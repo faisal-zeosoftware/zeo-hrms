@@ -129,11 +129,12 @@ class Payslip(models.Model):
     confirm_status = models.BooleanField(default=False, help_text="confirm this payslip  if True")
     trial_status = models.BooleanField(default=False, help_text="confirm this payslip  if True")
     rejection_reason = models.TextField(null=True, blank=True)
-    # def save(self, *args, **kwargs):
-    #     super().save(*args, **kwargs)
-    #     if self.send_email and self.payslip_pdf:
-    #         from .utils import send_payslip_email  # Adjust import as needed
-    #         send_payslip_email(self)
+    currency = models.ForeignKey("Core.crncy_mstr", on_delete=models.SET_NULL, null=True, blank=True)
+    def save(self, *args, **kwargs):
+        if not self.currency and self.employee and self.employee.emp_country_id:
+            if hasattr(self.employee.emp_country_id, 'currency'):
+                self.currency = self.employee.emp_country_id.currency
+        super().save(*args, **kwargs)
     def move_to_next_level(self):
         """
         Moves to the next approval level only if all current levels are approved.

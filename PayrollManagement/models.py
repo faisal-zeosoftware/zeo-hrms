@@ -25,6 +25,8 @@ class SalaryComponent(models.Model):
     description = models.TextField(blank=True, null=True)
     is_loan_component = models.BooleanField(default=False, help_text="Mark if this is the loan deduction component")
     show_in_payslip = models.BooleanField(default=True, help_text="Should this component be shown on the payslip?")
+    is_advance_salary = models.BooleanField(default=False, help_text="Used for advance salary deductions")
+    is_air_ticket = models.BooleanField(default=False, help_text="Used for air ticket")
 
     def __str__(self):
         return f"{self.name} ({self.get_component_type_display()})"

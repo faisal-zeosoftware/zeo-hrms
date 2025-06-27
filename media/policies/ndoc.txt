@@ -1,0 +1,150 @@
+@action(detail=False, methods=['post'])
+    def filter_by_date(self, request, *args, **kwargs):
+        report_id = request.data.get('report_id')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+
+        if not report_id or not start_date or not end_date:
+            return Response({'status': 'error', 'message': 'Missing required parameters'}, status=400)
+
+        try:
+            report_instance = Doc_Report.objects.get(id=report_id)
+            report_data = json.loads(report_instance.report_data.read().decode('utf-8'))
+        except Doc_Report.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Report not found'}, status=404)
+
+        try:
+            start_date = datetime.strptime(start_date, '%d-%m-%Y')
+            end_date = datetime.strptime(end_date, '%d-%m-%Y')
+        except ValueError:
+            return Response({'status': 'error', 'message': 'Invalid date format. Use dd-mm-yyyy.'}, status=400)
+
+        date_filtered_data = [
+            row for row in report_data
+            if start_date <= datetime.strptime(row.get('emp_doc_expiry_date', ''), '%d-%m-%Y') <= end_date
+        ]
+
+        # Save date filtered data to session
+        request.session['date_filtered_data'] = date_filtered_data
+        request.session.modified = True
+
+        return JsonResponse({
+            'date_filtered_data': date_filtered_data,
+            'report_id': report_id,
+        })
+
+    @action(detail=False, methods=['post'])
+    def generate_doc_filter_table(self, request, *args, **kwargs):
+        selected_fields = request.POST.getlist('selected_fields')
+        report_id = request.data.get('report_id')
+
+        # Save selected fields to session
+        request.session['selected_fields'] = selected_fields
+
+        # Fetch date filtered data from session
+        date_filtered_data = request.session.get('date_filtered_data', [])
+
+        # If no fields are selected for filtration, default to all existing fields in the report
+        if not selected_fields:
+            if date_filtered_data:
+                selected_fields = list(date_filtered_data[0].keys())  # Default to all keys in the first record
+            else:
+                selected_fields = []  # No data in the report
+
+        # Fetch employees data from emp_master and related Emp_Documents
+        employees = emp_master.objects.all()
+
+        # Define display names for fields
+        column_headings = {
+            "emp_id": "Employee Code",
+            "emp_first_name": "First Name",
+            "emp_active_date": "Active Date",
+            "emp_branch_id": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category",
+            "emp_doc_type": "Document Type",
+            "emp_doc_number": "Document Number",
+            "emp_doc_issued_date": "Issued Date",
+            "emp_doc_expiry_date": "Expiry Date",
+            "is_active": "Active",
+        }
+
+        # Get unique values for selected_fields
+        unique_values = self.get_unique_values_for_fields(employees, selected_fields, date_filtered_data)
+
+        processed_unique_values = {}
+        for field, values in unique_values.items():
+            processed_unique_values[field] = {
+                'values': values,
+            }
+
+        return JsonResponse({
+            'selected_fields': selected_fields,
+            'report_id': report_id,
+            'report_content': date_filtered_data,  # Pass date filtered data to the frontend
+            'unique_values': processed_unique_values,
+        })
+
+    def get_unique_values_for_fields(self, employees, selected_fields, report_content):
+        unique_values = {field: set() for field in selected_fields}
+        # Extract data from the JSON content
+        for record in report_content:
+            for field in selected_fields:
+                if field in record:
+                    unique_values[field].add(record[field])
+        # Fetch additional data from Emp_Documents if necessary
+        for field in selected_fields:
+            if field not in unique_values:
+                continue
+            for employee in employees:
+                if hasattr(Emp_Documents, field):
+                    custom_field_values = Emp_Documents.objects.filter(emp_id=employee).values_list(field, flat=True).distinct()
+                    unique_values[field].update(custom_field_values)
+        # Convert sets to lists
+        for field in unique_values:
+            unique_values[field] = list(unique_values[field])
+        return unique_values
+
+    @action(detail=False, methods=['post'])
+    def filter_document_report(self, request, *args, **kwargs):
+        report_id = request.data.get('report_id')
+        if not report_id:
+            return Response({'status': 'error', 'message': 'Report ID is missing'}, status=400)
+
+        try:
+            report_instance = Doc_Report.objects.get(id=report_id)
+            report_data = json.loads(report_instance.report_data.read().decode('utf-8'))
+            print("Report data loaded:", report_data)  # Debugging statement
+        except Doc_Report.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Report not found'}, status=404)
+
+        selected_fields = [key for key in request.data.keys() if key not in ('report_id', 'csrfmiddlewaretoken')]
+        filter_criteria = {}
+        for field in selected_fields:
+            values = [val.strip() for val in request.data.getlist(field) if val.strip()]
+            if values:
+                filter_criteria[field] = values
+
+        print("Filter criteria:", filter_criteria)  # Debugging statement
+
+        filtered_data = [row for row in report_data if self.match_filter_criteria(row, filter_criteria)]
+
+        print("Filtered data:", filtered_data)  # Debugging statement
+
+        # Save filtered data to session for Excel generation
+        request.session['filtered_data'] = filtered_data
+        request.session.modified = True
+
+        return JsonResponse({
+            'filtered_data': filtered_data,
+            'report_id': report_id,
+        })
+
+    def match_filter_criteria(self, row_data, filter_criteria):
+        for field, values in filter_criteria.items():
+            row_value = row_data.get(field, '').strip() if row_data.get(field) else ''
+            print(f"Checking field {field} with values {values} against row value {row_value}")  # Debugging statement
+            if row_value not in values:
+                return False
+        return True

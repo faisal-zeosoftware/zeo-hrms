@@ -1,0 +1,86 @@
+class Emp_CustomFieldValue(models.Model):
+    emp_custom_field = models.ForeignKey(Emp_CustomField, on_delete=models.CASCADE, related_name='field_values')
+    emp_master = models.ForeignKey('emp_master', on_delete=models.CASCADE, related_name='custom_field_values')
+    field_value = models.TextField(null=True, blank=True)  # Field value provided by end user
+
+    def __str__(self):
+        return f'{self.emp_custom_field.field_name}: {self.field_value}'
+
+    def clean(self):
+        custom_field = self.emp_custom_field
+        field_value = self.field_value
+        
+        # Validate dropdown field values
+        if custom_field.data_type == 'dropdown':
+            if custom_field.dropdown_values:
+                options = custom_field.dropdown_values
+                if not field_value or field_value not in options:
+                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
+        
+        # Validate radio field values
+        elif custom_field.data_type == 'radio':
+            if custom_field.radio_values:
+                options = custom_field.radio_values
+                if not field_value or field_value not in options:
+                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
+        
+        # Validate date field values
+        elif custom_field.data_type == 'date':
+            if field_value:
+                try:
+                    # Validate date format
+                    parts = field_value.split('-')
+                    if len(parts) != 3:
+                        raise ValueError
+                    day = parts[0].zfill(2)
+                    month = parts[1].zfill(2)
+                    year = parts[2]
+                    formatted_date = f"{day}-{month}-{year}"
+                    datetime.strptime(formatted_date, '%d-%m-%Y')  # Validate the format
+                except ValueError:
+                    raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
+            else:
+                raise ValidationError({'field_value': 'Date value is required.'})
+
+    def save(self, *args, **kwargs):
+        self.clean()  # Call clean to perform validation
+        super().save(*args, **kwargs)
+
+
+views.py
+
+@action(detail=True, methods=['get', 'post'])
+    def custom_fields(self, request, pk=None):
+        employee = self.get_object()
+        
+        if request.method == 'GET':
+            # Retrieve custom fields for the employee
+            custom_fields = Emp_CustomField.objects.filter(emp_master=employee)
+            serializer = CustomFieldSerializer(custom_fields, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        elif request.method == 'POST':
+            # Add a new custom field to the employee
+            serializer = CustomFieldSerializer(data=request.data)
+            if serializer.is_valid():
+                custom_field = serializer.save(emp_master=employee)
+                return Response(CustomFieldSerializer(custom_field).data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class Emp_CustomFieldValueSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Emp_CustomFieldValue
+        fields = '__all__'
+
+class CustomFieldSerializer(serializers.ModelSerializer):
+    field_values = Emp_CustomFieldValueSerializer(many=True, read_only=True)
+    class Meta:
+        model = Emp_CustomField
+        fields = '__all__' 
+
+
+ custom_fields = CustomFieldSerializer(many=True, read_only=True)
+    custom_field_values=Emp_CustomFieldValueSerializer(many=True, read_only=True)

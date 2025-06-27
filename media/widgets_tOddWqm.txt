@@ -1,0 +1,20 @@
+# Custom Date Widget to handle the date format
+class MultiTypeWidget(Widget):
+    def clean(self, value, row=None, *args, **kwargs):
+        if value:
+            try:
+                # Attempt to parse date in the format 'YYYY-MM-DD'
+                return datetime.strptime(value, '%d-%m-%y').date()
+            except ValueError:
+                try:
+                    # Attempt to parse date in the format 'YYYY-MM-DD HH:MM:SS'
+                    return datetime.strptime(value, '%d-%m-%y %H:%M:%S').date()
+                except ValueError:
+                    # Return as string if it's not a date
+                    return value
+        return None
+
+    def render(self, value, obj=None):
+        if isinstance(value, datetime):
+            return value.strftime('%d-%m-%y')
+        return str(value)

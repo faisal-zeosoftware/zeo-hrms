@@ -1,0 +1,114 @@
+@shared_task
+def send_document_expiry_notifications_for_all_tenants():
+    tenants = get_all_tenant_schemas()
+    for tenant_schema_name in tenants:
+        with schema_context(tenant_schema_name):
+            today = timezone.now().date()
+            documents = Emp_Documents.objects.filter(is_active=True)
+
+            # Fetch the selected ESS user from preferences
+            preference = SelectedEmpNotify.objects.first()
+            selected_ess_user = preference.selected_ess_user if preference else None
+
+            # Dictionary to collect all expiring documents for ESS user
+            ess_user_expiry_notifications = []
+
+            if documents.exists():
+                for document in documents:
+                    expiry_date = document.emp_doc_expiry_date
+                    if document.emp_id and document.emp_id.emp_branch_id:
+                        branch = document.emp_id.emp_branch_id
+
+                        # Fetch the branch-specific notification days
+                        branch_notification_days = branch.notification_period_days
+                        if branch_notification_days is not None:
+                            # Calculate the notification delta
+                            notification_delta = timedelta(days=branch_notification_days)
+
+                            # Send first notification if within the notification delta
+                            if expiry_date - today == notification_delta:
+                                # First notification
+                                send_document_notification(document, expiry_date, f'expiring in {branch_notification_days} days')
+
+                                # Add to ESS user's notification list if ESS user exists
+                                if selected_ess_user:
+                                    ess_user_expiry_notifications.append(
+                                        f"{document.document_type}: expiring in {branch_notification_days} days"
+                                    )
+
+                        # Get dynamic notification settings for the branch (for remaining notifications)
+                        try:
+                            notification_settings = NotificationSettings.objects.get(branch=branch)
+                            days_before_expiry = notification_settings.days_before_expiry
+                            days_after_expiry = notification_settings.days_after_expiry
+                        except NotificationSettings.DoesNotExist:
+                            # Default values if no specific settings found
+                            days_before_expiry = 7
+                            days_after_expiry = 0
+
+                        # Calculate the days remaining to expiry
+                        days_until_expiry = (expiry_date - today).days
+                        days_since_expiry = (today - expiry_date).days
+
+                        # Send further notifications based on dynamic date calculations
+                        if days_until_expiry == days_before_expiry:
+                            # Second notification (before expiry)
+                            send_document_notification(document, expiry_date, f'expiring in {days_before_expiry} days')
+
+                            if selected_ess_user:
+                                ess_user_expiry_notifications.append(
+                                    f"{document.document_type}: expiring in {days_before_expiry} days"
+                                )
+
+                        elif today == expiry_date:
+                            # Expiry day notification
+                            send_document_notification(document, expiry_date, 'expired today')
+
+                            if selected_ess_user:
+                                ess_user_expiry_notifications.append(
+                                    f"{document.document_type}: expired today"
+                                )
+
+                        elif days_since_expiry == days_after_expiry and days_since_expiry > 0:
+                            # Post-expiry notification
+                            send_document_notification(document, expiry_date, 'expired')
+
+                            if selected_ess_user:
+                                ess_user_expiry_notifications.append(
+                                    f"{document.document_type}: expired {days_since_expiry} days ago"
+                                )
+
+                # If ESS user exists, send a combined notification for all documents
+                if selected_ess_user and ess_user_expiry_notifications:
+                    combined_message = (
+                        f"Dear {selected_ess_user.emp_first_name},\n\n"
+                        "The following documents are expiring or have expired:\n\n" +
+                        "\n".join(ess_user_expiry_notifications)
+                    )
+                    send_mail(
+                        'All Document Expiry Notifications',
+                        combined_message,
+                        'approver312@gmail.com',
+                        [selected_ess_user.emp_personal_email],
+                        fail_silently=False,
+                    )
+            else:
+                print("No documents found that are expiring.")
+
+def send_document_notification(document, expiry_date, status):
+    notification_message = (
+        f"The document '{document.document_type}' of '{document.emp_id.emp_first_name} {document.emp_id.emp_last_name}' "
+        f"is {status} on {expiry_date}."
+    )
+    
+    # Create and send an email notification
+    send_mail(
+        'Document Expiry Notification',
+        notification_message,
+        'approver312@gmail.com',  # The 'from' email address
+        [document.emp_id.emp_personal_email],  # Send to the employee's email
+        fail_silently=False,
+    )def get_all_tenant_schemas():
+    # Implement this function based on your tenant management system
+    TenantModel = get_tenant_model()
+    return TenantModel.objects.values_list('schema_name', flat=True)

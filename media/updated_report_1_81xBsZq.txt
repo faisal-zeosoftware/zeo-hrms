@@ -1,0 +1,61 @@
+from django.db import models
+
+class Report(models.Model):
+    file_name = models.CharField(max_length=255, unique=True)
+    report_data = models.TextField()
+    # Add other fields as needed
+
+
+
+
+
+
+
+def ensure_standard_report_exists(self):
+    # Create or update the standard report
+    self.generate_standard_report()
+
+def generate_standard_report(self):
+    try:
+        file_name = 'std_report'
+        fields_to_include = self.get_available_fields().keys()
+        employees = emp_master.objects.all()
+
+        report_data = self.generate_report_data(fields_to_include, employees)
+        file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+
+        # Save report data to a file
+        with open(file_path, 'w') as file:
+            json.dump(report_data, file, default=str)
+
+        # Update or create the standard report entry in the database
+        Report.objects.update_or_create(
+            file_name=file_name,
+            defaults={'report_data': file_name + '.json'}
+        )
+
+        print("Standard report generated successfully.")
+
+    except Exception as e:
+        print(f"Error generating standard report: {str(e)}")
+
+@action(detail=False, methods=['get'])
+def std_report(self, request, *args, **kwargs):
+    try:
+        # Ensure the standard report is up-to-date
+        self.generate_standard_report()
+        report = Report.objects.get(file_name='std_report')
+        serializer = self.get_serializer(report)
+        return Response(serializer.data)
+    except Report.DoesNotExist:
+        return Response({"error": "Standard report not found."}, status=status.HTTP_404_NOT_FOUND)
+    except Report.MultipleObjectsReturned:
+        return Response({"error": "Multiple standard reports found."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+from yourapp.models import Report
+
+reports = Report.objects.filter(file_name='std_report')
+if reports.count() > 1:
+    # Keep the latest report and delete the rest
+    latest_report = reports.latest('id')  # Adjust this if needed
+    reports.exclude(id=latest_report.id).delete()

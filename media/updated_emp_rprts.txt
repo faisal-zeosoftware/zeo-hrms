@@ -1,0 +1,1071 @@
+class ReportViewset(viewsets.ModelViewSet):
+    queryset = Report.objects.all()
+    serializer_class = EmployeeReportSerializer
+    # permission_classes = [IsSuperUserOrInSameBranch]
+
+     
+    def get_queryset(self):
+        user = self.request.user
+        print ("user",user)
+        # If superuser, return all reports
+        if user.is_superuser:
+            return Report.objects.all()
+       
+       # Filter reports based on user's branch
+        if user.is_authenticated:
+            print("authenticated")
+            if hasattr(user, 'branches'):
+            
+                print("all")  
+                user_branch_id = user.branches
+                print("branch",user_branch_id)
+                return Report.objects.filter(branch_id=user_branch_id)
+            
+        # If user does not have branch_id (should not happen with proper user model setup), return empty queryset or handle as needed
+        return Report.objects.none()
+   
+
+    def __init__(self, *args, **kwargs):
+        super(ReportViewset, self).__init__(*args, **kwargs)
+        self.ensure_standard_report_exists()
+
+    def get_available_fields(self):
+        excluded_fields = {'id', 'is_ess','created_at', 'created_by', 'updated_at', 'updated_by', 'emp_profile_pic'}
+        display_names = {
+            "emp_code": "Employee Code",
+            "emp_first_name": "First Name",
+            "emp_last_name": "Last Name",
+            "emp_gender": "Gender",
+            "emp_date_of_birth": "Date of Birth",
+            "emp_personal_email": "Email",
+            "emp_mobile_number_1": "Mobile Number",
+            "emp_mobile_number_2": "Mobile Number2",
+            "emp_country_id": "Country",
+            "emp_state_id": "State",
+            "emp_city": "City",
+            "emp_permenent_address": "Permanent Address",
+            "emp_present_address": "Present Address",
+            "emp_status": "Status",
+            "emp_hired_date": "Hired Date",
+            "emp_active_date": "Active Date",
+            "emp_relegion": "Religion",
+            "emp_blood_group": "Blood Group",
+            "emp_nationality_id": "Nationality",
+            "emp_marital_status": "Marital Status",
+            "emp_father_name": "Father Name",
+            "emp_mother_name": "Mother Name",
+            "emp_posting_location": "Posting Location",
+            "is_active": "Active",
+            "epm_ot_applicable": "OT Applicable",
+            "emp_company_id": "Company",
+            "emp_branch_id": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category"
+        }
+        
+        emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name not in excluded_fields]
+        emp_custom_fields = list(Emp_CustomField.objects.values_list('emp_custom_field', flat=True))        
+        available_fields = {field: display_names.get(field, field) for field in emp_master_fields + emp_custom_fields} 
+        return available_fields
+
+    @action(detail=False, methods=['get'])
+    def select_employee_fields(self, request, *args, **kwargs):
+        available_fields = self.get_available_fields()
+        return Response({'available_fields': available_fields})
+        
+
+    @csrf_exempt
+    @action(detail=False, methods=['post'])
+    def emp_select_report(self, request, *args, **kwargs):
+        # if not request.user.is_superuser:
+        #     return Response({"error": "You do not have permission to access this resource."}, status=status.HTTP_403_FORBIDDEN)
+        if request.method == 'POST':
+            try:
+                file_name = request.POST.get('file_name', 'reports')  # Default to 'report' if 'file_name' is not provided
+                fields_to_include = request.POST.getlist('fields', [])
+            except Exception as e:
+                return JsonResponse({'status': 'error', 'message': str(e)})
+
+            if not fields_to_include:
+                fields_to_include = list(self.get_available_fields().keys())
+
+            employees = emp_master.objects.all()
+
+            report_data = self.generate_report_data(fields_to_include, employees)
+            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')  # Use 'file_name' provided by the user
+
+            with open(file_path, 'w') as file:
+                json.dump(report_data, file, default=str)  # Serialize dates to string format
+
+            Report.objects.create(file_name=file_name, report_data=file_name + '.json')
+            return JsonResponse({
+                'status': 'success',
+                'file_path': file_path,
+                'selected_fields_data': fields_to_include,
+                
+            })
+
+        return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
+    
+    def ensure_standard_report_exists(self):
+        # Update the standard report if it exists, otherwise create a new one
+        if Report.objects.filter(file_name='std_report').exists():
+            self.generate_standard_report()
+        else:
+            self.generate_standard_report()
+    
+    def generate_standard_report(self):
+        try:
+            file_name = 'std_report'
+            fields_to_include = self.get_available_fields().keys()
+            employees = emp_master.objects.all()
+
+            report_data = self.generate_report_data(fields_to_include, employees)
+            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+
+            # Save report data to a file
+            with open(file_path, 'w') as file:
+                json.dump(report_data, file, default=str)
+
+            # Update or create the standard report entry in the database
+            Report.objects.update_or_create(
+                file_name=file_name,
+                defaults={'report_data': file_name + '.json'}
+            )
+
+            print("Standard report generated successfully.")
+
+        except Exception as e:
+            print(f"Error generating standard report: {str(e)}")
+
+    @action(detail=False, methods=['get'])
+    def std_report(self, request, *args, **kwargs):
+        try:
+            # Ensure the standard report is up-to-date
+            self.generate_standard_report()
+            report = Report.objects.get(file_name='std_report')
+            serializer = self.get_serializer(report)
+            return Response(serializer.data)
+        except Report.DoesNotExist:
+            return Response({"error": "Standard report not found."}, status=status.HTTP_404_NOT_FOUND)
+def generate_report_data(self, fields_to_include, employees):
+        emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name != 'id']
+        custom_fields = list(Emp_CustomFieldValue.objects.filter(emp_master__in=employees).values_list('emp_custom_field', flat=True).distinct())
+
+        report_data = []
+        for employee in employees:
+            employee_data = {}
+            for field in fields_to_include:
+                if field in emp_master_fields:
+                    value = getattr(employee, field, 'N/A')
+                    if isinstance(value, date):
+                        value = value.isoformat()  # Convert date to ISO format string
+                elif field in custom_fields:
+                    # Fetch the custom field value directly from Emp_CustomFieldValue
+                    custom_field_value = Emp_CustomFieldValue.objects.filter(
+                        emp_master=employee, 
+                        emp_custom_field=field
+                    ).first()
+                    value = custom_field_value.field_value if custom_field_value else 'N/A'
+                else:
+                    value = 'N/A'
+                employee_data[field] = value
+            report_data.append(employee_data)
+
+        return report_data
+
+    
+    @action(detail=False, methods=['get'])
+    def select_filter_fields(self, request, *args, **kwargs):
+        available_fields = self.get_available_fields()
+        selected_fields = request.session.get('selected_fields', [])  # Get selected fields from session
+        print("selected fields:",selected_fields)
+        report_id = request.GET.get('report_id')  # Get report_id from query parameters
+
+        return Response({
+            'available_fields': available_fields,
+            'selected_fields': selected_fields,
+            'report_id': report_id
+        })   
+
+        
+
+    @csrf_exempt
+    @action(detail=False, methods=['post'])
+    def generate_employee_filter_table(self, request, *args, **kwargs):
+        selected_fields = request.POST.getlist('selected_fields')
+        report_id = request.POST.get('report_id')
+        available_fields = self.get_available_fields()
+       
+        # Save selected fields to session
+        request.session['selected_fields'] = selected_fields
+        print("select fields",selected_fields)
+        # Fetch report data based on report_id
+        try:
+            report = Report.objects.get(id=report_id)
+            report_file_path = os.path.join(settings.MEDIA_ROOT, report.report_data.name)  # Assuming report_data is a FileField
+            with open(report_file_path, 'r') as file:
+                report_content = json.load(file)  # Load content of the report file as JSON
+        except Report.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Report not found'})
+        print("reportcontnt",report_content)
+        # If no fields are selected for filtration, default to all existing fields in the report
+        if not selected_fields:
+            if report_content:
+                selected_fields = list(report_content[0].keys())  # Default to all keys in the first record
+            else:
+                selected_fields = []  # No data in the report
+
+        # Fetch employees data from emp_master
+        employees = emp_master.objects.all()
+
+        # Get unique values for selected_fields
+        unique_values = self.get_unique_values_for_fields(employees, selected_fields, report_content)
+        processed_unique_values = {}
+        for field, values in unique_values.items():
+            processed_unique_values[field] = {
+                'values': values,
+            }
+
+        return JsonResponse({
+            'selected_fields': selected_fields,
+            'report_id': report_id,
+            'report_content': report_content,  # Pass report_content to the frontend
+            'unique_values': processed_unique_values,
+        })
+
+       
+
+    def get_unique_values_for_fields(self, employees, selected_fields, report_content):
+        unique_values = {field: set() for field in selected_fields}
+
+        # Extract data from the JSON content
+        for record in report_content:
+            for field in selected_fields:
+                if field in record:
+                    unique_values[field].add(record[field])
+
+        # Fetch additional data from Emp_CustomField if necessary
+        for field in selected_fields:
+            if field not in unique_values:
+                continue
+            for employee in employees:
+                if not hasattr(employee, field):
+                    custom_field_value = Emp_CustomField.objects.filter(emp_master=employee, field_name=field).first()
+                    if custom_field_value:
+                        unique_values[field].add(custom_field_value.field_value)
+
+        # Convert sets to lists
+        for field in unique_values:
+            unique_values[field] = list(unique_values[field])
+        return unique_values
+    
+    
+    @csrf_exempt
+    @action(detail=False, methods=['post'])
+    def filter_existing_report(self, request, *args, **kwargs):
+        report_id = request.data.get('report_id')
+        if not report_id:
+            return HttpResponse('Report ID is missing', status=400)
+
+        try:
+            report_instance = Report.objects.get(id=report_id)
+            report_data = json.loads(report_instance.report_data.read().decode('utf-8'))
+        except (Report.DoesNotExist, json.JSONDecodeError) as e:
+            return HttpResponse(f'Report not found or invalid JSON format: {str(e)}', status=404)
+
+        selected_fields = [key for key in request.data.keys() if key != 'report_id']
+        filter_criteria = {}
+
+        for field in selected_fields:
+            values = [val.strip() for val in request.data.getlist(field) if val.strip()]
+            if values:
+                filter_criteria[field] = values
+
+        field_names = {
+            "Employee Code": "emp_code",
+            "First Name": "emp_first_name",
+            "Last Name": "emp_last_name",
+            "Gender": "emp_gender",
+            "Date of Birth": "emp_date_of_birth",
+            "Email": "emp_personal_email",
+            "Mobile Number": "emp_mobile_number_1",
+            "Mobile Number2": "emp_mobile_number_2",
+            "Country": "emp_country_id",
+            "State": "emp_state_id",
+            "City": "emp_city",
+            "Permanent Address": "emp_permenent_address",
+            "Present Address": "emp_present_address",
+            "Status": "emp_status",
+            "Hired Date": "emp_hired_date",
+            "Active Date": "emp_active_date",
+            "Religion": "emp_relegion",
+            "Blood Group": "emp_blood_group",
+            "Nationality": "emp_nationality_id",
+            "Marital Status": "emp_marital_status",
+            "Father Name": "emp_father_name",
+            "Mother Name": "emp_mother_name",
+            "Posting Location": "emp_posting_location",
+            "Active": "is_active",
+            "OT Applicable": "epm_ot_applicable",
+            "Company": "emp_company_id",
+            "Branch": "emp_branch_id",
+            "Department": "emp_dept_id",
+            "Designation": "emp_desgntn_id",
+            "Category": "emp_ctgry_id",
+            # Add other field mappings as per your needs
+        }
+
+        filtered_data = [row for row in report_data if self.match_filter_criteria(row, filter_criteria, field_names)]
+        print("filtered data",filtered_data)
+        # Save filtered data to session for Excel generation
+        request.session['filtered_data'] = filtered_data
+        request.session.modified = True
+        display_named = self.get_available_fields()
+
+        return JsonResponse({
+        'filtered_data': filtered_data,
+        'report_id': report_id,
+    })
+        
+
+    def match_filter_criteria(self, row_data, filter_criteria, field_names):
+        for column_heading, field_name in field_names.items():
+            if field_name in filter_criteria:
+                values = filter_criteria[field_name]
+                row_value = row_data.get(field_name)
+                if row_value is None or row_value.strip() not in values:
+                    return False
+        for custom_field_name in filter_criteria.keys():
+            if custom_field_name not in field_names.values():
+                custom_field_values = filter_criteria[custom_field_name]
+                custom_field_value = row_data.get(custom_field_name, '').strip().lower()
+                if custom_field_value and custom_field_value not in [val.lower() for val in custom_field_values]:
+                    return False
+        return True
+
+
+
+
+document***
+
+
+class Doc_ReportViewset(viewsets.ModelViewSet):
+    queryset = Doc_Report.objects.all()
+    serializer_class = DocumentReportSerializer
+
+    def __init__(self, *args, **kwargs):
+        super(Doc_ReportViewset, self).__init__(*args, **kwargs)
+        self.ensure_standard_report_exists()
+
+    def get_available_fields(self):
+        # Define your available fields logic specific to documents
+        excluded_fields = {'id', 'created_at', 'created_by', 'updated_at', 'updated_by', 'emp_sl_no', 'emp_doc_document'}
+        included_emp_master_fields = {'emp_first_name', 'emp_active_date', 'emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id'}
+        
+        display_names = {
+            "emp_id": "Employee ID",
+            "emp_first_name": "First Name",
+            "emp_active_date": "Active Date",
+            "emp_branch_id": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category",
+            "emp_doc_type": "Document Type",
+            "emp_doc_number": "Document Number",
+            "emp_doc_issued_date": "Issued Date",
+            "emp_doc_expiry_date": "Expiry Date",
+            "is_active": "Active",
+        }
+
+        emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name in included_emp_master_fields]
+        emp_document_fields = [field.name for field in Emp_Documents._meta.get_fields() if isinstance(field, Field) and field.name not in excluded_fields]
+
+        available_fields = {field: display_names.get(field, field) for field in emp_master_fields + emp_document_fields}
+        return available_fields
+
+
+    def ensure_standard_report_exists(self):
+        # Update the standard report if it exists, otherwise create a new one
+        if Doc_Report.objects.filter(file_name='doc_std_report').exists():
+            self.generate_standard_report()
+        else:
+            self.generate_standard_report()
+    
+    
+    def generate_standard_report(self):
+        try:
+            file_name = 'doc_std_report'
+            fields_to_include = self.get_available_fields().keys()
+            documents = Emp_Documents.objects.all()
+
+            report_data = self.doc_report_data(fields_to_include, documents)
+            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+
+            # Save report data to a file
+            with open(file_path, 'w') as file:
+                json.dump(report_data, file, default=str)
+
+            # Update or create the standard report entry in the database
+            Doc_Report.objects.update_or_create(
+                file_name=file_name,
+                defaults={'report_data': file_name + '.json'}
+            )
+
+            print("Standard report generated successfully.")
+
+        except Exception as e:
+            print(f"Error generating standard report: {str(e)}")
+
+    @action(detail=False, methods=['get'])
+    def std_report(self, request, *args, **kwargs):
+        try:
+            # Ensure the standard report is up-to-date
+            self.generate_standard_report()
+            report = Doc_Report.objects.get(file_name='doc_std_report')
+            serializer = self.get_serializer(report)
+            return Response(serializer.data)
+        except Doc_Report.DoesNotExist:
+            return Response({"error": "Standard report not found."}, status=status.HTTP_404_NOT_FOUND)
+    
+    def filter_documents_by_date_range(self, documents, from_date, to_date):
+        if from_date and to_date:
+            documents = documents.filter(emp_doc_expiry_date__range=(from_date, to_date))
+        elif from_date:
+            documents = documents.filter(emp_doc_expiry_date__gte=from_date)
+        elif to_date:
+            documents = documents.filter(emp_doc_expiry_date__lte=to_date)
+        return documents
+
+    @action(detail=False, methods=['get'])
+    def select_document_fields(self, request, *args, **kwargs):
+        available_fields = self.get_available_fields()
+        return JsonResponse({'available_fields': available_fields})
+        
+
+    @action(detail=False, methods=['post'])
+    def generate_document_report(self, request, *args, **kwargs):
+        if request.method == 'POST':
+            try:
+                file_name = request.data.get('file_name', 'report')
+                fields_to_include = request.data.getlist('fields', [])
+                # from_date = request.data.get('from_date')
+                # to_date = request.data.get('to_date')
+            except Exception as e:
+                return JsonResponse({'status': 'error', 'message': str(e)})
+
+            if not fields_to_include:
+                fields_to_include = list(self.get_available_fields().keys())
+
+            documents = Emp_Documents.objects.all()
+            # documents = self.filter_documents_by_date_range(documents, from_date, to_date)
+
+            report_data = self.doc_report_data(fields_to_include, documents)
+
+            if not report_data:
+                return JsonResponse({'status': 'error', 'message': 'No data to write into report'})
+
+            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            try:
+                with open(file_path, 'w') as file:
+                    json.dump(report_data, file, default=str)
+            except Exception as e:
+                return JsonResponse({'status': 'error', 'message': f'Failed to write file: {str(e)}'})
+
+            try:
+                Doc_Report.objects.create(file_name=file_name, report_data=file_name + '.json')
+            except Exception as e:
+                return JsonResponse({'status': 'error', 'message': f'Failed to save report: {str(e)}'})
+
+            return JsonResponse({'status': 'success', 'file_path': file_path, 'selected_fields_data': fields_to_include})
+        return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
+
+    def doc_report_data(self, fields_to_include, documents):
+        column_headings = {
+            "emp_id": "Employee ID",
+            "emp_first_name": "First Name",
+            "emp_active_date": "Active Date",
+            "emp_branch_id": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category",
+            "emp_doc_type": "Document Type",
+            "emp_doc_number": "Document Number",
+            "emp_doc_issued_date": "Issued Date",
+            "emp_doc_expiry_date": "Expiry Date",
+            "is_active": "Active",
+        }
+
+        emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name != 'id']
+        emp_document_fields = [field.name for field in Emp_Documents._meta.get_fields() if isinstance(field, Field) and field.name != 'id']
+        report_data = []
+        for document in documents:
+            document_data = {}
+            for field in fields_to_include:
+                if field in emp_master_fields:
+                    value = getattr(document.emp_id, field, 'N/A')
+                    if isinstance(value, date):
+                        value = value.isoformat()
+                elif field in emp_document_fields:
+                    value = getattr(document, field, 'N/A')
+                else:
+                    value = 'N/A'
+                document_data[field] = value
+            report_data.append(document_data)
+
+        # print(f"Final report data: {report_data}")
+        
+        return report_data
+
+    @action(detail=False, methods=['get'])
+    def select_filter_fields(self, request, *args, **kwargs):
+        available_fields = self.get_available_fields()
+        selected_fields = request.session.get('selected_fields', [])
+        report_id = request.GET.get('report_id')
+        
+        return Response({
+            'available_fields': available_fields,
+            'selected_fields': selected_fields,
+            'report_id': report_id
+        }) 
+
+    
+    ###################################
+    
+    @action(detail=False, methods=['post'])
+    def filter_by_date(self, request, *args, **kwargs):
+        report_id = request.data.get('report_id')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+
+        if not report_id or not start_date or not end_date:
+            return Response({'status': 'error', 'message': 'Missing required parameters'}, status=400)
+
+        try:
+            report_instance = Doc_Report.objects.get(id=report_id)
+            report_data = json.loads(report_instance.report_data.read().decode('utf-8'))
+        except Doc_Report.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Report not found'}, status=404)
+
+        def parse_date(date_str):
+            formats = ['%d-%m-%Y', '%Y-%m-%d', '%d/%m/%Y', '%Y/%m/%d', '%d.%m.%Y', '%Y.%m.%d']
+            for fmt in formats:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+            return None
+
+        start_date = parse_date(start_date)
+        end_date = parse_date(end_date)
+
+        if not start_date or not end_date:
+            return Response({'status': 'error', 'message': 'Invalid date format. Accepted formats are dd-mm-yyyy, yyyy-mm-dd, dd/mm/yyyy, yyyy/mm/dd, dd.mm.yyyy, yyyy.mm.dd.'}, status=400)
+
+        date_filtered_data = [
+            row for row in report_data
+            if 'emp_doc_expiry_date' in row and row['emp_doc_expiry_date'] and
+            parse_date(row['emp_doc_expiry_date']) and
+            start_date <= parse_date(row['emp_doc_expiry_date']) <= end_date
+        ]
+
+        # Debugging statement
+        print("Date filtered data:", date_filtered_data)
+
+        # Store filtered data in session
+        request.session['date_filtered_data'] = date_filtered_data
+        request.session.modified = True
+
+
+        return JsonResponse({
+            'date_filtered_data': date_filtered_data,
+            'report_id': report_id,
+        })
+    
+    
+    
+    @action(detail=False, methods=['post'])
+    def generate_doc_filter_table(self, request, *args, **kwargs):
+        selected_fields = request.POST.getlist('selected_fields')
+        report_id = request.data.get('report_id')
+
+        # Save selected fields to session
+        request.session['selected_fields'] = selected_fields
+
+        # Fetch date-filtered report data from session
+        date_filtered_data = request.session.get('date_filtered_data', [])
+        print("previosly date filtered ",date_filtered_data)
+        
+        # If no date-filtered data, attempt to fetch full report
+        if not date_filtered_data:
+            try:
+                report = Doc_Report.objects.get(id=report_id)
+                report_file_path = os.path.join(settings.MEDIA_ROOT, report.report_data.name)
+                with open(report_file_path, 'r') as file:
+                    report_content = json.load(file)
+            except Doc_Report.DoesNotExist:
+                return JsonResponse({'status': 'error', 'message': 'Report not found'})
+
+            date_filtered_data = report_content
+
+        # If no fields are selected for filtration, default to all existing fields in the report
+        if not selected_fields:
+            if date_filtered_data:
+                selected_fields = list(date_filtered_data[0].keys())  # Default to all keys in the first record
+            else:
+                selected_fields = []  # No data in the report
+
+        # Define display names for fields
+        column_headings = {
+            "emp_id": "Employee Code",
+            "emp_first_name": "First Name",
+            "emp_active_date": "Active Date",
+            "emp_branch_id": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category",
+            "emp_doc_type": "Document Type",
+            "emp_doc_number": "Document Number",
+            "emp_doc_issued_date": "Issued Date",
+            "emp_doc_expiry_date": "Expiry Date",
+            "is_active": "Active",
+        }
+
+        # Get unique values for selected_fields from date-filtered data
+        unique_values = self.get_unique_values_for_fields(date_filtered_data, selected_fields)
+
+        processed_unique_values = {}
+        for field, values in unique_values.items():
+            processed_unique_values[field] = {
+                'values': values,
+            }
+
+        return JsonResponse({
+            'selected_fields': selected_fields,
+            'report_id': report_id,
+            'report_content': date_filtered_data,  # Pass filtered data to the frontend
+            'unique_values': processed_unique_values,
+        })
+
+    def get_unique_values_for_fields(self, data, selected_fields):
+        unique_values = {field: set() for field in selected_fields}
+        # Extract data from the provided content
+        for record in data:
+            for field in selected_fields:
+                if field in record:
+                    unique_values[field].add(record[field])
+
+        # Convert sets to lists
+        for field in unique_values:
+            unique_values[field] = list(unique_values[field])
+        return unique_values
+       
+    
+    @action(detail=False, methods=['post'])
+    def filter_document_report(self, request, *args, **kwargs):
+        report_id = request.data.get('report_id')
+        if not report_id:
+            return Response({'status': 'error', 'message': 'Report ID is missing'}, status=400)
+
+        try:
+            report_instance = Doc_Report.objects.get(id=report_id)
+            report_data = json.loads(report_instance.report_data.read().decode('utf-8'))
+        except Doc_Report.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Report not found'}, status=404)
+
+        # Get date-filtered data from session if available, otherwise use full report data
+        filtered_data = request.session.get('date_filtered_data', report_data)
+
+        # Debugging statement
+        print("Data retrieved for field filtration:", filtered_data)
+
+        if not filtered_data:
+            return Response({'status': 'error', 'message': 'No date-filtered data available'}, status=404)
+
+        # Get selected fields and filter criteria from request
+        selected_fields = [key for key in request.data.keys() if key not in ('report_id', 'csrfmiddlewaretoken')]
+        print("Selected fields:", selected_fields)
+        
+        filter_criteria = {}
+        for field in selected_fields:
+            values = [val.strip() for val in request.data.getlist(field) if val.strip()]
+            if values:
+                filter_criteria[field] = values
+
+        print("Filter criteria:", filter_criteria)  # Debugging statement
+
+        # Apply field value filters to date-filtered data
+        filtered_data = [row for row in filtered_data if self.match_filter_criteria(row, filter_criteria)]
+
+        print("Filtered data after applying field filters:", filtered_data)  # Debugging statement
+
+        # Save filtered data to session for Excel generation
+        request.session['filtered_data'] = filtered_data
+        request.session.modified = True
+
+        return JsonResponse({
+            'filtered_data': filtered_data,
+            'report_id': report_id,
+        })
+
+    def match_filter_criteria(self, row_data, filter_criteria):
+        for field, values in filter_criteria.items():
+            row_value = row_data.get(field, '').strip() if row_data.get(field) else ''
+            print(f"Checking field {field} with values {values} against row value {row_value}")  # Debugging statement
+            if row_value not in values:
+                return False
+        return True
+
+
+
+
+general@@@
+
+
+
+
+
+
+class GeneralReportViewset(viewsets.ModelViewSet):
+    queryset = GeneralRequestReport.objects.all()
+    serializer_class = GeneralReportSerializer
+    
+    def __init__(self, *args, **kwargs):
+        super(GeneralReportViewset, self).__init__(*args, **kwargs)
+        self.general_standard_report_exists()
+
+    def get_available_fields(self):
+        excluded_fields = {'id', 'created_by'}
+        included_emp_master_fields = { 'emp_first_name', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id'}
+        
+        display_names = {
+            "employee": "Employee Code",
+            "emp_first_name": "First Name",
+            "emp_active_date": "Active Date",
+            "branch":"Branches",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category",
+            "doc_number": "Document Number",
+            "reason": "Reason",
+            "total":"Total",
+            "request_type": "Request Type",
+            "approved": "Approved Request",
+            "created_at_date":"Request Date",
+           
+        }
+
+        emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name in included_emp_master_fields]
+        general_request_fields = [field.name for field in GeneralRequest._meta.get_fields() if isinstance(field, Field) and field.name not in excluded_fields]
+        
+        available_fields = {field: display_names.get(field, field) for field in emp_master_fields + general_request_fields}
+        return available_fields
+    
+    @action(detail=False, methods=['get'])
+    def select_generalreport_fields(self, request, *args, **kwargs):
+        available_fields = self.get_available_fields()
+        return Response({'available_fields': available_fields})
+       
+    @action(detail=False, methods=['post'])
+    def generate_general_report(self, request, *args, **kwargs):
+        if request.method == 'POST':
+            try:
+                file_name = request.POST.get('file_name', 'report')
+                fields_to_include = request.POST.getlist('fields', [])
+                # from_date = parse_date(request.POST.get('from_date'))
+                # to_date = parse_date(request.POST.get('to_date'))
+            except Exception as e:
+                return JsonResponse({'status': 'error', 'message': str(e)})
+            
+            if not fields_to_include:
+                fields_to_include = list(self.get_available_fields().keys())
+            
+            generalreport = GeneralRequest.objects.all()
+            # documents = self.filter_documents_by_date_range(documents)
+
+            report_data = self.generate_report_data(fields_to_include,generalreport)
+            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            with open(file_path, 'w') as file:
+                json.dump(report_data, file, default=str)  # Serialize dates to string format
+
+
+            GeneralRequestReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            return JsonResponse({'status': 'success', 'file_path': file_path,'selected_fields_data': fields_to_include,})
+        return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
+
+   
+    def general_standard_report_exists(self):
+        # Update the standard report if it exists, otherwise create a new one
+        if GeneralRequestReport.objects.filter(file_name='generalrequest_std_report').exists():
+            self.generate_standard_report()
+        else:
+            self.generate_standard_report()
+    
+    def generate_standard_report(self):
+        try:
+            file_name = 'generalrequest_std_report'
+            fields_to_include = self.get_available_fields().keys()
+            generalreport = GeneralRequest.objects.all()
+
+            report_data = self.generate_report_data(fields_to_include, generalreport)
+            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+
+            # Save report data to a file
+            with open(file_path, 'w') as file:
+                json.dump(report_data, file, default=str)
+
+            # Update or create the standard report entry in the database
+            GeneralRequestReport.objects.update_or_create(
+                file_name=file_name,
+                defaults={'report_data': file_name + '.json'}
+            )
+
+            print("Standard report generated successfully.")
+
+        except Exception as e:
+            print(f"Error generating standard report: {str(e)}")
+
+    @action(detail=False, methods=['get'])
+    def std_report(self, request, *args, **kwargs):
+        try:
+            # Ensure the standard report is up-to-date
+            self.generate_standard_report()
+            report = GeneralRequestReport.objects.get(file_name='generalrequest_std_report')
+            serializer = self.get_serializer(report)
+            return Response(serializer.data)
+        except GeneralRequestReport.DoesNotExist:
+            return Response({"error": "Standard report not found."}, status=status.HTTP_404_NOT_FOUND)
+
+
+def generate_report_data(self, fields_to_include,generalreport):
+        column_headings = {
+            "employee": "Employee Code",
+            "emp_first_name": "First Name",
+            "branch": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category",
+            "doc_number": "Document Number",
+            "reason": "Reason",
+            "total":"Total",
+            "request_type": "Request Type",
+            "approved": "Approved Request",
+        }
+
+        emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name != 'id']
+        general_request_fields = [field.name for field in GeneralRequest._meta.get_fields() if isinstance(field, Field) and field.name != 'id']
+
+        report_data = []
+        for document in generalreport:
+            general_data = {}
+            for field in fields_to_include:
+                if field in emp_master_fields:
+                    value = getattr(document.employee, field, 'N/A')
+                    if isinstance(value, date):
+                        value = value.isoformat()
+                elif field in general_request_fields:
+                    value = getattr(document, field, 'N/A')
+                else:
+                    value = 'N/A'
+                general_data[field] = value
+            report_data.append(general_data)
+        return report_data            
+
+    @action(detail=False, methods=['get'])
+    def select_filter_fields(self, request, *args, **kwargs):
+        available_fields = self.get_available_fields()
+        selected_fields = request.session.get('selected_fields', [])
+        report_id = request.GET.get('report_id')  # Get report_id from query parameters
+
+        
+        return Response({
+            'available_fields': available_fields,
+            'selected_fields': selected_fields,
+            'report_id': report_id
+        }) 
+    
+    @action(detail=False, methods=['post'])
+    def filter_by_date(self, request, *args, **kwargs):
+        report_id = request.data.get('report_id')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+
+        if not report_id or not start_date or not end_date:
+            return Response({'status': 'error', 'message': 'Missing required parameters'}, status=400)
+
+        try:
+            report_instance = GeneralRequestReport.objects.get(id=report_id)
+            report_data = json.loads(report_instance.report_data.read().decode('utf-8'))
+        except GeneralRequestReport.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Report not found'}, status=404)
+
+        def parse_date(date_str):
+            formats = ['%d-%m-%Y', '%Y-%m-%d', '%d/%m/%Y', '%Y/%m/%d', '%d.%m.%Y', '%Y.%m.%d']
+            for fmt in formats:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+            return None
+
+        start_date = parse_date(start_date)
+        end_date = parse_date(end_date)
+
+        if not start_date or not end_date:
+            return Response({'status': 'error', 'message': 'Invalid date format. Accepted formats are dd-mm-yyyy, yyyy-mm-dd, dd/mm/yyyy, yyyy/mm/dd, dd.mm.yyyy, yyyy.mm.dd.'}, status=400)
+
+        date_filtered_data = [
+            row for row in report_data
+            if 'created_at_date' in row and row['created_at_date'] and
+            parse_date(row['created_at_date']) and
+            start_date <= parse_date(row['created_at_date']) <= end_date
+        ]
+
+        # Debugging statement
+        print("Date filtered data:", date_filtered_data)
+
+        # Store filtered data in session
+        request.session['date_filtered_data'] = date_filtered_data
+        request.session.modified = True
+
+
+        return JsonResponse({
+            'date_filtered_data': date_filtered_data,
+            'report_id': report_id,
+        })
+    
+    
+    
+    @action(detail=False, methods=['post'])
+    def generate_filter_table(self, request, *args, **kwargs):
+        selected_fields = request.POST.getlist('selected_fields')
+        report_id = request.data.get('report_id')
+
+        # Save selected fields to session
+        request.session['selected_fields'] = selected_fields
+
+        # Fetch date-filtered report data from session
+        date_filtered_data = request.session.get('date_filtered_data', [])
+        print("previosly date filtered ",date_filtered_data)
+        
+        # If no date-filtered data, attempt to fetch full report
+        if not date_filtered_data:
+            try:
+                report = GeneralRequestReport.objects.get(id=report_id)
+                report_file_path = os.path.join(settings.MEDIA_ROOT, report.report_data.name)
+                with open(report_file_path, 'r') as file:
+                    report_content = json.load(file)
+            except GeneralRequestReport.DoesNotExist:
+                return JsonResponse({'status': 'error', 'message': 'Report not found'})
+
+            date_filtered_data = report_content
+
+        # If no fields are selected for filtration, default to all existing fields in the report
+        if not selected_fields:
+            if date_filtered_data:
+                selected_fields = list(date_filtered_data[0].keys())  # Default to all keys in the first record
+            else:
+                selected_fields = []  # No data in the report
+            
+        # Define display names for fields
+        column_headings = {
+            "emp_id": "Employee Code",
+            "emp_first_name": "First Name",
+            "emp_active_date": "Active Date",
+            "emp_branch_id": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category",
+            "emp_doc_type": "Document Type",
+            "emp_doc_number": "Document Number",
+            "emp_doc_issued_date": "Issued Date",
+            "emp_doc_expiry_date": "Expiry Date",
+            "is_active": "Active",
+        }
+
+        # Get unique values for selected_fields from date-filtered data
+        unique_values = self.get_unique_values_for_fields(date_filtered_data, selected_fields)
+
+        processed_unique_values = {}
+        for field, values in unique_values.items():
+            processed_unique_values[field] = {
+                'values': values,
+            }
+
+        return JsonResponse({
+            'selected_fields': selected_fields,
+            'report_id': report_id,
+            'report_content': date_filtered_data,  # Pass filtered data to the frontend
+            'unique_values': processed_unique_values,
+        })
+        
+
+    def get_unique_values_for_fields(self, data, selected_fields):
+        unique_values = {field: set() for field in selected_fields}
+        # Extract data from the provided content
+        for record in data:
+            for field in selected_fields:
+                if field in record:
+                    unique_values[field].add(record[field])
+
+        # Convert sets to lists
+        for field in unique_values:
+            unique_values[field] = list(unique_values[field])
+        return unique_values
+       
+    
+    @action(detail=False, methods=['post'])
+    def general_filter_report(self, request, *args, **kwargs):
+        report_id = request.data.get('report_id')
+        if not report_id:
+            return Response({'status': 'error', 'message': 'Report ID is missing'}, status=400)
+
+        try:
+            report_instance = GeneralRequestReport.objects.get(id=report_id)
+            report_data = json.loads(report_instance.report_data.read().decode('utf-8'))
+        except GeneralRequestReport.DoesNotExist:
+            return Response({'status': 'error', 'message': 'Report not found'}, status=404)
+
+        # Get date-filtered data from session if available, otherwise use full report data
+        filtered_data = request.session.get('date_filtered_data', report_data)
+
+        # Debugging statement
+        # print("Data retrieved for field filtration:", filtered_data)
+
+        if not filtered_data:
+            return Response({'status': 'error', 'message': 'No date-filtered data available'}, status=404)
+
+        # Get selected fields and filter criteria from request
+        selected_fields = [key for key in request.data.keys() if key not in ('report_id', 'csrfmiddlewaretoken')]
+        print("Selected fields:", selected_fields)
+        
+        filter_criteria = {}
+        for field in selected_fields:
+            values = [val.strip() for val in request.data.getlist(field) if val.strip()]
+            if values:
+                filter_criteria[field] = values
+
+        print("Filter criteria:", filter_criteria)  # Debugging statement
+
+        # Apply field value filters to date-filtered data
+        filtered_data = [row for row in filtered_data if self.match_filter_criteria(row, filter_criteria)]
+
+        # print("Filtered data after applying field filters:", filtered_data)  # Debugging statement
+
+        # Save filtered data to session for Excel generation
+        request.session['filtered_data'] = filtered_data
+        request.session.modified = True
+
+        return JsonResponse({
+            'filtered_data': filtered_data,
+            'report_id': report_id,
+        })
+
+    def match_filter_criteria(self, row_data, filter_criteria):
+        for field, values in filter_criteria.items():
+            row_value = row_data.get(field, '').strip() if row_data.get(field) else ''
+            print(f"Checking field {field} with values {values} against row value {row_value}")  # Debugging statement
+            if row_value not in values:
+                return False
+        return True

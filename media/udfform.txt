@@ -1,0 +1,158 @@
+class Emp_CustomField(models.Model):
+    FIELD_TYPES = (   
+        ('dropdown', 'DropdownField'),
+        ('radio', 'RadioButtonField'),
+        ('date', 'DateField'),
+        ('text', 'TextField'),
+        ('checkbox', 'CheckboxField'),
+    )
+    # emp_master = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name='custom_fields',null=True)
+    emp_custom_field= models.CharField(unique=True,max_length=100)  # Field name provided by end user
+    data_type = models.CharField(max_length=20, choices=FIELD_TYPES, null=True, blank=True)
+    dropdown_values = models.JSONField(null=True, blank=True)
+    radio_values = models.JSONField(null=True, blank=True)
+    checkbox_values = models.JSONField(null=True,blank=True)
+    def __str__(self):
+        return self.emp_custom_field    
+    
+    def clean(self):
+        # Validate dropdown field values
+        if self.data_type == 'dropdown':
+            if self.dropdown_values:
+                options = self.dropdown_values
+                if  not  options:
+                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
+            else:
+                raise ValidationError({'field_value': 'provide value to the dropdown options.'})
+        # Validate radio field values
+        elif self.data_type == 'radio':
+            if self.radio_values:
+                options = self.radio_values
+                if not  options:
+                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
+            else:
+                raise ValidationError({'field_value': 'provide value to the radio options.'})
+        # Validate checkbox field values
+        elif self.data_type == 'checkbox':
+            if self.checkbox_values:
+                options = self.checkbox_values
+                if not  options:
+                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
+            else:
+                raise ValidationError({'field_value': 'provide value to the checkbox options.'})
+    def save(self, *args, **kwargs):
+        self.clean()  # Call clean to perform validation
+        super().save(*args, **kwargs)
+    
+
+class Emp_CustomFieldValue(models.Model):
+    # emp_custom_field = models.ForeignKey(Emp_CustomField, on_delete=models.CASCADE, related_name='field_values',null=True)
+    emp_custom_field = models.CharField(max_length=100,null=True)
+    field_value = models.TextField(null=True, blank=True)  # Field value provided by end user
+    emp_master = models.ForeignKey('emp_master', on_delete=models.CASCADE, related_name='custom_field_values',null=True)
+
+    def __str__(self):
+        return f'{self.emp_custom_field.emp_custom_field}: {self.field_value}'
+
+    def save(self, *args, **kwargs):
+        if not self.emp_custom_field:
+            raise ValueError("Field name cannot be None or empty.")
+        if not Emp_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).exists():
+            raise ValueError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
+
+        # Check if a custom field value already exists for the same emp_master and emp_custom_field
+        existing_value = Emp_CustomFieldValue.objects.filter(
+            emp_custom_field=self.emp_custom_field,
+            emp_master=self.emp_master
+        ).first()
+
+        if existing_value:
+            # If it exists, update the existing record instead of creating a new one
+            existing_value.field_value = self.field_value
+            # Use update() to avoid calling save() and prevent recursion
+            Emp_CustomFieldValue.objects.filter(
+                id=existing_value.id
+            ).update(field_value=self.field_value)
+        else:
+            # Call full_clean to ensure that the clean method is called
+            self.full_clean()
+            super().save(*args, **kwargs)
+
+    def clean(self):
+        # Retrieve the custom field object
+        custom_field = Emp_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).first()
+
+        if not custom_field:
+            raise ValidationError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
+        
+        field_value = self.field_value
+
+        if custom_field.data_type == 'dropdown':
+            if custom_field.dropdown_values:
+                options = custom_field.dropdown_values
+                if not field_value or field_value not in options:
+                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
+        
+        elif custom_field.data_type == 'radio':
+            if custom_field.radio_values:
+                options = custom_field.radio_values
+                if not field_value or field_value not in options:
+                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
+       
+        elif custom_field.data_type == 'checkbox':
+            if custom_field.checkbox_values:
+                options = custom_field.checkbox_values
+                if not field_value or field_value not in options:
+                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
+
+
+        elif custom_field.data_type == 'date':
+            if field_value:
+                try:
+                    parts = field_value.split('-')
+                    if len(parts) != 3:
+                        raise ValueError
+                    day, month, year = parts
+                    formatted_date = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
+                    datetime.strptime(formatted_date, '%d-%m-%Y')
+                except ValueError:
+                    raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
+            else:
+                raise ValidationError({'field_value': 'Date value is required.'})
+
+
+
+class CustomFieldViewset(viewsets.ModelViewSet):
+    queryset = Emp_CustomField.objects.all()
+    serializer_class = CustomFieldSerializer
+    # permission_classes = [IsAuthenticated]
+
+    def handle_exception(self, exc):
+        if isinstance(exc, ValidationError):
+            error_messages = [str(error) for error in exc]
+            error_message = ', '.join(error_messages)
+            return Response({'error': error_message}, status=status.HTTP_400_BAD_REQUEST)
+        
+        return super().handle_exception(exc)
+
+class Emp_CustomFieldValueViewSet(viewsets.ModelViewSet):
+    queryset = Emp_CustomFieldValue.objects.all()
+    serializer_class = Emp_CustomFieldValueSerializer
+      
+
+class Emp_CustomFieldValueSerializer(serializers.ModelSerializer):
+    # content_type_name = serializers.SerializerMethodField()
+    def to_representation(self, instance):
+        rep = super(Emp_CustomFieldValueSerializer, self).to_representation(instance)
+        if instance.emp_custom_field:  # Check if emp_state_id is not None
+            rep['emp_custom_field'] = instance.emp_custom_field
+        return rep
+    class Meta:
+        model = Emp_CustomFieldValue
+        fields = '__all__'
+
+class CustomFieldSerializer(serializers.ModelSerializer):
+    field_values = Emp_CustomFieldValueSerializer(many=True, read_only=True)
+    class Meta:
+        model = Emp_CustomField
+        fields = '__all__' 

@@ -1532,13 +1532,13 @@ class EmployeeResignation(models.Model):
     TERMINATION_TYPE_CHOICES = [
         ('resignation', 'Resignation'),
         ('termination', 'Termination'),
-        ('retirement','Retirement,'),
-        ('death_or_disablement','Death or disablement')
+        ('retirement', 'Retirement'),
+        ('death_or_disablement', 'Death or Disablement')
     ]
 
     document_date = models.DateField()
-    employee_code = models.CharField(max_length=50)
-    employee_name = models.CharField(max_length=255)
+    employee = models.ForeignKey('emp_master', on_delete=models.CASCADE, related_name='resignations')
+    # employee_name = models.CharField(max_length=255)
     resigned_on = models.DateField()
     notice_period = models.PositiveIntegerField(null=True, blank=True, help_text="Notice period in days")
     last_working_date = models.DateField()
@@ -1546,9 +1546,42 @@ class EmployeeResignation(models.Model):
     termination_type = models.CharField(max_length=20, choices=TERMINATION_TYPE_CHOICES)
     reason_for_leaving = models.TextField(blank=True, null=True)
     attachment = models.FileField(upload_to='resignation_docs/', blank=True, null=True)
+    status           =  models.CharField(max_length=20, default='Pending')
 
     def __str__(self):
-        return f"{self.employee_code} - {self.termination_type.title()} on {self.resigned_on}"
+        return f"{self.employee} - {self.termination_type.title()} on {self.resigned_on}"
+    def move_to_next_level(self):
+        if self.resign_approvals.filter(status=Approval.REJECTED).exists():
+            self.status = 'Rejected'
+            self.save()
+            return  # Important: Stop here if rejected
+            
+
+        current_approved_levels = self.resign_approvals.filter(status=Approval.APPROVED).count()
+        next_level = None
+
+       
+        next_level = ResignationApprovalLevel.objects.filter(
+            level=current_approved_levels + 1
+        ).first()
+
+        if next_level:
+            last_approval = self.resign_approvals.order_by('-level').first()
+            ResignationApproval.objects.create(
+                general_request=self,
+                approver=next_level.approver,
+                role=next_level.role,
+                level=next_level.level,
+                status=ResignationApproval.PENDING,
+                note=last_approval.note if last_approval else None
+            )
+           
+        else:
+            self.status = 'Approved'
+            self.save()
+            
+
+            
 
 class ResignationApprovalLevel(models.Model):
     level = models.PositiveIntegerField()
@@ -1601,12 +1634,12 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         first_level = ResignationApprovalLevel.objects.order_by('level').first()
         if first_level:
             ResignationApproval.objects.create(
-                request=instance,
+                general_request=instance,
                 approver=first_level.approver,
                 role=first_level.role,
                 level=first_level.level,
                 status='Pending',
-                employee=instance.employee
+                
             )
 class EndOfService(models.Model):
     resignation = models.OneToOneField(EmployeeResignation, on_delete=models.CASCADE, related_name='eos')

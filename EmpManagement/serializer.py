@@ -4,7 +4,6 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
-from OrganisationManager.serializer import DocumentNumberingSerializer
 from django.contrib.contenttypes.models import ContentType
 import datetime
 from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer
@@ -22,7 +21,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     DocRequestNotification,EndOfService,EmployeeResignation
                     )
 
-from OrganisationManager.serializer import CompanyPolicySerializer
+from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
 from calendars.models import employee_leave_request
 from UserManagement .models import CustomUser
 
@@ -340,6 +339,7 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
 
 #EMPLOYEE SERIALIZER
 class EmpSerializer(serializers.ModelSerializer):
+    assets_requests   =  AssetRequestSerializer(many=True, read_only=True, source='asset_requests')
     requests = GeneralRequestApprovalSerializer(many=True, read_only=True, source='generalrequest_set')
     leave_rqsts = LvRqstApprovalSerializer(many=True, read_only=True, source='employee_leave_request_set')
     leave_balance = EmployeeLeaveBalanceSerializer(many=True, read_only=True, source='emp_leave_balance_set')

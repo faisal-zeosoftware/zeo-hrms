@@ -13,12 +13,12 @@ from reportlab.pdfgen import canvas
 from .models import (brnch_mstr,dept_master,DocumentNumbering,
                      desgntn_master,ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,Announcement,
                      AnnouncementComment,AnnouncementView,Asset, AssetAllocation,AssetRequest,AssetCustomField,AssetType,
-                     AssetReport,AssetCustomFieldValue,AssetTransactionReport)
+                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable)
 
 from . serializer import (BranchSerializer,PermissionSerializer,GroupSerializer,permserializer,DocumentNumberingSerializer,
                           CtgrySerializer,DeptSerializer,DesgSerializer,FiscalYearSerializer,PeriodSerializer,DeptUploadSerializer,CtgryUploadSerializer,
                           DesgUploadSerializer,CompanyPolicySerializer,AnnouncementSerializer,AnnouncementCommentSerializer,AssetSerializer,AssetAllocationSerializer,AssetRequestSerializer,AssetCustomFieldSerializer,
-                          AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer)
+                          AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer)
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from .resource import (DepartmentResource,DesignationResource,DesgtnReportResource,DeptReportResource,CategoryResource)
 from EmpManagement.models import emp_master
@@ -1445,3 +1445,6 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
             'filtered_data': filtered_data,
             'report_id': report_id,
         })
+class GratuityTableViewset(viewsets.ModelViewSet):
+    queryset = GratuityTable.objects.all()
+    serializer_class = GratuityTableSerializer

@@ -5,6 +5,7 @@ from EmpManagement .models import Emp_CustomField
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q,F
 
 #branch model
 class brnch_mstr(models.Model):
@@ -396,3 +397,21 @@ class AssetTransactionReport(models.Model):
     
     def __str__(self):
         return self.file_name
+
+class GratuityTable(models.Model):
+    minimum_value = models.DecimalField(max_digits=5, decimal_places=2, help_text="Minimum years of service")
+    maximum_value = models.DecimalField(max_digits=5, decimal_places=2, help_text="Maximum years of service")
+    resignation_days = models.PositiveIntegerField(help_text="Gratuity days for resignation")
+    termination_days = models.PositiveIntegerField(help_text="Gratuity days for termination")
+    is_active = models.BooleanField(default=True, help_text="Is this range active?")
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=Q(minimum_value__lt=F('maximum_value')) | Q(maximum_value__isnull=True),
+                name='valid_range'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.minimum_value} to {self.maximum_value} years - Resignation: {self.resignation_days}, Termination: {self.termination_days}"

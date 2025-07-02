@@ -19,7 +19,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification
+                    DocRequestNotification,EndOfService,EmployeeResignation
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer
@@ -553,4 +553,21 @@ class DocRequestNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestNotification
         fields = '__all__'
-
+class EmployeeResignationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeResignation
+        fields = '__all__'
+class EndOfServiceSerializer(serializers.ModelSerializer):
+    employee_code = serializers.CharField(source='resignation.employee.emp_code', read_only=True)
+    employee_name = serializers.CharField(source='resignation.employee.emp_first_name', read_only=True)
+    designation = serializers.CharField(source='resignation.employee.emp_desgntn_id.name', read_only=True)  # Assume designation has name
+    department = serializers.CharField(source='resignation.employee.emp_dept_id.name', read_only=True)  # Assume department has name
+    class Meta:
+        model = EndOfService
+        fields = [
+            'employee_code', 'employee_name', 'designation', 'department',
+            'date_of_joining', 'date_of_resignation_termination', 'last_working_date',
+            'notice_period_days', 'total_service_days', 'net_number_of_days_worked',
+            'leave_days_without_pay', 'leave_balance', 'last_month_salary',
+            'gratuity_days', 'gratuity_amount', 'notice_pay', 'status', 'processed_date'
+        ]

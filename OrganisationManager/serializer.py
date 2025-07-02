@@ -1,7 +1,7 @@
 from .models import (brnch_mstr,dept_master,desgntn_master,DocumentNumbering,
                      ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,
                      Announcement,AnnouncementView,AnnouncementComment,Asset,AssetAllocation,AssetType, AssetRequest,AssetCustomField,AssetReport,
-                     AssetCustomFieldValue,AssetTransactionReport)
+                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable)
 from rest_framework import serializers
 from tenant_users.tenants.models import UserTenantPermissions
 from django.contrib.auth.models import Permission,Group
@@ -239,4 +239,9 @@ class AssetReportSerializer(serializers.ModelSerializer):
 class AssetTransactionReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetTransactionReport
+        fields = '__all__'
+
+class GratuityTableSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GratuityTable
         fields = '__all__'

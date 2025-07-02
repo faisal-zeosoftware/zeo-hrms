@@ -1608,3 +1608,30 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
                 status='Pending',
                 employee=instance.employee
             )
+class EndOfService(models.Model):
+    resignation = models.OneToOneField(EmployeeResignation, on_delete=models.CASCADE, related_name='eos')
+    years_of_service = models.FloatField(help_text="Years of service calculated")
+    date_of_joining = models.DateField()
+    date_of_resignation_termination = models.DateField()
+    last_working_date = models.DateField()
+    notice_period_days = models.PositiveIntegerField(default=0)
+    total_service_days = models.PositiveIntegerField(default=0)
+    net_number_of_days_worked = models.FloatField(default=0)
+    leave_days_without_pay = models.FloatField(default=0)
+    leave_balance = models.FloatField(default=0)
+    last_month_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    gratuity_days = models.FloatField(default=0)
+    gratuity_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    notice_pay = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    # leave_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    # air_ticket = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    processed_date = models.DateField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pending'),
+        ('processed', 'Processed'),
+        ('paid', 'Paid')
+    ], default='pending')
+
+
+    def __str__(self):
+        return f"EOS for {self.resignation} - {self.gratuity_amount} AED"

@@ -9,7 +9,7 @@ from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQ
                      EmpQualification_CustomField,EmpDocuments_CustomField,LanguageSkill,MarketingSkill,ProgrammingLanguageSkill,Emp_CustomField,Report,Doc_Report,GeneralRequest,RequestType,GeneralRequestReport,EmployeeLangSkill,EmployeeProgramSkill,
                      EmployeeMarketingSkill,Approval,ApprovalLevel,RequestNotification,Emp_CustomFieldValue,
                      EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,JobHistory_CustomFieldValue,
-                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification
+                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation
                      )
 from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,NotificationSerializer,RequestTypeSerializer,
                          EmpJobHistorySerializer,EmpLeaveRequestSerializer,DocumentSerializer,GeneralRequestSerializer,
@@ -19,7 +19,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          ReqNotifySerializer,Emp_CustomFieldValueSerializer,EmailTemplateSerializer,EmployeeFilterSerializer,EmailConfigurationSerializer,SelectedEmpNotifySerializer,
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
-                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer)
+                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2325,6 +2325,9 @@ class DocRequestEmailTemplateViewset(viewsets.ModelViewSet):
 class DocRequestNotificationViewset(viewsets.ModelViewSet):
     queryset = DocRequestNotification.objects.all()
     serializer_class = DocRequestNotificationSerializer
+class EmployeeResignationViewset(viewsets.ModelViewSet):
+    queryset = EmployeeResignation.objects.all()
+    serializer_class = EmployeeResignationSerializer
 class ResignationApprovalLevelViewset(viewsets.ModelViewSet):
     queryset = ResignationApprovalLevel.objects.all()
     serializer_class = ResignationApprovalLevelSerializer
@@ -2332,3 +2335,23 @@ class ResignationApprovalLevelViewset(viewsets.ModelViewSet):
 class ResignationApprovalViewset(viewsets.ModelViewSet):
     queryset = ResignationApproval.objects.all()
     serializer_class = ResignationApprovalSerializer
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        approval = self.get_object()
+        # if request.user != approval.approver:
+        #     return Response({'error': 'You are not authorized to approve this request.'}, status=status.HTTP_403_FORBIDDEN)
+
+        note = request.data.get('note')  # Get the note from the request
+        approval.approve(note=note)
+        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        approval = self.get_object()
+        note = request.data.get('note')  # Get the note from the request
+        approval.reject(note=note)
+        return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+
+class EndOfServiceViewset(viewsets.ModelViewSet):
+    queryset = EndOfService.objects.all()
+    serializer_class = EndOfServiceSerializer

@@ -8,6 +8,8 @@ from django.contrib.contenttypes.models import ContentType
 import datetime
 from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer
 from calendars .models import holiday
+from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer
+
 # from UserManagement.serializers import CustomUserSerializer
 
 
@@ -339,6 +341,9 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
 
 #EMPLOYEE SERIALIZER
 class EmpSerializer(serializers.ModelSerializer):
+    payslip  = PayslipSerializer(many=True, read_only=True, source='payslips')
+    advance_salary_requests   =  AdvanceSalaryRequestSerializer(many=True, read_only=True)
+    loan_requests   =  LoanApplicationSerializer(many=True, read_only=True, source='loan')
     assets_requests   =  AssetRequestSerializer(many=True, read_only=True, source='asset_requests')
     requests = GeneralRequestApprovalSerializer(many=True, read_only=True, source='generalrequest_set')
     leave_rqsts = LvRqstApprovalSerializer(many=True, read_only=True, source='employee_leave_request_set')

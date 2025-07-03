@@ -4,7 +4,6 @@ from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,
                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification)
 
 import calendar
-from EmpManagement .serializer import EmpSerializer
 from EmpManagement .models import EmployeeBankDetail,emp_master
 
 

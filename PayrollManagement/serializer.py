@@ -50,6 +50,7 @@ class PaySlipComponentSerializer(serializers.ModelSerializer):
         fields = ['id', 'component_name', 'component_type', 'amount']
 
 class PayslipSerializer(serializers.ModelSerializer):
+    currency_details = serializers.SerializerMethodField()
     payroll_run = PayrollRunSerializer(read_only=True)
     employee = serializers.StringRelatedField()
     components = serializers.SerializerMethodField()
@@ -293,10 +294,20 @@ class SIFSerializer(serializers.Serializer):
     
         return sif_data, total_salary  # ✅ Now returning two values
 class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
+    currency_details = serializers.SerializerMethodField()
     class Meta:
         model = AdvanceSalaryRequest
         fields = '__all__'
-
+    def get_currency_details(self, obj):
+        request = self.context.get("request")
+        if request and hasattr(request, "tenant") and request.tenant.currency:
+            currency = request.tenant.currency
+            return {
+                "currency_name": currency.currency_name,
+                "currency_code": currency.currency_code,
+                "symbol": currency.symbol
+            }
+        return None
 class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceSalaryApproval

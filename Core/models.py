@@ -223,7 +223,7 @@ class crncy_mstr(models.Model):
     currency_name    = models.CharField(max_length=50,unique=True)
     currency_code    = models.CharField(max_length=3, unique=True)
     symbol           = models.CharField(max_length=5, blank=True, null=True)
-    country = models.OneToOneField(cntry_mstr, on_delete=models.CASCADE, related_name='currency',null=True,blank=True)
+    country = models.OneToOneField(cntry_mstr, on_delete=models.CASCADE, related_name='currency')
     
     def __str__(self):
         return self.currency_name

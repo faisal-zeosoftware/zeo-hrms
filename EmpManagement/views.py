@@ -59,6 +59,7 @@ from calendars .serializer import EmployeeLeaveBalanceSerializer,LeaveTypeSerial
 from calendars .models import leave_type, employee_leave_request
 from django.db.models import Q
 from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer
+from .utils import calculate_settlement
 
 r = redis.StrictRedis(host='localhost', port=6379, db=0)
 
@@ -2328,6 +2329,47 @@ class DocRequestNotificationViewset(viewsets.ModelViewSet):
 class EmployeeResignationViewset(viewsets.ModelViewSet):
     queryset = EmployeeResignation.objects.all()
     serializer_class = EmployeeResignationSerializer
+    @action(detail=True, methods=['post'])
+    def create_eos(self, request, pk=None):
+        resignation = self.get_object()
+    
+        if resignation.status != 'Approved':
+            return Response({'detail': 'EOS cannot be created. Resignation is not approved.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+    
+        if hasattr(resignation, 'eos'):
+            return Response({'detail': 'EOS already exists for this resignation.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+    
+        try:
+            with transaction.atomic():
+                employee = resignation.employee
+                start_date = employee.emp_joined_date
+                end_date = resignation.last_working_date
+    
+                if not start_date or not end_date:
+                    return Response({'detail': 'Invalid joining or last working date.'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+    
+                # Calculate service time
+                total_days = (end_date - start_date).days
+                years_of_service = total_days / 365.0
+    
+                eos = EndOfService.objects.create(
+                    resignation=resignation,
+                    date_of_joining=start_date,
+                    date_of_resignation_termination=resignation.resigned_on,
+                    last_working_date=end_date,
+                    years_of_service=years_of_service,
+                    total_service_days=total_days,
+                )
+    
+                calculate_settlement(eos)  # Gratuity logic here
+    
+                return Response({'detail': 'EOS created successfully.'}, status=status.HTTP_201_CREATED)
+    
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 class ResignationApprovalLevelViewset(viewsets.ModelViewSet):
     queryset = ResignationApprovalLevel.objects.all()
     serializer_class = ResignationApprovalLevelSerializer

@@ -112,96 +112,77 @@ def send_notification_email(
     return {"status": "error", "message": "No recipient email found."}
 
 
-# def get_current_schema_from_domain(request):
-#     # Assuming the schema name is the first part of the domain name
-#     domain = request.get_host()
-#     schema_name = domain.split('.')[0]
-#     return schema_name
+from decimal import Decimal
+from django.db.models import Q
 
-# from django.core.mail import EmailMultiAlternatives, get_connection
-# from django.template import Context, Template
-# from django.utils.html import strip_tags
-# from django.conf import settings
-# from EmpManagement .models import EmailConfiguration
 
-# def send_email(to_email, subject, body, context):
-#     """
-#     Utility function to send emails.
-#     """
-#     try:
-#         # Try to retrieve the active email configuration
-#         try:
-#             email_config = EmailConfiguration.objects.get(is_active=True)
-#             use_custom_config = True
-#         except EmailConfiguration.DoesNotExist:
-#             use_custom_config = False
-#             default_email = settings.EMAIL_HOST_USER
+def calculate_settlement(eos):
+    from PayrollManagement.models import EmployeeSalaryStructure
+    from OrganisationManager.models import GratuityTable
 
-#         # Use custom or default email configuration
-#         if use_custom_config:
-#             default_email = email_config.email_host_user
-#             connection = get_connection(
-#                 host=email_config.email_host,
-#                 port=email_config.email_port,
-#                 username=email_config.email_host_user,
-#                 password=email_config.email_host_password,
-#                 use_tls=email_config.email_use_tls,
-#             )
-#         else:
-#             connection = get_connection(
-#                 host=settings.EMAIL_HOST,
-#                 port=settings.EMAIL_PORT,
-#                 username=settings.EMAIL_HOST_USER,
-#                 password=settings.EMAIL_HOST_PASSWORD,
-#                 use_tls=settings.EMAIL_USE_TLS,
-#             )
+    try:
+        resignation = eos.resignation
+        employee = resignation.employee
+        start_date = employee.emp_joined_date
+        end_date = resignation.last_working_date
 
-#         # Render email template
-#         template = Template(body)
-#         html_message = template.render(Context(context))
-#         plain_message = strip_tags(html_message)
+        # Recalculate years_of_service for consistency
+        total_days = (end_date - start_date).days
+        eos.years_of_service = total_days / 365.0
+        eos.total_service_days = total_days
+        eos.net_number_of_days_worked = total_days - eos.leave_days_without_pay
+        eos.date_of_joining = start_date
+        eos.date_of_resignation_termination = resignation.resigned_on
+        eos.last_working_date = end_date
+        eos.notice_period_days = resignation.notice_period or 0
 
-#         # Send email
-#         email = EmailMultiAlternatives(
-#             subject=subject,
-#             body=plain_message,
-#             from_email=default_email,
-#             to=[to_email],
-#             connection=connection,
-#             headers={'From': 'zeosoftware@abc.com'}
-#         )
-#         email.attach_alternative(html_message, "text/html")
-#         email.send(fail_silently=False)
+        # Get basic salary (component with is_gratuity=True)
+        salary_component = EmployeeSalaryStructure.objects.filter(
+            employee=employee,
+            component__is_gratuity=True,
+            is_active=True
+        ).order_by('-date_updated').first()
 
-#         return {"status": "success", "message": "Email sent successfully."}
+        if not salary_component or not salary_component.amount:
+            logger.warning(f"No active gratuity salary component for employee {employee.emp_code}")
+            eos.gratuity_amount = Decimal('0.00')
+            eos.last_month_salary = Decimal('0.00')
+            eos.gratuity_days = 0
+            eos.notice_pay = Decimal('0.00')
+            eos.save()
+            return
 
-#     except Exception as e:
-#         return {"status": "error", "message": str(e)}
+        basic_salary = salary_component.amount
+        daily_wage = basic_salary / 30
+        eos.last_month_salary = basic_salary
 
-# import smtplib
-# from email.mime.multipart import MIMEMultipart
-# from email.mime.text import MIMEText
-# from django.template.loader import render_to_string
-# from django.utils.html import strip_tags
+        # Get gratuity rule, converting years_of_service to Decimal for comparison
+        years_of_service_decimal = Decimal(str(eos.years_of_service))
+        gratuity_rule = GratuityTable.objects.filter(
+            Q(minimum_value__lte=years_of_service_decimal) &
+            (Q(maximum_value__gte=years_of_service_decimal) | Q(maximum_value__isnull=True)) &
+            Q(is_active=True)
+        ).first()
 
-# def send_dynamic_email(subject, template_name, context, from_email, to_email, smtp_server, smtp_port, smtp_user, smtp_password):
-#     html_message = render_to_string(template_name, context)
-#     plain_message = strip_tags(html_message)
+        if not gratuity_rule or eos.years_of_service < 1:
+            logger.warning(f"No gratuity rule or insufficient service years ({eos.years_of_service}) for employee {employee.emp_code}")
+            eos.gratuity_days = 0
+            eos.gratuity_amount = Decimal('0.00')
+        else:
+            if resignation.termination_type in ['termination', 'retirement', 'death_or_disablement']:
+                eos.gratuity_days = gratuity_rule.termination_days * eos.years_of_service
 
-#     msg = MIMEMultipart('alternative')
-#     msg['Subject'] = subject
-#     msg['From'] = from_email
-#     msg['To'] = to_email
+            else:  # resignation
+                eos.gratuity_days = gratuity_rule.resignation_days * eos.years_of_service
 
-#     part1 = MIMEText(plain_message, 'plain')
-#     part2 = MIMEText(html_message, 'html')
+            eos.gratuity_amount = Decimal(eos.gratuity_days) * daily_wage
+            max_gratuity = basic_salary * 24
+            eos.gratuity_amount = min(eos.gratuity_amount, max_gratuity)
 
-#     msg.attach(part1)
-#     msg.attach(part2)
+        # Additional settlement components
+        eos.notice_pay = Decimal('0.00') if eos.notice_period_days == 0 else daily_wage * eos.notice_period_days
+        # eos.leave_salary = Decimal('0.00')  # Placeholder for future use
 
-#     server = smtplib.SMTP(smtp_server, smtp_port)
-#     server.starttls()
-#     server.login(smtp_user, smtp_password)
-#     server.sendmail(from_email, to_email, msg.as_string())
-#     server.quit()
-
+        eos.save()
+    except Exception as e:
+        logger.erro

@@ -101,11 +101,19 @@ class DocumentNumbering(models.Model):
         ('general_request', 'General Request'),
         ('leave_request', 'Leave Request'),
         ('advance_salary_request', 'Advance Salary Request'),
+        ('air_ticket_request', 'Air Ticket Request'),
+        ('loan_request', 'Loan Request'),
+        ('asset_request','Asset Request')
+
+
     ]
 
     branch_id = models.ForeignKey('brnch_mstr', on_delete=models.CASCADE)
     type = models.CharField(max_length=50, choices=DOCUMENT_TYPES)
-    user = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, related_name='document_numbering_user')
+    user = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE,null=True,blank=True,related_name='document_numbering_user')
+
+    # leave_type = models.ForeignKey('calendars.leave_type', on_delete=models.CASCADE, null=True, blank=True)
+
     # automatic_numbering = models.BooleanField(default=True)
     prefix = models.CharField(max_length=50)
     suffix = models.CharField(max_length=50, blank=True, null=True)
@@ -115,12 +123,7 @@ class DocumentNumbering(models.Model):
     start_date = models.DateField(blank=True, null=True)  # New field
     end_date = models.DateField(blank=True, null=True)  # New field
     created_at = models.DateTimeField(auto_now_add=True)
-    created_by = models.ForeignKey(
-        'UserManagement.CustomUser',
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name='document_numbering_created_by'
-    )
+    created_by = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,related_name='document_numbering_created_by')
 
     class Meta:
         constraints = [
@@ -130,7 +133,9 @@ class DocumentNumbering(models.Model):
 
     def clean(self):
         if DocumentNumbering.objects.filter(branch_id=self.branch_id, type=self.type).exclude(id=self.id).exists():
-            raise ValidationError("A document numbering already exists for this branch and type.")    # Validate start and end dates
+            raise ValidationError("A document numbering already exists for this branch and type.")
+
+           # Validate start and end dates
         if self.start_date >= self.end_date:
             raise ValidationError({'end_date': "End date must be greater than start date."})
         if self.total_length < len(self.prefix) + len(self.suffix) + 2:  # Ensure total length can accommodate the format

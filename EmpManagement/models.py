@@ -1357,11 +1357,23 @@ class DocRequestNotification(models.Model):
             return f"Notification for {self.recipient_user.emp_code}: {self.message}"
         else:
             return f"Notification for employee: {self.message}"
+class DocRequestType(models.Model):
+    type_name   = models.CharField(max_length=50,unique=True)
+    description = models.CharField(max_length=200)
+    is_active   = models.BooleanField(default=True)  # Add is_active field
+    def __str__(self):
+        return self.type_name
+class DocumentTemplate(models.Model):
+    document_type = models.OneToOneField('Core.document_type', on_delete=models.CASCADE, related_name='document_template')
+    title = models.CharField(max_length=100)
+    content = models.TextField()
 
+    def __str__(self):
+        return self.title
 class DocumentRequest(models.Model):
     document_number  = models.CharField(max_length=50, unique=True, null =True, blank=True)
     reason           =  models. CharField(max_length=200)
-    request_type     =  models.ForeignKey('Core.document_type',on_delete=models.SET_NULL,null=True)
+    request_type     =  models.ForeignKey(DocRequestType,on_delete=models.SET_NULL,null=True)
     employee         =  models.ForeignKey('emp_master',on_delete = models.CASCADE)
     total            =  models.IntegerField(null=True)
     status           =  models.CharField(max_length=20, default='Pending')
@@ -1527,7 +1539,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
         email_template_model=DocRequestEmailTemplate,
         notification_model=DocRequestNotification
     )
-
 class EmployeeResignation(models.Model):
     TERMINATION_TYPE_CHOICES = [
         ('resignation', 'Resignation'),

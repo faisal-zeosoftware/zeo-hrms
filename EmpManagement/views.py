@@ -9,7 +9,7 @@ from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQ
                      EmpQualification_CustomField,EmpDocuments_CustomField,LanguageSkill,MarketingSkill,ProgrammingLanguageSkill,Emp_CustomField,Report,Doc_Report,GeneralRequest,RequestType,GeneralRequestReport,EmployeeLangSkill,EmployeeProgramSkill,
                      EmployeeMarketingSkill,Approval,ApprovalLevel,RequestNotification,Emp_CustomFieldValue,
                      EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,JobHistory_CustomFieldValue,
-                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation
+                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType
                      )
 from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,NotificationSerializer,RequestTypeSerializer,
                          EmpJobHistorySerializer,EmpLeaveRequestSerializer,DocumentSerializer,GeneralRequestSerializer,
@@ -19,7 +19,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          ReqNotifySerializer,Emp_CustomFieldValueSerializer,EmailTemplateSerializer,EmployeeFilterSerializer,EmailConfigurationSerializer,SelectedEmpNotifySerializer,
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
-                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer)
+                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2292,7 +2292,9 @@ class EmpBankBulkuploadViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Invalid file format. Only Excel files (.xlsx) are supported."}, status=400)
         else:
             return Response({"error": "Please provide an Excel file."}, status=400)
-
+class DocRequestTypeViewset(viewsets.ModelViewSet):
+    queryset = DocRequestType.objects.all()
+    serializer_class = DocRequestTypeSerializer
 class DocumentRequestViewset(viewsets.ModelViewSet):
     queryset = DocumentRequest.objects.all()
     serializer_class = DocRequestSerializer

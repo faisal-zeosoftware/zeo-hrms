@@ -8,7 +8,8 @@ from .views import (EmpFamViewSet, EmpJobHistoryvSet, EmpViewSet,NotificationVie
                     EmpLangSkillViewSet,ApprovalViewset,ApprovalLevelViewset,UserNotificationsViewSet,Emp_CustomFieldValueViewSet,EmailTemplateViewset,
                     EmailConfigurationViewSet,UpdateESSUserView,ESSUserListView,NotificationSettingsViewSet,DocExpEmailTemplateViewset,CommonWorkflowViewSet,Doc_CustomFieldValueViewSet,EmployeeBankDetailViewset,
                     EmpBankBulkuploadViewSet,EmplistViewSet,Fam_CustomFieldValueViewSet,JobHistory_CustomFieldValueViewSet,Qf_CustomFieldValueViewSet,DocumentRequestViewset,
-                    DocumentApprovalViewset,DocumentApprovalLevelViewset,DocRequestEmailTemplateViewset,DocRequestNotificationViewset,EmployeeResignationViewset,ResignationApprovalLevelViewset,ResignationApprovalViewset,EndOfServiceViewset
+                    DocumentApprovalViewset,DocumentApprovalLevelViewset,DocRequestEmailTemplateViewset,DocRequestNotificationViewset,EmployeeResignationViewset,ResignationApprovalLevelViewset,ResignationApprovalViewset,EndOfServiceViewset,
+                    DocRequestTypeViewset
                     )
 
 # Define the main router for top-level routes
@@ -55,6 +56,7 @@ router.register(r'email-config', EmailConfigurationViewSet, basename='email_conf
 router.register(r'notification-settings', NotificationSettingsViewSet, basename='notification-settings')
 router.register(r'doc-exp-emailtemplate', DocExpEmailTemplateViewset, basename='doc-exp-emailtemplate')
 router.register(r'common-workflow', CommonWorkflowViewSet, basename='common_workflow')
+router.register(r'Doc-request-Type', DocRequestTypeViewset, basename='Doc-request-Type')
 router.register(r'Doc-request', DocumentRequestViewset, basename='Doc-request')
 router.register(r'Doc-request-approval',DocumentApprovalViewset, basename='Doc-request-approval')
 router.register(r'Doc-request-approval-levels', DocumentApprovalLevelViewset, basename='Doc-request-approval-levels')

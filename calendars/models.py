@@ -342,6 +342,7 @@ class leave_type(models.Model):
     include_weekend_and_holiday   = models.BooleanField(default=False)
     use_common_workflow           = models.BooleanField(default=False)
     include_dashboard             = models.BooleanField(default=False)
+    branch                        = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='leave_types')
     created_at                    = models.DateTimeField(default=timezone.now)
     created_by                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 

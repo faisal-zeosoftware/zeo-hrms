@@ -4,7 +4,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     LvApprovalViewset,LvEmailTemplateviewset,LvApprovalNotifyviewset,LvCommonWorkflowViewset,LvRejectionViewset,Lv_Approval_ReportViewset,
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
-                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet
+                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet
                     )
 
 from rest_framework.routers import DefaultRouter
@@ -53,7 +53,7 @@ router.register(r'EmployeeYearlyCalendarViewset',EmployeeYearlyCalendarViewset ,
 router.register(r'Emp-bulkupld-openings',EmpOpeningsBlkupldViewSet , basename='Emp-bulkupld-openings')
 router.register(r'monthly-attendance', MonthlyAttendanceSummaryViewSet, basename='monthly-attendance')
 router.register(r'Emp-overtime',EmployeeOvertimeViewset , basename='EmployeeOvertime')
-
+router.register(r'Emp-bulkuplod-attendance',BulkuploadAttendanceViewSet , basename='Emp-bulkuplod-attendance')
 
 urlpatterns = [
     # Other paths

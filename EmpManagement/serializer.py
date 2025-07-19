@@ -20,7 +20,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
@@ -526,7 +526,10 @@ class DocExpEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocExpEmailTemplate
         fields = '__all__'
-
+class DocRequestTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DocRequestType
+        fields = '__all__'
 class DocRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentRequest

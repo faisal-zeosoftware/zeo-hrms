@@ -107,6 +107,7 @@ class CustomUser(UserProfile):
         if not self.pk:  # Only set is_active=True on creation
             self.is_active = True
         super().save(*args, **kwargs)
-    
+    def __str__(self):
+        return self.username
     # Add any additional fields if needed
 

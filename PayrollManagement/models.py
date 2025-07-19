@@ -18,6 +18,7 @@ class SalaryComponent(models.Model):
 
     name = models.CharField(max_length=100, unique=True)  # Component name (e.g., HRA, PF)
     component_type = models.CharField(max_length=20, choices=COMPONENT_TYPES)
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='salary_components')
     code = models.CharField(max_length=20,null=True)
     deduct_leave=models.BooleanField(default=False)
     is_fixed = models.BooleanField(default=True, help_text="Is this component fixed (True) or variable (False)?")

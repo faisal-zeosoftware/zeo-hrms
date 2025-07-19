@@ -27,6 +27,7 @@ urlpatterns = [
     path('organisation/',include('OrganisationManager.urls')),
     path('calendars/',include('calendars.urls')),
     path('payroll/',include('PayrollManagement.urls')),
+    path('project/',include('ProjectManagement.urls')),
     
 
 

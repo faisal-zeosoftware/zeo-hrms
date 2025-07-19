@@ -62,6 +62,7 @@ TENANT_APPS = [
     'EmpManagement',
     'calendars',
     'PayrollManagement',
+    'ProjectManagement',
     'django.contrib.admin',
 
 ]

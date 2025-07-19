@@ -1,12 +1,10 @@
 # resources.py
 from import_export import resources, fields
-from import_export.widgets import ForeignKeyWidget, DateWidget, TimeWidget
-from .models import Attendance, Shift, EmployeeMachineMapping,EmployeeShiftSchedule,leave_type,emp_leave_balance
+from import_export.widgets import ForeignKeyWidget
+from .models import Attendance,EmployeeMachineMapping,EmployeeShiftSchedule,emp_leave_balance,leave_type
 from EmpManagement.models import emp_master
 from django.core.exceptions import ValidationError
-from datetime import datetime,time 
-import datetime
-
+from datetime import datetime, timedelta, time
 
 class CustomEmployeeWidget(ForeignKeyWidget):
     def clean(self, value, row=None, *args, **kwargs):
@@ -168,3 +166,118 @@ class EmployeeOpenBalanceResource(resources.ModelResource):
 
         # Return None because we handled saving manually
         return None
+
+class MonthlyAttendanceResource(resources.ModelResource):
+    class Meta:
+        model = Attendance
+        skip_unchanged = True
+        report_skipped = True
+        # no import_id_fields because row contains multiple attendances
+
+    def import_data(self, dataset, dry_run=False, **kwargs):
+        errors = []
+        for row_number, row in enumerate(dataset.dict, start=1):
+            identifier_code = row.get('Identifier Code')
+            if not identifier_code:
+                errors.append(f"Row {row_number}: Missing Identifier Code")
+                continue
+
+            # Get employee
+            try:
+                employee = emp_master.objects.get(emp_code=identifier_code)
+            except emp_master.DoesNotExist:
+                try:
+                    mapping = EmployeeMachineMapping.objects.get(machine_code=identifier_code)
+                    employee = mapping.employee
+                except EmployeeMachineMapping.DoesNotExist:
+                    errors.append(f"Row {row_number}: Employee not found for Identifier Code '{identifier_code}'")
+                    continue
+
+            year = row.get('Year')
+            month_raw = row.get('Month')
+            if not year or not month_raw:
+                errors.append(f"Row {row_number}: Year or Month missing")
+                continue
+
+            try:
+                year = int(year)
+            except Exception:
+                errors.append(f"Row {row_number}: Invalid Year '{year}'")
+                continue
+
+            month_str = str(month_raw).strip()
+
+            for day in range(1, 32):
+                in_key = f'{day}_In'
+                out_key = f'{day}_Out'
+
+                check_in_time = row.get(in_key)
+                check_out_time = row.get(out_key)
+
+                if not check_in_time and not check_out_time:
+                    continue
+
+                try:
+                    if "-" not in month_str:
+                        month_number = int(month_str)
+                        date_obj = datetime(year, month_number, day).date()
+                    else:
+                        date_obj = datetime.strptime(f"{month_str}-{day:02d}", "%Y-%m-%d").date()
+                except Exception as e:
+                    errors.append(f"Row {row_number}, Day {day}: Invalid date - {e}")
+                    continue
+
+                try:
+                    check_in = None
+                    check_out = None
+
+                    if check_in_time:
+                        if isinstance(check_in_time, str):
+                            check_in = datetime.strptime(check_in_time.strip(), "%H:%M:%S").time()
+                        elif isinstance(check_in_time, time):
+                            check_in = check_in_time
+                        else:
+                            raise ValueError(f"Invalid check-in time format: {check_in_time}")
+
+                    if check_out_time:
+                        if isinstance(check_out_time, str):
+                            check_out = datetime.strptime(check_out_time.strip(), "%H:%M:%S").time()
+                        elif isinstance(check_out_time, time):
+                            check_out = check_out_time
+                        else:
+                            raise ValueError(f"Invalid check-out time format: {check_out_time}")
+
+                except ValueError as e:
+                    errors.append(f"Row {row_number}, Day {day}: Invalid time - {e}")
+                    continue
+
+                attendance = Attendance.objects.filter(employee=employee, date=date_obj).first()
+                if not attendance:
+                    attendance = Attendance(employee=employee, date=date_obj)
+
+                attendance.check_in_time = check_in
+                attendance.check_out_time = check_out
+
+                # Assign shift
+                schedule = EmployeeShiftSchedule.objects.filter(employee=employee).first()
+                if schedule and hasattr(schedule, 'get_shift_for_date') and callable(schedule.get_shift_for_date):
+                    try:
+                        shift = schedule.get_shift_for_date(date_obj)
+                        attendance.shift = shift
+                    except Exception:
+                        pass
+
+                if check_in and check_out:
+                    check_in_dt = datetime.combine(date_obj, check_in)
+                    check_out_dt = datetime.combine(date_obj, check_out)
+                    if check_out_dt < check_in_dt:
+                        check_out_dt += timedelta(days=1)
+                    attendance.total_hours = check_out_dt - check_in_dt
+
+                attendance.save()
+
+        if errors:
+            raise ValidationError(errors)
+
+        # Return super's import_data result for reporting
+        return super().import_data(dataset, dry_run=dry_run, **kwargs)

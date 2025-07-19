@@ -21,7 +21,7 @@ from .permissions import( WeekendCalendarPermission, WeekendDetailPermission, As
                         )
 from rest_framework.parsers import MultiPartParser, FormParser
 from EmpManagement.models import emp_master
-from .resource import AttendanceResource,EmployeeOpenBalanceResource
+from .resource import AttendanceResource,EmployeeOpenBalanceResource,MonthlyAttendanceResource
 from django.http import HttpResponse,JsonResponse
 from tablib import Dataset
 from django.core.exceptions import ValidationError
@@ -2319,3 +2319,29 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
             result.append(MonthlyAttendanceSummarySerializer(summary_obj).data)
 
         return Response(result)
+
+
+class BulkuploadAttendanceViewSet(viewsets.ModelViewSet):
+    queryset = Attendance.objects.all()
+    serializer_class = ImportAttendanceSerializer
+    parser_classes = (MultiPartParser, FormParser)
+
+    @action(detail=False, methods=['post'])
+    def bulk_upload(self, request):
+        if 'file' not in request.FILES:
+            return Response({"error": "Please provide an Excel file."}, status=400)
+
+        excel_file = request.FILES['file']
+        if not excel_file.name.endswith('.xlsx'):
+            return Response({"error": "Invalid file format. Only .xlsx is supported."}, status=400)
+
+        try:
+            dataset = Dataset()
+            dataset.load(excel_file.read(), format='xlsx')
+            resource = MonthlyAttendanceResource()
+
+            result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+
+            return Response({"message": "Monthly attendance imported successfully."})
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)

@@ -19,7 +19,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          ReqNotifySerializer,Emp_CustomFieldValueSerializer,EmailTemplateSerializer,EmployeeFilterSerializer,EmailConfigurationSerializer,SelectedEmpNotifySerializer,
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
-                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,FinalSettlementSerializer)
+                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2409,13 +2409,83 @@ class EndOfServiceViewset(viewsets.ModelViewSet):
             return Response(serializer.data)
         except EndOfService.DoesNotExist:
             return Response({"detail": "End of service not found for this employee."}, status=status.HTTP_404_NOT_FOUND)
+    @action(detail=True, methods=['get'], url_path='final-settlement-data')
+    def final_settlement_data(self, request, pk=None):
+        eos = get_object_or_404(EndOfService, pk=pk)
+        resignation = eos.resignation
+        employee = resignation.employee
 
-class FinalSettlementDetailAPIView(APIView):
-    def get(self, request, eos_id):
-        try:
-            eos = EndOfService.objects.select_related('resignation__employee').get(id=eos_id)
-        except EndOfService.DoesNotExist:
-            return Response({'error': 'End of Service record not found'}, status=404)
+        # Get latest approved payslip
+        payslip = employee.payslips.filter(status='Approved').order_by('-created_at').first()
 
-        serializer = FinalSettlementSerializer(eos, context={"request": request})
-        return Response(serializer.data)
+        if not payslip:
+            return Response({"detail": "Approved payslip not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Payslip component details
+        components = payslip.components.all()
+        deductions = []
+        additions = []
+        total_deductions = 0
+        total_additions = 0
+
+        for comp in components:
+            item = {
+                "component_name": comp.component.name,
+                "amount": float(comp.amount)
+            }
+            if comp.component.component_type == 'deduction':
+                deductions.append(item)
+                total_deductions += float(comp.amount)
+            elif comp.component.component_type == 'addition':
+                additions.append(item)
+                total_additions += float(comp.amount)
+
+        # Include EOS specific amounts as additions
+        if eos.gratuity_amount:
+            additions.append({"component_name": "Gratuity", "amount": float(eos.gratuity_amount)})
+            total_additions += float(eos.gratuity_amount)
+        if eos.notice_pay:
+            additions.append({"component_name": "Notice Pay", "amount": float(eos.notice_pay)})
+            total_additions += float(eos.notice_pay)
+        if eos.final_month_salary:
+            additions.append({"component_name": "Final Month Salary", "amount": float(eos.final_month_salary)})
+            total_additions += float(eos.final_month_salary)
+        if eos.air_ticket:
+            additions.append({"component_name": "Air Ticket", "amount": float(eos.air_ticket)})
+            total_additions += float(eos.air_ticket)
+
+        net_amount = total_additions - total_deductions
+
+        # Construct response
+        data = {
+            "employee": {
+                "code": employee.emp_code,
+                "name": f"{employee.emp_first_name} {employee.emp_last_name}",
+                "designation": str(employee.emp_desgntn_id),
+                "department": str(employee.emp_dept_id),
+            },
+            "gratuity_entitlement": {
+                "date_of_joining": eos.date_of_joining,
+                "work_status": "Resigned",
+                "date_of_resignation_termination": eos.date_of_resignation_termination,
+                "notice_period_days": eos.notice_period_days,
+                "last_working_date": eos.last_working_date,
+                "total_service_days": eos.total_service_days,
+                "leave_days_without_pay": eos.leave_days_without_pay,
+                "net_days_worked": eos.net_number_of_days_worked,
+                "basic_salary": float(payslip.gross_salary or 0),
+                "gratuity_days": eos.gratuity_days,
+                "last_month_salary": eos.last_month_salary,
+            },
+            "payslip_summary": {
+                "deductions": deductions,
+                "additions": additions,
+                "total_deductions": total_deductions,
+                "total_additions": total_additions,
+                "net_amount": net_amount
+            },
+            "status": eos.status,
+            "processed_date": eos.processed_date,
+        }
+
+        return Response(data)

@@ -9,7 +9,7 @@ from .views import (EmpFamViewSet, EmpJobHistoryvSet, EmpViewSet,NotificationVie
                     EmailConfigurationViewSet,UpdateESSUserView,ESSUserListView,NotificationSettingsViewSet,DocExpEmailTemplateViewset,CommonWorkflowViewSet,Doc_CustomFieldValueViewSet,EmployeeBankDetailViewset,
                     EmpBankBulkuploadViewSet,EmplistViewSet,Fam_CustomFieldValueViewSet,JobHistory_CustomFieldValueViewSet,Qf_CustomFieldValueViewSet,DocumentRequestViewset,
                     DocumentApprovalViewset,DocumentApprovalLevelViewset,DocRequestEmailTemplateViewset,DocRequestNotificationViewset,EmployeeResignationViewset,ResignationApprovalLevelViewset,ResignationApprovalViewset,EndOfServiceViewset,
-                    DocRequestTypeViewset,FinalSettlementDetailAPIView
+                    DocRequestTypeViewset
                     )
 
 # Define the main router for top-level routes
@@ -85,7 +85,6 @@ employee_router.register(r'notification', NotificationViewset, basename='employe
 urlpatterns = [
     path('api/', include(router.urls)),
     path('api/Employee/<int:pk>/', include(employee_router.urls)),  # Nested routes for individual employees
-    path('api/eos/<int:eos_id>/eos-report/', FinalSettlementDetailAPIView.as_view()),
     # path('link-user-to-employee/', LinkUserToEmployee.as_view(), name='link-user-to-employee'),
     path('api/ess-users/', ESSUserListView.as_view(), name='ess-user-list'),
     path('api/update-ess-user/', UpdateESSUserView.as_view(), name='update-ess-user'),

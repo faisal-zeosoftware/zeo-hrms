@@ -19,7 +19,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          ReqNotifySerializer,Emp_CustomFieldValueSerializer,EmailTemplateSerializer,EmployeeFilterSerializer,EmailConfigurationSerializer,SelectedEmpNotifySerializer,
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
-                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer)
+                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,FinalSettlementSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2401,3 +2401,21 @@ class ResignationApprovalViewset(viewsets.ModelViewSet):
 class EndOfServiceViewset(viewsets.ModelViewSet):
     queryset = EndOfService.objects.all()
     serializer_class = EndOfServiceSerializer
+    @action(detail=False, methods=['get'], url_path='employee/(?P<employee_id>[^/.]+)')
+    def get_by_employee(self, request, employee_id=None):
+        try:
+            eos = EndOfService.objects.get(resignation__employee_id=employee_id)
+            serializer = self.get_serializer(eos)
+            return Response(serializer.data)
+        except EndOfService.DoesNotExist:
+            return Response({"detail": "End of service not found for this employee."}, status=status.HTTP_404_NOT_FOUND)
+
+class FinalSettlementDetailAPIView(APIView):
+    def get(self, request, eos_id):
+        try:
+            eos = EndOfService.objects.select_related('resignation__employee').get(id=eos_id)
+        except EndOfService.DoesNotExist:
+            return Response({'error': 'End of Service record not found'}, status=404)
+
+        serializer = FinalSettlementSerializer(eos, context={"request": request})
+        return Response(serializer.data)

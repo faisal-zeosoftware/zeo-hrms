@@ -9,7 +9,8 @@ import datetime
 from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer
 from calendars .models import holiday
 from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer
-
+from decimal import Decimal
+from calendar import month_name
 # from UserManagement.serializers import CustomUserSerializer
 
 
@@ -568,14 +569,118 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
 class EndOfServiceSerializer(serializers.ModelSerializer):
     employee_code = serializers.CharField(source='resignation.employee.emp_code', read_only=True)
     employee_name = serializers.CharField(source='resignation.employee.emp_first_name', read_only=True)
-    designation = serializers.CharField(source='resignation.employee.emp_desgntn_id.name', read_only=True)  # Assume designation has name
-    department = serializers.CharField(source='resignation.employee.emp_dept_id.name', read_only=True)  # Assume department has name
+    designation = serializers.CharField(source='resignation.employee.emp_desgntn_id.desgntn_job_title', read_only=True)  # Assume designation has name
+    department = serializers.CharField(source='resignation.employee.emp_dept_id.dept_name', read_only=True)  # Assume department has name
+    work_status = serializers.SerializerMethodField()
+    basic_salary = serializers.SerializerMethodField()
+    per_day_gratuity = serializers.SerializerMethodField()
+    final_month_salary = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    last_payroll_processed = serializers.SerializerMethodField()
+
     class Meta:
         model = EndOfService
         fields = [
-            'employee_code', 'employee_name', 'designation', 'department',
+            'id','employee_code', 'employee_name', 'designation', 'department',
             'date_of_joining', 'date_of_resignation_termination', 'last_working_date',
             'notice_period_days', 'total_service_days', 'net_number_of_days_worked',
             'leave_days_without_pay', 'leave_balance', 'last_month_salary',
-            'gratuity_days', 'gratuity_amount', 'notice_pay', 'status', 'processed_date'
+            'gratuity_days', 'gratuity_amount', 'notice_pay', 'status', 'processed_date','basic_salary','work_status',
+            'per_day_gratuity','air_ticket','final_month_salary','last_payroll_processed'
+
         ]
+        # fields = '__all__'
+    def get_work_status(self, obj):
+        return obj.resignation.get_termination_type_display()
+
+    def get_basic_salary(self, obj):
+        from PayrollManagement.models import EmployeeSalaryStructure,Payslip
+        component = EmployeeSalaryStructure.objects.filter(
+            employee=obj.resignation.employee,
+            component__is_gratuity=True,
+            is_active=True
+        ).order_by('-date_updated').first()
+        return component.amount if component else Decimal('0.00')
+
+    def get_per_day_gratuity(self, obj):
+        basic = self.get_basic_salary(obj)
+        return round(basic / 30, 2) if basic else 0.0
+    def get_last_payroll_processed(self, obj):
+        employee = obj.resignation.employee
+        latest_payslip = employee.payslips.filter(
+            status__in=['paid', 'Approved']
+        ).order_by(
+            '-payroll_run__year', '-payroll_run__month'
+        ).first()
+
+        if latest_payslip and latest_payslip.payroll_run:
+            month = month_name[latest_payslip.payroll_run.month]
+            year = latest_payslip.payroll_run.year
+            return f"{month} {year}"
+        return None
+class FinalSettlementSerializer(serializers.ModelSerializer):
+    employee_code = serializers.CharField(source='resignation.employee.emp_code', read_only=True)
+    employee_name = serializers.CharField(source='resignation.employee.emp_first_name', read_only=True)
+    designation = serializers.CharField(source='resignation.employee.emp_desgntn_id.desgntn_job_title', read_only=True)  # Assume designation has name
+    department = serializers.CharField(source='resignation.employee.emp_dept_id.dept_name', read_only=True)  # Assume department has name
+    work_status = serializers.SerializerMethodField()
+    basic_salary = serializers.SerializerMethodField()
+    per_day_gratuity = serializers.SerializerMethodField()
+    
+    payslip = serializers.SerializerMethodField()
+    # unreturned_assets = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EndOfService
+        fields = [
+            'id',
+            'employee_code',
+            'date_of_joining',
+            'employee_name',
+            'designation',
+            'department',
+            'last_working_date',
+            'notice_period_days',
+            'total_service_days',
+            'net_number_of_days_worked',
+            'leave_days_without_pay',
+            'leave_balance',
+            'last_month_salary',
+            'gratuity_days',
+            'gratuity_amount',
+            'notice_pay',
+            'air_ticket',
+            'status',
+            'processed_date',
+            'payslip',
+            'per_day_gratuity',
+            'basic_salary',
+            'work_status'
+        ]
+
+    def get_payslip(self, obj):
+        from PayrollManagement.models import Payslip
+        # Get the last confirmed payslip before or equal to EOS date
+        return_obj = Payslip.objects.filter(
+            employee=obj.resignation.employee,
+            created_at__lte=obj.last_working_date,
+            confirm_status=True
+        ).order_by('-created_at').first()
+
+        if return_obj:
+            return PayslipSerializer(return_obj, context=self.context).data
+        return None
+    def get_work_status(self, obj):
+        return obj.resignation.get_termination_type_display()
+
+    def get_basic_salary(self, obj):
+        from PayrollManagement.models import EmployeeSalaryStructure
+        component = EmployeeSalaryStructure.objects.filter(
+            employee=obj.resignation.employee,
+            component__is_gratuity=True,
+            is_active=True
+        ).order_by('-date_updated').first()
+        return component.amount if component else Decimal('0.00')
+
+    def get_per_day_gratuity(self, obj):
+        basic = self.get_basic_salary(obj)
+        return round(basic / 30, 2) if basic else 0.0

@@ -160,7 +160,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
 class LanguageViewSet(viewsets.ModelViewSet):
     queryset = LanguageMaster.objects.all()
     serializer_class = LanguageMasterSerializer
-    permission_classes = [LanguageMasterPermission]
+    # permission_classes = [LanguageMasterPermission]
     def get_serializer_context(self):
         return {'request': self.request}
 

@@ -6,6 +6,9 @@ from django.core.mail import EmailMultiAlternatives, get_connection
 from django.conf import settings
 import logging
 
+
+
+
 def get_employee_context(employee):
     """
     Builds a dictionary of employee attributes to be used in email templates.
@@ -111,14 +114,34 @@ def send_notification_email(
 
     return {"status": "error", "message": "No recipient email found."}
 
-
 from decimal import Decimal
 from django.db.models import Q
 
+# def get_final_salary(employee, last_working_date):
+#             from PayrollManagement.models import Payslip
+#             payslip = Payslip.objects.filter(
+#                 employee=employee,
+#                 payroll_run__month=last_working_date.month,
+#                 payroll_run__year=last_working_date.year,
+#                 confirm_status=True,
+#                 status__in=['paid', 'Approved']
+#             ).order_by('-created_at').first()
 
+#             return payslip.net_salary if payslip else Decimal('0.00')
+def get_final_salary(employee, last_working_date):
+    from PayrollManagement.models import Payslip
+    s=payslip = Payslip.objects.filter(
+        employee=employee,
+        payroll_run__payment_date__lte=last_working_date,
+        confirm_status=True,
+        status__in=['paid', 'Approved']
+    ).order_by('-payroll_run').first()
+    print("pa",s)
+    return payslip.net_salary if payslip else Decimal('0.00')
 def calculate_settlement(eos):
     from PayrollManagement.models import EmployeeSalaryStructure
     from OrganisationManager.models import GratuityTable
+    from PayrollManagement.models import AirTicketAllocation
 
     try:
         resignation = eos.resignation
@@ -151,7 +174,7 @@ def calculate_settlement(eos):
             eos.notice_pay = Decimal('0.00')
             eos.save()
             return
-
+        eos.final_month_salary = get_final_salary(employee, end_date)
         basic_salary = salary_component.amount
         daily_wage = basic_salary / 30
         eos.last_month_salary = basic_salary
@@ -182,7 +205,18 @@ def calculate_settlement(eos):
         # Additional settlement components
         eos.notice_pay = Decimal('0.00') if eos.notice_period_days == 0 else daily_wage * eos.notice_period_days
         # eos.leave_salary = Decimal('0.00')  # Placeholder for future use
+        ticket = AirTicketAllocation.objects.filter(
+            employee=employee,
+            status='APPROVED',
+            is_active=True
+        ).order_by('-allocated_date').first()
+
+        eos.air_ticket = ticket.amount if ticket else Decimal('0.00')
+        
 
         eos.save()
+        
+        eos.save()
     except Exception as e:
-        logger.erro
+        logger.error(f"Error in calculate_settlement for employee {eos.resignation.employee.emp_code}: {str(e)}")
+        raise

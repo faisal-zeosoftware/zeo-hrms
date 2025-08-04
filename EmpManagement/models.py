@@ -1667,8 +1667,9 @@ class EndOfService(models.Model):
     gratuity_days = models.FloatField(default=0)
     gratuity_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     notice_pay = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    final_month_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     # leave_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    # air_ticket = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    air_ticket = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     processed_date = models.DateField(auto_now_add=True)
     status = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),

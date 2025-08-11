@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.contrib.contenttypes.models import ContentType
 import datetime
+from OrganisationManager .models import AssetAllocation
 from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer
 from calendars .models import holiday
 from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer
@@ -576,6 +577,7 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
     per_day_gratuity = serializers.SerializerMethodField()
     final_month_salary = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     last_payroll_processed = serializers.SerializerMethodField()
+    asset_return_pending = serializers.SerializerMethodField()
 
     class Meta:
         model = EndOfService
@@ -585,7 +587,7 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
             'notice_period_days', 'total_service_days', 'net_number_of_days_worked',
             'leave_days_without_pay', 'leave_balance', 'last_month_salary',
             'gratuity_days', 'gratuity_amount', 'notice_pay', 'status', 'processed_date','basic_salary','work_status',
-            'per_day_gratuity','air_ticket','final_month_salary','last_payroll_processed'
+            'per_day_gratuity','air_ticket','final_month_salary','last_payroll_processed','asset_return_pending'
 
         ]
         # fields = '__all__'
@@ -600,7 +602,12 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
             is_active=True
         ).order_by('-date_updated').first()
         return component.amount if component else Decimal('0.00')
-
+    def get_asset_return_pending(self, obj):
+        employee = obj.resignation.employee
+        return AssetAllocation.objects.filter(
+            employee=employee,
+            returned_date__isnull=True
+        ).exists()
     def get_per_day_gratuity(self, obj):
         basic = self.get_basic_salary(obj)
         return round(basic / 30, 2) if basic else 0.0

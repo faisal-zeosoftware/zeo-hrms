@@ -2397,7 +2397,13 @@ class ResignationApprovalViewset(viewsets.ModelViewSet):
         note = request.data.get('note')  # Get the note from the request
         approval.reject(note=note)
         return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
-
+from rest_framework.response import Response
+from django.http import FileResponse
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from django.shortcuts import get_object_or_404
+from decimal import Decimal
 class EndOfServiceViewset(viewsets.ModelViewSet):
     queryset = EndOfService.objects.all()
     serializer_class = EndOfServiceSerializer

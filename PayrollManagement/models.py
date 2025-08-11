@@ -28,6 +28,7 @@ class SalaryComponent(models.Model):
     show_in_payslip = models.BooleanField(default=True, help_text="Should this component be shown on the payslip?")
     is_advance_salary = models.BooleanField(default=False, help_text="Used for advance salary deductions")
     is_air_ticket = models.BooleanField(default=False, help_text="Used for air ticket")
+    is_gratuity = models.BooleanField(default=False, help_text="Used for emp-gratuity")
 
     def __str__(self):
         return f"{self.name} ({self.get_component_type_display()})"

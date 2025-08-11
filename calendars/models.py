@@ -1006,6 +1006,7 @@ class employee_leave_request(models.Model):
 
     def save(self, *args, **kwargs):
         # Calculate leave days based on start and end date
+        is_new = self.pk is None
         self.number_of_days = self.calculate_leave_days()
         self.clean()
         # Check if the status changed to "approved"
@@ -1020,6 +1021,8 @@ class employee_leave_request(models.Model):
         print("sr",status_changed_to_rejected)
         with transaction.atomic():
             super().save(*args, **kwargs)
+            if is_new and self.status == 'pending':
+                self.move_to_next_level()  # 🔁 Automatically create approval(s) if pending
             if status_changed_to_approved:
                 self.deduct_leave_balance()
             # elif status_changed_to_rejected:

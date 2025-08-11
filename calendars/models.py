@@ -974,7 +974,7 @@ class employee_leave_request(models.Model):
     reason            = models.TextField()
     status            = models.CharField(max_length=10, choices=LEAVE_STATUS_CHOICES, default='pending')
     applied_on        = models.DateField(auto_now_add=True)
-    document_number   = models.CharField(max_length=120, unique=True, null=True, blank=True)
+    document_number   = models.CharField(max_length=50, unique=True, blank=True)
     dis_half_day      = models.BooleanField(default=False)  # True if it's a half-day leave
     half_day_period   = models.CharField(max_length=20, choices=HALF_DAY_CHOICES, null=True, blank=True)  # First Half / Second Half
     created_by        = models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True,blank=True)
@@ -1004,7 +1004,6 @@ class employee_leave_request(models.Model):
         if not self.leave_type.negative and leave_balance.balance < leave_days_requested:
             raise ValidationError("Insufficient leave balance for this leave type.")
 
-
     def save(self, *args, **kwargs):
         # Calculate leave days based on start and end date
         self.number_of_days = self.calculate_leave_days()
@@ -1023,6 +1022,8 @@ class employee_leave_request(models.Model):
             super().save(*args, **kwargs)
             if status_changed_to_approved:
                 self.deduct_leave_balance()
+            # elif status_changed_to_rejected:
+            #     self.restore_leave_balance()
             
     def calculate_leave_days(self):
         leave_days = 0
@@ -1067,6 +1068,7 @@ class employee_leave_request(models.Model):
             current_date += timedelta(days=1)
 
         return leave_days
+    
     def deduct_leave_balance(self):
         from decimal import Decimal
         # Fetch or create the employee's leave balance for this leave type
@@ -1075,11 +1077,12 @@ class employee_leave_request(models.Model):
             leave_type=self.leave_type
         )
         print(leave_balance)
-        # Deduct the number_of_days from balance, allow negative if leave_type.negative is True
+        # # Deduct the number_of_days from balance, allow negative if leave_type.negative is True
         # if not self.leave_type.negative and leave_balance.balance < self.number_of_days:
         #     raise ValueError("Insufficient leave balance for this leave type.")
 
         leave_balance.balance -= self.number_of_days
+        print("f",leave_balance)
         leave_balance.save()
 
         leave_days_to_deduct = Decimal(str(self.number_of_days))
@@ -1093,7 +1096,6 @@ class employee_leave_request(models.Model):
             # Deduct the same number of leave days from the carry forward balance
             carry_forward_entry.final_carry_forward -= leave_days_to_deduct
             carry_forward_entry.save()
-
     def restore_leave_balance(self):
         from decimal import Decimal
 
@@ -1116,8 +1118,8 @@ class employee_leave_request(models.Model):
             carry_forward_entry.final_carry_forward += leave_days_to_restore
             carry_forward_entry.save()
     def __str__(self):
-        return f"{self.document_number}"
-    
+        # return f"{self.employee} {self.document_number} - {self.leave_type} from {self.start_date} to {self.end_date}"
+        return f"{self.document_number} "
     # def get_employee_requests(employee_id):
     #     return employee_leave_request.objects.filter(employee_id=employee_id).order_by('-applied_on')
      
@@ -1132,7 +1134,12 @@ class employee_leave_request(models.Model):
                 message=f"Your request for  {self.leave_type} has been rejected."
             )
             notification.send_email_notification('request_rejected', {
-                'request_type': self.leave_type,
+                'leave_type': self.leave_type,
+                'start_date':self.start_date,
+                'end_date':self.end_date,
+                'reason':self.reason,
+                'status':self.status,
+                'document_number':self.document_number,
                 'rejection_reason': 'Reason for rejection...',
                 'emp_gender': self.employee.emp_gender,
                 'emp_date_of_birth': self.employee.emp_date_of_birth,
@@ -1149,8 +1156,14 @@ class employee_leave_request(models.Model):
                     message=f"Request {self.leave_type} has been rejected."
                 )
                 notification.send_email_notification('request_rejected', {
-                    'request_type': self.leave_type,
+                    'leave_type': self.leave_type,
+                    'start_date':self.start_date,
+                    'end_date':self.end_date,
+                    'reason':self.reason,
+                    'document_number':self.document_number,
+                    'status':self.status,
                     'rejection_reason': 'Reason for rejection...',
+                    'document_number':self.document_number,
                     'emp_gender': self.employee.emp_gender,
                     'emp_date_of_birth': self.employee.emp_date_of_birth,
                     'emp_personal_email': self.employee.emp_personal_email,
@@ -1166,6 +1179,7 @@ class employee_leave_request(models.Model):
         if self.leave_type.use_common_workflow:
             next_level = LvCommonWorkflow.objects.filter(level=current_approved_levels + 1).first()
         else:
+            # next_level = LeaveApprovalLevels.objects.filter(request_type=self.leave_type, level=current_approved_levels + 1).first()
             next_level = LeaveApprovalLevels.objects.filter(
                 request_type=self.leave_type,
                 branch__id=self.employee.emp_branch_id.id,
@@ -1175,7 +1189,7 @@ class employee_leave_request(models.Model):
             LeaveApproval.objects.create(
                 leave_request=self,
                 approver=next_level.approver,
-                role=next_level.role,
+                # role=next_level.role,
                 level=next_level.level,
                 status=LeaveApproval.PENDING,
                 note=last_approval.note if last_approval else None
@@ -1187,9 +1201,14 @@ class employee_leave_request(models.Model):
                 message=f"New request for approval: {self.leave_type}, employee: {self.employee}"
             )
             notification.send_email_notification('request_created', {
-                'request_type': self.leave_type,
+                'leave_type': self.leave_type,
+                'start_date':self.start_date,
+                'end_date':self.end_date,
+                'reason':self.reason,
+                'document_number':self.document_number,
                 'employee_name': self.employee.emp_first_name,
                 'reason': self.reason,
+                'status':self.status,
                 'note': last_approval.note if last_approval else None,
                 'emp_gender': self.employee.emp_gender,
                 'emp_date_of_birth': self.employee.emp_date_of_birth,
@@ -1209,7 +1228,12 @@ class employee_leave_request(models.Model):
                 message=f"Your request {self.leave_type} has been approved."
             )
             notification.send_email_notification('request_approved', {
-                'request_type': self.leave_type,
+                'leave_type': self.leave_type,
+                'start_date':self.start_date,
+                 'end_date':self.end_date,
+                 'reason':self.reason,
+                 'status':self.status,
+                'document_number':self.document_number,
                 'emp_gender': self.employee.emp_gender,
                 'emp_date_of_birth': self.employee.emp_date_of_birth,
                 'emp_personal_email': self.employee.emp_personal_email,
@@ -1225,7 +1249,12 @@ class employee_leave_request(models.Model):
                     message=f"Request {self.leave_type} has been approved."
                 )
                 notification.send_email_notification('request_approved', {
-                    'request_type': self.leave_type,
+                    'leave_type': self.leave_type,
+                    'start_date':self.start_date,
+                    'end_date':self.end_date,
+                    'document_number':self.document_number,
+                    'reason':self.reason,
+                    'status':self.status,
                     'emp_gender': self.employee.emp_gender,
                     'emp_date_of_birth': self.employee.emp_date_of_birth,
                     'emp_personal_email': self.employee.emp_personal_email,

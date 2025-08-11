@@ -231,19 +231,21 @@ def update_leave_balance(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=employee_leave_request)
 def create_initial_approval(sender, instance, created, **kwargs):
+    import logging
+    logging.warning(f"Signal triggered for: {instance} created={created}")
     if created:
         if instance.leave_type.use_common_workflow:
             first_level = LvCommonWorkflow.objects.order_by('level').first()
         else:
         # Select the first approval level
-            # first_level = LeaveApprovalLevels.objects.filter(request_type=instance.leave_type).order_by('level').first()
+            first_level = LeaveApprovalLevels.objects.filter(request_type=instance.leave_type).order_by('level').first()
             first_level = LeaveApprovalLevels.objects.filter(
                 request_type=instance.leave_type,
                 branch__id=instance.employee.emp_branch_id.id).order_by('level').first()
         if first_level:
             # Prevent duplicate creation of approvals at the same level
-            # if not instance.approvals.filter(level=first_level.level).exists():
-            LeaveApproval.objects.create(
+            if not instance.approvals.filter(level=first_level.level).exists():
+                LeaveApproval.objects.create(
                     leave_request=instance,
                     approver=first_level.approver,
                     # role=first_level.role,

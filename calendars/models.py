@@ -1423,36 +1423,7 @@ class LeaveApproval(models.Model):
                     'emp_designation_name': self.compensatory_request.employee.emp_desgntn_id,
                     'emp_joined_date': self.compensatory_request.employee.emp_joined_date,
                 })
-
-import logging
-logger = logging.getLogger(__name__)
-
-@receiver(post_save, sender=employee_leave_request)
-def create_initial_approval(sender, instance, created, **kwargs):
-    if created:
-        if instance.leave_type.use_common_workflow:
-            first_level = LvCommonWorkflow.objects.order_by('level').first()
-        else:
-            first_level = LeaveApprovalLevels.objects.filter(
-                request_type=instance.leave_type,
-                branch__id=instance.employee.emp_branch_id.id
-            ).order_by('level').first()
-
-        logger.info(f"First level found: {first_level}")
-
-        if first_level:
-            if not instance.approvals.filter(level=first_level.level).exists():
-                LeaveApproval.objects.create(
-                    leave_request=instance,
-                    approver=first_level.approver,
-                    level=first_level.level,
-                    status=LeaveApproval.PENDING,
-                    employee_id=instance.employee_id
-                )
-                logger.info(f"Approval created for {instance}")
-            else:
-                logger.info("Approval already exists for this level")
-
+    
 # @receiver(post_save, sender=employee_leave_request)
 # def create_initial_approval(sender, instance, created, **kwargs):
 #     if created:

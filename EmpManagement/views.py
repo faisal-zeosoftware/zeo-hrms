@@ -2331,32 +2331,57 @@ class DocRequestNotificationViewset(viewsets.ModelViewSet):
 class EmployeeResignationViewset(viewsets.ModelViewSet):
     queryset = EmployeeResignation.objects.all()
     serializer_class = EmployeeResignationSerializer
-    @action(detail=True, methods=['post'])
-    def create_eos(self, request, pk=None):
-        resignation = self.get_object()
-    
-        if resignation.status != 'Approved':
-            return Response({'detail': 'EOS cannot be created. Resignation is not approved.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-    
-        if hasattr(resignation, 'eos'):
-            return Response({'detail': 'EOS already exists for this resignation.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-    
+    @action(detail=False, methods=['get'], url_path='approved_resignations')
+    def list_approved_resignations(self, request):
+        # Fetch all approved resignations
+        approved_resignations = EmployeeResignation.objects.filter(status='Approved')
+
+        # Serialize the employee details only
+        data = []
+        for resignation in approved_resignations:
+            employee = resignation.employee
+            data.append({
+                'employee_id': employee.id,
+                'employee_code': getattr(employee, 'emp_code', None),
+                'employee_name': f"{getattr(employee, 'emp_first_name', '')} {getattr(employee, 'emp_last_name', '')}".strip(),
+                'resignation_id': resignation.id,
+                'resigned_on': resignation.resigned_on,
+                'last_working_date': resignation.last_working_date,
+                'status': resignation.status,
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
+    @action(detail=False, methods=['post'], url_path='create_eos_by_employee/(?P<employee_id>[^/.]+)')
+    def create_eos_by_employee(self, request, employee_id=None):
         try:
+            # Get the latest approved resignation for this employee
+            resignation = EmployeeResignation.objects.filter(
+                employee_id=employee_id,
+                status='Approved'
+            ).order_by('-id').first()
+
+            if not resignation:
+                return Response({'detail': 'No approved resignation found for this employee.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if EOS already exists
+            if hasattr(resignation, 'eos'):
+                return Response({'detail': 'EOS already exists for this resignation.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+
             with transaction.atomic():
                 employee = resignation.employee
                 start_date = employee.emp_joined_date
                 end_date = resignation.last_working_date
-    
+
                 if not start_date or not end_date:
                     return Response({'detail': 'Invalid joining or last working date.'},
                                     status=status.HTTP_400_BAD_REQUEST)
-    
+
                 # Calculate service time
                 total_days = (end_date - start_date).days
                 years_of_service = total_days / 365.0
-    
+
                 eos = EndOfService.objects.create(
                     resignation=resignation,
                     date_of_joining=start_date,
@@ -2365,11 +2390,11 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
                     years_of_service=years_of_service,
                     total_service_days=total_days,
                 )
-    
+
                 calculate_settlement(eos)  # Gratuity logic here
-    
+
                 return Response({'detail': 'EOS created successfully.'}, status=status.HTTP_201_CREATED)
-    
+
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     

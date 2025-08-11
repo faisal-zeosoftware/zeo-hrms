@@ -311,7 +311,7 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
                 document_number = doc_config.get_next_number()
 
             serializer.save(document_number=document_number)
-            serializer.save(document_number=document_number)
+            
 
 
     @action(detail=False, methods=['get'], url_path='leave-request-history')

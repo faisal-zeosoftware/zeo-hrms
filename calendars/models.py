@@ -1006,7 +1006,6 @@ class employee_leave_request(models.Model):
 
     def save(self, *args, **kwargs):
         # Calculate leave days based on start and end date
-        is_new = self.pk is None
         self.number_of_days = self.calculate_leave_days()
         self.clean()
         # Check if the status changed to "approved"
@@ -1021,8 +1020,6 @@ class employee_leave_request(models.Model):
         print("sr",status_changed_to_rejected)
         with transaction.atomic():
             super().save(*args, **kwargs)
-            if is_new and self.status == 'pending':
-                self.move_to_next_level()  # 🔁 Automatically create approval(s) if pending
             if status_changed_to_approved:
                 self.deduct_leave_balance()
             # elif status_changed_to_rejected:
@@ -1266,6 +1263,7 @@ class employee_leave_request(models.Model):
                     'emp_department_name': self.employee.emp_dept_id,
                     'emp_designation_name': self.employee.emp_desgntn_id,
                 })
+   
 class EmployeeRejoining(models.Model):
     employee           = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
     leave_request      = models.OneToOneField('employee_leave_request', on_delete=models.CASCADE)
@@ -1277,7 +1275,7 @@ class EmployeeRejoining(models.Model):
     created_by         = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
     def __str__(self):
-        return f"Rejoining for {self.employee.emp_first_name} on {self.rejoining_date}"  
+        return f"Rejoining for {self.employee.emp_first_name} on {self.rejoining_date}"   
 class LvRejectionReason(models.Model):
     reason_text = models.CharField(max_length=255, unique=True)
 
@@ -1286,13 +1284,14 @@ class LvRejectionReason(models.Model):
 
 class LeaveApprovalLevels(models.Model):
     level            = models.IntegerField()
-    role             = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
+    # role             = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
     approver         = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,)  # Use this for user-based approval
     request_type     = models.ForeignKey('leave_type', related_name='leave_approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow
     is_compensatory  = models.BooleanField(default=False)
     branch           = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     created_by       = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+
 
 class LeaveApproval(models.Model):
     PENDING = 'Pending'
@@ -1307,16 +1306,16 @@ class LeaveApproval(models.Model):
     leave_request        = models.ForeignKey(employee_leave_request, related_name='approvals', on_delete=models.CASCADE,null=True, blank=True)
     compensatory_request = models.ForeignKey(CompensatoryLeaveRequest, related_name='approvals', on_delete=models.CASCADE, null=True, blank=True)
     approver             = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE)
-    role                 = models.CharField(max_length=50, null=True, blank=True)
+    # role                 = models.CharField(max_length=50, null=True, blank=True)
     level                = models.IntegerField(default=1)
     status               = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
     note                 = models.TextField(null=True, blank=True)
+    # rejection_reason     = models.ForeignKey(LvRejectionReason,null=True, blank=True, on_delete=models.SET_NULL)
     rejection_reason     = models.TextField(null=True, blank=True)
     created_at           = models.DateField(auto_now_add=True)
     created_by           = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at           = models.DateField(auto_now=True)
     employee_id          = models.IntegerField(null=True, blank=True)
-
 
     def approve(self, note=None):
         self.status = self.APPROVED
@@ -1432,6 +1431,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             first_level = LvCommonWorkflow.objects.order_by('level').first()
         else:
         # Select the first approval level
+            # first_level = LeaveApprovalLevels.objects.filter(request_type=instance.leave_type).order_by('level').first()
             first_level = LeaveApprovalLevels.objects.filter(
                 request_type=instance.leave_type,
                 branch__id=instance.employee.emp_branch_id.id).order_by('level').first()
@@ -1441,7 +1441,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 LeaveApproval.objects.create(
                     leave_request=instance,
                     approver=first_level.approver,
-                    role=first_level.role,
+                    # role=first_level.role,
                     level=first_level.level,
                     status=LeaveApproval.PENDING,
                     employee_id=instance.employee_id

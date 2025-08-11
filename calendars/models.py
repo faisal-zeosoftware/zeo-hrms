@@ -1423,49 +1423,78 @@ class LeaveApproval(models.Model):
                     'emp_designation_name': self.compensatory_request.employee.emp_desgntn_id,
                     'emp_joined_date': self.compensatory_request.employee.emp_joined_date,
                 })
-    
+
+import logging
+logger = logging.getLogger(__name__)
+
 @receiver(post_save, sender=employee_leave_request)
 def create_initial_approval(sender, instance, created, **kwargs):
     if created:
         if instance.leave_type.use_common_workflow:
             first_level = LvCommonWorkflow.objects.order_by('level').first()
         else:
-        # Select the first approval level
-            # first_level = LeaveApprovalLevels.objects.filter(request_type=instance.leave_type).order_by('level').first()
             first_level = LeaveApprovalLevels.objects.filter(
                 request_type=instance.leave_type,
-                branch__id=instance.employee.emp_branch_id.id).order_by('level').first()
+                branch__id=instance.employee.emp_branch_id.id
+            ).order_by('level').first()
+
+        logger.info(f"First level found: {first_level}")
+
         if first_level:
-            # Prevent duplicate creation of approvals at the same level
-            # if not instance.approvals.filter(level=first_level.level).exists():
-            LeaveApproval.objects.create(
+            if not instance.approvals.filter(level=first_level.level).exists():
+                LeaveApproval.objects.create(
                     leave_request=instance,
                     approver=first_level.approver,
-                    # role=first_level.role,
                     level=first_level.level,
                     status=LeaveApproval.PENDING,
                     employee_id=instance.employee_id
                 )
-            # Notify first approver
-            notification = LvApprovalNotify.objects.create(
-                recipient_user=first_level.approver,
-                message=f"New request for approval: {instance.leave_type}, employee: {instance.employee}"
-            )
-            notification.send_email_notification('request_created', {
-                'leave_type': instance.leave_type,
-                'start_date':instance.start_date,
-                'end_date':instance.end_date,
-                'status':instance.status,
-                'document_number':instance.document_number,
-                'employee_name': instance.employee.emp_first_name,
-                'reason': instance.reason,
-                'emp_gender':instance.employee.emp_gender,
-                'emp_date_of_birth':instance.employee.emp_date_of_birth,
-                'emp_personal_email':instance.employee.emp_personal_email,
-                'emp_branch_name':instance.employee.emp_branch_id,
-                'emp_department_name':instance.employee.emp_dept_id,
-                'emp_designation_name':instance.employee.emp_desgntn_id,
-            }) 
+                logger.info(f"Approval created for {instance}")
+            else:
+                logger.info("Approval already exists for this level")
+
+# @receiver(post_save, sender=employee_leave_request)
+# def create_initial_approval(sender, instance, created, **kwargs):
+#     if created:
+#         if instance.leave_type.use_common_workflow:
+#             first_level = LvCommonWorkflow.objects.order_by('level').first()
+#         else:
+#         # Select the first approval level
+#             # first_level = LeaveApprovalLevels.objects.filter(request_type=instance.leave_type).order_by('level').first()
+#             first_level = LeaveApprovalLevels.objects.filter(
+#                 request_type=instance.leave_type,
+#                 branch__id=instance.employee.emp_branch_id.id).order_by('level').first()
+#         if first_level:
+#             # Prevent duplicate creation of approvals at the same level
+#             # if not instance.approvals.filter(level=first_level.level).exists():
+#             LeaveApproval.objects.create(
+#                     leave_request=instance,
+#                     approver=first_level.approver,
+#                     # role=first_level.role,
+#                     level=first_level.level,
+#                     status=LeaveApproval.PENDING,
+#                     employee_id=instance.employee_id
+#                 )
+#             # Notify first approver
+#             notification = LvApprovalNotify.objects.create(
+#                 recipient_user=first_level.approver,
+#                 message=f"New request for approval: {instance.leave_type}, employee: {instance.employee}"
+#             )
+#             notification.send_email_notification('request_created', {
+#                 'leave_type': instance.leave_type,
+#                 'start_date':instance.start_date,
+#                 'end_date':instance.end_date,
+#                 'status':instance.status,
+#                 'document_number':instance.document_number,
+#                 'employee_name': instance.employee.emp_first_name,
+#                 'reason': instance.reason,
+#                 'emp_gender':instance.employee.emp_gender,
+#                 'emp_date_of_birth':instance.employee.emp_date_of_birth,
+#                 'emp_personal_email':instance.employee.emp_personal_email,
+#                 'emp_branch_name':instance.employee.emp_branch_id,
+#                 'emp_department_name':instance.employee.emp_dept_id,
+#                 'emp_designation_name':instance.employee.emp_desgntn_id,
+#             }) 
 
 
 class EmployeeMachineMapping(models.Model):

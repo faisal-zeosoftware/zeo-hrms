@@ -271,13 +271,13 @@ class Resetviewset(viewsets.ModelViewSet):
 class LeaveRequestviewset(viewsets.ModelViewSet):
     queryset = employee_leave_request.objects.all()
     serializer_class = LeaveRequestSerializer
-    # permission_classes = [EmployeeLeaveRequestPermission]
-    # def get_queryset(self):
-    #     # Filter queryset based on user access
-    #     if self.request.user.is_ess:
-    #         # Return only requests related to the ESS user's employee record
-    #         return self.queryset.filter(employee__emp_code=self.request.user.username)
-    #     return super().get_queryset()  # Non-ESS users can access as per their permissions
+    permission_classes = [EmployeeLeaveRequestPermission]
+    def get_queryset(self):
+        # Filter queryset based on user access
+        if self.request.user.is_ess:
+            # Return only requests related to the ESS user's employee record
+            return self.queryset.filter(employee__emp_code=self.request.user.username)
+        return super().get_queryset()  # Non-ESS users can access as per their permissions
     @action(detail=False, methods=['get'], url_path='approved-leaves')
     def approved_leaves(self, request):
         approved_queryset = employee_leave_request.objects.filter(status='approved')
@@ -976,7 +976,7 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
 class LvApprovalLevelViewset(viewsets.ModelViewSet):
     queryset=LeaveApprovalLevels.objects.all()
     serializer_class=LvApprovalLevelSerializer
-    # permission_classes = [LeaveApprovalLevelsPermission]
+    permission_classes = [LeaveApprovalLevelsPermission]
 
 
 class LvCommonWorkflowViewset(viewsets.ModelViewSet):
@@ -993,14 +993,14 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     queryset=LeaveApproval.objects.all()
     serializer_class=LvApprovalSerializer
     lookup_field = 'pk'
-    # def get_queryset(self):
-    #     """
-    #     Filter approvals based on the authenticated user.
-    #     """
-    #     user = self.request.user  # Get the logged-in user
-    #     if user.is_superuser:
-    #         return LeaveApproval.objects.all()
-    #     return LeaveApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+    def get_queryset(self):
+        """
+        Filter approvals based on the authenticated user.
+        """
+        user = self.request.user  # Get the logged-in user
+        if user.is_superuser:
+            return LeaveApproval.objects.all()
+        return LeaveApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()

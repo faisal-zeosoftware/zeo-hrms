@@ -1437,8 +1437,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 branch__id=instance.employee.emp_branch_id.id).order_by('level').first()
         if first_level:
             # Prevent duplicate creation of approvals at the same level
-            if not instance.approvals.filter(level=first_level.level).exists():
-                LeaveApproval.objects.create(
+            # if not instance.approvals.filter(level=first_level.level).exists():
+            LeaveApproval.objects.create(
                     leave_request=instance,
                     approver=first_level.approver,
                     # role=first_level.role,

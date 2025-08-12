@@ -271,7 +271,7 @@ class Resetviewset(viewsets.ModelViewSet):
 class LeaveRequestviewset(viewsets.ModelViewSet):
     queryset = employee_leave_request.objects.all()
     serializer_class = LeaveRequestSerializer
-    permission_classes = [EmployeeLeaveRequestPermission]
+    # permission_classes = [EmployeeLeaveRequestPermission]
     # def get_queryset(self):
     #     # Filter queryset based on user access
     #     if self.request.user.is_ess:

@@ -1425,56 +1425,46 @@ class LeaveApproval(models.Model):
                 })
 @receiver(post_save, sender=employee_leave_request)
 def create_initial_approval(sender, instance, created, **kwargs):
-    if not created:
-        return
+    if created:
+        emp_branch_id = instance.employee.emp_branch_id.id if instance.employee.emp_branch_id else None
+        leave_type_id = instance.leave_type.id if instance.leave_type else None
 
-    if instance.leave_type.use_common_workflow:
-        first_level = LvCommonWorkflow.objects.order_by('level').first()
-    else:
-        first_level = LeaveApprovalLevels.objects.filter(
-            request_type=instance.leave_type,
-            branch__id=instance.employee.emp_branch_id.id
-        ).order_by('level').first()
+        print(f"[DEBUG] Creating initial approval for leave request {instance.id}")
+        print(f"[DEBUG] Employee branch ID: {emp_branch_id}")
+        print(f"[DEBUG] Leave type ID: {leave_type_id}")
+        
+        if instance.leave_type.use_common_workflow:
+            first_level = LvCommonWorkflow.objects.order_by('level').first()
+        else:
+            # Log all matching approval levels for that leave_type
+            all_levels = LeaveApprovalLevels.objects.filter(
+                request_type=instance.leave_type
+            )
+            print(f"[DEBUG] Found {all_levels.count()} total approval levels for leave_type={instance.leave_type}")
 
-    if not first_level:
-        print(f"[LeaveApproval] No first level found for leave_type={instance.leave_type} branch={instance.employee.emp_branch_id}")
-        return
+            for lvl in all_levels:
+                branch_ids = list(lvl.branch.values_list('id', flat=True))
+                print(f"[DEBUG] Level {lvl.level} linked branches: {branch_ids}")
 
-    # ✅ Create approval in a separate DB transaction
-    approval = LeaveApproval.objects.create(
-        leave_request=instance,
-        approver=first_level.approver,
-        level=first_level.level,
-        status=LeaveApproval.PENDING,
-        employee_id=instance.employee_id
-    )
+            # Try to find matching branch
+            first_level = LeaveApprovalLevels.objects.filter(
+                request_type=instance.leave_type,
+                branch__id=emp_branch_id
+            ).order_by('level').first()
 
-    print(f"[LeaveApproval] Created first approval ID={approval.id} for leave request {instance.id}")
-
-    # ✅ Send notification in a separate try/except
-    try:
-        notification = LvApprovalNotify.objects.create(
-            recipient_user=first_level.approver,
-            message=f"New request for approval: {instance.leave_type}, employee: {instance.employee}"
-        )
-        notification.send_email_notification('request_created', {
-            'leave_type': instance.leave_type,
-            'start_date': instance.start_date,
-            'end_date': instance.end_date,
-            'status': instance.status,
-            'document_number': instance.document_number,
-            'employee_name': instance.employee.emp_first_name,
-            'reason': instance.reason,
-            'emp_gender': instance.employee.emp_gender,
-            'emp_date_of_birth': instance.employee.emp_date_of_birth,
-            'emp_personal_email': instance.employee.emp_personal_email,
-            'emp_branch_name': instance.employee.emp_branch_id,
-            'emp_department_name': instance.employee.emp_dept_id,
-            'emp_designation_name': instance.employee.emp_desgntn_id,
-        })
-        print(f"[LeaveApproval] Notification sent to approver {first_level.approver}")
-    except Exception as e:
-        print(f"[LeaveApproval] Email sending failed: {e}")  
+        if not first_level:
+            print(f"[ERROR] No first level found for leave_type={instance.leave_type} branch_id={emp_branch_id}")
+        else:
+            print(f"[DEBUG] First level approver: {first_level.approver} (level {first_level.level})")
+            if not instance.approvals.filter(level=first_level.level).exists():
+                LeaveApproval.objects.create(
+                    leave_request=instance,
+                    approver=first_level.approver,
+                    level=first_level.level,
+                    status=LeaveApproval.PENDING,
+                    employee_id=instance.employee_id
+                )
+                print(f"[DEBUG] Created initial approval record for leave_request {instance.id}") 
 # @receiver(post_save, sender=employee_leave_request)
 # def create_initial_approval(sender, instance, created, **kwargs):
 #     if created:

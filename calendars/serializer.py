@@ -419,7 +419,8 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
         if instance.request_type:  
             rep['request_type'] = instance.request_type.name
         if instance.approver:  
-            rep['approver'] = instance.approver.username    
+            rep['approver'] = instance.approver.username
+        rep['branch'] = list(instance.branch.values_list('branch_name', flat=True))
         return rep
 class LvApprovalSerializer(serializers.ModelSerializer):
     class Meta:

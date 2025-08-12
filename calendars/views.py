@@ -286,9 +286,10 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         with transaction.atomic():
             employee = serializer.validated_data.get('employee')
-            branch_id = employee.emp_branch_id.id  # Ensure this field exists
+            branch_id = employee.emp_branch_id.id
             leave_type = serializer.validated_data['leave_type']
 
+            # Document numbering logic (same as you already have)
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch_id,
@@ -297,20 +298,79 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
             except DocumentNumbering.DoesNotExist:
                 raise NotFound(f"No document numbering configuration found for branch {branch_id} and leave type {leave_type}.")
 
-            # Check if the user entered a document number manually
-            document_number = serializer.validated_data.get('document_number')
+            document_number = serializer.validated_data.get('document_number') or doc_config.get_next_number()
 
-            if document_number:
-                # Validate the entered document number falls within the allowed date range
-                current_date = timezone.now().date()
-                if doc_config.start_date and doc_config.end_date:
-                    if not (doc_config.start_date <= current_date <= doc_config.end_date):
-                        raise ValidationError("The document number cannot be assigned outside the valid date range.")
+            # Save leave request
+            leave_request = serializer.save(document_number=document_number)
+
+            # === Create First Approval ===
+            if leave_type.use_common_workflow:
+                first_level = LvCommonWorkflow.objects.order_by('level').first()
             else:
-                # Generate the document number automatically
-                document_number = doc_config.get_next_number()
+                first_level = LeaveApprovalLevels.objects.filter(
+                    request_type=leave_type,
+                    branch__id=branch_id
+                ).order_by('level').first()
 
-            serializer.save(document_number=document_number)
+            if first_level:
+                print("s")
+                if not leave_request.approvals.filter(level=first_level.level).exists():
+                    LeaveApproval.objects.create(
+                        leave_request=leave_request,
+                        approver=first_level.approver,
+                        level=first_level.level,
+                        status=LeaveApproval.PENDING,
+                        employee_id=employee.id
+                    )
+
+                # Send notification to first approver
+                notification = LvApprovalNotify.objects.create(
+                    recipient_user=first_level.approver,
+                    message=f"New request for approval: {leave_request.leave_type}, employee: {leave_request.employee}"
+                )
+                notification.send_email_notification('request_created', {
+                    'leave_type': leave_request.leave_type,
+                    'start_date': leave_request.start_date,
+                    'end_date': leave_request.end_date,
+                    'status': leave_request.status,
+                    'document_number': leave_request.document_number,
+                    'employee_name': leave_request.employee.emp_first_name,
+                    'reason': leave_request.reason,
+                    'emp_gender': leave_request.employee.emp_gender,
+                    'emp_date_of_birth': leave_request.employee.emp_date_of_birth,
+                    'emp_personal_email': leave_request.employee.emp_personal_email,
+                    'emp_branch_name': leave_request.employee.emp_branch_id,
+                    'emp_department_name': leave_request.employee.emp_dept_id,
+                    'emp_designation_name': leave_request.employee.emp_desgntn_id,
+                })
+    # def perform_create(self, serializer):
+    #     with transaction.atomic():
+    #         employee = serializer.validated_data.get('employee')
+    #         branch_id = employee.emp_branch_id.id  # Ensure this field exists
+    #         leave_type = serializer.validated_data['leave_type']
+
+    #         try:
+    #             doc_config = DocumentNumbering.objects.get(
+    #                 branch_id=branch_id,
+    #                 type='leave_request',
+    #             )
+    #         except DocumentNumbering.DoesNotExist:
+    #             raise NotFound(f"No document numbering configuration found for branch {branch_id} and leave type {leave_type}.")
+
+    #         # Check if the user entered a document number manually
+    #         document_number = serializer.validated_data.get('document_number')
+
+    #         if document_number:
+    #             # Validate the entered document number falls within the allowed date range
+    #             current_date = timezone.now().date()
+    #             if doc_config.start_date and doc_config.end_date:
+    #                 if not (doc_config.start_date <= current_date <= doc_config.end_date):
+    #                     raise ValidationError("The document number cannot be assigned outside the valid date range.")
+    #         else:
+    #             # Generate the document number automatically
+    #             document_number = doc_config.get_next_number()
+
+    #         serializer.save(document_number=document_number)
             
 
 

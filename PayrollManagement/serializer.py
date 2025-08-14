@@ -11,22 +11,33 @@ class SalaryComponentSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalaryComponent
         fields = '__all__'
-
 class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
+    # For readable output
+    emp_code = serializers.SerializerMethodField(read_only=True)
     component_name = serializers.CharField(source='component.name', read_only=True)
     component_type = serializers.CharField(source='component.get_component_type_display', read_only=True)
-    emp_code = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeSalaryStructure
-        fields = ['id', 'emp_code', 'component_name', 'component_type', 'amount', 'is_active', 'date_created', 'date_updated']
+        # Include 'employee' and 'component' for input
+        fields = [
+            'id', 'employee', 'emp_code',
+            'component', 'component_name', 'component_type',
+            'amount', 'is_active', 'date_created', 'date_updated'
+        ]
+        extra_kwargs = {
+            'employee': {'write_only': False},  # Allow it in input and output
+            'component': {'write_only': True}   # Hide component ID in output
+        }
 
     def get_emp_code(self, obj):
         return obj.employee.emp_code
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
+        # Replace employee ID with employee code in output
         rep['employee'] = rep.pop('emp_code')
+        # Replace component ID with component name
         rep['component'] = rep.pop('component_name')
         return rep
 

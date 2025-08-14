@@ -536,3 +536,8 @@ class EmployeeOvertimeSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeOvertime
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(EmployeeOvertimeSerializer, self).to_representation(instance)
+        if instance.employee:  
+            rep['employee'] = instance.employee.emp_code           
+        return rep

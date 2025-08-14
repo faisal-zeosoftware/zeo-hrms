@@ -125,7 +125,7 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     }
 
     variables['ot_hours'] = EmployeeOvertime.objects.filter(
-        employee=employee, date__range=(start_date, end_date), approved=True
+        employee=employee, date__range=(start_date, end_date)
     ).aggregate(total_hours=Sum('hours'))['total_hours'] or Decimal('0.00')
     # Air ticket encashment amount
     variables['air_ticket_encashment'] = AirTicketRequest.objects.filter(

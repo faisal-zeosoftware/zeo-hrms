@@ -337,7 +337,11 @@ class PayslipCommonWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayslipCommonWorkflow
         fields = '__all__'
-
+    def to_representation(self, instance):
+        rep = super(PayslipCommonWorkflowSerializer, self).to_representation(instance)
+        if instance.approver:  
+            rep['approver'] = instance.approver.username 
+        return rep
 class AirTicketPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = AirTicketPolicy

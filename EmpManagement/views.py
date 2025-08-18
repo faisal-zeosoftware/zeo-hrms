@@ -2398,7 +2398,26 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['get'], url_path='employees_with_eos')
+    def employees_with_eos(self, request):
+        eos_records = EndOfService.objects.select_related('resignation__employee')
 
+        data = []
+        for eos in eos_records:
+            employee = eos.resignation.employee
+            data.append({
+                'employee_id': employee.id,
+                'employee_code': getattr(employee, 'emp_code', None),
+                'employee_name': f"{getattr(employee, 'emp_first_name', '')} {getattr(employee, 'emp_last_name', '')}".strip(),
+                'resignation_id': eos.resignation.id,
+                'eos_id': eos.id,
+                'date_of_joining': eos.date_of_joining,
+                'last_working_date': eos.last_working_date,
+                'years_of_service': eos.years_of_service,
+                'total_service_days': eos.total_service_days,
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
 class ResignationApprovalLevelViewset(viewsets.ModelViewSet):
     queryset = ResignationApprovalLevel.objects.all()
     serializer_class = ResignationApprovalLevelSerializer

@@ -1,11 +1,11 @@
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification)
+                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
-                         ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer
+                         ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -530,6 +530,10 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
 
         approval.reject(rejection_reason=rejection_reason, note=note)
         return Response({'status': 'rejected'}, status=status.HTTP_200_OK)
+class AirTicketRuleViewSet(viewsets.ModelViewSet):
+    queryset = AirTicketRule.objects.all()
+    serializer_class = AirTicketRuleSerializer
+    
 class AirTicketPolicyViewSet(viewsets.ModelViewSet):
     queryset = AirTicketPolicy.objects.all()
     serializer_class = AirTicketPolicySerializer
@@ -539,11 +543,6 @@ class AirTicketAllocationViewSet(viewsets.ModelViewSet):
     queryset = AirTicketAllocation.objects.all()
     serializer_class = AirTicketAllocationSerializer
     # permission_classes = [IsAuthenticated]
-
-    # def perform_create(self, serializer):
-    #     # Manual allocation
-    #     serializer.save(allocation_type='MANUAL', allocated_by=self.request.user.employee)  # Assuming user has an employee profile
-    #     logger.info(f"Manual allocation created for Employee {serializer.instance.employee.id} by {self.request.user.id}")
 
     @action(detail=False, methods=['post'])
     def trigger_auto_allocation(self, request):
@@ -561,8 +560,39 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
     serializer_class = AirTicketRequestSerializer
     # permission_classes = [IsAuthenticated]
 
-    
+    # def get_queryset(self):
+    #     return AirTicketRequest.objects.filter(employee__users=self.request.user)
 
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            employee = serializer.validated_data.get('employee')
+            document_number = serializer.validated_data.get('document_number')  # Get manually entered document number
+
+            branch_id = employee.emp_branch_id.id  
+
+            try:
+                doc_config = DocumentNumbering.objects.get(
+                    branch_id=branch_id,
+                    type='air_ticket_request',
+                    
+                )
+            except DocumentNumbering.DoesNotExist:
+                raise NotFound(f"No document numbering configuration found for branch {branch_id} and Air Ticket request.")
+
+            current_date = timezone.now().date()
+
+            # Validate if the manually entered document number is within the date range
+            if document_number:
+                if doc_config.start_date and doc_config.end_date:
+                    if not (doc_config.start_date <= current_date <= doc_config.end_date):
+                        raise ValidationError("Document number cannot be assigned outside the valid date range.")
+            else:
+                # If no document number is entered, generate one automatically
+                document_number = doc_config.get_next_number()
+
+            serializer.save(document_number=document_number)
+    
 class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
     queryset = LoanEmailTemplate.objects.all()
     serializer_class = LoanEmailTemplateSerializer

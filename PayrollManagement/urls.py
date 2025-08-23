@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (SalaryComponentViewSet,EmployeeSalaryStructureViewSet,PayslipViewSet,PayrollRunViewSet,PayslipComponentViewSet,LoanTypeviewset,LoanApplicationviewset,LoanRepaymentviewset,LoanApprovalviewset,LoanApprovalLevelsviewset,
                     EmpBulkuploadSalaryStructureViewSet,PayslipConfirmedViewSet,SIFDataView,AdvanceSalaryRequestViewset,AdvanceSalaryApprovalViewSet,AdvanceCommonWorkflowViewSet,PayslipCommonWorkflowViewSet,PayslipApprovalViewSet,AirTicketPolicyViewSet,AirTicketAllocationViewSet,AirTicketRequestViewSet,
-                    LoanEmailTemplateViewSet,LoanNotificationViewSet,AdvSalaryNotificationViewSet,AdvSalaryEmailTemplateViewSet
+                    LoanEmailTemplateViewSet,LoanNotificationViewSet,AdvSalaryNotificationViewSet,AdvSalaryEmailTemplateViewSet,AirTicketRuleViewSet
                     
                     )
 
@@ -30,10 +30,10 @@ router.register(r'advance-salary-email-template', AdvSalaryEmailTemplateViewSet,
 router.register(r'advance-salary-notification', AdvSalaryNotificationViewSet,basename='advance-salary-approval-notification')
 router.register(r'approval-payroll', PayslipApprovalViewSet,basename='approval-payroll')
 router.register(r'payslip-approval-levels', PayslipCommonWorkflowViewSet,basename='payslip-approval-levels')
+router.register(r'airticket-rule', AirTicketRuleViewSet,basename='airticket-rule')
 router.register(r'airticket-allocation', AirTicketAllocationViewSet,basename='airticket-allocation')
 router.register(r'airticket-policy', AirTicketPolicyViewSet,basename='airticket-policy')
 router.register(r'airticket-request', AirTicketRequestViewSet,basename='airticket-request')
-
 
 urlpatterns = [
     path('api/', include(router.urls)),

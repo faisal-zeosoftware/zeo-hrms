@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification)
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule)
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
@@ -237,11 +237,24 @@ class LoanApprovalLevelsSerializer(serializers.ModelSerializer):
         rep = super(LoanApprovalLevelsSerializer, self).to_representation(instance)
         if instance.approver:
             rep['approver'] =instance.approver.username
+        if instance.loan_type:
+            rep['loan_type'] =instance.loan_type.loan_type
         return rep
 class LoanApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApproval
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(LoanApprovalSerializer, self).to_representation(instance)
+        if instance.loan_request:
+            rep['loan_request'] =instance.loan_request.loan_type.loan_type 
+        if instance.employee_id:
+            try:
+                emp = emp_master.objects.get(id=instance.employee_id)
+                rep['employee_id'] = emp.emp_code
+            except emp_master.DoesNotExist:
+                rep['employee_id'] = None
+        return rep
 
 class SIFSerializer(serializers.Serializer):
     payroll_run_id = serializers.IntegerField()
@@ -342,29 +355,61 @@ class PayslipCommonWorkflowSerializer(serializers.ModelSerializer):
         if instance.approver:  
             rep['approver'] = instance.approver.username 
         return rep
+class AirTicketRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AirTicketRule
+        fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(AirTicketRuleSerializer, self).to_representation(instance)
+        if instance.policy:  
+            rep['policy'] = instance.policy.name 
+        return rep
+
 class AirTicketPolicySerializer(serializers.ModelSerializer):
+    rules = AirTicketRuleSerializer(many=True, read_only=True)
     class Meta:
         model = AirTicketPolicy
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(AirTicketPolicySerializer, self).to_representation(instance)
+        if instance.country:  
+            rep['country'] = instance.country.country_name
+        if instance.eligible_departments.exists():  
+            rep['eligible_departments'] = [dept.dept_name for dept in instance.eligible_departments.all()]
 
+        if instance.eligible_designations.exists():  
+            rep['eligible_designations'] = [desg.desgntn_job_title for desg in instance.eligible_designations.all()]
+
+        if instance.eligible_categories.exists():  
+            rep['eligible_categories'] = [cat.ctgry_title for cat in instance.eligible_categories.all()]
+
+        return rep
 class AirTicketAllocationSerializer(serializers.ModelSerializer):
-    employee = serializers.PrimaryKeyRelatedField(queryset=emp_master.objects.all())
-    policy = serializers.PrimaryKeyRelatedField(queryset=AirTicketPolicy.objects.all())
+    # employee = serializers.PrimaryKeyRelatedField(queryset=emp_master.objects.all())
+    # policy = serializers.PrimaryKeyRelatedField(queryset=AirTicketPolicy.objects.all())
     # allocated_by = serializers.PrimaryKeyRelatedField(queryset=emp_master.objects.all(), allow_null=True)
 
     class Meta:
         model = AirTicketAllocation
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(AirTicketAllocationSerializer, self).to_representation(instance)
+        if instance.policy:  
+            rep['policy'] = instance.policy.name 
+        if instance.employee:  
+            rep['employee'] = instance.employee.emp_code
+        return rep
 class AirTicketRequestSerializer(serializers.ModelSerializer):
-    # allocation = AirTicketAllocationSerializer(read_only=True)
-    # allocation_id = serializers.PrimaryKeyRelatedField(
-    #     queryset=AirTicketAllocation.objects.all(), source='allocation', write_only=True
-    # )
-    # employee = EmpSerializer(read_only=True)
-
     class Meta:
         model = AirTicketRequest
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(AirTicketRequestSerializer, self).to_representation(instance)
+        if instance.employee:  
+            rep['employee'] = instance.employee.emp_code
+        if instance.allocation:  
+            rep['allocation'] = instance.allocation.policy.name
+        return rep
 
 class LoanEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:

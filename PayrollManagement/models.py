@@ -778,7 +778,7 @@ class AirTicketPolicy(models.Model):
     allowance_type = models.CharField(max_length=10, choices=ALLOWANCE_TYPE_CHOICES, default='TICKET')
     country =models.ForeignKey('Core.cntry_mstr',on_delete=models.CASCADE, related_name='air_ticket_country')
     eligible_departments = models.ManyToManyField('OrganisationManager.dept_master', blank=True)
-    eligible_departments = models.ManyToManyField('OrganisationManager.desgntn_master', blank=True)
+    eligible_designations = models.ManyToManyField('OrganisationManager.desgntn_master', blank=True)
     eligible_categories = models.ManyToManyField('OrganisationManager.ctgry_master', blank=True)
     travel_class = models.CharField(max_length=20, choices=TRAVEL_CLASS_CHOICES, default='ECONOMY')
     is_active = models.BooleanField(default=True)
@@ -795,9 +795,23 @@ class AirTicketPolicy(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.allowance_type}"
+class AirTicketRule(models.Model):
+    RULE_TYPE_CHOICES = [
+        ('ONE_WAY', 'One Way Ticket'),
+        ('TWO_WAY', 'Two Way Ticket'),
+        ('ENCASHMENT', 'Encashment'),
+    ]
 
-    class Meta:
-        verbose_name_plural = "Air Ticket Policies"
+    policy = models.ForeignKey(AirTicketPolicy, on_delete=models.CASCADE, related_name='rules')
+    rule_type = models.CharField(max_length=20, choices=RULE_TYPE_CHOICES)
+    required_service_years = models.PositiveIntegerField(help_text='Minimum years of service for this rule')
+
+    apply_in_next_payroll = models.BooleanField(default=False, help_text='For encashment: Apply in next payroll?')
+    remarks = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"{self.rule_type} after {self.required_service_years} year(s)"
+
 class AirTicketAllocation(models.Model):
     STATUS_CHOICES = [
         ('PENDING', 'Pending'),
@@ -813,33 +827,6 @@ class AirTicketAllocation(models.Model):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
     allocated_by = models.ForeignKey('EmpManagement.emp_master', on_delete=models.SET_NULL, null=True, blank=True, related_name='allocated_tickets')
     is_active = models.BooleanField(default=True)
-
-    # def clean(self):
-    #     if not self.employee.is_active:
-    #         raise ValidationError("Cannot allocate to inactive employees.")
-    #     if self.employee.is_on_probation and not self.policy.allowed_in_probation:
-    #         raise ValidationError("Air ticket not allowed during probation.")
-    #     # if self.policy.valid_until and self.policy.valid_until < timezone.now().date():
-    #     #     raise ValidationError("Policy has expired.")
-    #     if self.amount > self.policy.amount:
-    #         raise ValidationError("Allocation amount cannot exceed policy amount.")
-    #     # if self.employee.employee_grade not in self.policy.eligible_grades.all() and self.policy.eligible_grades.exists():
-    #     #     raise ValidationError("Employee grade not eligible for this policy.")
-    #     if self.employee.department not in self.policy.eligible_departments.all() and self.policy.eligible_departments.exists():
-    #         raise ValidationError("Employee department not eligible for this policy.")
-    #     last_allocation = AirTicketAllocation.objects.filter(
-    #         employee=self.employee, status='APPROVED', is_active=True
-    #     ).order_by('-allocated_date').first()
-    #     if last_allocation:
-    #         min_date = last_allocation.allocated_date + timedelta(days=self.policy.frequency_years * 365)
-    #         if timezone.now().date() < min_date:
-    #             raise ValidationError(f"Next allocation allowed after {min_date}.")
-
-    # def save(self, *args, **kwargs):
-    #     if not self.pk:  # Set remaining_amount on creation
-    #         self.remaining_amount = self.amount
-    #     self.clean()
-    #     super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.employee} - {self.amount} ({self.status})"
@@ -857,6 +844,7 @@ class AirTicketRequest(models.Model):
         ('TICKET', 'Ticket'),
         ('ENCASHMENT', 'Encashment'),
     ]
+    document_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
     employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
     allocation = models.ForeignKey(AirTicketAllocation, on_delete=models.CASCADE)
     request_type = models.CharField(max_length=20, choices=REQUEST_TYPE, default='TICKET')
@@ -872,27 +860,6 @@ class AirTicketRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # def clean(self):
-    #     if self.allocation.status != 'APPROVED':
-    #         raise ValidationError("Allocation must be approved.")
-    #     if self.request_type == 'TICKET' and self.allocation.policy.allowance_type not in ['TICKET', 'BOTH']:
-    #         raise ValidationError("Ticket request not allowed for this policy.")
-    #     if self.request_type == 'ENCASHMENT' and self.allocation.policy.allowance_type not in ['CASH', 'BOTH']:
-    #         raise ValidationError("Encashment request not allowed for this policy.")
-    #     if self.request_type == 'TICKET' and (not self.origin or not self.destination):
-    #         raise ValidationError("Origin and destination required for ticket requests.")
-
-    # def save(self, *args, **kwargs):
-    #     self.clean()
-    #     super().save(*args, **kwargs)
-    #     if self.status == 'APPROVED' and self.request_type == 'ENCASHMENT':
-    #         if self.allocation.remaining_amount < self.allocation.amount:
-    #             raise ValidationError("Not enough balance for encashment.")
-    #         self.allocation.remaining_amount -= self.allocation.amount
-    #         self.allocation.save()
-
-    class Meta:
-        verbose_name_plural = "Air Ticket Requests"
 
     def __str__(self):
         return f"{self.employee} - {self.get_request_type_display()} ({self.get_status_display()})"

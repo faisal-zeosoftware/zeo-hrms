@@ -14,308 +14,553 @@ class IsOwnerOrReadOnly(BasePermission):
         # Otherwise, require ownership of the object.
         return obj.owner == request.user
     
+
 class BranchPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific object-level permissions.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
 
-
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_brnch_mstr', 'delete_brnch_mstr', 'add_brnch_mstr', 'change_brnch_mstr']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_brnch_mstr',
+            'retrieve': 'view_brnch_mstr',
+            'create': 'add_brnch_mstr',
+            'update': 'change_brnch_mstr',
+            'partial_update': 'change_brnch_mstr',
+            'destroy': 'delete_brnch_mstr',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
-
-
-        return False
 class DepartmentPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_dept_master', 'delete_dept_master', 'add_dept_master', 'change_dept_master']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_dept_master',
+            'retrieve': 'view_dept_master',
+            'create': 'add_dept_master',
+            'update': 'change_dept_master',
+            'partial_update': 'change_dept_master',
+            'destroy': 'delete_dept_master',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
-    
-
-
-class DesignationPermission(BasePermission):
-    """
-    Custom permission to only allow users with specific permissions or superuser status to access the company API.
-    """
-
+class DesignationPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_desgntn_master', 'delete_desgntn_master', 'add_desgntn_master', 'change_desgntn_master']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_desgntn_master',
+            'retrieve': 'view_desgntn_master',
+            'create': 'add_desgntn_master',
+            'update': 'change_desgntn_master',
+            'partial_update': 'change_desgntn_master',
+            'destroy': 'delete_desgntn_master',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
-    
+
 class CategoryPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_ctgry_master', 'delete_ctgry_master', 'add_ctgry_master', 'change_ctgry_master']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_ctgry_master',
+            'retrieve': 'view_ctgry_master',
+            'create': 'add_ctgry_master',
+            'update': 'change_ctgry_master',
+            'partial_update': 'change_ctgry_master',
+            'destroy': 'delete_ctgry_master',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
+
 class FiscalYearPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_fiscalyear', 'delete_view_fiscalyear', 'add_view_fiscalyear', 'change_view_fiscalyear']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_fiscalyear',
+            'retrieve': 'view_fiscalyear',
+            'create': 'add_fiscalyear',
+            'update': 'change_fiscalyear',
+            'partial_update': 'change_fiscalyear',
+            'destroy': 'delete_fiscalyear',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
-    
-class DocumentNumberingPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
 
+class DocumentNumberingPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_document_numbering', 'delete_view_document_numbering', 'add_view_document_numbering', 'change_document_numbering']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_documentnumbering',
+            'retrieve': 'view_documentnumbering',
+            'create': 'add_documentnumbering',
+            'update': 'change_documentnumbering',
+            'partial_update': 'change_documentnumbering',
+            'destroy': 'delete_documentnumbering',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class CompanyPolicyPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_companypolicy', 'delete_view_companypolicy', 'add_view_companypolicy', 'change_companypolicy']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_companypolicy',
+            'retrieve': 'view_companypolicy',
+            'create': 'add_companypolicy',
+            'update': 'change_companypolicy',
+            'partial_update': 'change_companypolicy',
+            'destroy': 'delete_companypolicy',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
-class AssetMasterPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
-
+class AssetTypePermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_assetmaster', 'delete_view_assetmaster', 'add_view_assetmaster', 'change_assetmaster']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assettype',
+            'retrieve': 'view_assettype',
+            'create': 'add_assettype',
+            'update': 'change_assettype',
+            'partial_update': 'change_assettype',
+            'destroy': 'delete_assettype',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class AssetMasterPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_asset',
+            'retrieve': 'view_asset',
+            'create': 'add_asset',
+            'update': 'change_asset',
+            'partial_update': 'change_asset',
+            'destroy': 'delete_asset',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class AssetRequestPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assetrequest',
+            'retrieve': 'view_assetrequest',
+            'create': 'add_assetrequest',
+            'update': 'change_assetrequest',
+            'partial_update': 'change_assetrequest',
+            'destroy': 'delete_assetrequest',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class AssetAllocationPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assetallocation',
+            'retrieve': 'view_assetallocation',
+            'create': 'add_assetallocation',
+            'update': 'change_assetallocation',
+            'partial_update': 'change_assetallocatione',
+            'destroy': 'delete_assetallocation',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class Asset_CustomFieldValuePermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_asset_customfieldvalue', 'delete_view_asset_customfieldvalue', 'add_view_asset_customfieldvalue', 'change_asset_customfieldvalue']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assetcustomfieldvalue',
+            'retrieve': 'view_assetcustomfieldvalue',
+            'create': 'add_assetcustomfieldvalue',
+            'update': 'change_assetcustomfieldvalue',
+            'partial_update': 'change_assetcustomfieldvalue',
+            'destroy': 'delete_assetcustomfieldvalue',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
-class AssetTransactionPermission(permissions.BasePermission):
-    """
-    Custom permission to only allow users with specific permissions to access company API.
-    """
 
+class AssetReportPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Grant access if the user is a superuser
         if user_permissions.is_superuser:
             return True
 
-        # Check if the user's group has any of the necessary permissions
-        required_permissions = ['view_assettransaction', 'delete_view_assettransaction', 'add_view_assettransaction', 'change_assettransaction']
-        for group in user_permissions.groups.all():  # Access all related groups
-            for permission in group.permissions.all():  # Access permissions of each group
-                if permission.codename in required_permissions:
-                    return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assetreport',
+            'retrieve': 'view_assetreport',
+            'create': 'add_assetreport',
+            'update': 'change_assetreport',
+            'partial_update': 'change_assetreport',
+            'destroy': 'delete_assetreport',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class AssetTransactionReportPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assettransactionreport',
+            'retrieve': 'view_assettransactionreport',
+            'create': 'add_assettransactionreport',
+            'update': 'change_assettransactionreport',
+            'partial_update': 'change_assettransactionreport',
+            'destroy': 'delete_assettransactionreport',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class GratuityTablePermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_gratuitytable',
+            'retrieve': 'view_gratuitytable',
+            'create': 'add_gratuitytable',
+            'update': 'change_gratuitytable',
+            'partial_update': 'change_gratuitytable',
+            'destroy': 'delete_gratuitytable',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False

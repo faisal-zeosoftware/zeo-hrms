@@ -1,1129 +1,1406 @@
 from rest_framework import permissions
-
 from tenant_users.tenants.models import UserTenantPermissions
 
 class WeekendCalendarPermission(permissions.BasePermission):
-    """
-    Custom permission for the weekend_calendar model.
-    """
-
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for weekend_calendar actions
-        required_permissions = [
-            'view_weekendcalendar',
-            'add_weekendcalendar',
-            'change_weekendcalendar',
-            'delete_weekendcalendar'
-        ]
+        if user_permissions.is_superuser:
+            return True
 
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_weekendcalendar',
+            'retrieve': 'view_weekendcalendar',
+            'create': 'add_weekendcalendar',
+            'update': 'change_weekendcalendar',
+            'partial_update': 'change_weekendcalendar',
+            'destroy': 'delete_weekendcalendar',
+        }
 
-        return any(permission in user_group_permissions for permission in required_permissions)
+        required_perm = action_permissions.get(view.action)
 
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 class WeekendDetailPermission(permissions.BasePermission):
-    """
-    Custom permission for the WeekendDetail model.
-    """
-
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        required_permissions = [
-            'view_weekenddetail',
-            'add_weekenddetail',
-            'change_weekenddetail',
-            'delete_weekenddetail'
-        ]
+        if user_permissions.is_superuser:
+            return True
 
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_weekenddetail',
+            'retrieve': 'view_weekenddetail',
+            'create': 'add_weekenddetail',
+            'update': 'change_weekenddetail',
+            'partial_update': 'change_weekenddetail',
+            'destroy': 'delete_weekenddetail',
+        }
 
-        return any(permission in user_group_permissions for permission in required_permissions)
+        required_perm = action_permissions.get(view.action)
 
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 class AssignWeekendPermission(permissions.BasePermission):
-    """
-    Custom permission for the assign_weekend model.
-    """
-
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        required_permissions = [
-            'view_assignweekend',
-            'add_assignweekend',
-            'change_assignweekend',
-            'delete_assignweekend'
-        ]
+        if user_permissions.is_superuser:
+            return True
 
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assign_weekend',
+            'retrieve': 'view_assign_weekend',
+            'create': 'add_assign_weekend',
+            'update': 'change_assign_weekend',
+            'partial_update': 'change_assign_weekend',
+            'destroy': 'delete_assign_weekend',
+        }
 
-        return any(permission in user_group_permissions for permission in required_permissions)
+        required_perm = action_permissions.get(view.action)
 
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 class HolidayPermission(permissions.BasePermission):
-    """
-    Custom permission for the holiday model.
-    """
-
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        required_permissions = [
-            'view_holiday',
-            'add_holiday',
-            'change_holiday',
-            'delete_holiday'
-        ]
+        if user_permissions.is_superuser:
+            return True
 
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_holiday',
+            'retrieve': 'view_holiday',
+            'create': 'add_holiday',
+            'update': 'change_holiday',
+            'partial_update': 'change_holiday',
+            'destroy': 'delete_holiday',
+        }
 
-        return any(permission in user_group_permissions for permission in required_permissions)
+        required_perm = action_permissions.get(view.action)
 
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 class HolidayCalendarPermission(permissions.BasePermission):
-    """
-    Custom permission for the holiday_calendar model.
-    """
-
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        required_permissions = [
-            'view_holidaycalendar',
-            'add_holidaycalendar',
-            'change_holidaycalendar',
-            'delete_holidaycalendar'
-        ]
+        if user_permissions.is_superuser:
+            return True
 
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_holiday_calendar',
+            'retrieve': 'view_holiday_calendar',
+            'create': 'add_holiday_calendar',
+            'update': 'change_holiday_calendar',
+            'partial_update': 'change_holiday_calendar',
+            'destroy': 'delete_holiday_calendar',
+        }
 
-        return any(permission in user_group_permissions for permission in required_permissions)
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+
 
 class AssignHolidayPermission(permissions.BasePermission):
-    """
-    Custom permission for the assign_holiday model.
-    """
-
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        required_permissions = [
-            'view_assignholiday',
-            'add_assignholiday',
-            'change_assignholiday',
-            'delete_assignholiday'
-        ]
+        if user_permissions.is_superuser:
+            return True
 
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_assign_holiday',
+            'retrieve': 'view_assign_holiday',
+            'create': 'add_assign_holiday',
+            'update': 'change_assign_holiday',
+            'partial_update': 'change_assign_holiday',
+            'destroy': 'delete_assign_holiday',
+        }
 
-        return any(permission in user_group_permissions for permission in required_permissions)
+        required_perm = action_permissions.get(view.action)
 
+        if not required_perm:
+            return False
 
-#leave
-from rest_framework import permissions
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
-from tenant_users.tenants.models import UserTenantPermissions
+        return False
 
 class LeaveTypePermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for leave_type.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for leave_type model actions
-        required_permissions = ['view_leave_type', 'add_leave_type', 'change_leave_type', 'delete_leave_type']
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [p.codename for group in user_permissions.groups.all() for p in group.permissions.all()]
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leave_type',
+            'retrieve': 'view_leave_type',
+            'create': 'add_leave_type',
+            'update': 'change_leave_type',
+            'partial_update': 'change_leave_type',
+            'destroy': 'delete_leave_type',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class LeaveEntitlementPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for leave_entitlement.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for leave_entitlement model actions
-        required_permissions = [
-            'view_leave_entitlement',
-            'add_leave_entitlement',
-            'change_leave_entitlement',
-            'delete_leave_entitlement'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-        
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
 
-        return False
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leave_entitlement',
+            'retrieve': 'view_leave_entitlement',
+            'create': 'add_leave_entitlement',
+            'update': 'change_leave_entitlement',
+            'partial_update': 'change_leave_entitlement',
+            'destroy': 'delete_leave_entitlement',
+        }
 
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class LeaveResetPolicyPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leaveresetpolicy',
+            'retrieve': 'view_leaveresetpolicy',
+            'create': 'add_leaveresetpolicy',
+            'update': 'change_leaveresetpolicy',
+            'partial_update': 'change_leaveresetpolicy',
+            'destroy': 'delete_leaveresetpolicyt',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 class EmpLeaveBalancePermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for emp_leave_balance.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for emp_leave_balance model actions
-        required_permissions = [
-            'view_emp_leave_balance',
-            'add_emp_leave_balance',
-            'change_emp_leave_balance',
-            'delete_emp_leave_balance'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
 
-        return False
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_emp_leave_balance',
+            'retrieve': 'view_emp_leave_balance',
+            'create': 'add_emp_leave_balance',
+            'update': 'change_emp_leave_balance',
+            'partial_update': 'change_emp_leave_balance',
+            'destroy': 'delete_emp_leave_balance',
+        }
 
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 class ApplicabilityCriteriaPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for applicability_criteria.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for applicability_criteria model actions
-        required_permissions = [
-            'view_applicability_criteria',
-            'add_applicability_criteria',
-            'change_applicability_criteria',
-            'delete_applicability_criteria'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
 
-        return False
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_applicablity_critirea',
+            'retrieve': 'view_applicablity_critirea',
+            'create': 'add_applicablity_critirea',
+            'update': 'change_applicablity_critirea',
+            'partial_update': 'change_applicablity_critirea',
+            'destroy': 'delete_applicablity_critirea',
+        }
 
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 
 class EmployeeLeaveRequestPermission(permissions.BasePermission):
-    """
-    Custom permission to allow specific users to access and create leave requests.
-    ESS users can only access and create requests for their own employee ID.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
-        
-        # Grant access if the user is a superuser
         if request.user.is_superuser:
             return True
 
-        # Check if the user has is_ess=True
-        if hasattr(request.user, 'is_ess') and request.user.is_ess:
-            # If accessing or creating, ensure they are limited to their own employee record
-            employee_id = request.user.username  # Assuming username represents the employee ID
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
 
-            # For read actions, ensure user only sees their own employee details
-            if view.action in ['retrieve', 'list']:
-                requested_employee_id = view.kwargs.get('pk')
-                return str(requested_employee_id) == str(employee_id)
-            
-            # For create actions, ensure the leave request is for the user's own employee ID
-            if view.action == 'create':
-                # In the viewset, ensure `employee_id` is automatically set to the user's employee ID
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_employee_leave_request',
+            'retrieve': 'view_employee_leave_request',
+            'create': 'add_employee_leave_request',
+            'update': 'change_employee_leave_request',
+            'partial_update': 'change_employee_leave_request',
+            'destroy': 'delete_employee_leave_request',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
                 return True
 
-        # Retrieve permissions for other users
-        try:
-            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-        except UserTenantPermissions.DoesNotExist:
-            return False
-
-        # Define required permissions for employee model actions
-        required_permissions = ['view_employee_leave_request', 'delete_employee_leave_request', 'add_employee_leave_request', 'change_employee_leave_request']
-        user_group_permissions = [p.codename for group in user_permissions.groups.all() for p in group.permissions.all()]
-
-        # Allow access if the user's group has any of the necessary permissions
-        return any(permission in user_group_permissions for permission in required_permissions)
+        return False
 
 class LvEmailTemplatePermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvEmailTemplate.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LvEmailTemplate model actions
-        required_permissions = [
-            'view_lvemailtemplate',
-            'add_lvemailtemplate',
-            'change_lvemailtemplate',
-            'delete_lvemailtemplate'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_lvemailtemplate',
+            'retrieve': 'view_lvemailtemplate',
+            'create': 'add_lvemailtemplate',
+            'update': 'change_lvemailtemplate',
+            'partial_update': 'change_lvemailtemplate',
+            'destroy': 'delete_lvemailtemplate',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class LeaveResetTransactionPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvEmailTemplate.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LvEmailTemplate model actions
-        required_permissions = [
-            'view_leave_reset_transaction',
-            'add_leave_reset_transaction',
-            'change_leave_reset_transaction',
-            'delete_leave_reset_transaction'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leave_reset_transaction',
+            'retrieve': 'view_leave_reset_transaction',
+            'create': 'add_leave_reset_transaction',
+            'update': 'change_leave_reset_transaction',
+            'partial_update': 'change_leave_reset_transaction',
+            'destroy': 'delete_leave_reset_transaction',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class LeaveAccrualTransactionPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvEmailTemplate.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LvEmailTemplate model actions
-        required_permissions = [
-            'view_leave_accrual_transaction',
-            'add_leave_accrual_transaction',
-            'change_leave_accrual_transaction',
-            'delete_leave_accrual_transaction'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leave_accrual_transaction',
+            'retrieve': 'view_leave_accrual_transaction',
+            'create': 'add_leave_accrual_transaction',
+            'update': 'change_leave_accrual_transaction',
+            'partial_update': 'change_leave_accrual_transaction',
+            'destroy': 'delete_leave_accrual_transaction',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
-    
-class LvCommonWorkflowPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvCommonWorkflow.
-    """
 
+class LvCommonWorkflowPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LvCommonWorkflow model actions
-        required_permissions = [
-            'view_lvcommonworkflow',
-            'add_lvcommonworkflow',
-            'change_lvcommonworkflow',
-            'delete_lvcommonworkflow'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_lvcommonworkflow',
+            'retrieve': 'view_lvcommonworkflow',
+            'create': 'add_lvcommonworkflow',
+            'update': 'change_lvcommonworkflow',
+            'partial_update': 'change_lvcommonworkflow',
+            'destroy': 'delete_lvcommonworkflow',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 
 class LvRejectionReasonPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvRejectionReason.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LvRejectionReason model actions
-        required_permissions = [
-            'view_lvrejectionreason',
-            'add_lvrejectionreason',
-            'change_lvrejectionreason',
-            'delete_lvrejectionreason'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_lvrejectionreason',
+            'retrieve': 'view_lvrejectionreason',
+            'create': 'add_lvrejectionreason',
+            'update': 'change_lvrejectionreason',
+            'partial_update': 'change_lvrejectionreason',
+            'destroy': 'delete_lvrejectionreason',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class LeaveApprovalLevelsPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LeaveApprovalLevels.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LeaveApprovalLevels model actions
-        required_permissions = [
-            'view_leaveapprovallevels',
-            'add_leaveapprovallevels',
-            'change_leaveapprovallevels',
-            'delete_leaveapprovallevels'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leaveapprovallevels',
+            'retrieve': 'view_leaveapprovallevels',
+            'create': 'add_leaveapprovallevels',
+            'update': 'change_leaveapprovallevels',
+            'partial_update': 'change_leaveapprovallevels',
+            'destroy': 'delete_leaveapprovallevels',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
-
-
-class EmployeeMachineMappingPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for EmployeeMachineMapping.
-    """
-
+class LeaveApprovalPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for EmployeeMachineMapping model actions
-        required_permissions = [
-            'view_employeemachinemapping',
-            'add_employeemachinemapping',
-            'change_employeemachinemapping',
-            'delete_employeemachinemapping'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leaveapproval',
+            'retrieve': 'view_leaveapproval',
+            'create': 'add_leaveapproval',
+            'update': 'change_leaveapproval',
+            'partial_update': 'change_leaveapproval',
+            'destroy': 'delete_leaveapproval',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class EmployeeMachineMappingPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_employeemachinemapping',
+            'retrieve': 'view_employeemachinemapping',
+            'create': 'add_employeemachinemapping',
+            'update': 'change_employeemachinemapping',
+            'partial_update': 'change_employeemachinemapping',
+            'destroy': 'delete_employeemachinemapping',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class ShiftPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for Shift.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for Shift model actions
-        required_permissions = [
-            'view_shift',
-            'add_shift',
-            'change_shift',
-            'delete_shift'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_shift',
+            'retrieve': 'view_shift',
+            'create': 'add_shift',
+            'update': 'change_shift',
+            'partial_update': 'change_shift',
+            'destroy': 'delete_shift',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 
 class ShiftPatternPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for Shift.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for Shift model actions
-        required_permissions = [
-            'view_shiftpattern',
-            'add_shiftpattern',
-            'change_shiftpattern',
-            'delete_shiftpattern'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_shiftpattern',
+            'retrieve': 'view_shiftpattern',
+            'create': 'add_shiftpattern',
+            'update': 'change_shiftpattern',
+            'partial_update': 'change_shiftpattern',
+            'destroy': 'delete_shiftpattern',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class ShiftOverridePermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for Shift.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for Shift model actions
-        required_permissions = [
-            'view_shiftoverride',
-            'add_shiftoverride',
-            'change_shiftoverride',
-            'delete_shiftoverride'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_shiftoverride',
+            'retrieve': 'view_shiftoverride',
+            'create': 'add_shiftoverride',
+            'update': 'change_shiftoverride',
+            'partial_update': 'change_shiftoverride',
+            'destroy': 'delete_shiftoverride',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class EmployeeShiftSchedulePermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for Shift.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for Shift model actions
-        required_permissions = [
-            'view_employeeshiftschedule',
-            'add_employeeshiftschedule',
-            'change_employeeshiftschedule',
-            'delete_employeeshiftschedule'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_employeeshiftschedule',
+            'retrieve': 'view_employeeshiftschedule',
+            'create': 'add_employeeshiftschedule',
+            'update': 'change_employeeshiftschedule',
+            'partial_update': 'change_employeeshiftschedule',
+            'destroy': 'delete_employeeshiftschedule',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class WeekPatternAssignmentPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for WeeklyShiftSchedule.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for WeeklyShiftSchedule model actions
-        required_permissions = [
-            'view_weekpatternassignment',
-            'add_weekpatternassignment',
-            'change_weekpatternassignment',
-            'delete_weekpatternassignment'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_weekpatternassignment',
+            'retrieve': 'view_weekpatternassignment',
+            'create': 'add_weekpatternassignment',
+            'update': 'change_weekpatternassignment',
+            'partial_update': 'change_weekpatternassignment',
+            'destroy': 'delete_weekpatternassignment',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class AttendancePermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for Attendance.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for Attendance model actions
-        required_permissions = [
-            'view_attendance',
-            'add_attendance',
-            'change_attendance',
-            'delete_attendance'
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_attendance',
+            'retrieve': 'view_attendance',
+            'create': 'add_attendance',
+            'update': 'change_attendance',
+            'partial_update': 'change_attendance',
+            'destroy': 'delete_attendance',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 
 class LeaveReportPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LeaveReport.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LeaveReport model actions
-        required_permissions = [
-            'view_leavereport',
-            'add_leavereport',
-            'change_leavereport',
-            'delete_leavereport',
-            # 'export_report'  # Custom permission for exporting reports
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leavereport',
+            'retrieve': 'view_leavereport',
+            'create': 'add_leavereport',
+            'update': 'change_leavereport',
+            'partial_update': 'change_leavereport',
+            'destroy': 'delete_leavereport',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class LeaveApprovalReportPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LeaveApprovalReport.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for LeaveApprovalReport model actions
-        required_permissions = [
-            'view_leaveapprovalreport',
-            'add_leaveapprovalreport',
-            'change_leaveapprovalreport',
-            'delete_leaveapprovalreport',
-            # 'export_report'  # Custom permission for exporting reports
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
 
-        return False
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leaveapprovalreport',
+            'retrieve': 'view_leaveapprovalreport',
+            'create': 'add_leaveapprovalreport',
+            'update': 'change_leaveapprovalreport',
+            'partial_update': 'change_leaveapprovalreport',
+            'destroy': 'delete_leaveapprovalreport',
+        }
 
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 class AttendanceReportPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for AttendanceReport.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for AttendanceReport model actions
-        required_permissions = [
-            'view_attendancereport',
-            'add_attendancereport',
-            'change_attendancereport',
-            'delete_attendancereport',
-            # 'export_report'  # Custom permission for exporting reports
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_attendancereport',
+            'retrieve': 'view_attendancereport',
+            'create': 'add_attendancereport',
+            'update': 'change_attendancereport',
+            'partial_update': 'change_attendancereport',
+            'destroy': 'delete_attendancereport',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
+class LeaveCarryForwardTransactionPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leavecarryforwardtransaction',
+            'retrieve': 'view_leavecarryforwardtransaction',
+            'create': 'add_leavecarryforwardtransaction',
+            'update': 'change_leavecarryforwardtransaction',
+            'partial_update': 'change_leavecarryforwardtransaction',
+            'destroy': 'delete_leavecarryforwardtransaction',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class LeaveEncashmentTransactionPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leaveencashmenttransaction',
+            'retrieve': 'view_leaveencashmenttransaction',
+            'create': 'add_leaveencashmenttransaction',
+            'update': 'change_leaveencashmenttransaction',
+            'partial_update': 'change_leaveencashmenttransaction',
+            'destroy': 'delete_leaveencashmenttransaction',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
 
 class LvBalanceReportPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvBalanceReport.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for lvBalanceReport model actions
-        required_permissions = [
-            'view_lvbalancereport',
-            'add_lvbalancereport',
-            'change_lvbalancereport',
-            'delete_lvbalancereport',
-            'export_report'  # Custom permission for exporting reports
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_lvbalancereport',
+            'retrieve': 'view_lvbalancereport',
+            'create': 'add_lvbalancereport',
+            'update': 'change_lvbalancereport',
+            'partial_update': 'change_lvbalancereporte',
+            'destroy': 'delete_lvbalancereport',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
-class CompensatoryLeaveRequestPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvBalanceReport.
-    """
 
+class CompensatoryLeaveRequestPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for lvBalanceReport model actions
-        required_permissions = [
-            'view_compensatoryleaverequest',
-            'add_compensatoryleaverequestt',
-            'change_compensatoryleaverequest',
-            'delete_compensatoryleaverequest',
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_compensatoryleaverequest',
+            'retrieve': 'view_compensatoryleaverequest',
+            'create': 'add_compensatoryleaverequest',
+            'update': 'change_compensatoryleaverequest',
+            'partial_update': 'change_compensatoryleaverequest',
+            'destroy': 'delete_compensatoryleaverequest',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
 
 class CompensatoryLeaveBalancePermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvBalanceReport.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for lvBalanceReport model actions
-        required_permissions = [
-            'view_compensatoryleavebalance',
-            'add_compensatoryleavebalance',
-            'change_compensatoryleavebalance',
-            'delete_compensatoryleavebalance',
-           
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
 
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_compensatoryleavebalance',
+            'retrieve': 'view_compensatoryleavebalance',
+            'create': 'add_compensatoryleavebalance',
+            'update': 'change_compensatoryleavebalance',
+            'partial_update': 'change_compensatoryleavebalance',
+            'destroy': 'delete_compensatoryleavebalance',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
         return False
+
 class CompensatoryLeaveTransactionPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvBalanceReport.
-    """
-
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for lvBalanceReport model actions
-        required_permissions = [
-            'view_compensatoryleavetransaction',
-            'add_compensatoryleavetransaction',
-            'change_compensatoryleavetransaction',
-            'delete_compensatoryleavetransaction',
-            
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_compensatoryleavetransaction',
+            'retrieve': 'view_compensatoryleavetransaction',
+            'create': 'add_compensatoryleavetransaction',
+            'update': 'change_compensatoryleavetransaction',
+            'partial_update': 'change_compensatoryleavetransaction',
+            'destroy': 'delete_compensatoryleavetransaction',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False
-class EmployeeYearlyCalendarPermission(permissions.BasePermission):
-    """
-    Custom permission to allow users with specific permissions for LvBalanceReport.
-    """
 
+class EmployeeYearlyCalendarPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Check if the user is authenticated
         if not request.user.is_authenticated:
             return False
         if request.user.is_superuser:
             return True
-        # Attempt to retrieve user permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions for lvBalanceReport model actions
-        required_permissions = [
-            'view_employeeyearlycalendar',
-            'add_employeeyearlycalendar',
-            'change_employeeyearlycalendar',
-            'delete_employeeyearlycalendar',
-            
-        ]
-
-        # Check if any group the user belongs to has the required permissions
-        user_group_permissions = [
-            p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-        ]
-
-        # Check if user has at least one of the required permissions
-        if any(permission in user_group_permissions for permission in required_permissions):
+        if user_permissions.is_superuser:
             return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_employeeyearlycalendar',
+            'retrieve': 'view_employeeyearlycalendar',
+            'create': 'add_employeeyearlycalendar',
+            'update': 'change_employeeyearlycalendar',
+            'partial_update': 'change_employeeyearlycalendar',
+            'destroy': 'delete_employeeyearlycalendar',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class EmployeeOvertimePermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_employeeovertime',
+            'retrieve': 'view_employeeovertime',
+            'create': 'add_employeeovertime',
+            'update': 'change_employeeovertime',
+            'partial_update': 'change_employeeovertime',
+            'destroy': 'delete_employeeovertime',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+class EmployeeRejoiningPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_employeerejoining',
+            'retrieve': 'view_employeerejoining',
+            'create': 'add_employeerejoining',
+            'update': 'change_employeerejoining',
+            'partial_update': 'change_employeerejoining',
+            'destroy': 'delete_employeerejoining',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
 
         return False

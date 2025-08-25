@@ -329,9 +329,9 @@ class leave_type(models.Model):
         ('leave_grant','leave_grant')
     ]
     
-    name                          = models.CharField(max_length=50,unique=True)
+    name                          = models.CharField(max_length=50)
     image                         = models.ImageField(upload_to='leave_images/')
-    code                          = models.CharField(max_length=30,unique=True)
+    code                          = models.CharField(max_length=30)
     type                          = models.CharField(max_length=20,choices=type_choice)
     unit                          = models.CharField(max_length=10,choices=unit_choice)
     negative                      = models.BooleanField(default=False)
@@ -346,7 +346,11 @@ class leave_type(models.Model):
     created_at                    = models.DateTimeField(default=timezone.now)
     created_by                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
-    # allow_opening_balance =models.BooleanField(default=False)
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['name', 'branch'], name='unique_leave_name_per_branch'),
+            models.UniqueConstraint(fields=['code', 'branch'], name='unique_leave_code_per_branch'),
+        ]
     def __str__(self):
         return f"{self.name}"
     def get_email_template(self, template_type):

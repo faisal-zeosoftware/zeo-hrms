@@ -108,7 +108,7 @@ class emp_master(models.Model):
                 logger.error(f"No company found for schema: {schema_name}")
 
             try:
-                user = user_model.objects.create_user(username=username, email=email, password=password)
+                user = user_model.objects.create_user(username=username, email=email, password=password,is_ess=self.is_ess)
                 self.users = user  # Assign the new user to the users field
                 super().save(update_fields=['users'])  # Save again to update users field
 

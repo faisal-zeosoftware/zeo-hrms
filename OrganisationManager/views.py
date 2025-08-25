@@ -32,7 +32,7 @@ from openpyxl.styles import PatternFill,Alignment,Font
 from django.http import HttpResponse
 from io import BytesIO
 from .permissions import (BranchPermission,DepartmentPermission,DesignationPermission,CategoryPermission,FiscalYearPermission,DocumentNumberingPermission,
-                          CompanyPolicyPermission,AssetMasterPermission,Asset_CustomFieldValuePermission,AssetTransactionPermission)
+                          CompanyPolicyPermission,AssetMasterPermission,Asset_CustomFieldValuePermission,)
 # Create your views here.
 from django.contrib.auth.models import Permission,Group
 from django.core.exceptions import PermissionDenied

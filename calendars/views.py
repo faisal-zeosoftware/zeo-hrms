@@ -140,7 +140,7 @@ class HolidayAssignViewset(viewsets.ModelViewSet):
 class LeaveTypeviewset(viewsets.ModelViewSet):
     queryset = leave_type.objects.all()
     serializer_class = LeaveTypeSerializer
-    # permission_classes = [LeaveTypePermission] 
+    permission_classes = [LeaveTypePermission] 
     
 class LvEmailTemplateviewset(viewsets.ModelViewSet):
     queryset = LvEmailTemplate.objects.all()
@@ -207,7 +207,7 @@ class LvApprovalNotifyviewset(viewsets.ModelViewSet):
 class LeaveEntitlementviewset(viewsets.ModelViewSet):
     queryset = leave_entitlement.objects.all()
     serializer_class = LeaveEntitlementSerializer
-    # permission_classes = [LeaveEntitlementPermission]
+    permission_classes = [LeaveEntitlementPermission]
     def perform_create(self, serializer):
         instance = serializer.save()
         self.process_accrual(instance)
@@ -251,17 +251,17 @@ class Applicableviewset(viewsets.ModelViewSet):
 class leave_balance_viewset(viewsets.ModelViewSet):
     queryset = emp_leave_balance.objects.all()
     serializer_class = EmployeeLeaveBalanceSerializer
-    # permission_classes = [EmpLeaveBalancePermission] 
+    permission_classes = [EmpLeaveBalancePermission] 
 
 class Acrualviewset(viewsets.ModelViewSet):
     queryset = leave_accrual_transaction.objects.all()
     serializer_class = AccrualSerializer
-    # permission_classes = [LeaveAccrualTransactionPermission] 
+    permission_classes = [LeaveAccrualTransactionPermission] 
 
 class Resetviewset(viewsets.ModelViewSet):
     queryset = leave_reset_transaction.objects.all()
     serializer_class = ResetSerializer
-    # permission_classes = [LeaveResetTransactionPermission] 
+    permission_classes = [LeaveResetTransactionPermission] 
 
 # class Enchashviewset(viewsets.ModelViewSet):
 #     queryset = leave_encashment.objects.all()
@@ -271,13 +271,13 @@ class Resetviewset(viewsets.ModelViewSet):
 class LeaveRequestviewset(viewsets.ModelViewSet):
     queryset = employee_leave_request.objects.all()
     serializer_class = LeaveRequestSerializer
-    # permission_classes = [EmployeeLeaveRequestPermission]
-    # def get_queryset(self):
-    #     # Filter queryset based on user access
-    #     if self.request.user.is_ess:
-    #         # Return only requests related to the ESS user's employee record
-    #         return self.queryset.filter(employee__emp_code=self.request.user.username)
-    #     return super().get_queryset()  # Non-ESS users can access as per their permissions
+    permission_classes = [EmployeeLeaveRequestPermission]
+    def get_queryset(self):
+        # Filter queryset based on user access
+        if self.request.user.is_ess:
+            # Return only requests related to the ESS user's employee record
+            return self.queryset.filter(employee__emp_code=self.request.user.username)
+        return super().get_queryset()  # Non-ESS users can access as per their permissions
     @action(detail=False, methods=['get'], url_path='approved-leaves')
     def approved_leaves(self, request):
         approved_queryset = employee_leave_request.objects.filter(status='approved')
@@ -396,7 +396,7 @@ class ShiftOverrideViewSet(viewsets.ModelViewSet):
 class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
     queryset = EmployeeShiftSchedule.objects.all()
     serializer_class = EmployeeShiftScheduleSerializer
-    # permission_classes = [EmployeeShiftSchedulePermission]
+    permission_classes = [EmployeeShiftSchedulePermission]
     def get_shift_for_day(self, request, *args, **kwargs):
         """
         Get shift for a given employee and date.
@@ -976,7 +976,7 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
 class LvApprovalLevelViewset(viewsets.ModelViewSet):
     queryset=LeaveApprovalLevels.objects.all()
     serializer_class=LvApprovalLevelSerializer
-    # permission_classes = [LeaveApprovalLevelsPermission]
+    permission_classes = [LeaveApprovalLevelsPermission]
 
 
 class LvCommonWorkflowViewset(viewsets.ModelViewSet):
@@ -993,14 +993,14 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     queryset=LeaveApproval.objects.all()
     serializer_class=LvApprovalSerializer
     lookup_field = 'pk'
-    # def get_queryset(self):
-    #     """
-    #     Filter approvals based on the authenticated user.
-    #     """
-    #     user = self.request.user  # Get the logged-in user
-    #     if user.is_superuser:
-    #         return LeaveApproval.objects.all()
-    #     return LeaveApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+    def get_queryset(self):
+        """
+        Filter approvals based on the authenticated user.
+        """
+        user = self.request.user  # Get the logged-in user
+        if user.is_superuser:
+            return LeaveApproval.objects.all()
+        return LeaveApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()
@@ -1067,7 +1067,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
 class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
     queryset = LeaveApprovalReport.objects.all()
     serializer_class = LvApprovalReportSerializer
-    # permission_classes = [LeaveApprovalReportPermission]
+    permission_classes = [LeaveApprovalReportPermission]
     
     def __init__(self, *args, **kwargs):
         super(Lv_Approval_ReportViewset, self).__init__(*args, **kwargs)
@@ -1362,7 +1362,7 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
 class AttendanceReportViewset(viewsets.ModelViewSet):
     queryset = AttendanceReport.objects.all()
     serializer_class = AttendanceReportSerializer
-    # permission_classes = [AttendanceReportPermission]
+    permission_classes = [AttendanceReportPermission]
 
     
     
@@ -1632,7 +1632,7 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
 class LvBalanceReportViewset(viewsets.ModelViewSet):
     queryset = lvBalanceReport.objects.all()
     serializer_class = lvBalanceReportSerializer
-    # permission_classes = [LvBalanceReportPermission]
+    permission_classes = [LvBalanceReportPermission]
 
     
 

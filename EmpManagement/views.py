@@ -24,7 +24,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
                         EmpFamilyCustomFieldPermission,EmpJobHistoryCustomFieldPermission,EmpQualificationCustomFieldPermission,ReportPermission,DocReportPermission,GeneralRequestReportPermission,
-                        EmployeeMarketingSkillPermission,EmployeeProgramSkillPermission,EmployeeLangSkillPermission,NotificationPermission,ApprovalLevelPermission,EmployeeMarketingSkillPermission,RequestTypePermission,EmployeeListPermission)
+                        EmployeeMarketingSkillPermission,EmployeeProgramSkillPermission,EmployeeLangSkillPermission,NotificationPermission,ApprovalLevelPermission,EmployeeMarketingSkillPermission,RequestTypePermission)
 from django.core.exceptions import ValidationError
 from rest_framework.decorators import action
 from phonenumber_field.modelfields import PhoneNumberField
@@ -1696,7 +1696,7 @@ class Bulkupload_DocumentViewSet(viewsets.ModelViewSet):
 class EmplistViewSet(viewsets.ReadOnlyModelViewSet):  # Read-only API (GET only)
     queryset = emp_master.objects.all()
     serializer_class = EmplistSerializer
-    permission_classes = [EmployeeListPermission]
+    permission_classes = [EmployeePermission]
     
 # EmpLeaveRequest
 class EmpLeaveRequestViewSet(viewsets.ModelViewSet):

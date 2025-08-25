@@ -16,7 +16,7 @@ class SalaryComponent(models.Model):
         ('others', 'Others'),
     ]
 
-    name = models.CharField(max_length=100, unique=True)  # Component name (e.g., HRA, PF)
+    name = models.CharField(max_length=100)  # Component name (e.g., HRA, PF)
     component_type = models.CharField(max_length=20, choices=COMPONENT_TYPES)
     branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='salary_components')
     code = models.CharField(max_length=20,null=True)
@@ -29,7 +29,11 @@ class SalaryComponent(models.Model):
     is_advance_salary = models.BooleanField(default=False, help_text="Used for advance salary deductions")
     is_air_ticket = models.BooleanField(default=False, help_text="Used for air ticket")
     is_gratuity = models.BooleanField(default=False, help_text="Used for emp-gratuity")
-
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['name', 'branch'], name='unique_salary_component_name_per_branch'),
+            models.UniqueConstraint(fields=['code', 'branch'], name='unique_salary_component_code_per_branch'),
+        ]
     def __str__(self):
         return f"{self.name} ({self.get_component_type_display()})"
 

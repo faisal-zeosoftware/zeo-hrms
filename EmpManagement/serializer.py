@@ -385,7 +385,12 @@ class EmpSerializer(serializers.ModelSerializer):
             rep['emp_ctgry_id'] =instance.emp_ctgry_id.ctgry_title
         if instance.emp_branch_id:
             rep['emp_branch_id'] =instance.emp_branch_id.branch_name
+        if instance.emp_nationality:
+            rep['emp_nationality'] =instance.emp_nationality.N_name
+        if instance.emp_relegion:
+            rep['emp_relegion'] =instance.emp_relegion.religion
         return rep
+        
     def get_holidays(self, obj):
         holidays = holiday.objects.filter(holiday_calendar=obj.holiday_calendar)
         return HolidaySerializer(holidays, many=True).data
@@ -510,7 +515,8 @@ class ApprovalLevelSerializer(serializers.ModelSerializer):
             rep['request_type'] = instance.request_type.name
         if instance.approver:  
             rep['approver'] = instance.approver.username
-        
+        if instance.branch.exists():  
+            rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
         return rep
     
 

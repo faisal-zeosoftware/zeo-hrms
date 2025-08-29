@@ -262,7 +262,14 @@ class LoanApprovalviewset(viewsets.ModelViewSet):
     queryset = LoanApproval.objects.all()
     serializer_class = LoanApprovalSerializer
     lookup_field = 'pk'
-
+    def get_queryset(self):
+        """
+        Filter approvals based on the authenticated user.
+        """
+        user = self.request.user  # Get the logged-in user
+        if user.is_superuser:
+            return LoanApproval.objects.all()
+        return LoanApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approvals = self.get_object()
@@ -506,6 +513,14 @@ class AdvanceCommonWorkflowViewSet(viewsets.ModelViewSet):
 class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
     queryset = AdvanceSalaryApproval.objects.all()
     serializer_class = AdvanceSalaryApprovalSerializer
+    def get_queryset(self):
+        """
+        Filter approvals based on the authenticated user.
+        """
+        user = self.request.user  # Get the logged-in user
+        if user.is_superuser:
+            return AdvanceSalaryApproval.objects.all()
+        return AdvanceSalaryApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):

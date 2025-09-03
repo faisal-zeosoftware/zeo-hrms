@@ -30,6 +30,10 @@ import logging
 logger = logging.getLogger((__name__))
 from .utils import send_notification_email,get_employee_context
 
+#managers
+class ActiveEmployeeManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
 #EmpManagement
 class emp_master(models.Model):    
     GENDER_CHOICES = [ ("M", "Male"), ("F", "Female"),("O", "Other"),]
@@ -75,7 +79,9 @@ class emp_master(models.Model):
     holiday_calendar         = models.ForeignKey("calendars.holiday_calendar",on_delete = models.CASCADE,null=True,blank =True)
     users                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, related_name='employees',null=True,blank =True)
     person_id                = models.CharField(max_length=14,unique=True,validators=[RegexValidator(r'^\d{14}$', 'Must be a 14-digit number')],help_text="14-digit Person ID from Ministry of Labor",blank=True,null=True)    
-
+    objects = ActiveEmployeeManager()  # Now .objects.all() returns only active employees
+    all_objects = models.Manager()#include inactive employees
+    
     def save(self, *args, **kwargs):
         created = not self.pk  # Check if the instance is being created
         authenticated_user = kwargs.pop('authenticated_user', None)  # Get authenticated user from kwargs, if provided

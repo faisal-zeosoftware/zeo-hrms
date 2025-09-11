@@ -79,6 +79,9 @@ class emp_master(models.Model):
     holiday_calendar         = models.ForeignKey("calendars.holiday_calendar",on_delete = models.CASCADE,null=True,blank =True)
     users                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, related_name='employees',null=True,blank =True)
     person_id                = models.CharField(max_length=14,unique=True,validators=[RegexValidator(r'^\d{14}$', 'Must be a 14-digit number')],help_text="14-digit Person ID from Ministry of Labor",blank=True,null=True)    
+    work_location            = models.ForeignKey('UserManagement.company',on_delete = models.CASCADE,related_name='work_location',null=True,blank =True)
+    visa_location            = models.ForeignKey('UserManagement.company', on_delete=models.CASCADE,related_name='visa_location',null=True,blank =True)
+
     objects = ActiveEmployeeManager()  # Now .objects.all() returns only active employees
     all_objects = models.Manager()#include inactive employees
     
@@ -787,14 +790,29 @@ class Emp_Documents(models.Model):
     def __str__(self):
         return f"{self.document_type} - {self.emp_id}" 
     def save(self, *args, **kwargs):
-        """Override save method to check expiry at the time of creation or update"""
-        
-        is_new = self.pk is None  # Check if the document is new
-        super().save(*args, **kwargs)  # Save the document first
+        from .models import notification
 
-        # Only check expiry when a new document is created
+        is_new = self.pk is None
+        old_expiry = None
+
+        if not is_new:
+            try:
+                old_doc = Emp_Documents.objects.get(pk=self.pk)
+                old_expiry = old_doc.emp_doc_expiry_date
+            except Emp_Documents.DoesNotExist:
+                pass
+
+        super().save(*args, **kwargs)
+
+        # If expiry date changed → remove old notifications
+        if not is_new and old_expiry and old_expiry != self.emp_doc_expiry_date:
+            notification.objects.filter(document_id=self).delete()
+            # re-check expiry with updated date
+            check_document_expiry_and_notify(self)
+
+        # For newly created documents
         if is_new:
-            check_document_expiry_and_notify(self)  # Call the notification function
+            check_document_expiry_and_notify(self)
 
 
 def check_document_expiry_and_notify(document):

@@ -5,6 +5,8 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.contenttypes.models import ContentType
 from django_tenants.utils import schema_context
 # from Core .models import TaxSystem,crncy_mstr
+from Core .models import TaxSystem,crncy_mstr,state_mstr
+from Core .serializer import StateSerializer
 from tenant_users.tenants.models import UserTenantPermissions
        
 class CustomUserSerializer(serializers.ModelSerializer):
@@ -125,26 +127,32 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return super().validate(attrs)
     
 class CompanySerializer(serializers.ModelSerializer):
-    # tax_details = serializers.SerializerMethodField()
-    # currency_details = serializers.SerializerMethodField()
-    state_label = serializers.SerializerMethodField()
+    tax_details = serializers.SerializerMethodField()
+    currency_details = serializers.SerializerMethodField()
+    state_label = serializers.SerializerMethodField()  # Avoid duplicate logic
+    states = serializers.SerializerMethodField()
     class Meta:
-        model = company 
+        model = company
         fields = '__all__'
-    # def get_tax_details(self, obj):
-    #     """Fetch tax details dynamically from the TaxSystem model"""
-    #     tax = TaxSystem.objects.filter(country=obj.country, is_active=True).first()
-    #     if tax:
-    #         return {"tax_name": tax.tax_name, "tax_percentage": tax.tax_percentage}
-    #     return None  # If no tax is found  
-    # def get_currency_details(self, obj):
-    #     """Fetch currency details dynamically from the TaxSystem model"""
-    #     currency = crncy_mstr.objects.filter(country=obj.country).first()
-    #     if currency:
-    #         return {"currency_name": currency.currency_name, "currency_code": currency.currency_code,"symbol": currency.symbol}
-    #     return None  # If no currency is found
+    def get_states(self, obj):
+        if obj.country:
+            states = state_mstr.objects.filter(country=obj.country, is_active=True)
+            return StateSerializer(states, many=True).data
+        return []
+    def get_tax_details(self, obj):
+        """Fetch tax details dynamically from the TaxSystem model"""
+        tax = TaxSystem.objects.filter(country=obj.country, is_active=True).first()
+        if tax:
+            return {"tax_name": tax.tax_name, "tax_percentage": tax.tax_percentage}
+        return None  # If no tax is found  
+    def get_currency_details(self, obj):
+        """Fetch currency details dynamically from the TaxSystem model"""
+        currency = crncy_mstr.objects.filter(country=obj.country).first()
+        if currency:
+            return {"currency_name": currency.currency_name, "currency_code": currency.currency_code,"symbol": currency.symbol}
+        return None  # If no currency is found
     def get_state_label(self, obj):
-        return obj.country.get_state_label() if obj.country else None
+        return obj.country.get_state_label() if obj.country else None  # Use method from model
 class Non_EssUserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser

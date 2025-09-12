@@ -344,6 +344,7 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
 #EMPLOYEE SERIALIZER
 class EmpSerializer(serializers.ModelSerializer):
     # payslip  = PayslipSerializer(many=True, read_only=True, source='payslips')
+    emp_bank = EmpBankDetailsSerializer(read_only=True, source='bank_details')
     advance_salary_requests   =  AdvanceSalaryRequestSerializer(many=True, read_only=True)
     loan_requests   =  LoanApplicationSerializer(many=True, read_only=True, source='loan')
     assets_requests   =  AssetRequestSerializer(many=True, read_only=True, source='asset_requests')

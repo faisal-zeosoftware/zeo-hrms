@@ -297,7 +297,15 @@ class EmpViewSet(viewsets.ModelViewSet):
             payslip = employee.loan.all()
             serializer = LoanApplicationSerializer(payslip, many=True)
             return Response(serializer.data) 
-
+    @action(detail=True, methods=['GET'])
+    def emp_bank(self, request, pk=None):
+        employee = self.get_object()
+        try:
+            bank_detail = employee.bank_details
+            serializer = EmpBankDetailsSerializer(bank_detail)
+            return Response(serializer.data)
+        except EmployeeBankDetail.DoesNotExist:
+            return Response({"detail": "No bank details found."}, status=404)
     @action(detail=False, methods=['get'])
     def filter_empty_user_non_ess(self, request):
         filtered_employees = self.queryset.filter(users__isnull=True, is_ess=False)

@@ -79,8 +79,8 @@ class emp_master(models.Model):
     holiday_calendar         = models.ForeignKey("calendars.holiday_calendar",on_delete = models.CASCADE,null=True,blank =True)
     users                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, related_name='employees',null=True,blank =True)
     person_id                = models.CharField(max_length=14,unique=True,validators=[RegexValidator(r'^\d{14}$', 'Must be a 14-digit number')],help_text="14-digit Person ID from Ministry of Labor",blank=True,null=True)    
-    work_location            = models.ForeignKey('UserManagement.company',on_delete = models.CASCADE,related_name='work_location',null=True,blank =True)
-    visa_location            = models.ForeignKey('UserManagement.company', on_delete=models.CASCADE,related_name='visa_location',null=True,blank =True)
+    work_location            = models.ForeignKey('OrganisationManager.brnch_mstr',on_delete = models.CASCADE,related_name='work_location',null=True,blank =True)
+    visa_location            = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,related_name='visa_location',null=True,blank =True)
 
     objects = ActiveEmployeeManager()  # Now .objects.all() returns only active employees
     all_objects = models.Manager()#include inactive employees

@@ -1373,7 +1373,7 @@ class DocExpEmailTemplate(models.Model):
         return self.template_name
 
 class EmployeeBankDetail(models.Model):
-    employee = models.OneToOneField(emp_master, on_delete=models.CASCADE, related_name="bank_details")
+    employee = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name="bank_details")
     bank_name = models.CharField(max_length=255,blank=True, null=True)
     branch_name = models.CharField(max_length=255,blank=True, null=True)
     account_number = models.CharField(max_length=50, unique=True)

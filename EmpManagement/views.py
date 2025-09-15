@@ -1702,7 +1702,7 @@ class Bulkupload_DocumentViewSet(viewsets.ModelViewSet):
             return Response({"error": "Please provide an Excel file."}, status=400)
 
 class EmplistViewSet(viewsets.ReadOnlyModelViewSet):  # Read-only API (GET only)
-    queryset = emp_master.objects.all()
+    queryset = emp_master.objects.filter(is_active=True)
     serializer_class = EmplistSerializer
     permission_classes = [EmployeePermission]
     

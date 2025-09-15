@@ -30,10 +30,7 @@ import logging
 logger = logging.getLogger((__name__))
 from .utils import send_notification_email,get_employee_context
 
-#managers
-class ActiveEmployeeManager(models.Manager):
-    def get_queryset(self):
-        return super().get_queryset().filter(is_active=True)
+
 #EmpManagement
 class emp_master(models.Model):    
     GENDER_CHOICES = [ ("M", "Male"), ("F", "Female"),("O", "Other"),]
@@ -81,31 +78,49 @@ class emp_master(models.Model):
     person_id                = models.CharField(max_length=14,unique=True,validators=[RegexValidator(r'^\d{14}$', 'Must be a 14-digit number')],help_text="14-digit Person ID from Ministry of Labor",blank=True,null=True)    
     work_location            = models.ForeignKey('OrganisationManager.brnch_mstr',on_delete = models.CASCADE,related_name='work_location',null=True,blank =True)
     visa_location            = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,related_name='visa_location',null=True,blank =True)
-
-    objects = ActiveEmployeeManager()  # Now .objects.all() returns only active employees
-    all_objects = models.Manager()#include inactive employees
     
     def save(self, *args, **kwargs):
-        created = not self.pk  # Check if the instance is being created
-        authenticated_user = kwargs.pop('authenticated_user', None)  # Get authenticated user from kwargs, if provided
+        created = not self.pk  # True if creating a new employee
+        authenticated_user = kwargs.pop('authenticated_user', None)
 
         # Set probation period
         if self.emp_joined_date and self.emp_branch_id:
-            self.emp_date_of_confirmation = self.emp_joined_date + timedelta(days=self.emp_branch_id.probation_period_days)
+            self.emp_date_of_confirmation = self.emp_joined_date + timedelta(
+                days=self.emp_branch_id.probation_period_days
+            )
 
         # Set created_by and is_active for new records
         if created:
             if authenticated_user:
                 self.created_by = authenticated_user
-            self.is_active = True  # Explicitly set is_active to True for new records
+            self.is_active = True
+
+        # ---- Check if is_ess changed ----
+        create_user_required = False
+        deactivate_user_required = False
+
+        if not created:  
+            old_instance = emp_master.objects.filter(pk=self.pk).first()
+            if old_instance:
+                # Case 1: was False, now True
+                if not old_instance.is_ess and self.is_ess:
+                    create_user_required = True
+
+                # Case 2: was True, now False
+                if old_instance.is_ess and not self.is_ess:
+                    deactivate_user_required = True
 
         super().save(*args, **kwargs)
 
-        # Create a CustomUser for ESS employees
+        # Case 1: Create user on first save if is_ess=True
         if created and self.is_ess:
+            create_user_required = True
+
+        # Handle user creation
+        if create_user_required:
             user_model = get_user_model()
             username = self.emp_code
-            password = 'admin'  # Consider using a secure password
+            password = 'admin'  # ⚠️ Consider generating a secure password
             email = self.emp_personal_email
             schema_name = connection.schema_name
 
@@ -117,9 +132,14 @@ class emp_master(models.Model):
                 logger.error(f"No company found for schema: {schema_name}")
 
             try:
-                user = user_model.objects.create_user(username=username, email=email, password=password,is_ess=self.is_ess)
-                self.users = user  # Assign the new user to the users field
-                super().save(update_fields=['users'])  # Save again to update users field
+                user = user_model.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    is_ess=True
+                )
+                self.users = user
+                super().save(update_fields=['users'])
 
                 if company_instance:
                     user.tenants.set([company_instance])
@@ -128,10 +148,19 @@ class emp_master(models.Model):
                     logger.warning(f"User {user.username} not assigned to any tenant (no company found).")
 
                 user.is_ess = True
+                user.is_active = True
                 user.save()
             except Exception as e:
                 logger.error(f"Error creating user for {self.emp_code}: {e}")
                 raise
+
+        # Handle user deactivation
+        if deactivate_user_required:
+            if self.users:  # linked user exists
+                self.users.is_active = False
+                self.users.is_ess = False
+                self.users.save()
+                logger.info(f"User {self.users.username} deactivated because ESS was disabled.")
     
     def delete(self, *args, **kwargs):
         """

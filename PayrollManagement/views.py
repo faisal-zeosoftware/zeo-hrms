@@ -611,6 +611,32 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
 class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
     queryset = LoanEmailTemplate.objects.all()
     serializer_class = LoanEmailTemplateSerializer
+    @action(detail=False, methods=['get'], url_path='placeholders')
+    def placeholder_list(self, request):
+        placeholders = {
+            'request': [
+                '{{ doc_number }}',
+                '{{ request_type }}',
+                '{{ reason }}',
+                # Add other request-related placeholders here
+            ],
+            'employee': [
+                '{{ document_number }}',
+                '{{ leave_type }}',
+                '{{ reason }}',
+                '{{ recipient_name }}',
+                '{{ emp_first_name }}',
+                '{{ emp_last_name }}',
+                '{{ emp_gender }}',
+                '{{ emp_date_of_birth }}',
+                '{{ emp_personal_email }}',
+                '{{ emp_company_email }}',
+                '{{ emp_branch_name }}',
+                '{{ emp_department_name }}',
+                '{{ emp_designation_name }}'
+            ]
+        }
+        return Response(placeholders)
 
 class LoanNotificationViewSet(viewsets.ModelViewSet):
     queryset = LoanNotification.objects.all()
@@ -619,6 +645,32 @@ class LoanNotificationViewSet(viewsets.ModelViewSet):
 class AdvSalaryEmailTemplateViewSet(viewsets.ModelViewSet):
     queryset = AdvanceSalaryEmailTemplate.objects.all()
     serializer_class = AdvSalaryEmailTemplateSerializer
+    @action(detail=False, methods=['get'], url_path='placeholders')
+    def placeholder_list(self, request):
+        placeholders = {
+            'request': [
+                '{{ doc_number }}',
+                '{{ request_type }}',
+                '{{ reason }}',
+                # Add other request-related placeholders here
+            ],
+            'employee': [
+                '{{ document_number }}',
+                '{{ leave_type }}',
+                '{{ reason }}',
+                '{{ recipient_name }}',
+                '{{ emp_first_name }}',
+                '{{ emp_last_name }}',
+                '{{ emp_gender }}',
+                '{{ emp_date_of_birth }}',
+                '{{ emp_personal_email }}',
+                '{{ emp_company_email }}',
+                '{{ emp_branch_name }}',
+                '{{ emp_department_name }}',
+                '{{ emp_designation_name }}'
+            ]
+        }
+        return Response(placeholders)
 class AdvSalaryNotificationViewSet(viewsets.ModelViewSet):
     queryset = AdvanceSalaryNotification.objects.all()
     serializer_class = AdvSalaryNotificationSerializer

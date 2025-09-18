@@ -2341,6 +2341,32 @@ class DocumentApprovalLevelViewset(viewsets.ModelViewSet):
 class DocRequestEmailTemplateViewset(viewsets.ModelViewSet):
     queryset = DocRequestEmailTemplate.objects.all()
     serializer_class = DocRequestEmailTemplateSerializer
+    @action(detail=False, methods=['get'], url_path='placeholders')
+    def placeholder_list(self, request):
+        placeholders = {
+            'request': [
+                '{{ doc_number }}',
+                '{{ request_type }}',
+                '{{ reason }}',
+                # Add other request-related placeholders here
+            ],
+            'employee': [
+                '{{ document_number }}',
+                '{{ leave_type }}',
+                '{{ reason }}',
+                '{{ recipient_name }}',
+                '{{ emp_first_name }}',
+                '{{ emp_last_name }}',
+                '{{ emp_gender }}',
+                '{{ emp_date_of_birth }}',
+                '{{ emp_personal_email }}',
+                '{{ emp_company_email }}',
+                '{{ emp_branch_name }}',
+                '{{ emp_department_name }}',
+                '{{ emp_designation_name }}'
+            ]
+        }
+        return Response(placeholders)
 class DocRequestNotificationViewset(viewsets.ModelViewSet):
     queryset = DocRequestNotification.objects.all()
     serializer_class = DocRequestNotificationSerializer

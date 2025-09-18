@@ -203,11 +203,14 @@ class EmployeeResource(resources.ModelResource):
         
             # Nationality Validation
             emp_nationality = row.get('Employee Nationality')
-            matching_emp_nationality = Nationality.objects.filter(N_name__iexact=emp_nationality).first()
-            if not matching_emp_nationality:
-                errors.append(f"No matching Nationality found for Nationality: '{emp_nationality}'")
+            if emp_nationality and emp_nationality.strip():
+                matching_emp_nationality = Nationality.objects.filter(N_name__iexact=emp_nationality).first()
+                if not matching_emp_nationality:
+                    errors.append(f"No matching Nationality found for Nationality: '{emp_nationality}'")
+                else:
+                    row['emp_nationality'] = matching_emp_nationality.id
             else:
-                row['emp_nationality'] = matching_emp_nationality.id
+                row['emp_nationality'] = None  # Allow blank religion without error
             # Religion Validation
             emp_relegion = row.get('Employee Religion')
             # Check if religion is None or empty before querying

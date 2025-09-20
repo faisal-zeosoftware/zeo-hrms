@@ -1166,6 +1166,7 @@ class GeneralRequest(models.Model):
     status           =  models.CharField(max_length=20, default='Pending')
     remarks          =  models.CharField(max_length=50, null=True, blank=True)
     request_document =  models.FileField(upload_to="generalrequest_documents/",null=True,blank=True)
+    is_processed     =  models.BooleanField(default=False, help_text="Marks whether this request has been processed in payroll")
     created_by       =  models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True,blank=True)
     created_at_date  =  models.DateField(auto_now_add=True)
     def __str__(self):

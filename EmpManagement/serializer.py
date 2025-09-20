@@ -391,7 +391,10 @@ class EmpSerializer(serializers.ModelSerializer):
         if instance.emp_relegion:
             rep['emp_relegion'] =instance.emp_relegion.religion
         return rep
-        
+    def update(self, instance, validated_data):
+        if 'is_active' not in validated_data:
+            validated_data['is_active'] = instance.is_active
+        return super().update(instance, validated_data)        
     def get_holidays(self, obj):
         holidays = holiday.objects.filter(holiday_calendar=obj.holiday_calendar)
         return HolidaySerializer(holidays, many=True).data

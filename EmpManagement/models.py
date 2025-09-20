@@ -67,7 +67,7 @@ class emp_master(models.Model):
     updated_by               = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, null=True, related_name='emp_updated_by1')
     is_active                = models.BooleanField(default=True,null=True,blank =True)
     emp_ot_applicable        = models.BooleanField(default=False,null=True,blank =True)
-    is_ess                   = models.BooleanField(default=False,null=True,blank =True)
+    is_ess                   = models.BooleanField(default=False,blank =True)
     emp_branch_id            = models.ForeignKey("OrganisationManager.brnch_mstr",on_delete = models.CASCADE)
     emp_dept_id              = models.ForeignKey("OrganisationManager.dept_master",on_delete = models.CASCADE,null=True,blank =True)
     emp_desgntn_id           = models.ForeignKey("OrganisationManager.desgntn_master",on_delete = models.CASCADE,null=True,blank =True)

@@ -80,7 +80,7 @@ class emp_master(models.Model):
     visa_location            = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,related_name='visa_location',null=True,blank =True)
     
     def save(self, *args, **kwargs):
-        created = not self.pk  # True if creating a new employee
+        created = not self.pk
         authenticated_user = kwargs.pop('authenticated_user', None)
 
         # Set probation period
@@ -96,32 +96,32 @@ class emp_master(models.Model):
             self.is_active = True
 
         # ---- Check if is_ess changed ----
-        create_user_required = False
+        create_or_reactivate_user_required = False
         deactivate_user_required = False
 
-        if not created:  
+        if not created:
             old_instance = emp_master.objects.filter(pk=self.pk).first()
             if old_instance:
-                # Case 1: was False, now True
+                # Case 1: was False, now True → create/reactivate user
                 if not old_instance.is_ess and self.is_ess:
-                    create_user_required = True
+                    create_or_reactivate_user_required = True
 
-                # Case 2: was True, now False
+                # Case 2: was True, now False → deactivate user
                 if old_instance.is_ess and not self.is_ess:
                     deactivate_user_required = True
 
         super().save(*args, **kwargs)
 
-        # Case 1: Create user on first save if is_ess=True
+        # Case 1: New employee created with is_ess=True
         if created and self.is_ess:
-            create_user_required = True
+            create_or_reactivate_user_required = True
 
-        # Handle user creation
-        if create_user_required:
+        # --- Handle User Creation/Activation ---
+        if create_or_reactivate_user_required:
             user_model = get_user_model()
             username = self.emp_code
-            password = 'admin'  # ⚠️ Consider generating a secure password
             email = self.emp_personal_email
+            password = 'admin'  # ⚠️ Consider generating secure password
             schema_name = connection.schema_name
 
             try:
@@ -132,36 +132,47 @@ class emp_master(models.Model):
                 logger.error(f"No company found for schema: {schema_name}")
 
             try:
-                user = user_model.objects.create_user(
-                    username=username,
-                    email=email,
-                    password=password,
-                    is_ess=True
-                )
-                self.users = user
-                super().save(update_fields=['users'])
+                # Check if a user already exists for this employee code
+                user = user_model.objects.filter(username=username).first()
 
-                if company_instance:
-                    user.tenants.set([company_instance])
-                    logger.info(f"User {user.username} assigned to tenants: {company_instance}")
+                if user:
+                    # Reactivate instead of creating duplicate
+                    user.is_active = True
+                    user.is_ess = True
+                    user.email = email or user.email  # update email if available
+                    user.save()
+                    self.users = user
+                    super().save(update_fields=['users'])
+                    logger.info(f"User {user.username} reactivated and linked to employee {self.emp_code}.")
                 else:
-                    logger.warning(f"User {user.username} not assigned to any tenant (no company found).")
+                    # Create new user
+                    user = user_model.objects.create_user(
+                        username=username,
+                        email=email,
+                        password=password,
+                        is_ess=True
+                    )
+                    self.users = user
+                    super().save(update_fields=['users'])
 
-                user.is_ess = True
-                user.is_active = True
-                user.save()
+                    if company_instance:
+                        user.tenants.set([company_instance])
+
+                    user.is_active = True
+                    user.is_ess = True
+                    user.save()
+                    logger.info(f"User {user.username} created and linked to employee {self.emp_code}.")
             except Exception as e:
-                logger.error(f"Error creating user for {self.emp_code}: {e}")
+                logger.error(f"Error handling user for {self.emp_code}: {e}")
                 raise
 
-        # Handle user deactivation
+        # --- Handle User Deactivation ---
         if deactivate_user_required:
-            if self.users:  # linked user exists
+            if self.users:
                 self.users.is_active = False
                 self.users.is_ess = False
                 self.users.save()
-                logger.info(f"User {self.users.username} deactivated because ESS was disabled.")
-    
+                logger.info(f"User {self.users.username} deactivated because ESS was disabled.")    
     def delete(self, *args, **kwargs):
         """
         Instead of deleting, mark the employee as inactive.

@@ -173,6 +173,11 @@ class EmployeeResource(resources.ModelResource):
 
     def before_import_row(self, row, **kwargs):
         errors = []
+        for key, value in row.items():
+            if isinstance(value, str):
+                row[key] = " ".join(value.split())  # removes leading/trailing + multiple spaces
+            elif value is None:
+                row[key] = ""  # replace None with empty string (if you prefer keeping None, skip this)
         login_id = row.get('Employee Code')
         personal_email = row.get('Employee Personal Email ID')
        
@@ -322,7 +327,8 @@ class DocumentResource(resources.ModelResource):
         import_id_fields = ()
 
     def before_import_row(self, row, **kwargs):
-        errors = []  
+        errors = []
+          
         emp_code = row.get('Employee Code')
         doc_type = row.get('Document Type')
 

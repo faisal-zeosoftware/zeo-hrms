@@ -169,7 +169,9 @@ class EmployeeResource(resources.ModelResource):
             'emp_ctgry_id',
             'emp_profile_pic'
         )
-        import_id_fields = ()
+        import_id_fields = ['emp_code'] 
+        skip_unchanged = True             # don’t update unchanged rows
+        report_skipped = True
 
     def before_import_row(self, row, **kwargs):
         errors = []
@@ -180,11 +182,8 @@ class EmployeeResource(resources.ModelResource):
                 row[key] = ""  # replace None with empty string (if you prefer keeping None, skip this)
         login_id = row.get('Employee Code')
         personal_email = row.get('Employee Personal Email ID')
-       
-        
-        if emp_master.objects.filter(emp_code=login_id).exists():
-            errors.append(f"Duplicate value found for Employee Code: {login_id}")
-               
+        # if emp_master.objects.filter(emp_code=login_id).exists():
+        #     errors.append(f"Duplicate value found for Employee Code: {login_id}")
         designation_name = row.get('Employee Designation Code', '').strip()  # Remove extra spaces
         branch_name = row.get('Employee Branch Code', '')
         department_name = row.get('Employee Department Code', '')

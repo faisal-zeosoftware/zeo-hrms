@@ -114,7 +114,7 @@ class DocumentNumbering(models.Model):
 
     # leave_type = models.ForeignKey('calendars.leave_type', on_delete=models.CASCADE, null=True, blank=True)
 
-    # automatic_numbering = models.BooleanField(default=True)
+    automatic_numbering = models.BooleanField(default=True)
     prefix = models.CharField(max_length=50)
     suffix = models.CharField(max_length=50, blank=True, null=True)
     # year = models.IntegerField(default=timezone.now().year)

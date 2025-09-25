@@ -1004,9 +1004,31 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()
-        note = request.data.get('note')  # Get the note from the request
-        approval.approve(note=note)
-        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
+        note = request.data.get('note')
+        approved_days = request.data.get('approved_days')
+
+        # ✅ handle empty string case
+        if approved_days is not None and approved_days != "":
+            try:
+                approved_days = float(approved_days)
+            except ValueError:
+                return Response(
+                    {"error": "Invalid value for approved_days"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            approved_days = None
+
+        try:
+            approval.approve(note=note, approved_days=approved_days)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'status': 'approved',
+            'note': note,
+            'approved_days': approved_days
+        }, status=status.HTTP_200_OK)
 
     
     @action(detail=True, methods=['post'])

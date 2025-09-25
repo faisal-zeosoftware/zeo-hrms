@@ -60,6 +60,7 @@ from calendars .models import leave_type, employee_leave_request
 from django.db.models import Q
 from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer
 from .utils import calculate_settlement
+import csv
 
 r = redis.StrictRedis(host='localhost', port=6379, db=0)
 
@@ -416,7 +417,83 @@ class EmpViewSet(viewsets.ModelViewSet):
         response['Content-Disposition'] = 'attachment; filename="Empployee_data.xlsx"'
         return response
 
+    @action(detail=False, methods=['get'])
+    def export_employee_data_csv(self, request):
+        excluded_fields = {
+            'id', 'is_ess', 'created_at', 'created_by',
+            'updated_at', 'updated_by', 'emp_profile_pic'
+        }
+        display_names = {
+            "emp_code": "Employee Code",
+            "emp_first_name": "First Name",
+            "emp_last_name": "Last Name",
+            "emp_gender": "Gender",
+            "emp_date_of_birth": "Date of Birth",
+            "emp_personal_email": "Email",
+            "emp_mobile_number_1": "Mobile Number",
+            "emp_mobile_number_2": "Mobile Number2",
+            "emp_country_id": "Country",
+            "emp_state_id": "State",
+            "emp_city": "City",
+            "emp_permenent_address": "Permanent Address",
+            "emp_present_address": "Present Address",
+            "emp_status": "Status",
+            "emp_hired_date": "Hired Date",
+            "emp_active_date": "Active Date",
+            "emp_relegion": "Religion",
+            "emp_blood_group": "Blood Group",
+            "emp_nationality_id": "Nationality",
+            "emp_marital_status": "Marital Status",
+            "emp_father_name": "Father Name",
+            "emp_mother_name": "Mother Name",
+            "emp_posting_location": "Posting Location",
+            "is_active": "Active",
+            "epm_ot_applicable": "OT Applicable",
+            "emp_company_id": "Company",
+            "emp_branch_id": "Branch",
+            "emp_dept_id": "Department",
+            "emp_desgntn_id": "Designation",
+            "emp_ctgry_id": "Category"
+        }
 
+        # Fetch all employees
+        employees = emp_master.objects.all()
+
+        # Fetch all distinct field names from Emp_CustomField
+        custom_fields = Emp_CustomField.objects.values_list('emp_custom_field', flat=True).distinct()
+
+        # Prepare headers
+        emp_master_fields = [
+            field.name for field in emp_master._meta.get_fields()
+            if isinstance(field, Field) and field.name not in excluded_fields
+        ]
+        headers = emp_master_fields + list(custom_fields)
+
+        # Prepare HTTP response with CSV content type
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="Employee_data.csv"'
+
+        writer = csv.writer(response)
+
+        # Write header row
+        header_row = [display_names.get(h, h.capitalize()) for h in headers]
+        writer.writerow(header_row)
+
+        # Write employee rows
+        for employee in employees:
+            row = []
+            for header in headers:
+                if header in custom_fields:
+                    custom_field_value = Emp_CustomFieldValue.objects.filter(
+                        emp_master=employee, emp_custom_field=header
+                    ).first()
+                    value = custom_field_value.field_value if custom_field_value else ''
+                else:
+                    value = getattr(employee, header, '')
+                row.append(str(value))
+            writer.writerow(row)
+
+        return response
 
 class ReportViewset(viewsets.ModelViewSet):
     queryset = Report.objects.all()

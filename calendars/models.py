@@ -28,6 +28,7 @@ import calendar
 from datetime import datetime, timedelta
 from django.db.models import Q
 from decimal import Decimal
+from PayrollManagement .models import PayrollRun
 
 
 # Create your models here.
@@ -983,11 +984,43 @@ class employee_leave_request(models.Model):
     half_day_period   = models.CharField(max_length=20, choices=HALF_DAY_CHOICES, null=True, blank=True)  # First Half / Second Half
     created_by        = models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True,blank=True)
     number_of_days    = models.FloatField(default=1)
+    applied_days      = models.FloatField(default=0)   # Total days employee requested
+    approved_days     = models.FloatField(default=0)  # Days actually approved
+    lv_document       = models.FileField(upload_to="leaverequest_documents/",null=True,blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)
     created_by        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-
+    
     def clean(self):
         super().clean()
+        # --- PAYROLL LOCK VALIDATION ---
+        leave_month = self.start_date.month
+        leave_year = self.start_date.year
+        emp = self.employee
+
+        # 🔹 Case 1: Employee included directly in a payroll run
+        payroll_exists = PayrollRun.objects.filter(
+            month=leave_month,
+            year=leave_year,
+            employees=emp,
+            status__in=['processed', 'approved', 'paid']
+        ).exists()
+
+        # 🔹 Case 2: Payroll run is for branch/department/category where employee belongs
+        if not payroll_exists:
+            payroll_exists = PayrollRun.objects.filter(
+                month=leave_month,
+                year=leave_year,
+                branch=emp.emp_branch_id,
+                department=emp.emp_dept_id,
+                category=emp.emp_ctgry_id,
+                status__in=['processed', 'approved', 'paid']
+            ).exists()
+
+        if payroll_exists:
+            raise ValidationError(
+                f"Leave cannot be created/edited because payroll for "
+                f"{leave_month}/{leave_year} is already processed."
+            )
         # Validate if half-day leave is allowed for this leave type
         if self.dis_half_day and not self.leave_type.allow_half_day:
             raise ValidationError(f"{self.leave_type} does not allow half-day leaves.")
@@ -1011,6 +1044,9 @@ class employee_leave_request(models.Model):
     def save(self, *args, **kwargs):
         # Calculate leave days based on start and end date
         self.number_of_days = self.calculate_leave_days()
+        # If applied_days not set, initialize with requested number_of_days
+        if not self.applied_days or self.applied_days == 0:
+            self.applied_days = self.number_of_days
         self.clean()
         # Check if the status changed to "approved"
         previous_instance = type(self).objects.filter(pk=self.pk).first()
@@ -1072,34 +1108,30 @@ class employee_leave_request(models.Model):
             current_date += timedelta(days=1)
 
         return leave_days
-    
     def deduct_leave_balance(self):
         from decimal import Decimal
-        # Fetch or create the employee's leave balance for this leave type
         leave_balance, created = emp_leave_balance.objects.get_or_create(
             employee=self.employee,
             leave_type=self.leave_type
         )
-        print(leave_balance)
-        # # Deduct the number_of_days from balance, allow negative if leave_type.negative is True
-        # if not self.leave_type.negative and leave_balance.balance < self.number_of_days:
-        #     raise ValueError("Insufficient leave balance for this leave type.")
 
-        leave_balance.balance -= self.number_of_days
-        print("f",leave_balance)
+        # Deduct based on approved_days, fallback to number_of_days
+        days_to_deduct = self.approved_days or self.number_of_days
+        leave_balance.balance -= days_to_deduct
         leave_balance.save()
 
-        leave_days_to_deduct = Decimal(str(self.number_of_days))
+        # Deduct from carry forward if exists
+        leave_days_to_deduct = Decimal(str(days_to_deduct))
         carry_forward_entry = LeaveCarryForwardTransaction.objects.filter(
-        employee=self.employee,
-        leave_type=self.leave_type,
-        final_carry_forward__gt=0  # Ensure there's a balance to deduct
-        ).order_by('-reset_date').first()  # Prioritize the oldest carry-forward balance
+            employee=self.employee,
+            leave_type=self.leave_type,
+            final_carry_forward__gt=0
+        ).order_by('-reset_date').first()
 
         if carry_forward_entry:
-            # Deduct the same number of leave days from the carry forward balance
             carry_forward_entry.final_carry_forward -= leave_days_to_deduct
             carry_forward_entry.save()
+
     def restore_leave_balance(self):
         from decimal import Decimal
 
@@ -1124,6 +1156,8 @@ class employee_leave_request(models.Model):
     def __str__(self):
         # return f"{self.employee} {self.document_number} - {self.leave_type} from {self.start_date} to {self.end_date}"
         return f"{self.document_number} "
+    
+    
     # def get_employee_requests(employee_id):
     #     return employee_leave_request.objects.filter(employee_id=employee_id).order_by('-applied_on')
      
@@ -1177,7 +1211,7 @@ class employee_leave_request(models.Model):
                     'emp_designation_name': self.employee.emp_desgntn_id,
                 })
             return
-        # 2️⃣ Determine next approval level
+        #  Determine next approval level
         current_approved_levels = self.approvals.filter(status=LeaveApproval.APPROVED).count()
         next_level = None
 
@@ -1203,7 +1237,9 @@ class employee_leave_request(models.Model):
                 # role=next_level.role,
                 level=next_level.level,
                 status=LeaveApproval.PENDING,
-                note=last_approval.note if last_approval else None
+                employee_id=self.employee.id,
+                note=last_approval.note if last_approval else None,
+                approved_days=last_approval.approved_days if last_approval else None
             )
 
             # Notify next approver
@@ -1323,21 +1359,35 @@ class LeaveApproval(models.Model):
     note                 = models.TextField(null=True, blank=True)
     # rejection_reason     = models.ForeignKey(LvRejectionReason,null=True, blank=True, on_delete=models.SET_NULL)
     rejection_reason     = models.TextField(null=True, blank=True)
+    approved_days = models.FloatField(blank=True, null=True)  # ✅ NEW FIELD
     created_at           = models.DateField(auto_now_add=True)
     created_by           = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at           = models.DateField(auto_now=True)
     employee_id          = models.IntegerField(null=True, blank=True)
-
-    def approve(self, note=None):
+    def approve(self, note=None, approved_days=None):
         self.status = self.APPROVED
         if note:
             self.note = note
+        if approved_days is not None:
+            self.approved_days = approved_days
+            if self.leave_request:
+                if approved_days > (self.leave_request.applied_days or self.leave_request.number_of_days):
+                    raise ValueError("Approved days cannot exceed requested days")
+                
+                self.leave_request.approved_days = approved_days
+                self.leave_request.status = (
+                    'approved' if approved_days == (self.leave_request.applied_days or self.leave_request.number_of_days)
+                    else 'approved'
+                )
+                self.leave_request.save()
         self.save()
+
+        # Continue workflow
         if self.leave_request:
             self.leave_request.move_to_next_level()
         elif self.compensatory_request:
             self.compensatory_request.move_to_next_level()
-
+    
     def reject(self, rejection_reason, note=None):
         if rejection_reason:
             self.rejection_reason = rejection_reason

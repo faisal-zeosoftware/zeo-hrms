@@ -402,8 +402,19 @@ class EmpSerializer(serializers.ModelSerializer):
 class EmplistSerializer(serializers.ModelSerializer):
     class Meta:
         model = emp_master
-        fields = ['emp_code', 'emp_first_name', 'emp_last_name', 'emp_profile_pic','id','is_active']
-
+        fields = ['emp_code', 'emp_first_name', 'emp_last_name', 'emp_profile_pic','id','is_active','emp_branch_id',
+                  'emp_dept_id','emp_desgntn_id','emp_ctgry_id']
+    def to_representation(self, instance):
+        rep = super(EmplistSerializer, self).to_representation(instance)
+        if instance.emp_desgntn_id:  
+            rep['emp_desgntn_id'] = instance.emp_desgntn_id.desgntn_job_title
+        if instance.emp_dept_id:  
+            rep['emp_dept_id'] = instance.emp_dept_id.dept_name
+        if instance.emp_ctgry_id:
+            rep['emp_ctgry_id'] =instance.emp_ctgry_id.ctgry_title
+        if instance.emp_branch_id:
+            rep['emp_branch_id'] =instance.emp_branch_id.branch_name
+        return rep
 class EmpBulkUploadSerializer(serializers.ModelSerializer):
     emp_custom_fields = CustomFieldSerializer(many=True, required=False)
     file = serializers.FileField(write_only=True) 

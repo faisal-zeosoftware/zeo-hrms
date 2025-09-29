@@ -99,12 +99,38 @@ class MultiTypeWidget(Widget):
             return value.strftime('%d-%m-%y')
         return str(value)
 
+class CustomDateWidget(Widget):
+    """Handles datetime, timedelta, and string date formats for Excel and CSV"""
+
+    def clean(self, value, row=None, *args, **kwargs):
+        if value in (None, ''):
+            return None
+        # Excel returns timedelta sometimes
+        if isinstance(value, timedelta):
+            excel_start_date = datetime(1899, 12, 30)
+            return (excel_start_date + value).date()
+        # Excel returns datetime
+        if isinstance(value, datetime):
+            return value.date()
+        # CSV string
+        value = str(value).strip()
+        for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%d/%m/%y', '%d-%m-%y'):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                continue
+        raise ValueError(f"Invalid date format: {value}")
+
+    def render(self, value, obj=None):
+        if not value:
+            return ''
+        return value.strftime('%d/%m/%Y')
 class EmployeeResource(resources.ModelResource):
     emp_code = fields.Field(attribute='emp_code', column_name='Employee Code')
     emp_first_name = fields.Field(attribute='emp_first_name', column_name='Employee First Name')
     emp_last_name = fields.Field(attribute='emp_last_name', column_name='Employee Last Name')
     emp_gender = fields.Field(attribute='emp_gender', column_name='Employee Gender')
-    emp_date_of_birth = fields.Field(attribute='emp_date_of_birth', column_name='Employee DOB(DD/MM/YYYY)',widget=DateWidget(format='%d/%m/%Y'))
+    emp_date_of_birth = fields.Field(attribute='emp_date_of_birth', column_name='Employee DOB(DD/MM/YYYY)',widget=CustomDateWidget())
     emp_personal_email = fields.Field(attribute='emp_personal_email', column_name='Employee Personal Email ID')
     emp_company_email= fields.Field(attribute='emp_company_email', column_name='Employee Company Email ID')
     is_ess = fields.Field(attribute='is_ess', column_name='Iss ESS (True/False)')
@@ -116,8 +142,8 @@ class EmployeeResource(resources.ModelResource):
     emp_permenent_address = fields.Field(attribute='emp_permenent_address', column_name='Employee Permanent Address')
     emp_present_address = fields.Field(attribute='emp_present_address', column_name='Employee Current Address')
     emp_status = fields.Field(attribute='emp_status', column_name='Employee Status(True/False)')
-    emp_joined_date = fields.Field(attribute='emp_joined_date', column_name='Employee Joining Date(DD/MM/YYYY)')
-    emp_date_of_confirmation = fields.Field(attribute='emp_date_of_confirmation', column_name='Employee Confirmaton Date(DD/MM/YYYY)')
+    emp_joined_date = fields.Field(attribute='emp_joined_date', column_name='Employee Joining Date(DD/MM/YYYY)',widget=CustomDateWidget())
+    emp_date_of_confirmation = fields.Field(attribute='emp_date_of_confirmation', column_name='Employee Confirmaton Date(DD/MM/YYYY)',widget=CustomDateWidget())
     emp_relegion = fields.Field(attribute='emp_relegion', column_name='Employee Religion',widget=ForeignKeyWidget(ReligionMaster, 'religion'))
     emp_blood_group = fields.Field(attribute='emp_blood_group', column_name='Employee Blood Group')
     emp_nationality = fields.Field(attribute='emp_nationality', column_name='Employee Nationality',widget=ForeignKeyWidget(Nationality, 'N_name'))
@@ -172,95 +198,123 @@ class EmployeeResource(resources.ModelResource):
         import_id_fields = ['emp_code'] 
         skip_unchanged = True             # don’t update unchanged rows
         report_skipped = True
-
     def before_import_row(self, row, **kwargs):
         errors = []
+
+        # 1️⃣ Normalize strings and replace None with empty string
         for key, value in row.items():
             if isinstance(value, str):
-                row[key] = " ".join(value.split())  # removes leading/trailing + multiple spaces
+                row[key] = " ".join(value.split())  # remove extra spaces
             elif value is None:
-                row[key] = ""  # replace None with empty string (if you prefer keeping None, skip this)
-        login_id = row.get('Employee Code')
-        personal_email = row.get('Employee Personal Email ID')
-        # if emp_master.objects.filter(emp_code=login_id).exists():
-        #     errors.append(f"Duplicate value found for Employee Code: {login_id}")
-        designation_name = row.get('Employee Designation Code', '').strip()  # Remove extra spaces
+                row[key] = ""
+
+        # 2️⃣ Branch, Department, Designation
         branch_name = row.get('Employee Branch Code', '')
         department_name = row.get('Employee Department Code', '')
-        matching_branch = brnch_mstr.objects.filter(branch_name=branch_name).first()
+        designation_name = row.get('Employee Designation Code', '').strip()
+
+        matching_branch = brnch_mstr.objects.filter(branch_name__iexact=branch_name).first()
         if not matching_branch:
             errors.append(f"No matching branch found for Branch Name: {branch_name}")
         else:
-            # Department Validation
-            matching_department = dept_master.objects.filter(branch_id=matching_branch.id, dept_name=department_name).first()
+            matching_department = dept_master.objects.filter(branch_id=matching_branch.id, dept_name__iexact=department_name).first()
             if not matching_department:
                 errors.append(f"No matching department found for Department: {department_name} in Branch: {branch_name}")
             else:
                 row['emp_dept_id'] = matching_department.id
 
-            # Designation Validation
             matching_designation = desgntn_master.objects.filter(desgntn_job_title__iexact=designation_name).first()
             if not matching_designation:
                 errors.append(f"No matching designation found for Designation: '{designation_name}'")
             else:
-                row['emp_designation_id'] = matching_designation.id
-        
-            # Nationality Validation
-            emp_nationality = row.get('Employee Nationality')
-            if emp_nationality and emp_nationality.strip():
-                matching_emp_nationality = Nationality.objects.filter(N_name__iexact=emp_nationality).first()
-                if not matching_emp_nationality:
-                    errors.append(f"No matching Nationality found for Nationality: '{emp_nationality}'")
-                else:
-                    row['emp_nationality'] = matching_emp_nationality.id
+                row['emp_desgntn_id'] = matching_designation.id
+
+        # 3️⃣ Nationality
+        emp_nationality = row.get('Employee Nationality')
+        if emp_nationality:
+            matching_nationality = Nationality.objects.filter(N_name__iexact=emp_nationality).first()
+            if not matching_nationality:
+                errors.append(f"No matching Nationality found for Nationality: '{emp_nationality}'")
             else:
-                row['emp_nationality'] = None  # Allow blank religion without error
-            # Religion Validation
-            emp_relegion = row.get('Employee Religion')
-            # Check if religion is None or empty before querying
-            if emp_relegion and emp_relegion.strip():
-                matching_emp_relegion = ReligionMaster.objects.filter(religion__iexact=emp_relegion.strip()).first()
-                if not matching_emp_relegion:
-                    errors.append(f"No matching Religion found for Religion: '{emp_relegion}'")
-                else:
-                    row['emp_relegion'] = matching_emp_relegion.id
+                row['emp_nationality'] = matching_nationality.id
+        else:
+            row['emp_nationality'] = None
+
+        # 4️⃣ Religion
+        emp_religion = row.get('Employee Religion')
+        if emp_religion:
+            matching_religion = ReligionMaster.objects.filter(religion__iexact=emp_religion).first()
+            if not matching_religion:
+                errors.append(f"No matching Religion found for Religion: '{emp_religion}'")
             else:
-                row['emp_relegion'] = None  # Allow blank religion without error
-                
-         # Validating gender field
+                row['emp_relegion'] = matching_religion.id
+        else:
+            row['emp_relegion'] = None
+
+        # 5️⃣ Gender
         gender = row.get('Employee Gender')
-        if gender and gender not in ['Male', 'Female', 'Other','M','F','O']:
-            errors.append("Invalid value for Employee Gender field. Allowed values are 'Male', 'Female','Other','M','F','O'")
-              
+        if gender and gender not in ['Male', 'Female', 'Other', 'M', 'F', 'O']:
+            errors.append("Invalid value for Employee Gender field. Allowed: 'Male','Female','Other','M','F','O'")
 
-        # Validate date fields format
+        # 6️⃣ Date Fields (handle datetime, timedelta, CSV strings)
         date_fields = ['Employee DOB(DD/MM/YYYY)', 'Employee Joining Date(DD/MM/YYYY)', 'Employee Confirmaton Date(DD/MM/YYYY)']
-        date_format = '%d-%m-%y'  # Format: dd-mm-yy
-
         for field in date_fields:
             date_value = row.get(field)
             if date_value:
                 try:
-                    if isinstance(date_value, datetime):  # Check if value is already a datetime object
-                        date_value = date_value.strftime('%d-%m-%y')  # Convert datetime object to string
-                    datetime.strptime(date_value, date_format)
-                except ValueError:
-                    errors.append(f"Invalid date format for {field}. Date should be in format dd-mm-yy")
-            else:
-                pass
-                # errors.append(f"Date value for {field} is empty")
-        # Validate email format
+                    if isinstance(date_value, datetime):
+                        row[field] = date_value.strftime('%d/%m/%Y')
+                    elif isinstance(date_value, timedelta):
+                        excel_start_date = datetime(1899, 12, 30)
+                        row[field] = (excel_start_date + date_value).strftime('%d/%m/%Y')
+                    else:
+                        parsed_date = None
+                        for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%d/%m/%y', '%d-%m-%y'):
+                            try:
+                                parsed_date = datetime.strptime(date_value, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if not parsed_date:
+                            errors.append(f"Invalid date format for {field}. Expected formats: dd/mm/yyyy or dd-mm-yyyy")
+                        else:
+                            row[field] = parsed_date.strftime('%d/%m/%Y')
+                except Exception as e:
+                    errors.append(f"Error parsing date for {field}: {str(e)}")
+
+        # 7️⃣ Boolean Fields
+        bool_fields = {
+            'Iss ESS (True/False)': 'is_ess',
+            'Employee Status(True/False)': 'emp_status',
+            'Employee Active(True/False)': 'is_active',
+            'Employee OT applicable(True/False)': 'emp_ot_applicable'
+        }
+
+        for field, attr in bool_fields.items():
+            value = row.get(field)
+            if isinstance(value, str):
+                value = value.strip().lower()
+                if value in ['true', '1', 'yes']:
+                    row[attr] = True
+                elif value in ['false', '0', 'no', '']:  # empty string treated as False
+                    row[attr] = False
+                else:
+                    errors.append(f"Invalid boolean value for {field}: {row.get(field)}")
+            elif value is None:
+                row[attr] = False
+
+        # 8️⃣ Email Validation
         email = row.get('Employee Personal Email ID')
         if email:
             if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-                errors.append(f"Invalid email format for Employee Personal Email ID' field:{email}")
+                errors.append(f"Invalid email format for Employee Personal Email ID: {email}")
 
-        
-        # Validating marital status field
+        # 9️⃣ Marital Status Validation
         marital_status = row.get('Employee Marital Status')
-        if marital_status and marital_status not in ['Married', 'Single', 'Divorced', 'Widow','MARRIED','SINGLE','DIVORCED','WIDOW']:
-            errors.append("Invalid value for marital status field. Allowed values are 'Married', 'Single', 'Divorced', 'Widow','MARRIED','SINGLE','DIVORCED',WIDOW")      
+        if marital_status and marital_status.lower() not in ['married', 'single', 'divorced', 'widow']:
+            errors.append("Invalid value for marital status field. Allowed: 'Married','Single','Divorced','Widow'")
 
+        # 10️⃣ Raise validation errors if any
         if errors:
             raise ValidationError(errors)
 

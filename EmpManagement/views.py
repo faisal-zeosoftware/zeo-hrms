@@ -1249,7 +1249,7 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
         try:
             with open(demo_file_path, 'rb') as f:
                 response = HttpResponse(f.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                response['Content-Disposition'] = 'attachment; filename="Bulkupload_Demo_Sheet.xlsx"'
+                response['Content-Disposition'] = 'attachment; filename="Employee_Sample_Template.xlsx"'
                 return response
         except FileNotFoundError:
             return Response({"error": "Default demo file not found."}, status=400)
@@ -1264,9 +1264,8 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
         writer.writerow(headers)  # only headers, no data
 
         response = HttpResponse(output.getvalue(), content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="Bulkupload_Template.csv"'
+        response['Content-Disposition'] = 'attachment; filename="Employee_Sample_Template.csv"'
         return response
-
 #EMP_FAMILY
 class EmpFamViewSet(viewsets.ModelViewSet):
     queryset = emp_family.objects.all()  # Retrieve all instances of emp_family model

@@ -1,8 +1,89 @@
-from django.db.models.signals import post_save
+# OrganisationManager/signals.py
+from django_tenants.signals import post_schema_sync
 from django.dispatch import receiver
-from calendars .models import leave_type
-from .models import brnch_mstr, DocumentNumbering
+from django_tenants.utils import schema_context
+from OrganisationManager.models import brnch_mstr
+from calendars.models import leave_type
 from PayrollManagement .models import SalaryComponent
+
+@receiver(post_schema_sync)
+def create_tenant_defaults(sender, tenant, **kwargs):
+    with schema_context(tenant.schema_name):
+        # Branch
+        brnch_mstr.objects.create(
+            branch_name=tenant.name,
+            branch_logo=tenant.logo,
+            branch_code="BR001",
+            probation_period_days=30,
+            br_country=tenant.country,
+            br_city="Sample City",
+            br_pincode="123456",
+            br_branch_nmbr_1="BR-0001",
+            br_branch_mail="branch@example.com",
+        )
+
+        # Default leave types
+        default_leaves = [
+            ("Sick Leave", "SL", "paid"),
+            ("Annual Leave", "AL", "paid"),
+            ("Casual Leave", "CL", "paid"),
+            ("Maternity Leave", "ML", "paid"),
+            ("Paternity Leave", "PL", "paid"),
+        ]
+        for name, code, leave_type_value in default_leaves:
+            leave_type.objects.get_or_create(
+                code=code,
+                defaults={
+                    "name": name,
+                    "type": leave_type_value,
+                    "unit": "days",
+                    "negative": False,
+                    "description": f"Default {name}",
+                    "allow_half_day": True,
+                    "include_weekend_and_holiday": False,
+                    "use_common_workflow": True,
+                    "include_dashboard": True,
+                },
+            )
+
+        # Default salary components
+        default_salary_components = [
+            ("Basic", "addition", "BAS", True, "", False, True, False, False),
+            ("HRA", "addition", "HRA", True, "", False, True, False, False),
+            ("Air Ticket", "addition", "ATK", True, "", False, True, False, True),
+            ("Petty Cash", "addition", "PC", False, "", False, True, False, False),
+        ]
+        for (
+            name,
+            component_type,
+            code,
+            is_fixed,
+            formula,
+            is_loan_component,
+            show_in_payslip,
+            is_advance_salary,
+            is_air_ticket,
+        ) in default_salary_components:
+            SalaryComponent.objects.get_or_create(
+                code=code,
+                defaults={
+                    "name": name,
+                    "component_type": component_type,
+                    "is_fixed": is_fixed,
+                    "formula": formula,
+                    "description": f"Default {name} Component",
+                    "is_loan_component": is_loan_component,
+                    "show_in_payslip": show_in_payslip,
+                    "is_advance_salary": is_advance_salary,
+                    "is_air_ticket": is_air_ticket,
+                },
+            )
+
+from django.db.models.signals import post_save
+# from django.dispatch import receiver
+# from calendars .models import leave_type
+from .models import brnch_mstr, DocumentNumbering
+# from PayrollManagement .models import SalaryComponent
 from datetime import timedelta
 from django.utils import timezone
 
@@ -22,53 +103,5 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
                     'created_by': instance.br_created_by,
                     'start_date':timezone.now().date(),
                     'end_date':timezone.now().date() + timedelta(days=365),
-                }
-            )
-        default_leaves = [
-            ('Sick Leave', 'SL', 'paid'),
-            ('Annual Leave', 'AL', 'paid'),
-            ('Casual Leave', 'CL', 'paid'),
-            ('Maternity Leave', 'ML', 'paid'),
-            ('Paternity Leave', 'PL', 'paid'),
-        ]
-
-        for name, code, leave_type_value in default_leaves:
-            leave_type.objects.get_or_create(
-                name=name,
-                code=code,
-                branch=instance,
-                defaults={
-                    'type': leave_type_value,
-                    'unit': 'days',
-                    'negative': False,
-                    'description': f'Default {name}',
-                    'allow_half_day': True,
-                    'include_weekend_and_holiday': False,
-                    'use_common_workflow': True,
-                    'include_dashboard': True,
-                    'created_by': instance.br_created_by,
-                }
-            )
-        default_salary_components = [
-            ("Basic", "addition", "BAS", True, "", False, True, False, False),
-            ("HRA", "addition", "HRA", True, "", False, True, False, False),
-            ("Air Ticket", "addition", "ATK", True, "", False, True, False, True),
-            ("Petty Cash", "addition", "PC", False, "", False, True, False, False),
-        ]
-
-        for name, component_type, code, is_fixed, formula, is_loan_component, show_in_payslip, is_advance_salary, is_air_ticket in default_salary_components:
-            SalaryComponent.objects.get_or_create(
-                name=name,
-                branch=instance,
-                defaults={
-                    'component_type': component_type,
-                    'code': code,
-                    'is_fixed': is_fixed,
-                    'formula': formula,
-                    'description': f'Default {name} Component',
-                    'is_loan_component': is_loan_component,
-                    'show_in_payslip': show_in_payslip,
-                    'is_advance_salary': is_advance_salary,
-                    'is_air_ticket': is_air_ticket,
                 }
             )

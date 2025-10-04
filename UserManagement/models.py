@@ -63,20 +63,20 @@ class company(TenantMixin):
         if not Domain.objects.filter(domain=f"{self.schema_name}.localhost").exists():
             Domain.objects.create(domain=f"{self.schema_name}.localhost", tenant=self)
 
-        # Switch to the newly created schema using schema_context
-        with schema_context(self.schema_name):
-            # Create the branch within the company's schema
-            brnch_mstr.objects.create(
-                branch_name=self.name,
-                branch_logo=self.logo,
-                branch_code='BR001',  # Provide a default or unique branch code
-                probation_period_days = 30,  # Provide a value for non-nullable field
-                br_country_id=1,  # Set the country or use default ID
-                br_city='Sample City',
-                br_pincode='123456',
-                br_branch_nmbr_1='BR-0001',  # Provide a unique branch number
-                br_branch_mail='branch@example.com',  # Provide a valid email
-            )
+        # # Switch to the newly created schema using schema_context
+        # with schema_context(self.schema_name):
+        #     # Create the branch within the company's schema
+        #     brnch_mstr.objects.create(
+        #         branch_name=self.name,
+        #         branch_logo=self.logo,
+        #         branch_code='BR001',  # Provide a default or unique branch code
+        #         probation_period_days = 30,  # Provide a value for non-nullable field
+        #         br_country_id=1,  # Set the country or use default ID
+        #         br_city='Sample City',
+        #         br_pincode='123456',
+        #         br_branch_nmbr_1='BR-0001',  # Provide a unique branch number
+        #         br_branch_mail='branch@example.com',  # Provide a valid email
+        #     )
     def __str__(self):
         return self.name
 

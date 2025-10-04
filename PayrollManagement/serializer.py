@@ -5,6 +5,7 @@ from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
+from decimal import Decimal
 
 
 class SalaryComponentSerializer(serializers.ModelSerializer):
@@ -258,65 +259,111 @@ class LoanApprovalSerializer(serializers.ModelSerializer):
 
 class SIFSerializer(serializers.Serializer):
     payroll_run_id = serializers.IntegerField()
-
+    department_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, allow_empty=True
+    )
+    employee_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, allow_empty=True
+    )
+    branch_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, allow_empty=True
+    )
     def validate_payroll_run_id(self, value):
         if not PayrollRun.objects.filter(id=value).exists():
             raise serializers.ValidationError("Invalid PayrollRun ID")
         return value
-
     def generate_sif_data(self):
         payroll_run = PayrollRun.objects.get(id=self.validated_data['payroll_run_id'])
-        employees = payroll_run.get_employees()
+        employees = payroll_run.get_employees().filter(emp_status=True)
+
+        # ✅ Apply branch filter if provided
+        branch_ids = self.validated_data.get("branch_ids", [])
+        if branch_ids:
+            employees = employees.filter(emp_branch_id__in=branch_ids)
+
+        # ✅ Apply department filter if provided
+        department_ids = self.validated_data.get("department_ids", [])
+        if department_ids:
+            employees = employees.filter(emp_dept_id__in=department_ids)
+
+        # ✅ Apply employee filter if provided
+        employee_ids = self.validated_data.get("employee_ids", [])
+        if employee_ids:
+            employees = employees.filter(id__in=employee_ids)
+
         month, year = payroll_run.month, payroll_run.year
         last_day = calendar.monthrange(year, month)[1]
         pay_start_date = f"{year}-{month:02d}-01"
         pay_end_date = f"{year}-{month:02d}-{last_day}"
-    
+
         sif_data = []
-        total_salary = 0  # Initialize total
-    
+        total_salary = Decimal("0.0")
+        skipped_employees = []
+
         for employee in employees:
-            if not employee.person_id:
-                raise serializers.ValidationError(f"Employee {employee.emp_code} is missing a valid 14-digit Person ID")
-    
-            try:
-                bank_detail = employee.bank_details
-            except EmployeeBankDetail.DoesNotExist:
-                raise serializers.ValidationError(f"Employee {employee.emp_code} has no bank details")
-    
-            if not bank_detail.route_code:
-                raise serializers.ValidationError(f"Employee {employee.emp_code} is missing a valid 9-digit routing code")
-            if not bank_detail.iban_number:
-                raise serializers.ValidationError(f"Employee {employee.emp_code} is missing a valid 23-character IBAN")
-    
+            # ✅ Get the employee’s active bank detail
+            bank_detail = employee.bank_details.filter(is_active=True).first()
+            if not bank_detail:
+                skipped_employees.append({
+                    "emp_code": employee.emp_code,
+                    "reason": "Missing or inactive bank details"
+                })
+                continue
+
+            # ✅ Person ID validation
+            if not employee.person_id or len(employee.person_id) != 14:
+                skipped_employees.append({
+                    "emp_code": employee.emp_code,
+                    "reason": "Invalid or missing Person ID (14 digits required)"
+                })
+                continue
+
+            # ✅ Routing code validation
+            if not bank_detail.route_code or len(bank_detail.route_code) != 9:
+                skipped_employees.append({
+                    "emp_code": employee.emp_code,
+                    "reason": "Invalid or missing Routing Code (9 digits required)"
+                })
+                continue
+
+            # ✅ IBAN validation
+            if not bank_detail.iban_number or len(bank_detail.iban_number) != 23:
+                skipped_employees.append({
+                    "emp_code": employee.emp_code,
+                    "reason": "Invalid or missing IBAN (23 characters required)"
+                })
+                continue
+
+            # ✅ Calculate fixed & variable income
             fixed_income = sum(
-                structure.amount or 0 for structure in employee.salary_structures.filter(
+                struct.amount or Decimal("0.0")
+                for struct in employee.salary_structures.filter(
                     component__is_fixed=True, is_active=True
                 )
             )
             variable_income = sum(
-                salary_struct.amount or 0 for salary_struct in EmployeeSalaryStructure.objects.filter(
-                    employee=employee, is_active=True
+                struct.amount or Decimal("0.0")
+                for struct in employee.salary_structures.filter(
+                    component__is_fixed=False, is_active=True
                 )
             )
-    
-            # Add to total salary
+
             total_salary += fixed_income + variable_income
-    
+
             row = {
-                'Type': 'EDR',
-                'Person ID': employee.person_id,
-                'Routing Code': bank_detail.route_code,
-                'IBAN Number': bank_detail.iban_number,
-                'Pay Start Date': pay_start_date,
-                'Pay End Date': pay_end_date,
-                'Number of Days': last_day,
-                'Fixed Income': f"{fixed_income:.2f}",
-                'Variable Income': f"{variable_income:.2f}",
+                "Type": "EDR",
+                "Person ID": employee.person_id,
+                "Routing Code": bank_detail.route_code,
+                "IBAN Number": bank_detail.iban_number,
+                "Pay Start Date": pay_start_date,
+                "Pay End Date": pay_end_date,
+                "Number of Days": last_day,
+                "Fixed Income": f"{fixed_income:.2f}",
+                "Variable Income": f"{variable_income:.2f}",
             }
             sif_data.append(row)
+        return sif_data, total_salary, skipped_employees
     
-        return sif_data, total_salary  # ✅ Now returning two values
 class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
     currency_details = serializers.SerializerMethodField()
     class Meta:

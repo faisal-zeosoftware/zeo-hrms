@@ -299,7 +299,8 @@ class SIFDataView(APIView):
         serializer = SIFSerializer(data=request.data)
         if serializer.is_valid():
             try:
-                sif_data, total_salary = serializer.generate_sif_data()
+                # sif_data, total_salary = serializer.generate_sif_data()
+                sif_data, total_salary, skipped_employees = serializer.generate_sif_data()
             except serializers.ValidationError as e:
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -374,7 +375,8 @@ class SIFDataView(APIView):
                 'data': {
                     'hdr': hdr_row,
                     'edr': sif_data,
-                    'scr': scr_row
+                    'scr': scr_row,
+                    "skipped_employees": skipped_employees,  # 👈 new field
                 }
             }
 

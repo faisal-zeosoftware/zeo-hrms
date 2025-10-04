@@ -52,6 +52,11 @@ import json
 from datetime import date,datetime
 from django.core.cache import cache
 from django.utils import timezone
+import io
+import pandas as pd
+from django.http import HttpResponse
+from rest_framework.decorators import action
+from rest_framework.response import Response
 
 
 def get_model_permissions(model):
@@ -201,31 +206,70 @@ class DeptBulkUploadViewSet(viewsets.ModelViewSet):
     queryset = dept_master.objects.all()
     serializer_class = DeptUploadSerializer
     
-
     @action(detail=False, methods=['post'])
     def bulk_upload(self, request):
-        if request.method == 'POST' and request.FILES.get('file'):
-            excel_file = request.FILES['file']
-            if excel_file.name.endswith('.xlsx'):
-                try:
-                    # Load data from the Excel file into a Dataset
-                    dataset = Dataset()
-                    dataset.load(excel_file.read(), format='xlsx')
+        if not request.FILES.get('file'):
+            return Response({"error": "Please provide a file."}, status=400)
 
-                    # Create a resource instance
-                    resource = DepartmentResource()
+        uploaded_file = request.FILES['file']
+        file_name = uploaded_file.name.lower()
 
-                    # Import data into the model using the resource
-                    result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+        try:
+            dataset = Dataset()
 
-                    return Response({"message": f"{result.total_rows} records created successfully"})
-                except Exception as e:
-                    return Response({"error": str(e)}, status=400)
+            # Handle CSV
+            if file_name.endswith('.csv'):
+                dataset.load(uploaded_file.read().decode('utf-8'), format='csv')
+
+            # Handle Excel
+            elif file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+                dataset.load(uploaded_file.read(), format='xlsx')
+
             else:
-                return Response({"error": "Invalid file format. Only Excel files (.xlsx) are supported."}, status=400)
-        else:
-            return Response({"error": "Please provide an Excel file."}, status=400)
+                return Response({"error": "Invalid file format. Only CSV or Excel files are supported."}, status=400)
 
+            # Import via resource
+            resource = DepartmentResource()
+            result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+
+            return Response({"message": f"{result.total_rows} records uploaded successfully."})
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+    @action(detail=False, methods=['get'])
+    def download_demo_excel(self, request):
+        # Only column headers
+        columns = ["Department Name", "Department Code", "Description", "Active", "Branch"]
+
+        # Empty DataFrame (only headers, no rows)
+        df = pd.DataFrame(columns=columns)
+
+        # Save to Excel in memory
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Departments")
+
+        buffer.seek(0)
+        response = HttpResponse(
+            buffer,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = 'attachment; filename="department_demo.xlsx"'
+        return response
+
+    @action(detail=False, methods=['get'])
+    def download_demo_csv(self, request):
+        # Only column headers
+        columns = ["Department Name", "Department Code", "Description", "Active", "Branch"]
+
+        df = pd.DataFrame(columns=columns)
+
+        buffer = io.StringIO()
+        df.to_csv(buffer, index=False)
+
+        response = HttpResponse(buffer.getvalue(), content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="department_demo.csv"'
+        return response
 #DESIGNATION 
 class DesignationViewSet(viewsets.ModelViewSet):
     queryset = desgntn_master.objects.all()
@@ -321,45 +365,68 @@ class DesignationBulkUploadViewSet(viewsets.ModelViewSet):
    
     @action(detail=False, methods=['post'])
     def bulk_upload(self, request):
-        if request.method == 'POST' and request.FILES.get('file'):
-            excel_file = request.FILES['file']
-            if excel_file.name.endswith('.xlsx'):
-                try:
-                    # Load data from the Excel file into a Dataset
-                    dataset = Dataset()
-                    dataset.load(excel_file.read(), format='xlsx')
+        if not request.FILES.get('file'):
+            return Response({"error": "Please provide a file."}, status=400)
 
-                    # Create a resource instance
-                    resource = DesignationResource()
+        uploaded_file = request.FILES['file']
+        file_name = uploaded_file.name.lower()
 
-                    # Initialize a list to capture row-wise errors
-                    errors = []
+        try:
+            dataset = Dataset()
 
-                    # Validate each row before importing
-                    for row_number, row in enumerate(dataset.dict, start=2):  # Start counting from row 2
-                        try:
-                            resource.before_import_row(row, row_number=row_number)
-                        except ValueError as e:
-                            # Append validation errors for this row
-                            errors.append(str(e))
+            # Handle CSV
+            if file_name.endswith('.csv'):
+                dataset.load(uploaded_file.read().decode('utf-8'), format='csv')
 
-                    # If there are errors, return them in the response
-                    if errors:
-                        return Response({"validation_errors": errors}, status=400)
+            # Handle Excel
+            elif file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+                dataset.load(uploaded_file.read(), format='xlsx')
 
-                    # Import data if there are no errors
-                    result = resource.import_data(dataset, dry_run=False, raise_errors=True)
-
-                    # Return success message
-                    return Response({"message": f"{result.total_rows} records created successfully"})
-
-                except Exception as e:
-                    # Handle unexpected errors
-                    return Response({"error": str(e)}, status=400)
             else:
-                return Response({"error": "Invalid file format. Only Excel files (.xlsx) are supported."}, status=400)
-        else:
-            return Response({"error": "Please provide an Excel file."}, status=400)
+                return Response({"error": "Invalid file format. Only CSV or Excel files are supported."}, status=400)
+
+            # Import via resource
+            resource = DesignationResource()
+            result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+
+            return Response({"message": f"{result.total_rows} records uploaded successfully."})
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+    @action(detail=False, methods=['get'])
+    def download_demo_excel(self, request):
+        # Only column headers
+        columns = ["Job Tittle", "Designation Code", "Description", "Active"]
+
+        # Empty DataFrame (only headers, no rows)
+        df = pd.DataFrame(columns=columns)
+
+        # Save to Excel in memory
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Designation")
+
+        buffer.seek(0)
+        response = HttpResponse(
+            buffer,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = 'attachment; filename="sample_designation_sheet.xlsx"'
+        return response
+
+    @action(detail=False, methods=['get'])
+    def download_demo_csv(self, request):
+        # Only column headers
+        columns = ["Job Tittle", "Designation Code", "Description", "Active"]
+
+        df = pd.DataFrame(columns=columns)
+
+        buffer = io.StringIO()
+        df.to_csv(buffer, index=False)
+
+        response = HttpResponse(buffer.getvalue(), content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="sample_designation_sheet.csv"'
+        return response
 
 #CATOGARY CRUD
 class CatogoryViewSet(viewsets.ModelViewSet):
@@ -372,31 +439,70 @@ class CategoryBulkUploadViewSet(viewsets.ModelViewSet):
     queryset = ctgry_master.objects.all()
     serializer_class = CtgryUploadSerializer
     
-
     @action(detail=False, methods=['post'])
     def bulk_upload(self, request):
-        if request.method == 'POST' and request.FILES.get('file'):
-            excel_file = request.FILES['file']
-            if excel_file.name.endswith('.xlsx'):
-                try:
-                    # Load data from the Excel file into a Dataset
-                    dataset = Dataset()
-                    dataset.load(excel_file.read(), format='xlsx')
+        if not request.FILES.get('file'):
+            return Response({"error": "Please provide a file."}, status=400)
 
-                    # Create a resource instance
-                    resource = CategoryResource()
+        uploaded_file = request.FILES['file']
+        file_name = uploaded_file.name.lower()
 
-                    # Import data into the model using the resource
-                    result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+        try:
+            dataset = Dataset()
 
-                    return Response({"message": f"{result.total_rows} records created successfully"})
-                except Exception as e:
-                    return Response({"error": str(e)}, status=400)
+            # Handle CSV
+            if file_name.endswith('.csv'):
+                dataset.load(uploaded_file.read().decode('utf-8'), format='csv')
+
+            # Handle Excel
+            elif file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+                dataset.load(uploaded_file.read(), format='xlsx')
+
             else:
-                return Response({"error": "Invalid file format. Only Excel files (.xlsx) are supported."}, status=400)
-        else:
-            return Response({"error": "Please provide an Excel file."}, status=400)
+                return Response({"error": "Invalid file format. Only CSV or Excel files are supported."}, status=400)
 
+            # Import via resource
+            resource = CategoryResource()
+            result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+
+            return Response({"message": f"{result.total_rows} records uploaded successfully."})
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+    @action(detail=False, methods=['get'])
+    def download_demo_excel(self, request):
+        # Only column headers
+        columns = ["Category", "Category Code", "Description", "Active"]
+
+        # Empty DataFrame (only headers, no rows)
+        df = pd.DataFrame(columns=columns)
+
+        # Save to Excel in memory
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Category")
+
+        buffer.seek(0)
+        response = HttpResponse(
+            buffer,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = 'attachment; filename="sample_category_sheet.xlsx"'
+        return response
+
+    @action(detail=False, methods=['get'])
+    def download_demo_csv(self, request):
+        # Only column headers
+        columns = ["Category", "Category Code", "Description", "Active"]
+
+        df = pd.DataFrame(columns=columns)
+
+        buffer = io.StringIO()
+        df.to_csv(buffer, index=False)
+
+        response = HttpResponse(buffer.getvalue(), content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="sample_category_sheet.csv"'
+        return response
 
 class FiscalYearViewSet(viewsets.ModelViewSet):
     queryset = FiscalYear.objects.all()

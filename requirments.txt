@@ -20,3 +20,4 @@ django-celery-beat
 django-oauth-toolkit
 django-redis
 simpleeval
+xlsxwriter

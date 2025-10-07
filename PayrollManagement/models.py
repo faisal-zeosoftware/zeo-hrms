@@ -300,6 +300,7 @@ class  LoanApplication(models.Model):
     ]
 
     employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE,related_name="loan")
+    document_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
     loan_type = models.ForeignKey(LoanType, on_delete=models.CASCADE)
     amount_requested = models.DecimalField(max_digits=10, decimal_places=2)
     repayment_period = models.PositiveIntegerField()  # In months
@@ -373,7 +374,7 @@ class  LoanApplication(models.Model):
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
-                    'doc_number': self.loan_type,
+                    'document_number': self.loan_type,
                     'loan_type': self.loan_type.loan_type,
                     
                 },
@@ -407,6 +408,7 @@ class  LoanApplication(models.Model):
                 context={
                     **get_employee_context(self.employee),
                     'loan_type': self.loan_type.loan_type,
+                    'document_number': self.document_number,
                     
                 },
                 email_template_model=LoanEmailTemplate,
@@ -424,6 +426,7 @@ class  LoanApplication(models.Model):
                 context={
                     **get_employee_context(self.employee),
                     'loan_type': self.loan_type.loan_type,
+                    'document_number': self.document_number,
                 
                 },
                 email_template_model=LoanEmailTemplate,
@@ -502,6 +505,7 @@ class LoanApproval(models.Model):
         context={
             **get_employee_context(self.loan_request.employee),
             'loan_type': self.loan_request.loan_type.loan_type,
+            'document_number': self.loan_request.document_number,
             
         },
         email_template_model=LoanEmailTemplate,
@@ -537,6 +541,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 context={
                     **get_employee_context(instance.employee),
                     'loan_type': instance.loan_type.loan_type,
+                    'document_number': instance.document_number,
                     
                 },
                 email_template_model=LoanEmailTemplate,

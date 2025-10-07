@@ -624,7 +624,7 @@ class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
             ],
             'employee': [
                 '{{ document_number }}',
-                '{{ leave_type }}',
+                '{{ loan_type }}',
                 '{{ reason }}',
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
@@ -650,15 +650,8 @@ class AdvSalaryEmailTemplateViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='placeholders')
     def placeholder_list(self, request):
         placeholders = {
-            'request': [
-                '{{ doc_number }}',
-                '{{ request_type }}',
-                '{{ reason }}',
-                # Add other request-related placeholders here
-            ],
             'employee': [
                 '{{ document_number }}',
-                '{{ leave_type }}',
                 '{{ reason }}',
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',

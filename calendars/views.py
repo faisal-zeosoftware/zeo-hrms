@@ -150,16 +150,13 @@ class LvEmailTemplateviewset(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='placeholders')
     def placeholder_list(self, request):
         placeholders = {
-            'request': [
-                '{{ doc_number }}',
-                '{{ request_type }}',
-                '{{ reason }}',
-                # Add other request-related placeholders here
-            ],
+            
             'employee': [
                 '{{ document_number }}',
                 '{{ leave_type }}',
                 '{{ reason }}',
+                '{{ start_date }}',
+                '{{ end_date }}',
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',

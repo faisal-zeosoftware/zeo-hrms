@@ -88,7 +88,8 @@ class emp_master(models.Model):
             self.emp_date_of_confirmation = self.emp_joined_date + timedelta(
                 days=self.emp_branch_id.probation_period_days
             )
-
+        if self.person_id == '':
+            self.person_id = None
         # Set created_by and is_active for new records
         if created:
             if authenticated_user:

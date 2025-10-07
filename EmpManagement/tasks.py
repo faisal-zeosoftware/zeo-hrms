@@ -73,7 +73,7 @@ def send_document_notification(document, expiry_date, status):
         )
 
         context = {
-            'employee_first_name': employee.emp_first_name,
+            'emp_first_name': employee.emp_first_name,
             'document_type': document.document_type,
             'status': status,
             'expiry_date': expiry_date,

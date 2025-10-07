@@ -2362,6 +2362,7 @@ class DocExpEmailTemplateViewset(viewsets.ModelViewSet):
                 '{{ designation }}',
                 '{{ document_type }}',
                 '{{ expiry_date }}',
+                '{{ status }}'
             ]
         }
         return Response(placeholders)
@@ -2448,15 +2449,10 @@ class DocRequestEmailTemplateViewset(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='placeholders')
     def placeholder_list(self, request):
         placeholders = {
-            'request': [
+            
+            'employee': [
                 '{{ doc_number }}',
                 '{{ request_type }}',
-                '{{ reason }}',
-                # Add other request-related placeholders here
-            ],
-            'employee': [
-                '{{ document_number }}',
-                '{{ leave_type }}',
                 '{{ reason }}',
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',

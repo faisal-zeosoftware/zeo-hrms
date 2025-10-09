@@ -365,8 +365,9 @@ class DocumentResource(resources.ModelResource):
     emp_id = fields.Field(attribute='emp_id', column_name='Employee Code', widget=ForeignKeyWidget(emp_master, 'emp_code'))
     document_type = fields.Field(attribute='document_type', column_name='Document Type', widget=ForeignKeyWidget(document_type, 'type_name'))
     emp_doc_number = fields.Field(attribute='emp_doc_number', column_name='Document Number')
-    emp_doc_issued_date = fields.Field(attribute='emp_doc_issued_date', column_name='Document Issued Date')
-    emp_doc_expiry_date = fields.Field(attribute='emp_doc_expiry_date', column_name='Document Expiry Date')
+    emp_doc_issued_date = fields.Field(attribute='emp_doc_issued_date', column_name='Document Issued Date',widget=CustomDateWidget())
+    emp_doc_expiry_date = fields.Field(attribute='emp_doc_expiry_date', column_name='Document Expiry Date',widget=CustomDateWidget())
+    is_active = fields.Field(attribute='is_active', column_name='Active')
 
     class Meta:
         model = Emp_Documents
@@ -376,11 +377,22 @@ class DocumentResource(resources.ModelResource):
             'emp_doc_number',
             'emp_doc_issued_date',
             'emp_doc_expiry_date',
+            'is_active',
         )
-        import_id_fields = ()
+        import_id_fields = ["emp_doc_number"]
 
     def before_import_row(self, row, **kwargs):
+        if isinstance(row, list):
+            row = dict(zip(self.get_header_names(), row))
+
         errors = []
+
+        # 1️⃣ Normalize strings and replace None
+        for key, value in row.items():
+            if isinstance(value, str):
+                row[key] = " ".join(value.split())
+            elif value is None:
+                row[key] = ""
           
         emp_code = row.get('Employee Code')
         doc_type = row.get('Document Type')
@@ -397,25 +409,61 @@ class DocumentResource(resources.ModelResource):
 
         # Validate and convert date fields format
         date_fields = ['Document Issued Date', 'Document Expiry Date']
-        input_date_format = '%Y-%m-%d'  # The format after conversion from Excel
-
         for field in date_fields:
             date_value = row.get(field)
             if date_value:
                 try:
-                    # Check if date_value is already a datetime object
                     if isinstance(date_value, datetime):
-                        parsed_date = date_value.date()  # Extract date part
-                    elif isinstance(date_value, str):
-                        parsed_date = datetime.strptime(date_value, input_date_format).date()
+                        row[field] = date_value.strftime('%d/%m/%Y')
+                    elif isinstance(date_value, timedelta):
+                        excel_start_date = datetime(1899, 12, 30)
+                        row[field] = (excel_start_date + date_value).strftime('%d/%m/%Y')
                     else:
-                        raise ValueError(f"Unsupported date format for {field}")
-                    
-                    row[field] = parsed_date
-                except ValueError as e:
-                    errors.append(f"Invalid date format for {field}: {e}")
+                        parsed_date = None
+                        for fmt in ('%d/%m/%Y','%d-%m-%Y','%d/%m/%y','%d-%m-%y'):
+                            try:
+                                parsed_date = datetime.strptime(date_value, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if not parsed_date:
+                            errors.append(f"Invalid date format for {field}. Expected dd/mm/yyyy")
+                        else:
+                            row[field] = parsed_date.strftime('%d/%m/%Y')
+                except Exception as e:
+                    errors.append(f"Error parsing date for {field}: {str(e)}")
             # else:
             #     errors.append(f"Date value for {field} is empty")
+        # 7️⃣ Boolean Fields
+        # 4️⃣ Normalize Boolean fields
+        bool_fields = {
+            'Active': 'is_active',
+        }
+
+        for field, attr in bool_fields.items():
+            value = row.get(field)
+
+            # Convert typical string inputs
+            if isinstance(value, str):
+                value = value.strip().lower()
+                if value in ['true', '1', 'yes', 'y', 't']:
+                    bool_val = True
+                elif value in ['false', '0', 'no', 'n', 'f', '']:
+                    bool_val = False
+                else:
+                    errors.append(f"Invalid boolean value for {field}: {row.get(field)}")
+                    bool_val = False
+            elif isinstance(value, (int, bool)):
+                bool_val = bool(value)
+            elif value is None:
+                bool_val = False
+            else:
+                errors.append(f"Invalid type for boolean field {field}: {type(value)}")
+                bool_val = False
+
+            # Update both field and attribute
+            row[field] = bool_val
+            row[attr] = bool_val
 
         if errors:
             raise ValidationError(errors)

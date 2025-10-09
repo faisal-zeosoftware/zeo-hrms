@@ -157,6 +157,10 @@ class EmployeeResource(resources.ModelResource):
     emp_dept_id = fields.Field(attribute='emp_dept_id', column_name='Employee Department Code',widget=CustomForeignKeyWidget(dept_master, 'dept_name'))
     emp_desgntn_id = fields.Field(attribute='emp_desgntn_id', column_name='Employee Designation Code',widget=ForeignKeyWidget(desgntn_master, 'desgntn_job_title'))
     emp_ctgry_id = fields.Field(attribute='emp_ctgry_id', column_name='Employee Category Code',widget=ForeignKeyWidget(ctgry_master, 'ctgry_title'))
+    person_id = fields.Field(attribute='person_id', column_name='Person ID')
+    work_location = fields.Field(attribute='work_locatio', column_name='Employee Work Location', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
+    visa_location = fields.Field(attribute='visa_location', column_name='Employee Visa Location', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
+
     emp_profile_pic = fields.Field(attribute='emp_profile_pic',
         column_name='Employee Profile Picture',widget=FileWidget())
     class Meta:
@@ -194,17 +198,24 @@ class EmployeeResource(resources.ModelResource):
             'emp_desgntn_id',
             'emp_ctgry_id',
             'emp_profile_pic'
+            'person_id',
+            'work_location',
+            'visa_location',
         )
         import_id_fields = ['emp_code'] 
         skip_unchanged = True             # don’t update unchanged rows
         report_skipped = True
     def before_import_row(self, row, **kwargs):
+        # ✅ Convert list to dict if needed
+        if isinstance(row, list):
+            row = dict(zip(self.get_header_names(), row))
+
         errors = []
 
-        # 1️⃣ Normalize strings and replace None with empty string
+        # 1️⃣ Normalize strings and replace None
         for key, value in row.items():
             if isinstance(value, str):
-                row[key] = " ".join(value.split())  # remove extra spaces
+                row[key] = " ".join(value.split())
             elif value is None:
                 row[key] = ""
 
@@ -212,22 +223,42 @@ class EmployeeResource(resources.ModelResource):
         branch_name = row.get('Employee Branch Code', '')
         department_name = row.get('Employee Department Code', '')
         designation_name = row.get('Employee Designation Code', '').strip()
-
-        matching_branch = brnch_mstr.objects.filter(branch_name__iexact=branch_name).first()
-        if not matching_branch:
-            errors.append(f"No matching branch found for Branch Name: {branch_name}")
+        matching_branch = None
+        if branch_name:
+            matching_branch = brnch_mstr.objects.filter(branch_name__iexact=branch_name).first()
+            if not matching_branch:
+                errors.append(f"No matching branch found for Branch Name: '{branch_name}'")
+            else:
+                row['emp_branch_id'] = matching_branch.id
         else:
-            matching_department = dept_master.objects.filter(branch_id=matching_branch.id, dept_name__iexact=department_name).first()
+            errors.append("Employee Branch Code is required.")
+
+        # ✅ Department (only check if value provided and branch exists)
+        if matching_branch and department_name:
+            matching_department = dept_master.objects.filter(
+                branch_id=matching_branch.id,
+                dept_name__iexact=department_name
+            ).first()
             if not matching_department:
-                errors.append(f"No matching department found for Department: {department_name} in Branch: {branch_name}")
+                errors.append(f"No matching department found for Department: '{department_name}' in Branch: '{branch_name}'")
             else:
                 row['emp_dept_id'] = matching_department.id
+        elif not department_name:
+            # Optional: skip if empty
+            row['emp_dept_id'] = None
 
-            matching_designation = desgntn_master.objects.filter(desgntn_job_title__iexact=designation_name).first()
+        # ✅ Designation (only check if value provided)
+        if designation_name:
+            matching_designation = desgntn_master.objects.filter(
+                desgntn_job_title__iexact=designation_name
+            ).first()
             if not matching_designation:
                 errors.append(f"No matching designation found for Designation: '{designation_name}'")
             else:
                 row['emp_desgntn_id'] = matching_designation.id
+        else:
+            # Optional: skip if empty
+            row['emp_desgntn_id'] = None
 
         # 3️⃣ Nationality
         emp_nationality = row.get('Employee Nationality')
@@ -256,7 +287,7 @@ class EmployeeResource(resources.ModelResource):
         if gender and gender not in ['Male', 'Female', 'Other', 'M', 'F', 'O']:
             errors.append("Invalid value for Employee Gender field. Allowed: 'Male','Female','Other','M','F','O'")
 
-        # 6️⃣ Date Fields (handle datetime, timedelta, CSV strings)
+        # 6️⃣ Date Fields
         date_fields = ['Employee DOB(DD/MM/YYYY)', 'Employee Joining Date(DD/MM/YYYY)', 'Employee Confirmaton Date(DD/MM/YYYY)']
         for field in date_fields:
             date_value = row.get(field)
@@ -269,14 +300,14 @@ class EmployeeResource(resources.ModelResource):
                         row[field] = (excel_start_date + date_value).strftime('%d/%m/%Y')
                     else:
                         parsed_date = None
-                        for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%d/%m/%y', '%d-%m-%y'):
+                        for fmt in ('%d/%m/%Y','%d-%m-%Y','%d/%m/%y','%d-%m-%y'):
                             try:
                                 parsed_date = datetime.strptime(date_value, fmt)
                                 break
                             except ValueError:
                                 continue
                         if not parsed_date:
-                            errors.append(f"Invalid date format for {field}. Expected formats: dd/mm/yyyy or dd-mm-yyyy")
+                            errors.append(f"Invalid date format for {field}. Expected dd/mm/yyyy")
                         else:
                             row[field] = parsed_date.strftime('%d/%m/%Y')
                 except Exception as e:
@@ -289,14 +320,13 @@ class EmployeeResource(resources.ModelResource):
             'Employee Active(True/False)': 'is_active',
             'Employee OT applicable(True/False)': 'emp_ot_applicable'
         }
-
         for field, attr in bool_fields.items():
             value = row.get(field)
             if isinstance(value, str):
                 value = value.strip().lower()
-                if value in ['true', '1', 'yes']:
+                if value in ['true','1','yes']:
                     row[attr] = True
-                elif value in ['false', '0', 'no', '']:  # empty string treated as False
+                elif value in ['false','0','no','']:
                     row[attr] = False
                 else:
                     errors.append(f"Invalid boolean value for {field}: {row.get(field)}")
@@ -305,16 +335,39 @@ class EmployeeResource(resources.ModelResource):
 
         # 8️⃣ Email Validation
         email = row.get('Employee Personal Email ID')
-        if email:
-            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-                errors.append(f"Invalid email format for Employee Personal Email ID: {email}")
+        if email and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+            errors.append(f"Invalid email format for Employee Personal Email ID: {email}")
 
-        # 9️⃣ Marital Status Validation
+        # 9️⃣ Marital Status
         marital_status = row.get('Employee Marital Status')
-        if marital_status and marital_status.lower() not in ['married', 'single', 'divorced', 'widow']:
+        if marital_status and marital_status.lower() not in ['married','single','divorced','widow']:
             errors.append("Invalid value for marital status field. Allowed: 'Married','Single','Divorced','Widow'")
+        # 10 Person ID
+        person_id = row.get('Person ID')
 
-        # 10️⃣ Raise validation errors if any
+        if person_id:
+            person_id = str(person_id).strip()
+
+            # 🧠 Handle scientific notation like 9.87654E+13
+            try:
+                if 'e' in person_id.lower():  # e.g. "9.87654e+13"
+                    # Convert to int safely
+                    person_id = str(int(float(person_id)))
+            except Exception:
+                errors.append(f"Invalid Person ID format: '{person_id}'")
+
+            # ✅ Clean & validate after conversion
+            if not re.fullmatch(r'^\d{14}$', person_id):
+                errors.append(f"Invalid Person ID '{person_id}'. Must be exactly 14 digits (numbers only).")
+            else:
+                row['person_id'] = person_id
+
+                # ✅ Check uniqueness
+                if emp_master.objects.filter(person_id=person_id).exists():
+                    errors.append(f"Person ID '{person_id}' already exists. Must be unique.")
+        else:
+            row['person_id'] = None
+                
         if errors:
             raise ValidationError(errors)
 

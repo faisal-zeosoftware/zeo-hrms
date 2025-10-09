@@ -197,7 +197,7 @@ class EmployeeResource(resources.ModelResource):
             'emp_dept_id',
             'emp_desgntn_id',
             'emp_ctgry_id',
-            'emp_profile_pic'
+            'emp_profile_pic',
             'person_id',
             'work_location',
             'visa_location',

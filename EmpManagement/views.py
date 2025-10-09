@@ -1148,98 +1148,148 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def bulk_upload(self, request):
-        if request.method == 'POST' and request.FILES.get('file'):
-            upload_file = request.FILES['file']
-            filename = upload_file.name.lower()
+        if request.method != 'POST' or 'file' not in request.FILES:
+            return Response({"error": "Please provide a file."}, status=400)
 
-            all_errors = {
-                "sheet1_errors": [],
-                "sheet2_errors": []
-            }
+        upload_file = request.FILES['file']
+        filename = upload_file.name.lower()
+        all_errors = {"sheet1_errors": [], "sheet2_errors": []}
 
-            try:
-                # ---------------- XLSX upload ----------------
-                if filename.endswith('.xlsx'):
-                    workbook = load_workbook(upload_file)
+        try:
+            dataset_sheet1 = None
+            dataset_sheet2 = None
 
-                    # Sheet 1: EmployeeMaster
-                    sheet1 = workbook["EmployeeMaster"] if "EmployeeMaster" in workbook.sheetnames else None
-                    if not sheet1 or sheet1.max_row == 1:
-                        return Response({"error": "Sheet1 (EmployeeMaster) missing or empty"}, status=400)
+            # ---------------- XLS/XLSX ----------------
+            if filename.endswith(('.xlsx', '.xls')):
+                workbook = load_workbook(upload_file, data_only=True)
 
-                    dataset_sheet1 = Dataset()
-                    dataset_sheet1.headers = [cell.value for cell in sheet1[1]]
-                    for row in sheet1.iter_rows(min_row=2):
-                        dataset_sheet1.append([cell.value for cell in row])
+                # Sheet 1: EmployeeMaster
+                if "EmployeeMaster" not in workbook.sheetnames:
+                    return Response({"error": "Sheet1 (EmployeeMaster) missing"}, status=400)
+                sheet1 = workbook["EmployeeMaster"]
+                dataset_sheet1 = Dataset()
+                dataset_sheet1.headers = [cell.value for cell in sheet1[1]]
+                for row in sheet1.iter_rows(min_row=2):
+                    dataset_sheet1.append([cell.value for cell in row])
 
-                    # Sheet 2: UDF (optional)
-                    dataset_sheet2 = None
-                    if "UDF" in workbook.sheetnames:
-                        sheet2 = workbook["UDF"]
-                        if sheet2.max_row > 1:
+                # Sheet 2: UDF
+                if "UDF" in workbook.sheetnames:
+                    sheet2 = workbook["UDF"]
+                    if sheet2.max_row > 1:
+                        headers = [cell.value for cell in sheet2[1]]
+
+                        # Case 1: Normalized format (Employee Code, Field Name, Field Value)
+                        if len(headers) == 3 and set(headers) == {"Employee Code", "Field Name", "Field Value"}:
                             dataset_sheet2 = Dataset()
-                            dataset_sheet2.headers = [cell.value for cell in sheet2[1]]
+                            dataset_sheet2.headers = headers
                             for row in sheet2.iter_rows(min_row=2):
-                                dataset_sheet2.append([str(cell.value) for cell in row])
+                                dataset_sheet2.append([str(cell.value) if cell.value is not None else '' for cell in row])
 
-                # ---------------- CSV upload ----------------
-                elif filename.endswith('.csv'):
-                    file_data = upload_file.read().decode("utf-8")
-                    csv_reader = csv.DictReader(io.StringIO(file_data))
+                        # Case 2: Wide format (Employee Code + multiple UDFs)
+                        else:
+                            dataset_sheet2 = Dataset()
+                            dataset_sheet2.headers = ['Employee Code', 'Field Name', 'Field Value']
 
-                    dataset_sheet1 = Dataset()
-                    dataset_sheet1.headers = csv_reader.fieldnames  # ✅ must match EmployeeResource column_name
-                    for row in csv_reader:
-                        dataset_sheet1.append([row.get(h, "") for h in dataset_sheet1.headers])
+                            emp_code_index = headers.index("Employee Code")
+                            for row in sheet2.iter_rows(min_row=2):
+                                emp_code = str(row[emp_code_index].value or "")
+                                for col_idx, field_name in enumerate(headers):
+                                    if field_name == "Employee Code":
+                                        continue
+                                    field_value = row[col_idx].value
+                                    if field_value not in (None, ''):
+                                        dataset_sheet2.append([emp_code, field_name, str(field_value)])
 
-                    # ❗ In CSV we assume EmployeeMaster + UDF are merged in same file
-                    dataset_sheet2 = None
+            # ---------------- CSV ----------------
+            elif filename.endswith('.csv'):
+                file_data = upload_file.read().decode("utf-8")
+                csv_reader = csv.DictReader(io.StringIO(file_data))
+                headers = csv_reader.fieldnames
 
-                else:
-                    return Response({"error": "Invalid file format. Only .xlsx or .csv supported."}, status=400)
+                employee_columns = [f.column_name for f in EmployeeResource().fields.values()]
 
-                # ---------------- Validation ----------------
-                employee_resource = EmployeeResource()
-                custom_field_value_resource = EmpCustomFieldValueResource()
+                dataset_sheet1 = Dataset()
+                dataset_sheet1.headers = employee_columns
 
-                for row_idx, row in enumerate(dataset_sheet1.dict, start=2):
+                dataset_sheet2 = Dataset()
+                dataset_sheet2.headers = ['Employee Code', 'Field Name', 'Field Value']
+
+                for row in csv_reader:
+                    # Employee data
+                    emp_row = [row.get(col, '') for col in employee_columns]
+                    dataset_sheet1.append(emp_row)
+
+                    emp_code = row.get('Employee Code', '')
+
+                    # UDF columns = all columns not part of Employee fields
+                    udf_columns = [h for h in headers if h not in employee_columns]
+                    for udf_col in udf_columns:
+                        field_value = row.get(udf_col, '')
+                        if field_value not in (None, ''):
+                            dataset_sheet2.append([emp_code, udf_col, field_value])
+
+            else:
+                return Response({"error": "Invalid file format. Only .xlsx, .xls, .csv supported."}, status=400)
+
+            # ---------------- Validation ----------------
+            employee_resource = EmployeeResource()
+            custom_field_resource = EmpCustomFieldValueResource()
+
+            # EmployeeMaster validation
+            for row_idx, row in enumerate(dataset_sheet1.dict, start=2):
+                try:
+                    employee_resource.before_import_row(row, row_idx=row_idx)
+                except ValidationError as e:
+                    all_errors["sheet1_errors"].append({"row": row_idx, "error": str(e)})
+
+            # UDF validation
+            if dataset_sheet2:
+                for row_idx, row in enumerate(dataset_sheet2.dict, start=2):
                     try:
-                        employee_resource.before_import_row(row, row_idx=row_idx)
+                        field_name = (row.get('Field Name') or '').strip()
+                        if not field_name:
+                            raise ValidationError("Field Name cannot be empty")
+                        field_value = row.get('Field Value', '')
+
+                        # check if field exists
+                        custom_field = Emp_CustomField.objects.filter(emp_custom_field=field_name).first()
+                        if not custom_field:
+                            raise ValidationError(
+                                f"Custom field '{field_name}' does not exist (check column header or spelling)."
+                            )
+
+                        # validate date fields
+                        if custom_field.data_type == 'date' and field_value:
+                            try:
+                                date_obj = datetime.strptime(field_value.strip(), '%d-%m-%Y').date()
+                                row['field_value'] = date_obj.strftime('%d-%m-%Y')
+                            except ValueError:
+                                raise ValidationError(
+                                    f"Invalid date format for field '{field_name}'. Expected DD-MM-YYYY."
+                                )
+
                     except ValidationError as e:
-                        all_errors["sheet1_errors"].append({"row": row_idx, "error": str(e)})
+                        all_errors["sheet2_errors"].append({"row": row_idx, "error": str(e)})
 
-                if dataset_sheet2:
-                    for row_idx, row in enumerate(dataset_sheet2.dict, start=2):
-                        try:
-                            custom_field_value_resource.before_import_row(row, row_idx=row_idx)
-                        except ValidationError as e:
-                            all_errors["sheet2_errors"].append({"row": row_idx, "error": str(e)})
+            if all_errors["sheet1_errors"] or all_errors["sheet2_errors"]:
+                return Response({"errors": all_errors}, status=400)
 
-                if all_errors["sheet1_errors"] or all_errors["sheet2_errors"]:
-                    return Response({"errors": all_errors}, status=400)
+            # ---------------- Import ----------------
+            with transaction.atomic():
+                employee_result = employee_resource.import_data(dataset_sheet1, dry_run=False, raise_errors=True)
 
-                # ---------------- Import ----------------
+            if dataset_sheet2:
                 with transaction.atomic():
-                    employee_result = employee_resource.import_data(dataset_sheet1, dry_run=False, raise_errors=True)
-
-                if dataset_sheet2:
-                    with transaction.atomic():
-                        custom_field_value_result = custom_field_value_resource.import_data(
-                            dataset_sheet2, dry_run=False, raise_errors=True
-                        )
-                    return Response({
-                        "message": f"{employee_result.total_rows} records created for EmployeeMaster, "
-                                   f"{custom_field_value_result.total_rows} records created for UDF successfully"
-                    })
-
+                    custom_field_result = custom_field_resource.import_data(dataset_sheet2, dry_run=False, raise_errors=True)
                 return Response({
-                    "message": f"{employee_result.total_rows} records created successfully."
+                    "message": f"{employee_result.total_rows} Employee records created, "
+                            f"{custom_field_result.total_rows} UDF records created successfully"
                 })
 
-            except Exception as e:
-                return Response({"error": str(e)}, status=400)
+            return Response({"message": f"{employee_result.total_rows} Employee records created successfully."})
 
-        return Response({"error": "Please provide a file."}, status=400)
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
 
     
     @action(detail=False, methods=['get'])  # New endpoint for downloading default file

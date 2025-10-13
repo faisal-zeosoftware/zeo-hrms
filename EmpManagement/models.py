@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.db.models.signals import pre_save
-from datetime import datetime
+from datetime import datetime,date
 import re
 from django.utils import timezone
 from django.db.models.signals import post_save
@@ -363,18 +363,30 @@ class Emp_CustomFieldValue(models.Model):
 
 
         elif custom_field.data_type == 'date':
-            if field_value:
-                try:
-                    parts = field_value.split('-')
-                    if len(parts) != 3:
-                        raise ValueError
-                    day, month, year = parts
-                    formatted_date = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
-                    datetime.strptime(formatted_date, '%d-%m-%Y')
-                except ValueError:
-                    raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
-            else:
+            if not field_value:
                 raise ValidationError({'field_value': 'Date value is required.'})
+
+            try:
+                if isinstance(field_value, (datetime, date)):
+                    valid_date = field_value.strftime('%d-%m-%Y')
+                else:
+                    field_value_str = str(field_value).strip()
+                    # Remove time part if exists
+                    if ' ' in field_value_str:
+                        field_value_str = field_value_str.split(' ')[0]
+                    # Try multiple formats
+                    for fmt in ('%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%d'):
+                        try:
+                            valid_date = datetime.strptime(field_value_str, fmt).strftime('%d-%m-%Y')
+                            break
+                        except ValueError:
+                            continue
+                    else:
+                        raise ValueError
+                self.field_value = valid_date
+            except ValueError:
+                raise ValidationError({'field_value': 'Invalid date format. Allowed formats: DD-MM-YYYY or DD/MM/YYYY.'})
+
 
 
 #EMPLOYEE FAMILY(ef) data

@@ -347,10 +347,10 @@ class EmployeeResource(resources.ModelResource):
         # 1️⃣3️⃣ Validate Email
         email = row.get('Employee Personal Email ID')
         if email and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-            errors.append(f"Invalid email format: '{email}'")
+            errors.append(f"Invalid email format for Personal Email ID: '{email}'")
         compny_email= row.get('Employee Company Email ID')
         if compny_email and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', compny_email):
-            errors.append(f"Invalid email format: '{compny_email}'")
+            errors.append(f"Invalid email format For Company Email IDS: '{compny_email}'")
         
         # 1️⃣4️⃣ Validate Marital Status
         marital_status = row.get('Employee Marital Status')

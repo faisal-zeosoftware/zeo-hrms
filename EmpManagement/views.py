@@ -1290,17 +1290,126 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=400)
 
     
-    @action(detail=False, methods=['get'])  # New endpoint for downloading default file
+    @action(detail=False, methods=['get'])
     def download_default_excel_file(self, request):
-        # demo_file_path = os.path.join(settings.BASE_DIR,'defaults', 'emp mstr.xlsx')
-        demo_file_path = os.path.join(os.path.dirname(__file__), 'defaults', 'Bulkupload_Demo_Sheet.xlsx')
-        try:
-            with open(demo_file_path, 'rb') as f:
-                response = HttpResponse(f.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                response['Content-Disposition'] = 'attachment; filename="Employee_Sample_Template.xlsx"'
-                return response
-        except FileNotFoundError:
-            return Response({"error": "Default demo file not found."}, status=400)
+        resource = EmployeeResource()
+        headers = [field.column_name for field in resource.fields.values()]
+
+        wb = Workbook()
+
+        # ======== Common Styles ========
+        black_font = Font(color="000000", bold=True)
+        blue_fill = PatternFill(start_color="1E90FF", end_color="1E90FF", fill_type="solid")
+        yellow_fill = PatternFill(start_color="FFF8DC", end_color="FFF8DC", fill_type="solid")  # light cream/yellow
+        border_style = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # Helper function to style header row
+        def style_header_row(ws, max_cols=10):
+            """Style header row with blue fill and black bold text across full width."""
+            for col in range(1, max_cols + 1):
+                cell = ws.cell(row=1, column=col)
+                if not cell.value:
+                    cell.value = ""
+                cell.fill = blue_fill
+                cell.font = black_font
+                cell.border = border_style
+                ws.column_dimensions[cell.column_letter].width = 25
+            ws.freeze_panes = "A2"  # freeze header
+
+        # ======================================================
+        # Sheet 1: EmployeeMaster
+        # ======================================================
+        ws1 = wb.active
+        ws1.title = "EmployeeMaster"
+
+        for col_num, header in enumerate(headers, 1):
+            ws1.cell(row=1, column=col_num, value=header)
+        style_header_row(ws1, max_cols=len(headers) + 5)
+
+        # ======================================================
+        # Sheet 2: UDF
+        # ======================================================
+        ws2 = wb.create_sheet(title="UDF")
+        udf_headers = ["Employee Code"]
+        for col_num, header in enumerate(udf_headers, 1):
+            ws2.cell(row=1, column=col_num, value=header)
+        style_header_row(ws2, max_cols=10)
+
+        # ======================================================
+        # Sheet 3: Instructions
+        # ======================================================
+        ws3 = wb.create_sheet(title="Instructions")
+        ws3.sheet_view.showGridLines = False
+
+        # Header Row
+        ws3.cell(row=1, column=1, value="Instructions")
+        ws3["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        style_header_row(ws3, max_cols=1)
+
+        # Detailed instruction content
+        instruction_text = (
+            "📘 INSTRUCTIONS FOR EMPLOYEE BULK UPLOAD\n\n"
+            "➡ SHEET 1: EmployeeMaster\n"
+            "   • Employee Code - Must be unique for each employee (no duplicates).\n"
+            "   • Employee First Name, Gender, DOB, Joining Date, and Confirmation Date are mandatory.\n"
+            "   • DOB, Joining Date, and Confirmation Date must be in format DD/MM/YYYY.\n"
+            "   • Branch, Department, Designation, and Category must match existing master data.\n"
+            "   • Work Location, Visa Location must match existing branch names.\n"
+            "   • Country and State names must match the database (case-insensitive).\n"
+            "   • Nationality and Religion must exist in their respective master tables.\n"
+            "   • Marital Status allowed values: Married, Single, Divorced, Widow.\n"
+            "   • Gender allowed values: Male, Female, Other (or M, F, O).\n"
+            "   • Email must follow valid format (e.g., name@domain.com).\n"
+            "   • Person ID must be exactly 14 digits (numbers only, no scientific notation).\n"
+            "   • Boolean fields (Iss ESS, Employee Status, Active, OT Applicable) accept values: True/False, Yes/No, 1/0.\n"
+            "   • Trim unnecessary spaces — extra spaces are auto-normalized but discouraged.\n\n"
+            "➡ SHEET 2: UDF (User Defined Fields)\n"
+            "   • Used for uploading additional (custom) fields linked to employees.\n"
+            "   • Only 'Employee Code' column is predefined; users can add extra columns for their custom fields.\n"
+            "   • Employee Code must exist in EmployeeMaster.\n"
+            "   • Date fields must be in DD-MM-YYYY or DD/MM/YYYY format.\n"
+            "   • Dropdown, Radio, or Checkbox values must match allowed options in their setup.\n"
+            "   • If a UDF field already exists for an employee, the system updates the value instead of duplicating.\n\n"
+            "⚠️ COMMON VALIDATION NOTES:\n"
+            "   • Ensure mandatory columns are filled; missing mandatory data will stop import.\n"
+            "   • Ensure column headers are not renamed.\n"
+            "   • Do not change sheet names.\n"
+            "   • Do not delete or reorder system-generated columns.\n"
+            "   • For optional fields, leave them blank (do not delete the column).\n\n"
+                    )
+
+        # Create bordered instruction box
+        ws3.merge_cells("A2:A45")
+        cell = ws3["A2"]
+        cell.value = instruction_text
+        cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")
+        cell.font = Font(color="000000", bold=False)
+        cell.fill = yellow_fill
+        cell.border = border_style
+
+        # Set readable layout
+        ws3.column_dimensions["A"].width = 120  # wide enough for content
+        for row in range(2, 46):
+            ws3.row_dimensions[row].height = 25  # comfortable text height
+
+        # ======================================================
+        # Save to response
+        # ======================================================
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename=\"Employee_BulkUpload_Template.xlsx\"'
+        return response
     @action(detail=False, methods=['get'])
     def download_default_csv_file(self, request):
         # Use EmployeeResource column names

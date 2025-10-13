@@ -38,7 +38,7 @@ from rest_framework.views import APIView
 from django.http import HttpResponse,JsonResponse
 from rest_framework.parsers import MultiPartParser, FormParser
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill,Alignment,Font,NamedStyle
+from openpyxl.styles import PatternFill,Alignment,Font,NamedStyle,Border, Side
 from rest_framework import status,generics,viewsets,permissions
 from .permissions import EmployeePermission
 from datetime import datetime, timedelta

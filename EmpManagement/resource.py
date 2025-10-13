@@ -372,7 +372,31 @@ class EmployeeResource(resources.ModelResource):
                 #     errors.append(f"Person ID '{person_id}' already exists. Must be unique.")
         else:
             row['person_id'] = None
-
+        #date validation
+        date_fields = ['Employee DOB(DD/MM/YYYY)', 'Employee Joining Date(DD/MM/YYYY)', 'Employee Confirmaton Date(DD/MM/YYYY)']
+        for field in date_fields:
+            date_value = row.get(field)
+            if date_value:
+                try:
+                    if isinstance(date_value, datetime):
+                        row[field] = date_value.strftime('%d/%m/%Y')
+                    elif isinstance(date_value, timedelta):
+                        excel_start_date = datetime(1899, 12, 30)
+                        row[field] = (excel_start_date + date_value).strftime('%d/%m/%Y')
+                    else:
+                        parsed_date = None
+                        for fmt in ('%d/%m/%Y','%d-%m-%Y','%d/%m/%y','%d-%m-%y'):
+                            try:
+                                parsed_date = datetime.strptime(date_value, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if not parsed_date:
+                            errors.append(f"Invalid date format for {field}. Expected dd/mm/yyyy")
+                        else:
+                            row[field] = parsed_date.strftime('%d/%m/%Y')
+                except Exception as e:
+                    errors.append(f"Error parsing date for {field}: {str(e)}")
         # ✅ If any errors collected, stop import for this row
         if errors:
             raise ValidationError(errors)

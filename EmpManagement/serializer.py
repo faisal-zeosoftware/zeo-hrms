@@ -545,6 +545,14 @@ class NotificationSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationSettings
         fields = '__all__'
+    def validate_branch(self, value):
+        # Exclude current instance when updating
+        instance = getattr(self, 'instance', None)
+        if NotificationSettings.objects.filter(branch=value).exclude(id=instance.id if instance else None).exists():
+            raise serializers.ValidationError(
+                "Notification settings for this branch already exist."
+            )
+        return value
     def to_representation(self, instance):
         rep = super(NotificationSettingsSerializer, self).to_representation(instance)
         if instance.branch:  

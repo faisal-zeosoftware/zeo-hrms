@@ -1379,7 +1379,10 @@ class NotificationSettings(models.Model):
     days_after_expiry   = models.IntegerField(default=0)  # Default reminder 0 days after expiry (on expiry day)
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['branch'], name='unique_branch_notification')
+        ]
 
     def __str__(self):
         return f"Reminder Settings for {self.branch.name}"

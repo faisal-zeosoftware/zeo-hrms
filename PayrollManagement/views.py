@@ -36,6 +36,7 @@ import csv
 from rest_framework import serializers
 import pytz
 from .tasks import send_payslip_email_task,accrue_air_tickets
+from django.db import connection
 
 # Set up logging
 logger = logging.getLogger(__name__)

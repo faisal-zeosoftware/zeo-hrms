@@ -81,6 +81,7 @@ class PayrollRun(models.Model):
     payment_date = models.DateField(null=True, blank=True, help_text="When employees will be paid")
     branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.SET_NULL, null=True, blank=True)
     department = models.ForeignKey('OrganisationManager.dept_master', on_delete=models.SET_NULL, null=True, blank=True)
+    employees = models.ManyToManyField('EmpManagement.emp_master',blank=True,null=True)
     category = models.ForeignKey('OrganisationManager.ctgry_master', on_delete=models.SET_NULL, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -89,17 +90,21 @@ class PayrollRun(models.Model):
     def get_employees(self):
         from EmpManagement.models import emp_master
         try:
+            # ✅ If specific employees are selected, return only them
+            if self.employees.exists():
+                return self.employees.all()
+
+            # ✅ Otherwise fall back to branch/department/category filtering
             employees = emp_master.objects.all()
-            
             if self.branch:
                 employees = employees.filter(emp_branch_id=self.branch)
             if self.department:
                 employees = employees.filter(emp_dept_id=self.department)
             if self.category:
                 employees = employees.filter(emp_ctgry_id=self.category)
-                
+
             return employees
-        except Exception as e:
+        except Exception:
             return emp_master.objects.none()
 
     def get_month_display(self):

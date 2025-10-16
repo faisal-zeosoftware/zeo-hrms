@@ -274,6 +274,8 @@ SIMPLE_JWT = {
 SHOW_PUBLIC_IF_NO_TENANT_FOUND = True
 #https://github.com/microsoftarchive/redis/releases
 # Celery settings
+#redis automatic  -redis-server --service-install redis.windows.conf --loglevel verbose
+#redis-server --service-start
 CELERY_BROKER_URL = 'redis://localhost:6379/0'  # Or your Redis server URL
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 # Set this to ensure retries during startup

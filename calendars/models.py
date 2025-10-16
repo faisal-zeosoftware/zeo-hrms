@@ -1040,6 +1040,7 @@ class employee_leave_request(models.Model):
         # Check if leave type does not allow negative balance and employee has insufficient balance
         if not self.leave_type.negative and leave_balance.balance < leave_days_requested:
             raise ValidationError("Insufficient leave balance for this leave type.")
+        
 
     def save(self, *args, **kwargs):
         # Calculate leave days based on start and end date

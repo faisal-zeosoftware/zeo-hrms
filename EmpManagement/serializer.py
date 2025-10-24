@@ -26,7 +26,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
-from calendars.models import employee_leave_request
+from calendars.models import employee_leave_request,assign_holiday
 from UserManagement .models import CustomUser
 
 
@@ -363,6 +363,7 @@ class EmpSerializer(serializers.ModelSerializer):
     policy_file = CompanyPolicySerializer(many=True, read_only=True)
     emp_weekend_calendar = WeekendCalendarSerailizer(required=False, read_only=True)
     holiday_calendar = HolidayCalandarSerializer(required=False, read_only=True)
+    holidays = serializers.SerializerMethodField()
     
     
     # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -399,6 +400,51 @@ class EmpSerializer(serializers.ModelSerializer):
     def get_holidays(self, obj):
         holidays = holiday.objects.filter(holiday_calendar=obj.holiday_calendar)
         return HolidaySerializer(holidays, many=True).data
+    def get_holidays(self, obj):
+        from calendars.serializer import HolidaySerializer
+
+        # Collect all applicable holiday calendars for this employee
+        holiday_calendars = set()
+
+        # 1️⃣ Branch-level holidays
+        if obj.emp_branch_id:
+            holiday_calendars.update(
+                assign_holiday.objects.filter(
+                    related_to="branch",
+                    branch=obj.emp_branch_id
+                ).values_list("holiday_model", flat=True)
+            )
+
+        # 2️⃣ Department-level holidays
+        if obj.emp_dept_id:
+            holiday_calendars.update(
+                assign_holiday.objects.filter(
+                    related_to="department",
+                    department=obj.emp_dept_id
+                ).values_list("holiday_model", flat=True)
+            )
+
+        # 3️⃣ Category-level holidays
+        if obj.emp_ctgry_id:
+            holiday_calendars.update(
+                assign_holiday.objects.filter(
+                    related_to="category",
+                    category=obj.emp_ctgry_id
+                ).values_list("holiday_model", flat=True)
+            )
+
+        # 4️⃣ Employee-level holidays
+        holiday_calendars.update(
+            assign_holiday.objects.filter(
+                related_to="employee",
+                employee=obj
+            ).values_list("holiday_model", flat=True)
+        )
+
+        # 5️⃣ Now fetch all holidays from these calendars
+        holidays = holiday.objects.filter(calendar__in=holiday_calendars)
+        return HolidaySerializer(holidays, many=True).data
+
 class EmplistSerializer(serializers.ModelSerializer):
     class Meta:
         model = emp_master

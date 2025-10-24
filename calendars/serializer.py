@@ -431,7 +431,13 @@ class LvApprovalSerializer(serializers.ModelSerializer):
         if instance.approver:
             rep['approver'] = instance.approver.username   
         if instance.leave_request:
-            rep['leave_request'] = instance.leave_request.document_number  
+            rep['leave_request'] = instance.leave_request.document_number
+        if instance.employee_id:
+            try:
+                emp = emp_master.objects.get(id=instance.employee_id)
+                rep['employee_id'] = emp.emp_code
+            except emp_master.DoesNotExist:
+                rep['employee_id'] = None
         return rep
    
 

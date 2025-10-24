@@ -397,9 +397,7 @@ class EmpSerializer(serializers.ModelSerializer):
         if 'is_active' not in validated_data:
             validated_data['is_active'] = instance.is_active
         return super().update(instance, validated_data)        
-    def get_holidays(self, obj):
-        holidays = holiday.objects.filter(holiday_calendar=obj.holiday_calendar)
-        return HolidaySerializer(holidays, many=True).data
+    
     def get_holidays(self, obj):
         from calendars.serializer import HolidaySerializer
 

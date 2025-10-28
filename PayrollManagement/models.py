@@ -379,8 +379,13 @@ class  LoanApplication(models.Model):
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
-                    'document_number': self.loan_type,
                     'loan_type': self.loan_type.loan_type,
+                    'document_number': self.document_number,
+                    'amount_requested': self.amount_requested,
+                    'repayment_period': self.repayment_period,
+                    'emi_amount': self.emi_amount,
+                    'remaining_balance': self.remaining_balance,
+                    'status': self.status,
                     
                 },
                 email_template_model=LoanEmailTemplate,
@@ -414,6 +419,11 @@ class  LoanApplication(models.Model):
                     **get_employee_context(self.employee),
                     'loan_type': self.loan_type.loan_type,
                     'document_number': self.document_number,
+                    'amount_requested': self.amount_requested,
+                    'repayment_period': self.repayment_period,
+                    'emi_amount': self.emi_amount,
+                    'remaining_balance': self.remaining_balance,
+                    'status': self.status,
                     
                 },
                 email_template_model=LoanEmailTemplate,
@@ -432,6 +442,11 @@ class  LoanApplication(models.Model):
                     **get_employee_context(self.employee),
                     'loan_type': self.loan_type.loan_type,
                     'document_number': self.document_number,
+                    'amount_requested': self.amount_requested,
+                    'repayment_period': self.repayment_period,
+                    'emi_amount': self.emi_amount,
+                    'remaining_balance': self.remaining_balance,
+                    'status': self.status,
                 
                 },
                 email_template_model=LoanEmailTemplate,
@@ -511,6 +526,12 @@ class LoanApproval(models.Model):
             **get_employee_context(self.loan_request.employee),
             'loan_type': self.loan_request.loan_type.loan_type,
             'document_number': self.loan_request.document_number,
+            'amount_requested': self.loan_request.amount_requested,
+            'repayment_period': self.loan_request.repayment_period,
+            'emi_amount': self.loan_request.emi_amount,
+            'remaining_balance': self.loan_request.remaining_balance,
+            'status': self.loan_request.status,
+            'rejection_reason': self.rejection_reason,
             
         },
         email_template_model=LoanEmailTemplate,
@@ -547,6 +568,11 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     **get_employee_context(instance.employee),
                     'loan_type': instance.loan_type.loan_type,
                     'document_number': instance.document_number,
+                    'amount_requested': instance.amount_requested,
+                    'repayment_period': instance.repayment_period,
+                    'emi_amount': instance.emi_amount,
+                    'remaining_balance': instance.remaining_balance,
+                    'status': instance.status,
                     
                 },
                 email_template_model=LoanEmailTemplate,
@@ -620,7 +646,10 @@ class AdvanceSalaryRequest(models.Model):
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
+                    'document_number': self.document_number,
+                    'requested_amount': self.requested_amount,
+                    'reason': self.reason,
+                    'remarks': self.remarks,
                     
                 },
                 email_template_model=AdvanceSalaryEmailTemplate,
@@ -648,6 +677,9 @@ class AdvanceSalaryRequest(models.Model):
                 context={
                     **get_employee_context(self.employee),
                     'document_number': self.document_number,
+                    'requested_amount': self.requested_amount,
+                    'reason': self.reason,
+                    'remarks': self.remarks,
                     
                 },
                 email_template_model=AdvanceSalaryEmailTemplate,
@@ -664,7 +696,10 @@ class AdvanceSalaryRequest(models.Model):
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
+                    'document_number': self.document_number,
+                    'requested_amount': self.requested_amount,
+                    'reason': self.reason,
+                    'remarks': self.remarks,
                 },
                 email_template_model=AdvanceSalaryEmailTemplate,
                 notification_model=AdvanceSalaryNotification
@@ -741,11 +776,15 @@ class AdvanceSalaryApproval(models.Model):
         template_type="request_rejected",
         context={
             **get_employee_context(self.request.employee),
-            'loan_type': self.request,
+            'document_number': self.request.document_number,
+            'requested_amount': self.request.requested_amount,
+            'reason': self.request.reason,
+            'remarks': self.request.remarks,
+            'rejection_reason':self.rejection_reason,
             
         },
-        email_template_model=LoanEmailTemplate,
-        notification_model=LoanNotification
+        email_template_model=AdvanceSalaryEmailTemplate,
+        notification_model=AdvanceSalaryNotification
     )
 @receiver(post_save, sender=AdvanceSalaryRequest)
 def create_initial_advance_approval(sender, instance, created, **kwargs):
@@ -769,6 +808,9 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             context={
                 **get_employee_context(instance.employee),
                 'document_number': instance.document_number,
+                'requested_amount': instance.requested_amount,
+                'reason': instance.reason,
+                'remarks': instance.remarks,
             },
             email_template_model=AdvanceSalaryEmailTemplate,
             notification_model=AdvanceSalaryNotification

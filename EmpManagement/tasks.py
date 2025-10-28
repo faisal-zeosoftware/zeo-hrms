@@ -74,8 +74,18 @@ def send_document_notification(document, expiry_date, status):
 
         context = {
             'emp_first_name': employee.emp_first_name,
+            'emp_last_name': employee.emp_last_name,
+            'emp_gender': employee.emp_gender,
+            'emp_date_of_birth':employee.emp_date_of_birth,
+            'emp_personal_email':employee.emp_personal_email,
+            'emp_company_email':employee.emp_company_email, 
+            'emp_branch_name':employee.emp_branch_id,
+            'emp_department_name':employee.emp_dept_id ,
+            'emp_designation_name':employee.emp_desgntn_id, 
+            'emp_joined_date':employee.emp_joined_date, 
             'document_type': document.document_type,
-            'status': status,
+            'document_number':document.emp_doc_number,
+            ' is_active ': document.is_active ,
             'expiry_date': expiry_date,
         }
 
@@ -117,8 +127,19 @@ def send_ess_user_notifications(employee_docs):
 
             for user in selected_employees:
                 context = {
-                    'user_first_name': user.username,
-                    'documents': documents_summary
+                    'user_first_name': user.username, 
+                    'documents': documents_summary,
+                    'emp_first_name':emp.emp_first_name,
+                    'emp_last_name':emp.emp_last_name,
+                    'emp_date_of_birth':emp.emp_date_of_birth,
+                    'emp_branch_name':emp.emp_branch_id,
+                    'emp_department_name':emp.emp_dept_id,
+                    'emp_designation_name':emp.emp_desgntn_id,
+                    'document_number':doc. emp_doc_number,
+                    'doc_issued_date':doc.emp_doc_issued_date,
+                    'doc_expiry_date':doc.emp_doc_expiry_date,
+                    'is_active':doc.is_active,
+                    'expiry_date':doc.emp_doc_expiry_date,
                 }
                 send_template_email('ESS User Notification', user.email, context)
 

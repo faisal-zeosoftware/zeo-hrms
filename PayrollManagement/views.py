@@ -617,12 +617,6 @@ class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='placeholders')
     def placeholder_list(self, request):
         placeholders = {
-            'request': [
-                '{{ doc_number }}',
-                '{{ request_type }}',
-                '{{ reason }}',
-                # Add other request-related placeholders here
-            ],
             'employee': [
                 '{{ document_number }}',
                 '{{ loan_type }}',
@@ -636,7 +630,13 @@ class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
                 '{{ emp_company_email }}',
                 '{{ emp_branch_name }}',
                 '{{ emp_department_name }}',
-                '{{ emp_designation_name }}'
+                '{{ emp_designation_name }}',
+                '{{ amount_requested }}',
+                '{{ repayment_period }}',
+                '{{ emi_amount }}',
+                '{{ remaining_balance }}',
+                '{{ status }}',
+                '{{ rejection_reason }}',
             ]
         }
         return Response(placeholders)
@@ -663,7 +663,11 @@ class AdvSalaryEmailTemplateViewSet(viewsets.ModelViewSet):
                 '{{ emp_company_email }}',
                 '{{ emp_branch_name }}',
                 '{{ emp_department_name }}',
-                '{{ emp_designation_name }}'
+                '{{ emp_designation_name }}',
+                '{{ requested_amount }}',
+                '{{ reason }}',
+                '{{ remarks }}',
+                '{{ rejection_reason }}'
             ]
         }
         return Response(placeholders)

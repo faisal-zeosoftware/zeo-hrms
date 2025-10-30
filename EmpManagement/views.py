@@ -58,7 +58,7 @@ from rest_framework.exceptions import NotFound
 from calendars .serializer import EmployeeLeaveBalanceSerializer,LeaveTypeSerializer
 from calendars .models import leave_type, employee_leave_request
 from django.db.models import Q
-from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer
+from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer,AdvanceSalaryRequestSerializer
 from .utils import calculate_settlement
 import csv
 import io
@@ -301,6 +301,13 @@ class EmpViewSet(viewsets.ModelViewSet):
             payslip = employee.loan.all()
             serializer = LoanApplicationSerializer(payslip, many=True)
             return Response(serializer.data) 
+    @action(detail=True, methods=['GET'])
+    def emp_adv_salary(self, request, pk=None):
+        employee = self.get_object()
+        if request.method == 'GET':
+            payslip = employee.advance_salary_requests.all()
+            serializer = AdvanceSalaryRequestSerializer(payslip, many=True)
+            return Response(serializer.data)
     @action(detail=True, methods=['POST', 'GET'])
     def emp_bank_details(self, request, pk=None):
         employee = self.get_object()

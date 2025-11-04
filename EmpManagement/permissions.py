@@ -5,7 +5,8 @@ class IsSuperUserOrHasGeneralRequestPermission(permissions.BasePermission):
         # Allow superusers full access
         if request.user.is_superuser:
             return True
-
+        if request.user.is_ess:
+            return True
         # Non-superusers: Check specific permissions
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)

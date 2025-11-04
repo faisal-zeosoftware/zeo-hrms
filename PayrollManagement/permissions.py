@@ -192,7 +192,8 @@ class LoanApplicationPermission(permissions.BasePermission):
             return False
         if request.user.is_superuser:
             return True
-
+        if request.user.is_ess:
+            return True
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
@@ -345,7 +346,8 @@ class AdvanceSalaryRequestPermission(permissions.BasePermission):
 
         if user_permissions.is_superuser:
             return True
-
+        if request.user.is_ess:
+            return True
         # Map view actions to required permissions
         action_permissions = {
             'list': 'view_advancesalaryrequest',

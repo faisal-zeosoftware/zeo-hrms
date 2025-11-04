@@ -910,15 +910,18 @@ class AnnouncementCommentViewSet(viewsets.ModelViewSet):
 class AssetTypeViewSet(viewsets.ModelViewSet):
     queryset = AssetType.objects.all()
     serializer_class = AssetTypeSerializer
+    permission_classes = [AssetTypePermission]
   
 class AssetMasterViewSet(viewsets.ModelViewSet):
     queryset = Asset.objects.all()
     serializer_class = AssetSerializer
+    permission_classes = [AssetMasterPermission]
 
 class AssetRequestViewSet(viewsets.ModelViewSet):
     queryset = AssetRequest.objects.all()
     serializer_class = AssetRequestSerializer
-    
+    permission_classes = [AssetRequestPermission]
+   
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         asset_request = self.get_object()

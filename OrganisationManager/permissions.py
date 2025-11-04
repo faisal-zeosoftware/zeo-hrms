@@ -280,7 +280,8 @@ class AssetTypePermission(permissions.BasePermission):
             return False
         if request.user.is_superuser:
             return True
-
+        if request.user.is_ess:
+            return True
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
@@ -316,7 +317,8 @@ class AssetMasterPermission(permissions.BasePermission):
             return False
         if request.user.is_superuser:
             return True
-
+        if request.user.is_ess:
+            return True
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:

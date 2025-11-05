@@ -52,41 +52,7 @@ class IsSuperUserOrInSameBranch(permissions.BasePermission):
         # Deny access to unauthenticated users
         return False
 
-    #     # Non-superusers: Check specific permissions
-    #     try:
-    #         user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-    #     except UserTenantPermissions.DoesNotExist:
-    #         return False
-
-    #     # Define required permissions
-    #     required_permissions = [
-    #         'view_report',
-    #         'delete_report',
-    #         'add_report',
-    #         'change_report',
-    #         'export_report'
-    #     ]
-
-    #     # Check if the user has the necessary permissions
-    #     for permission in required_permissions:
-    #         if permission in [p.codename for p in user_permissions.group.permissions.all()]:
-    #             return True
-
-    #     return False
-
-
-    # def has_object_permission(self, request, view, obj):
-    #     # Allow access to superusers
-    #     if request.user.is_superuser:
-    #         return True
-        
-    #     # Allow access to authenticated users in the same branch
-    #     if request.user.is_authenticated:
-    #         user_branch_id = request.user.branches
-    #         return user_branch_id == obj.branches
-        
-    #     # Deny access to unauthenticated users
-    #     return False
+    
 
 class EmpCustomFieldPermission(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -200,38 +166,6 @@ class EmpFamilyCustomFieldPermission(permissions.BasePermission):
 
         return False
 
-# class EmpJobHistoryCustomFieldPermission(permissions.BasePermission):
-#     """
-#     Custom permission to allow users with specific permissions for EmpJobHistory_CustomField.
-#     """
-
-#     def has_permission(self, request, view):
-#         # Check if the user is authenticated
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         # Retrieve user permissions
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         # Define required permissions for EmpJobHistory_CustomField model actions
-#         required_permissions = [
-#             'view_empjobhistory_customfield',
-#             'add_empjobhistory_customfield',
-#             'change_empjobhistory_customfield',
-#             'delete_empjobhistory_customfield',
-#         ]
-
-#         # Check if the user has any of the required permissions
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         # Return True if any of the required permissions match
-#         return any(permission in user_group_permissions for permission in required_permissions)
 
 
 class EmpJobHistoryCustomFieldPermission(permissions.BasePermission):
@@ -271,41 +205,7 @@ class EmpJobHistoryCustomFieldPermission(permissions.BasePermission):
 
         return False
 
-# class EmpQualificationCustomFieldPermission(permissions.BasePermission):
-#     """
-#     Custom permission to allow users with specific permissions for EmpQualification_CustomField.
-#     """
 
-#     def has_permission(self, request, view):
-#         # Check if the user is authenticated
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         # Retrieve user permissions (adjust according to your UserTenantPermissions model)
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         # Define the required permissions for EmpQualification_CustomField model actions
-#         required_permissions = [
-#             'view_empqualification_customfield',
-#             'add_empqualification_customfield',
-#             'change_empqualification_customfield',
-#             'delete_empqualification_customfield',
-#         ]
-
-#         # Retrieve the permissions for the user’s groups
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         # Check if any of the required permissions are present in the user's permissions
-#         return any(permission in user_group_permissions for permission in required_permissions)
-
-
-# from rest_framework import permissions
 class EmpQualificationCustomFieldPermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -343,34 +243,6 @@ class EmpQualificationCustomFieldPermission(permissions.BasePermission):
 
         return False
 
-# class ReportPermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access the Report API.
-#     """
-
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         # Retrieve user permissions from UserTenantPermissions (modify if your model is different)
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         # Grant access if the user is a superuser
-#         if user_permissions.is_superuser:
-#             return True
-
-#         # Define the required permissions for the Report model
-#         required_permissions = ['view_report', 'add_report', 'change_report', 'delete_report', 'export_report']
-
-#         # Check if any of the user's group permissions match the required permissions
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-#         return any(permission in user_group_permissions for permission in required_permissions)
 class ReportPermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -409,31 +281,6 @@ class ReportPermission(permissions.BasePermission):
 
         return False
 
-# class DocReportPermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access the Doc_Report API.
-#     """
-
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         if user_permissions.is_superuser:
-#             return True
-
-#         required_permissions = ['view_doc_report', 'add_doc_report', 'change_doc_report', 'delete_doc_report', 'export_document_report']
-
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         return any(permission in user_group_permissions for permission in required_permissions)
 class DocReportPermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -472,31 +319,6 @@ class DocReportPermission(permissions.BasePermission):
 
         return False
 
-# class GeneralRequestReportPermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access the GeneralRequestReport API.
-#     """
-
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         if user_permissions.is_superuser:
-#             return True
-
-#         required_permissions = ['view_generalrequestreport', 'add_generalrequestreport', 'change_generalrequestreport', 'delete_generalrequestreport', 'export_general_request_report']
-
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         return any(permission in user_group_permissions for permission in required_permissions)
 
 class GeneralRequestReportPermission(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -536,32 +358,6 @@ class GeneralRequestReportPermission(permissions.BasePermission):
 
         return False
 
-# class NotificationPermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access the notification model.
-#     """
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         if user_permissions.is_superuser:
-#             return True
-
-#         required_permissions = [
-#             'view_notification', 'add_notification', 'change_notification', 'delete_notification'
-#         ]
-
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         return any(permission in user_group_permissions for permission in required_permissions)
 
 
 class NotificationPermission(permissions.BasePermission):
@@ -570,7 +366,8 @@ class NotificationPermission(permissions.BasePermission):
             return False
         if request.user.is_superuser:
             return True
-
+        if request.user.is_ess:
+            return True
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
@@ -600,33 +397,6 @@ class NotificationPermission(permissions.BasePermission):
                 return True
 
         return False
-
-# class EmployeeSkillPermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access the EmployeeSkill model.
-#     """
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         if user_permissions.is_superuser:
-#             return True
-
-#         required_permissions = [
-#             'view_employeeskill', 'add_employeeskill', 'change_employeeskill', 'delete_employeeskill'
-#         ]
-
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         return any(permission in user_group_permissions for permission in required_permissions)
 
 
 class EmployeeSkillPermission(permissions.BasePermission):
@@ -666,33 +436,6 @@ class EmployeeSkillPermission(permissions.BasePermission):
 
         return False
 
-# class EmployeeMarketingSkillPermission(permissions.BasePermission):
-#     """
-#     Custom permission to allow users with specific permissions to access the EmployeeMarketingSkill model.
-#     """
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         if user_permissions.is_superuser:
-#             return True
-
-#         required_permissions = [
-#             'view_employeemarketingskill', 'add_employeemarketingskill',
-#             'change_employeemarketingskill', 'delete_employeemarketingskill'
-#         ]
-
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         return any(permission in user_group_permissions for permission in required_permissions)
 
 class EmployeeMarketingSkillPermission(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -731,33 +474,6 @@ class EmployeeMarketingSkillPermission(permissions.BasePermission):
 
         return False
 
-# class EmployeeProgramSkillPermission(permissions.BasePermission):
-#     """
-#     Custom permission to allow users with specific permissions to access the EmployeeProgramSkill model.
-#     """
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         if user_permissions.is_superuser:
-#             return True
-
-#         required_permissions = [
-#             'view_employeeprogramskill', 'add_employeeprogramskill',
-#             'change_employeeprogramskill', 'delete_employeeprogramskill'
-#         ]
-
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         return any(permission in user_group_permissions for permission in required_permissions)
 
 class EmployeeProgramSkillPermission(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -796,33 +512,6 @@ class EmployeeProgramSkillPermission(permissions.BasePermission):
 
         return False
 
-# class EmployeeLangSkillPermission(permissions.BasePermission):
-#     """
-#     Custom permission to allow users with specific permissions to access the EmployeeLangSkill model.
-#     """
-#     def has_permission(self, request, view):
-#         if not request.user.is_authenticated:
-#             return False
-#         if request.user.is_superuser:
-#             return True
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         if user_permissions.is_superuser:
-#             return True
-
-#         required_permissions = [
-#             'view_employeelangskill', 'add_employeelangskill',
-#             'change_employeelangskill', 'delete_employeelangskill'
-#         ]
-
-#         user_group_permissions = [
-#             p.codename for group in user_permissions.groups.all() for p in group.permissions.all()
-#         ]
-
-#         return any(permission in user_group_permissions for permission in required_permissions)
 class EmployeeLangSkillPermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -860,38 +549,7 @@ class EmployeeLangSkillPermission(permissions.BasePermission):
 
         return False
 
-# class RequestTypePermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access RequestType API.
-#     """
 
-#     def has_permission(self, request, view):
-#         # Check if the user is authenticated
-#         if not request.user.is_authenticated:
-#             return False
-
-#         # Grant access if the user is a superuser in the user model
-#         if request.user.is_superuser:
-#             return True
-
-#         # Grant access if the user has is_ess=True in the user model
-#         if hasattr(request.user, 'is_ess') and request.user.is_ess:
-#             return True
-
-#         # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         # Check if the user's group has any of the necessary permissions for RequestType
-#         required_permissions = ['view_requesttype', 'delete_requesttype', 'add_requesttype', 'change_requesttype']
-#         for group in user_permissions.groups.all():  # Access all related groups
-#             for permission in group.permissions.all():  # Access permissions of each group
-#                 if permission.codename in required_permissions:
-#                     return True
-
-#         return False
 class RequestTypePermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -930,36 +588,6 @@ class RequestTypePermission(permissions.BasePermission):
 
         return False
 
-# class EmployeePermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access company API.
-#     """
-
-#     def has_permission(self, request, view):
-#         # Check if the user is authenticated
-#         if not request.user.is_authenticated:
-#             return False
-
-#         # Grant access if the user is a superuser in the user model
-#         if request.user.is_superuser:
-#             return True
-
-#         # Grant access if the user has is_ess=True in the user model
-#         if hasattr(request.user, 'is_ess') and request.user.is_ess:
-#             return True
-
-#         # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         # Check if the user's group has any of the necessary permissions
-#         required_permissions = ['view_emp_master', 'delete_emp_master', 'add_emp_master', 'change_emp_master']
-#         for group in user_permissions.groups.all():  # Access all related groups
-#             for permission in group.permissions.all():  # Access permissions of each group
-#                 if permission.codename in required_permissions:
-#                     return True
 class EmployeePermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -998,36 +626,6 @@ class EmployeePermission(permissions.BasePermission):
 
         return False
 
-# class ApprovalLevelPermission(permissions.BasePermission):
-#     """
-#     Custom permission to only allow users with specific permissions to access company API.
-#     """
-
-#     def has_permission(self, request, view):
-#         # Check if the user is authenticated
-#         if not request.user.is_authenticated:
-#             return False
-
-#         # Grant access if the user is a superuser in the user model
-#         if request.user.is_superuser:
-#             return True
-
-#         # Grant access if the user has is_ess=True in the user model
-#         if hasattr(request.user, 'is_ess') and request.user.is_ess:
-#             return True
-
-#         # Retrieve UserTenantPermissions efficiently using get (if unique) or filter
-#         try:
-#             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
-#         except UserTenantPermissions.DoesNotExist:
-#             return False
-
-#         # Check if the user's group has any of the necessary permissions
-#         required_permissions = ['view_approvallevel', 'delete_approvallevel', 'add_approvallevel', 'change_approvallevel']
-#         for group in user_permissions.groups.all():  # Access all related groups
-#             for permission in group.permissions.all():  # Access permissions of each group
-#                 if permission.codename in required_permissions:
-#                     return True
 class ApprovalLevelPermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:

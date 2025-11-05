@@ -197,10 +197,17 @@ class LvApprovalNotifyviewset(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        return LvApprovalNotify.objects.filter(
-            Q(recipient_user=user) | Q(recipient_employee__user=user)
-        ).order_by('-created_at')  # Fetch only relevant notifications, sorted by latest
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return LvApprovalNotify.objects.all().order_by('-created_at')
 
+        # Normal user → show request notifications assigned directly to them
+        qs = LvApprovalNotify.objects.filter(
+            Q(recipient_user=user) |
+            Q(recipient_employee__users=user)      # employee assigned to this user
+        ).order_by('-created_at')
+
+        return qs
 class LeaveEntitlementviewset(viewsets.ModelViewSet):
     queryset = leave_entitlement.objects.all()
     serializer_class = LeaveEntitlementSerializer

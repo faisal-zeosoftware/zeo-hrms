@@ -24,7 +24,7 @@ class TimeSheetSerializer(serializers.ModelSerializer):
 
 class ProjectSerializer(serializers.ModelSerializer):
     project_stages = ProjectStageSerializer(many=True, read_only=True)
-    task_set = TaskSerializer(many=True, read_only=True)
+    tasks = TaskSerializer(many=True, read_only=True)
 
     class Meta:
         model = Project

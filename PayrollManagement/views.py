@@ -37,6 +37,8 @@ from rest_framework import serializers
 import pytz
 from .tasks import send_payslip_email_task,accrue_air_tickets
 from django.db import connection
+from django.db.models import Q
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -644,6 +646,20 @@ class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
 class LoanNotificationViewSet(viewsets.ModelViewSet):
     queryset = LoanNotification.objects.all()
     serializer_class = LoanNotificationSerializer
+    def get_queryset(self):
+        user = self.request.user
+
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return LoanNotification.objects.all().order_by('-created_at')
+
+        # Normal user → show request notifications assigned directly to them
+        qs = LoanNotification.objects.filter(
+            Q(recipient_user=user) |
+            Q(recipient_employee__users=user)      # employee assigned to this user
+        ).order_by('-created_at')
+
+        return qs
 
 class AdvSalaryEmailTemplateViewSet(viewsets.ModelViewSet):
     queryset = AdvanceSalaryEmailTemplate.objects.all()
@@ -674,3 +690,17 @@ class AdvSalaryEmailTemplateViewSet(viewsets.ModelViewSet):
 class AdvSalaryNotificationViewSet(viewsets.ModelViewSet):
     queryset = AdvanceSalaryNotification.objects.all()
     serializer_class = AdvSalaryNotificationSerializer
+    def get_queryset(self):
+        user = self.request.user
+
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return AdvanceSalaryNotification.objects.all().order_by('-created_at')
+
+        # Normal user → show request notifications assigned directly to them
+        qs = AdvanceSalaryNotification.objects.filter(
+            Q(recipient_user=user) |
+            Q(recipient_employee__users=user)      # employee assigned to this user
+        ).order_by('-created_at')
+
+        return qs

@@ -62,6 +62,7 @@ from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSeria
 from .utils import calculate_settlement
 import csv
 import io
+from django.db import models
 
 
 
@@ -324,7 +325,15 @@ class EmpViewSet(viewsets.ModelViewSet):
             emp_banks = employee.bank_details.all()
             serializer = EmpBankDetailsSerializer(emp_banks, many=True)
             return Response(serializer.data)
-    
+    @action(detail=True, methods=['GET'])
+    def emp_projects(self, request, pk=None):
+        employee = self.get_object()
+        projects = Project.objects.filter(
+            models.Q(managers=employee) | models.Q(members=employee)
+        ).distinct()
+
+        serializer = ProjectSerializer(projects, many=True)
+        return Response(serializer.data)
     @action(detail=False, methods=['get'])
     def filter_empty_user_non_ess(self, request):
         filtered_employees = self.queryset.filter(users__isnull=True, is_ess=False)
@@ -2297,9 +2306,17 @@ class UserNotificationsViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        return RequestNotification.objects.filter(
-            Q(recipient_user=user) | Q(recipient_employee__user=user)
-        ).order_by('-created_at')  # Fetch only relevant notifications, sorted by latest
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return RequestNotification.objects.all().order_by('-created_at')
+
+        # Normal user → show request notifications assigned directly to them
+        qs = RequestNotification.objects.filter(
+            Q(recipient_user=user) |
+            Q(recipient_employee__users=user)      # employee assigned to this user
+        ).order_by('-created_at')
+
+        return qs
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
 
@@ -2740,6 +2757,20 @@ class DocRequestEmailTemplateViewset(viewsets.ModelViewSet):
 class DocRequestNotificationViewset(viewsets.ModelViewSet):
     queryset = DocRequestNotification.objects.all()
     serializer_class = DocRequestNotificationSerializer
+    def get_queryset(self):
+        user = self.request.user
+
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return DocRequestNotification.objects.all().order_by('-created_at')
+
+        # Normal user → show request notifications assigned directly to them
+        qs = DocRequestNotification.objects.filter(
+            Q(recipient_user=user) |
+            Q(recipient_employee__users=user)      # employee assigned to this user
+        ).order_by('-created_at')
+
+        return qs
 class EmployeeResignationViewset(viewsets.ModelViewSet):
     queryset = EmployeeResignation.objects.all()
     serializer_class = EmployeeResignationSerializer

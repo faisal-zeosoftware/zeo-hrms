@@ -2089,13 +2089,13 @@ class NotificationViewset(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        # If admin or HR (staff user) → show all notifications
+        # Admin / staff / superuser → see all notifications
         if user.is_superuser or user.is_staff:
-            return notification.objects.all()
+            return notification.objects.all().order_by('-created_at')
 
-        # Else, normal employee → show only notifications for his/her documents
+        # Normal employee (ESS User) → only notifications related to their documents
         return notification.objects.filter(
-            document_id__emp_id__user=user
+            document_id__emp_id__users=user
         ).order_by('-created_at')
 
 class EmpMarketSkillViewSet(viewsets.ModelViewSet):

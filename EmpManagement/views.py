@@ -2086,6 +2086,17 @@ class NotificationViewset(viewsets.ModelViewSet):
     queryset = notification.objects.all()
     serializer_class = NotificationSerializer
     permission_classes = [NotificationPermission]
+    def get_queryset(self):
+        user = self.request.user
+
+        # If admin or HR (staff user) → show all notifications
+        if user.is_superuser or user.is_staff:
+            return notification.objects.all()
+
+        # Else, normal employee → show only notifications for his/her documents
+        return notification.objects.filter(
+            document_id__emp_id__user=user
+        ).order_by('-created_at')
 
 class EmpMarketSkillViewSet(viewsets.ModelViewSet):
     queryset = EmployeeMarketingSkill.objects.all()

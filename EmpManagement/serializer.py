@@ -12,7 +12,8 @@ from calendars .models import holiday
 from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer
 from decimal import Decimal
 from calendar import month_name
-# from UserManagement.serializers import CustomUserSerializer
+from django.utils import timezone
+from django.db import models  # Ensure models import is included
 
 
 from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,EmpLeaveRequest,emp_master,Emp_CustomField,
@@ -344,6 +345,8 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
 #EMPLOYEE SERIALIZER
 class EmpSerializer(serializers.ModelSerializer):
     is_active = serializers.BooleanField(read_only=True)
+    announcements = serializers.SerializerMethodField()
+    projects = serializers.SerializerMethodField() 
     payslip  = PayslipSerializer(many=True, read_only=True, source='payslips')
     emp_bank = EmpBankDetailsSerializer(many=True,read_only=True, source='bank_details')
     advance_salary_requests   =  AdvanceSalaryRequestSerializer(many=True, read_only=True)
@@ -442,7 +445,37 @@ class EmpSerializer(serializers.ModelSerializer):
         # 5️⃣ Now fetch all holidays from these calendars
         holidays = holiday.objects.filter(calendar__in=holiday_calendars)
         return HolidaySerializer(holidays, many=True).data
+    def get_announcements(self, obj):
+        from OrganisationManager .models import Announcement
+        now = timezone.now()
+        # Announcements directly assigned to employee
+        direct = Announcement.objects.filter(
+            specific_employees=obj
+        )
+        # Announcements assigned to employee branch
+        branch_ann = Announcement.objects.filter(
+            branches=obj.emp_branch_id
+        )
+        # Combine & remove duplicates
+        announcements = (direct | branch_ann).distinct()
 
+        #Exclude expired or not yet active announcements
+        announcements = announcements.filter(
+            models.Q(expires_at__isnull=True) | models.Q(expires_at__gte=now),
+            models.Q(schedule_at__isnull=True) | models.Q(schedule_at__lte=now)
+        )
+        return announcements.values(
+            "id", "title", "message", "created_at", "is_sticky",
+            "allow_comments", "attachment","schedule_at","expires_at"
+        )
+    def get_projects(self, obj):
+        from ProjectManagement .serializer import ProjectSerializer  # to avoid circular import
+        from ProjectManagement .models import Project
+
+        projects = Project.objects.filter(
+            models.Q(managers=obj) | models.Q(members=obj)
+        ).distinct()
+        return ProjectSerializer(projects, many=True).data
 class EmplistSerializer(serializers.ModelSerializer):
     class Meta:
         model = emp_master

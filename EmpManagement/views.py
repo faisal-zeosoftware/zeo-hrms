@@ -334,6 +334,20 @@ class EmpViewSet(viewsets.ModelViewSet):
 
         serializer = ProjectSerializer(projects, many=True)
         return Response(serializer.data)
+        return Response(serializer.data)
+        return Response(serializer.data)
+        return Response(serializer.data)
+    @action(detail=False, methods=['GET'])
+    def my_profile(self, request):
+        user = request.user
+
+        try:
+            employee = emp_master.objects.get(users=user)
+        except emp_master.DoesNotExist:
+            return Response({"detail": "No employee record linked to this user."}, status=404)
+
+        serializer = self.get_serializer(employee)
+        return Response(serializer.data)
     @action(detail=False, methods=['get'])
     def filter_empty_user_non_ess(self, request):
         filtered_employees = self.queryset.filter(users__isnull=True, is_ess=False)

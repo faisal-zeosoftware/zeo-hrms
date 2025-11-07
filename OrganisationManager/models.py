@@ -420,3 +420,39 @@ class GratuityTable(models.Model):
 
     def __str__(self):
         return f"{self.minimum_value} to {self.maximum_value} years - Resignation: {self.resignation_days}, Termination: {self.termination_days}"
+
+class Folder(models.Model):
+    name = models.CharField(max_length=255)
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, related_name='subfolders', on_delete=models.CASCADE
+    )
+    created_by = models.ForeignKey("UserManagement.CustomUser", on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('name', 'parent')
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def path(self):
+        """Return full folder path (like Company/Projects/Plans)."""
+        parts = []
+        folder = self
+        while folder:
+            parts.insert(0, folder.name)
+            folder = folder.parent
+        return "/".join(parts)
+
+
+class Document(models.Model):
+    folder = models.ForeignKey(Folder, related_name='documents', on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    file = models.FileField(upload_to='documents/')
+    uploaded_by = models.ForeignKey("UserManagement.CustomUser", on_delete=models.SET_NULL, null=True, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name

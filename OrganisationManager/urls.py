@@ -3,7 +3,7 @@ from . views import (FiscalYearViewSet,PeriodViewSet,BranchViewSet,DepartmentVie
                      DesignationViewSet,CatogoryViewSet,CompanyFiscalData,permissionviewset,Groupviewset,permviewset,FiscalYearDatesView,DeptBulkUploadViewSet,DesignationBulkUploadViewSet,
                    save_notification_settings,CompanyPolicyViewSet,list_data_in_schema,CategoryBulkUploadViewSet,AnnouncementViewSet,
                    AnnouncementCommentViewSet,AssetTypeViewSet,AssetMasterViewSet,Asset_CustomFieldValueViewSet,AssetReportViewset,AssetTransactionReportViewset,AssetAllocationViewSet,AssetRequestViewSet,AssetCustomFieldViewSet,
-                   GratuityTableViewset
+                   GratuityTableViewset,FolderViewSet,DocumentViewSet
                    )
 from rest_framework.routers import DefaultRouter
 
@@ -37,6 +37,9 @@ router.register(r'asset-customfield-value', Asset_CustomFieldValueViewSet, basen
 router.register(r'asset-Report', AssetReportViewset, basename='assets-Report')
 router.register(r'asset-transaction-report', AssetTransactionReportViewset, basename='assets-transaction-report')
 router.register(r'gratuity', GratuityTableViewset, basename='gratuity')
+router.register(r'folders', FolderViewSet,'folders')
+router.register(r'documents', DocumentViewSet,'folder-documents')
+
 
 
 urlpatterns = [

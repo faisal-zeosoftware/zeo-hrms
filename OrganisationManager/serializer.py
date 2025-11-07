@@ -1,7 +1,7 @@
 from .models import (brnch_mstr,dept_master,desgntn_master,DocumentNumbering,
                      ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,
                      Announcement,AnnouncementView,AnnouncementComment,Asset,AssetAllocation,AssetType, AssetRequest,AssetCustomField,AssetReport,
-                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable)
+                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable,Folder, Document)
 from rest_framework import serializers
 from tenant_users.tenants.models import UserTenantPermissions
 from django.contrib.auth.models import Permission,Group
@@ -245,3 +245,37 @@ class GratuityTableSerializer(serializers.ModelSerializer):
     class Meta:
         model = GratuityTable
         fields = '__all__'
+
+class DocumentSerializer(serializers.ModelSerializer):
+    # uploaded_by_name = serializers.CharField(source='uploaded_by.username', read_only=True)
+
+    class Meta:
+        model = Document
+        fields = ['id', 'name', 'file', 'folder', 'uploaded_at']
+
+
+class FolderSerializer(serializers.ModelSerializer):
+    subfolders = serializers.SerializerMethodField()
+    documents = serializers.SerializerMethodField()
+    path = serializers.ReadOnlyField()
+
+    class Meta:
+        model = Folder
+        fields = [
+            'id',
+            'name',
+            'path',
+            'parent',
+            'subfolders',
+            'documents',
+            'created_by',
+            'created_at'
+        ]
+
+    def get_subfolders(self, obj):
+        subfolders = obj.subfolders.all().order_by('name')
+        return FolderSerializer(subfolders, many=True, context=self.context).data
+
+    def get_documents(self, obj):
+        docs = obj.documents.all().order_by('-uploaded_at')
+        return DocumentSerializer(docs, many=True, context=self.context).data

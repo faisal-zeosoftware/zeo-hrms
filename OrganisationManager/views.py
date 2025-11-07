@@ -18,7 +18,7 @@ from .models import (brnch_mstr,dept_master,DocumentNumbering,
 from . serializer import (BranchSerializer,PermissionSerializer,GroupSerializer,permserializer,DocumentNumberingSerializer,
                           CtgrySerializer,DeptSerializer,DesgSerializer,FiscalYearSerializer,PeriodSerializer,DeptUploadSerializer,CtgryUploadSerializer,
                           DesgUploadSerializer,CompanyPolicySerializer,AnnouncementSerializer,AnnouncementCommentSerializer,AssetSerializer,AssetAllocationSerializer,AssetRequestSerializer,AssetCustomFieldSerializer,
-                          AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer)
+                          AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer,FolderSerializer, DocumentSerializer)
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from .resource import (DepartmentResource,DesignationResource,DesgtnReportResource,DeptReportResource,CategoryResource)
 from EmpManagement.models import emp_master
@@ -1557,3 +1557,53 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
 class GratuityTableViewset(viewsets.ModelViewSet):
     queryset = GratuityTable.objects.all()
     serializer_class = GratuityTableSerializer
+
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .models import Folder, Document
+from .serializer import FolderSerializer, DocumentSerializer
+
+
+class FolderViewSet(viewsets.ModelViewSet):
+    queryset = Folder.objects.all().select_related('parent', 'created_by')
+    serializer_class = FolderSerializer
+    # permission_classes = [IsAuthenticated]
+
+    # def perform_create(self, serializer):
+    #     serializer.save(created_by=self.request.user)
+
+    @action(detail=False, methods=['get'])
+    def root_folders(self, request):
+        """Return top-level folders (where parent is null)."""
+        folders = Folder.objects.filter(parent__isnull=True)
+        serializer = self.get_serializer(folders, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def children(self, request, pk=None):
+        """Return all subfolders and documents of this folder."""
+        folder = self.get_object()
+        serializer = self.get_serializer(folder)
+        return Response(serializer.data)
+
+
+class DocumentViewSet(viewsets.ModelViewSet):
+    queryset = Document.objects.all().select_related('folder', 'uploaded_by')
+    serializer_class = DocumentSerializer
+    # permission_classes = [IsAuthenticated]
+
+    # def perform_create(self, serializer):
+    #     serializer.save(uploaded_by=self.request.user)
+
+    @action(detail=False, methods=['get'])
+    def by_folder(self, request):
+        """Filter documents by folder id"""
+        folder_id = request.query_params.get('folder_id')
+        if not folder_id:
+            return Response({"error": "folder_id parameter is required"}, status=400)
+
+        docs = Document.objects.filter(folder_id=folder_id)
+        serializer = self.get_serializer(docs, many=True)
+        return Response(serializer.data)

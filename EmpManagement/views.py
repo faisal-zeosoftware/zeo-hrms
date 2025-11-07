@@ -2996,3 +2996,7 @@ class EndOfServiceViewset(viewsets.ModelViewSet):
         }
 
         return Response(data)
+class EmployeeByUserViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = EmpSerializer
+    def get_queryset(self):
+        return emp_master.objects.filter(users=self.request.user, is_ess=False)

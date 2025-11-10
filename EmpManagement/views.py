@@ -19,7 +19,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          ReqNotifySerializer,Emp_CustomFieldValueSerializer,EmailTemplateSerializer,EmployeeFilterSerializer,EmailConfigurationSerializer,SelectedEmpNotifySerializer,
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
-                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer)
+                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2996,6 +2996,48 @@ class EndOfServiceViewset(viewsets.ModelViewSet):
         }
 
         return Response(data)
+class EscalationRuleViewSet(viewsets.ModelViewSet):
+    """
+    API for managing escalation settings on each approval level.
+    """
+    serializer_class = EscalationRuleSerializer
+    queryset = ApprovalLevel.objects.all().order_by('request_type', 'level')
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        request_type_id = self.request.query_params.get('request_type')
+        branch_id = self.request.query_params.get('branch')
+
+        if request_type_id:
+            queryset = queryset.filter(request_type_id=request_type_id)
+        if branch_id:
+            queryset = queryset.filter(branch__id=branch_id)
+
+        return queryset.distinct()
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update only escalation fields for a level.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({
+            "message": "Escalation rule updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['post'])
+    def reset(self, request, pk=None):
+        instance = self.get_object()
+        instance.escalate_to = None
+        instance.escalate_after_days = 0
+        instance.escalate_after_hours = 0
+        instance.escalate_after_minutes = 0
+        instance.save()
+        return Response({"message": "Escalation rule reset successfully"}, status=200)
+
 class EmployeeByUserViewSet(EmpViewSet):
     serializer_class = EmpSerializer
     def get_queryset(self):

@@ -28,7 +28,8 @@ from Core .models import LanguageSkill,MarketingSkill,ProgrammingLanguageSkill
 from django.core.validators import RegexValidator
 import logging
 logger = logging.getLogger((__name__))
-from .utils import send_notification_email,get_employee_context
+from .utils import send_notification_email,get_employee_context,schedule_escalation
+
 
 
 #EmpManagement
@@ -1163,6 +1164,8 @@ class RequestType(models.Model):
     created_by          = models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE)
     use_common_workflow = models.BooleanField(default=False)
     salary_component = models.ForeignKey('PayrollManagement.SalaryComponent', on_delete=models.SET_NULL,null=True, blank=True,help_text="Link to salary component for payroll integration")
+    min_approvals_required = models.PositiveIntegerField(null=True, blank=True, help_text="Minimum number of approvals required to approve the request")
+
     
     def __str__(self):
         return self.name
@@ -1218,8 +1221,57 @@ class GeneralRequest(models.Model):
                 notification_model=RequestNotification
             )
             return  # Important: Stop here if rejected
-            
+        # -------- 2️⃣ MINIMUM APPROVALS CHECK -------- #
+        min_required = self.request_type.min_approvals_required
+        approved_count = self.approvals.filter(status=Approval.APPROVED).count()
+
+        if min_required and approved_count >= min_required:
+            self.status = 'approved'
+            self.save()
+
+            # Notify request creator
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your leave request has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'doc_number': self.document_number,
+                    'request_type': self.request_type.name
+                },
+                email_template_model=EmailTemplate,
+                notification_model=RequestNotification
+            )
+            return
         current_approved_levels = self.approvals.filter(status=Approval.APPROVED).count()
+        if self.request_type.use_common_workflow:
+            total_levels = CommonWorkflow.objects.count()
+        else:
+            total_levels = ApprovalLevel.objects.filter(
+                request_type=self.request_type,
+                branch__id=self.employee.emp_branch_id.id
+            ).count()
+        # min_required = self.request_type.min_approvals_required or total_levels
+
+        # # 4️⃣ If enough approvals reached, mark as approved
+        # if current_approved_levels >= min_required:
+        #     self.status = 'Approved'
+        #     self.save()
+        #     send_notification_email(
+        #         user=self.created_by,
+        #         employee=self.employee,
+        #         message=f"Your request {self.document_number} has been approved.",
+        #         template_type="request_approved",
+        #         context={
+        #             **get_employee_context(self.employee),
+        #             'doc_number': self.document_number,
+        #             'request_type': self.request_type.name
+        #         },
+        #         email_template_model=EmailTemplate,
+        #         notification_model=RequestNotification
+        #     )
+        #     return
         next_level = None
 
         if self.request_type.use_common_workflow:
@@ -1232,15 +1284,46 @@ class GeneralRequest(models.Model):
             ).first()
 
         if next_level:
-            last_approval = self.approvals.order_by('-level').first()
-            Approval.objects.create(
+            last_approval = self.approvals.order_by('-level', '-id').first()
+
+            next_level = ApprovalLevel.objects.filter(
+                request_type=self.request_type,
+                level__gt=last_approval.level
+            ).order_by('level').first()
+
+            if not next_level:
+                self.status = "Approved"
+                self.save()
+                return
+
+            # ✅ Keep normal user comments, skip escalation-related notes only
+            note_to_carry = None
+            if last_approval and last_approval.note:
+                if not (
+                    last_approval.note.startswith("Escalated to") or
+                    last_approval.note.startswith("Escalated from")
+                ):
+                    note_to_carry = last_approval.note
+            # last_approval = self.approvals.order_by('-level').first()
+            # # note_to_carry = None if last_approval and last_approval.is_escalation else last_approval.note
+            # note_to_carry = None
+            # if last_approval and last_approval.note:
+            #     if not (
+            #         last_approval.note.startswith("Escalated to") or
+            #         last_approval.note.startswith("Escalated from")
+            #     ):
+            #         note_to_carry = last_approval.note
+
+            new_approval=Approval.objects.create(
                 general_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
                 status=Approval.PENDING,
-                note=last_approval.note if last_approval else None
+                # note=last_approval.note if last_approval else None
+                note=note_to_carry,
             )
+            schedule_escalation(new_approval, next_level)
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
@@ -1280,16 +1363,28 @@ class ApprovalLevel(models.Model):
     approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
     request_type = models.ForeignKey('RequestType', related_name='approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow
     branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
-    
+    # 🆕 Escalation fields
+    escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='escalated_levels')
+    escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
+    escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
+    escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
+
+    def get_escalation_timedelta(self):
+        """Returns the total time delta for escalation."""
+        from datetime import timedelta
+        total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
+        return timedelta(minutes=total_minutes)
 class Approval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
     REJECTED = 'Rejected'
+    ESCALATED = 'Escalated'
 
     STATUS_CHOICES = [
         (PENDING, 'Pending'),
         (APPROVED, 'Approved'),
         (REJECTED, 'Rejected'),
+        (ESCALATED, 'Escalated'),
     ]
     general_request = models.ForeignKey(GeneralRequest, related_name='approvals', on_delete=models.CASCADE)
     approver        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE)
@@ -1297,7 +1392,10 @@ class Approval(models.Model):
     level           = models.IntegerField(default=1)
     status          = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
     note            = models.TextField(null=True, blank=True)
-    created_at      = models.DateField(auto_now_add=True)
+    escalated = models.BooleanField(default=False)
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    is_escalation = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at      = models.DateField(auto_now=True)
    
@@ -1340,14 +1438,14 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 branch__id=instance.employee.emp_branch_id.id
             ).order_by('level').first()
         if first_level:
-            Approval.objects.create(
+            approval = Approval.objects.create(
                 general_request=instance,
                 approver=first_level.approver,
                 role=first_level.role,
                 level=first_level.level,
                 status=Approval.PENDING
             )
-
+            schedule_escalation(approval, first_level)
             send_notification_email(
             user=first_level.approver,
             employee=None,
@@ -1362,7 +1460,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             },
             email_template_model=EmailTemplate,
             notification_model=RequestNotification
-        )         
+            )         
 
 class SelectedEmpNotify(models.Model):
     # selected_ess_user = models.ForeignKey(emp_master, on_delete=models.SET_NULL, null=True, blank=True)

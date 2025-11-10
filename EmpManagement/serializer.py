@@ -738,3 +738,29 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
             year = latest_payslip.payroll_run.year
             return f"{month} {year}"
         return None
+class EscalationRuleSerializer(serializers.ModelSerializer):
+    request_type_name = serializers.CharField(source='request_type.name', read_only=True)
+    approver_name = serializers.CharField(source='approver.username', read_only=True)
+    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+
+    class Meta:
+        model = ApprovalLevel
+        fields = [
+            'id',
+            'level',
+            'role',
+            'request_type',
+            'request_type_name',
+            'approver',
+            'approver_name',
+            'branch',
+            'escalate_to',
+            'escalate_to_name',
+            'escalate_after_days',
+            'escalate_after_hours',
+            'escalate_after_minutes',
+        ]
+        read_only_fields = [
+            'level', 'role', 'approver', 'request_type', 'branch',
+            'request_type_name', 'approver_name', 'escalate_to_name'
+        ]

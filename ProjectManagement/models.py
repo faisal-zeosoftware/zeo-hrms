@@ -38,6 +38,8 @@ class Project(models.Model):
     document = models.FileField(upload_to='projects/', null=True, blank=True)
     description = models.TextField()
     is_active = models.BooleanField(default=True)
+    branches = models.ManyToManyField("OrganisationManager.brnch_mstr", blank=True, related_name="branch_projects")
+
 
     def clean(self):
         if self.end_date and self.end_date < self.start_date:

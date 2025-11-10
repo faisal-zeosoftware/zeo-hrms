@@ -7,6 +7,8 @@ from tenant_users.tenants.models import UserTenantPermissions
 from django.contrib.auth.models import Permission,Group
 from calendars .models import assign_holiday,holiday,holiday_calendar
 from django.utils import timezone
+from ProjectManagement .serializer import ProjectSerializer
+from django.db import models
 
 class CompanyPolicySerializer(serializers.ModelSerializer):
     class Meta:
@@ -21,39 +23,6 @@ class CompanyPolicySerializer(serializers.ModelSerializer):
         if instance.category:
             rep['category'] =instance.category.ctgry_title
         return rep
-class BranchSerializer(serializers.ModelSerializer):
-    holidays = serializers.SerializerMethodField()
-    policies = serializers.SerializerMethodField()  # Add this field
-
-    class Meta:
-        model = brnch_mstr
-        fields = '__all__'
-
-    # def get_holidays(self, obj):
-    #     from calendars.serializer import HolidaySerializer
-    #     assigned_holidays = assign_holiday.objects.filter(branch=obj).values_list('holiday_model__holiday', flat=True)
-    #     holidays = holiday.objects.filter(id__in=assigned_holidays)
-    #     return HolidaySerializer(holidays, many=True).data
-    def get_holidays(self, obj):
-        from calendars.serializer import HolidaySerializer  # Ensure correct import path
-        # Fetch assigned holiday calendars for this branch
-        assigned_holiday_calendars = assign_holiday.objects.filter(branch__in=[obj]).values_list('holiday_model', flat=True)
-        holidays = holiday.objects.filter(calendar__in=assigned_holiday_calendars)
-        return HolidaySerializer(holidays, many=True).data
-    
-    def get_policies(self, obj):
-        """Fetch company policies assigned to this branch."""
-        # from OrganisationManager.serializer import CompanyPolicySerializer  # Import the serializer
-        policies = obj.policies.all()  # Using related_name='policies' from CompanyPolicy model
-        return CompanyPolicySerializer(policies, many=True, context={'request': self.context.get('request')}).data
-    
-    def get_announcements(self, obj):
-        from OrganisationManager.serializer import AnnouncementSerializer  
-        announcements = obj.branch_announcements.all()  #Use the related_name from Announcement model
-        # Optional: filter out expired announcements
-        current_time = timezone.now()
-        active_announcements = announcements.filter(expires_at__isnull=True) | announcements.filter(expires_at__gt=current_time)
-        return AnnouncementSerializer(active_announcements.distinct(), many=True, context={'request': self.context.get('request')}).data
 
     
 #DEPARTMENT SERIALIZER
@@ -279,3 +248,33 @@ class FolderSerializer(serializers.ModelSerializer):
     def get_documents(self, obj):
         docs = obj.documents.all().order_by('-uploaded_at')
         return DocumentSerializer(docs, many=True, context=self.context).data
+
+class BranchSerializer(serializers.ModelSerializer):
+    from OrganisationManager.serializer import AnnouncementSerializer
+    holidays = serializers.SerializerMethodField()
+    policies = serializers.SerializerMethodField()  # Add this field
+    branch_announcements = AnnouncementSerializer(many=True, read_only=True)
+    branch_projects = ProjectSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = brnch_mstr
+        fields = '__all__'
+
+    def get_holidays(self, obj):
+        from calendars.serializer import HolidaySerializer  # Ensure correct import path
+        # Fetch assigned holiday calendars for this branch
+        assigned_holiday_calendars = assign_holiday.objects.filter(branch__in=[obj]).values_list('holiday_model', flat=True)
+        holidays = holiday.objects.filter(calendar__in=assigned_holiday_calendars)
+        return HolidaySerializer(holidays, many=True).data
+    
+    def get_policies(self, obj):
+        """Fetch company policies assigned to this branch."""
+        # from OrganisationManager.serializer import CompanyPolicySerializer  # Import the serializer
+        policies = obj.policies.all()  # Using related_name='policies' from CompanyPolicy model
+        return CompanyPolicySerializer(policies, many=True, context={'request': self.context.get('request')}).data
+    
+    def get_branch_announcements(self, obj):
+        announcements = obj.branch_announcements.filter(
+            models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=timezone.now())
+        )
+        return AnnouncementSerializer(announcements, many=True).data

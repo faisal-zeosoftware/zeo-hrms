@@ -20,6 +20,8 @@ import traceback
 from collections import defaultdict
 from django.core.mail import EmailMultiAlternatives, get_connection
 from .models import EmailConfiguration
+from .utils import get_employee_context,send_notification_email
+
 
 @shared_task
 def send_document_expiry_notifications_for_all_tenants():

@@ -5,6 +5,8 @@ from django.template import Template, Context
 from django.core.mail import EmailMultiAlternatives, get_connection
 from django.conf import settings
 import logging
+from django_tenants.utils import connection
+
 
 
 

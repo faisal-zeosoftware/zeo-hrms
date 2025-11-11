@@ -1540,10 +1540,12 @@ class DocRequestType(models.Model):
     type_name   = models.CharField(max_length=50,unique=True)
     description = models.CharField(max_length=200)
     is_active   = models.BooleanField(default=True)  # Add is_active field
+    min_approvals_required        = models.PositiveIntegerField(null=True, blank=True, help_text="Minimum number of approvals required to approve the request")
+
     def __str__(self):
         return self.type_name
 class DocumentTemplate(models.Model):
-    document_type = models.OneToOneField('Core.document_type', on_delete=models.CASCADE, related_name='document_template')
+    document_type = models.OneToOneField(DocRequestType, on_delete=models.CASCADE, related_name='document_template')
     title = models.CharField(max_length=100)
     content = models.TextField()
 
@@ -1581,7 +1583,29 @@ class DocumentRequest(models.Model):
                 notification_model=DocRequestNotification
             )
             return  # Important: Stop here if rejected
+        # -------- 2️⃣ MINIMUM APPROVALS CHECK -------- #
+        min_required = self.request_type.min_approvals_required
+        approved_count = self.approvals.filter(status=DocumentApproval.APPROVED).count()
 
+        if min_required and approved_count >= min_required:
+            self.status = 'approved'
+            self.save()
+
+            # Notify request creator
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your leave request has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'doc_number': self.document_number,
+                    'request_type': self.request_type.type_name
+                },
+                email_template_model=DocRequestEmailTemplate,
+                notification_model=DocRequestNotification
+            )
+            return
         current_approved_levels = self.doc_approvals.filter(status=DocumentApproval.APPROVED).count()
 
         # Look up the next level
@@ -1639,7 +1663,7 @@ class DocumentApprovalLevel(models.Model):
     level = models.IntegerField()
     role = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
     approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
-    request_type = models.ForeignKey('Core.document_type', related_name='approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow 
+    request_type = models.ForeignKey(DocRequestType, related_name='approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow 
     branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
 class DocumentApproval(models.Model):
     PENDING = 'Pending'

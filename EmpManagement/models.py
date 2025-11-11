@@ -1585,7 +1585,7 @@ class DocumentRequest(models.Model):
             return  # Important: Stop here if rejected
         # -------- 2️⃣ MINIMUM APPROVALS CHECK -------- #
         min_required = self.request_type.min_approvals_required
-        approved_count = self.approvals.filter(status=DocumentApproval.APPROVED).count()
+        approved_count = self.doc_approvals.filter(status=DocumentApproval.APPROVED).count()
 
         if min_required and approved_count >= min_required:
             self.status = 'approved'

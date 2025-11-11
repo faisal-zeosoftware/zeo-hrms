@@ -650,7 +650,14 @@ class DocRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentRequest
         fields = '__all__'
-
+    def to_representation(self, instance):
+        rep = super(DocRequestSerializer, self).to_representation(instance)
+        if instance.request_type:  
+            rep['request_type'] = instance.request_type.type_name
+        if instance.employee:  
+            rep['employee'] = instance.employee.emp_first_name
+        
+        return rep
 class DocApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentApproval

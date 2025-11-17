@@ -169,3 +169,28 @@ class DomainSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class ValidateCredentialsSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField()
+
+    def validate(self, attrs):
+        username_or_email = attrs.get("username")
+        password = attrs.get("password")
+
+        # Check username or email
+        if "@" in username_or_email:
+            user = CustomUser.objects.filter(email=username_or_email).first()
+        else:
+            user = CustomUser.objects.filter(username=username_or_email).first()
+
+        if user is None:
+            raise serializers.ValidationError("User not found")
+
+        if not user.is_active:
+            raise serializers.ValidationError("User is deactivated")
+
+        if not user.check_password(password):
+            raise serializers.ValidationError("Invalid password")
+
+        # SUCCESS → credentials are valid
+        return {"user_id": user.id}

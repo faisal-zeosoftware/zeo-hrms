@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from django.contrib.auth.models import User,Group,Permission
-from .serializers import CustomUserSerializer,CustomTokenObtainPairSerializer,CompanySerializer,DomainSerializer,UserListSerializer,Non_EssUserListSerializer
+from .serializers import CustomUserSerializer,CustomTokenObtainPairSerializer,CompanySerializer,DomainSerializer,UserListSerializer,Non_EssUserListSerializer,ValidateCredentialsSerializer
 from . models import CustomUser,company,Domain
 from . permissions import (IsOwnerOrReadOnly,
                            IsSuperUser,IsEssUserOrReadOnly)
@@ -155,3 +155,93 @@ class GroupPermTenantUserListView(generics.ListAPIView):
                 tenants__schema_name=schema_name,
                 is_active=True  # Filter for users that are active
             )
+
+class ValidateCredentialsView(APIView):
+    def post(self, request):
+        serializer = ValidateCredentialsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        return Response({
+            "message": "Credentials correct. Now call /send-otp/.",
+            "user_id": serializer.validated_data["user_id"]
+        })
+from django.utils import timezone
+from django.core.mail import send_mail
+import random    
+class SendOTPView(APIView):
+    def post(self, request):
+        user_id = request.data.get("user_id")
+
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=400)
+
+        import random
+        from django.utils import timezone
+        
+        otp = random.randint(100000, 999999)
+        user.otp = str(otp)
+        user.otp_created_at = timezone.now()
+        user.is_2fa_verified = False
+        user.save()
+
+        # Send email
+        send_mail(
+            "Your OTP Code",
+            f"Your OTP is {otp}. It is valid for 5 minutes.",
+            "no-reply@example.com",
+            [user.email]
+        )
+
+        return Response({"message": "OTP sent successfully"})
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.utils import timezone
+class VerifyOTPView(APIView):
+    def post(self, request):
+        user_id = request.data.get("user_id")
+        otp = request.data.get("otp")
+
+        try:
+            user = CustomUser.objects.get(id=user_id)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=400)
+
+        # validate OTP
+        if user.otp != str(otp):
+            return Response({"error": "Invalid OTP"}, status=400)
+
+        # OTP Expired?
+        if user.otp_created_at + timezone.timedelta(minutes=5) < timezone.now():
+            return Response({"error": "OTP expired"}, status=400)
+
+        # Set 2FA Verified
+        user.is_2fa_verified = True
+        user.save()
+
+        # Generate JWT tokens
+        refresh = RefreshToken.for_user(user)
+
+        # TENANTS LIST
+        tenants_data = [
+            {
+                "id": tenant.id,
+                "name": tenant.name,
+                "schema_name": tenant.schema_name
+            }
+            for tenant in user.tenants.all()
+        ]
+
+        tenant_ids = [tenant.schema_name for tenant in user.tenants.all()]
+
+        # Final Response
+        return Response({
+            "message": "Login successful",
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user_id": user.id,
+            "username": user.username,
+            "tenants": tenants_data,   # ➜ ADDED
+            "tenant_id": tenant_ids    # ➜ ADDED
+        })

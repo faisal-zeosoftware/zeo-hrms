@@ -22,7 +22,6 @@ from OrganisationManager.models import brnch_mstr,ctgry_master,dept_master
 from EmpManagement.models import emp_master
 from django.db.models.signals import m2m_changed
 from django.dispatch import receiver
-from django.dispatch import receiver
 from django.db.models.signals import post_save
 import calendar
 from datetime import datetime, timedelta

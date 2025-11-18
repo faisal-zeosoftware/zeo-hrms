@@ -97,6 +97,9 @@ class CustomUser(UserProfile):
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
     is_active=models.BooleanField(default=True)
+    otp = models.CharField(max_length=6, blank=True, null=True)
+    otp_created_at = models.DateTimeField(blank=True, null=True)
+    is_2fa_verified = models.BooleanField(default=False)
 
     USERNAME_FIELD = 'username'  # Authentication uses username
     REQUIRED_FIELDS = ['email']  # No required fields other than username

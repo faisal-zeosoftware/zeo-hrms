@@ -988,7 +988,13 @@ class employee_leave_request(models.Model):
     lv_document       = models.FileField(upload_to="leaverequest_documents/",null=True,blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)
     created_by        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-    
+    class Meta:
+        permissions = (
+                ("add_lv_cancellation", "Can add leave cancellation"),
+                ("view_lv_cancellation", "Can view leave cancellation"),
+                # ("export_lv_cancellation", "Can export leave cancellation"),
+                ("delete_lv_cancellation", "Can delete leave cancellation"),
+        )
     def clean(self):
         super().clean()
         # --- PAYROLL LOCK VALIDATION ---
@@ -1320,7 +1326,7 @@ class EmployeeRejoining(models.Model):
     deducted = models.BooleanField(default=False)  # <-- New field to track if deduction is already done
     created_at         = models.DateTimeField(auto_now_add=True)
     created_by         = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-
+    
     def __str__(self):
         return f"Rejoining for {self.employee.emp_first_name} on {self.rejoining_date}"   
 class LvRejectionReason(models.Model):
@@ -1808,7 +1814,7 @@ class LeaveReport(models.Model):
 
     class Meta:
         permissions = (
-            ('export_report', 'Can export report'),
+            ('lv_export_report', 'Can export lv report'),
             # Add more custom permissions here
         )
     
@@ -1825,7 +1831,7 @@ class LeaveApprovalReport(models.Model):
 
     class Meta:
         permissions = (
-            ('export_report', 'Can export report'),
+            ('lv_approval_export_report', 'Can export lv approval report'),
             # Add more custom permissions here
         )
        
@@ -1841,7 +1847,7 @@ class AttendanceReport(models.Model):
 
     class Meta:
         permissions = (
-            ('export_report', 'Can export report'),
+            ('attendance_export_report', 'Can export attendance report'),
             # Add more custom permissions here
         )
        
@@ -1856,7 +1862,7 @@ class lvBalanceReport(models.Model):
 
     class Meta:
         permissions = (
-            ('export_report', 'Can export report'),
+            ('lv_balance_export_report', 'Can export lv balance report'),
             # Add more custom permissions here
         )
        

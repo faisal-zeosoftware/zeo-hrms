@@ -86,7 +86,14 @@ class PayrollRun(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+    class Meta:
+        permissions = (
+                ("add_wps", "Can add wps"),
+                ("view_wps", "Can view wps"),
+                ("change_wps", "Can change wps"),
+                ("export_wps", "Can export wps"),
+                ("delete_wps", "Can delete wps"),
+        )
     def get_employees(self):
         from EmpManagement.models import emp_master
         try:

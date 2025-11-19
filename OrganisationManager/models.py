@@ -42,7 +42,13 @@ class dept_master(models.Model):
     dept_updated_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     dept_is_active   = models.BooleanField(default=True)
     branch_id = models.ForeignKey("brnch_mstr", on_delete=models.SET_NULL, null=True)
-    
+    class Meta:
+        permissions = (
+                # ("add_dept_report", "Can add department report"),
+                ("view_dept_report", "Can view department report"),
+                ("export_dept_report", "Can export department report"),
+                ("delete_dept_report", "Can delete department report"),
+        )
     # Method to fetch all department users
     def get_department_users(self):
         # You can customize this to fetch relevant users within the department
@@ -62,6 +68,13 @@ class desgntn_master(models.Model):
     desgntn_updated_at  = models.DateTimeField(auto_now=True)
     desgntn_updated_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     desgntn_is_active   = models.BooleanField(default=True)
+    class Meta:
+        permissions = (
+                # ("add_designtn_report", "Can add designation report"),
+                ("view_designtn_report", "Can view designation report"),
+                ("export_designtn_report", "Can export designation report"),
+                ("delete_designtn_report", "Can delete designation report"),
+        )
     def __str__(self):
         return self.desgntn_job_title
 
@@ -382,7 +395,7 @@ class AssetReport(models.Model):
     # created_at = models.DateTimeField(auto_now_add=True,null=True,blank =True)
     class Meta:
         permissions = (
-            ('export_report', 'Can export report'),
+            ('asset_export_report', 'Can export asset report'),
             # Add more custom permissions here
         )
     
@@ -395,7 +408,7 @@ class AssetTransactionReport(models.Model):
     # created_at = models.DateTimeField(auto_now_add=True,null=True,blank =True)
     class Meta:
         permissions = (
-            ('export_report', 'Can export report'),
+            ('asset_transaction_export_report', 'Can export asset transaction report'),
             # Add more custom permissions here
         )
     

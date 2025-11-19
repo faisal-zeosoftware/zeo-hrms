@@ -1761,7 +1761,11 @@ class EmployeeResignation(models.Model):
     reason_for_leaving = models.TextField(blank=True, null=True)
     attachment = models.FileField(upload_to='resignation_docs/', blank=True, null=True)
     status           =  models.CharField(max_length=20, default='Pending')
-
+    class Meta:
+        permissions = [
+            ("view_approved_resignations", "Can view approved resignations"),
+            ("add_create_eos_for_resignation", "Can add  EOS for approved resignation"),
+        ]
     def __str__(self):
         return f"{self.employee} - {self.termination_type.title()} on {self.resigned_on}"
     def move_to_next_level(self):

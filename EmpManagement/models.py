@@ -212,7 +212,7 @@ class Report(models.Model):
     # created_at = models.DateTimeField(auto_now_add=True,null=True,blank =True)
     class Meta:
         permissions = (
-            ('export_report', 'Can export report'),
+            ('emp_export_report', 'Can export employee report'),
             # Add more custom permissions here
         )
     

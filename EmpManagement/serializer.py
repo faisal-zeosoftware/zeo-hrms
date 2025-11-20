@@ -531,6 +531,16 @@ class EmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailTemplate
         fields = '__all__'
+    def validate(self, attrs):
+        template_type=attrs.get("template_type")
+        temp=EmailTemplate.objects.filter(template_type=template_type)
+        if self.instance:
+            temp=temp.exclude(id=self.instance.id)
+        if temp.exists():
+            raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
+        })
+        return attrs
+
 
 class ReqNotifySerializer(serializers.ModelSerializer):
     class Meta:
@@ -642,6 +652,16 @@ class DocExpEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocExpEmailTemplate
         fields = '__all__'
+    def validate(self, attrs):
+        template_name=attrs.get("template_name")
+        temp=DocExpEmailTemplate.objects.filter(template_name=template_name)
+        if self.instance:
+            temp=temp.exclude(id=self.instance.id)
+        if temp.exists():
+            raise serializers.ValidationError({"template_name": f"{template_name} template already exists."
+        })
+        return attrs
+
 class DocRequestTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestType
@@ -680,6 +700,15 @@ class DocRequestEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestEmailTemplate
         fields = '__all__'
+    def validate(self, attrs):
+        template_type=attrs.get("template_type")
+        temp=DocRequestEmailTemplate.objects.filter(template_type=template_type)
+        if self.instance:
+            temp=temp.exclude(id=self.instance.id)
+        if temp.exists():
+            raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
+        })
+        return attrs
 class DocRequestNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestNotification

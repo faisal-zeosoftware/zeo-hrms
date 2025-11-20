@@ -445,6 +445,15 @@ class LvEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = LvEmailTemplate
         fields = '__all__'
+    def validate(self, attrs):
+        template_type=attrs.get("template_type")
+        temp=LvEmailTemplate.objects.filter(template_type=template_type)
+        if self.instance:
+            temp=temp.exclude(id=self.instance.id)
+        if temp.exists():
+            raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
+        })
+        return attrs
 class LvApprovalNotifySerializer(serializers.ModelSerializer):
     class Meta:
         model = LvApprovalNotify

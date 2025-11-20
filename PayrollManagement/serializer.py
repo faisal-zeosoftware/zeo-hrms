@@ -462,6 +462,15 @@ class LoanEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanEmailTemplate
         fields = '__all__'
+    def validate(self, attrs):
+        template_type=attrs.get("template_type")
+        temp=LoanEmailTemplate.objects.filter(template_type=template_type)
+        if self.instance:
+            temp=temp.exclude(id=self.instance.id)
+        if temp.exists():
+            raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
+        })
+        return attrs
 class LoanNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanNotification
@@ -470,6 +479,15 @@ class AdvSalaryEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceSalaryEmailTemplate
         fields = '__all__'
+    def validate(self, attrs):
+        template_type=attrs.get("template_type")
+        temp=AdvanceSalaryEmailTemplate.objects.filter(template_type=template_type)
+        if self.instance:
+            temp=temp.exclude(id=self.instance.id)
+        if temp.exists():
+            raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
+        })
+        return attrs
 class AdvSalaryNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceSalaryNotification

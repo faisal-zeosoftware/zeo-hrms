@@ -245,3 +245,71 @@ class VerifyOTPView(APIView):
             "tenants": tenants_data,   # ➜ ADDED
             "tenant_id": tenant_ids    # ➜ ADDED
         })
+class SendResetPasswordOTP(APIView):
+    def post(self, request):
+        from django.core.mail import EmailMessage
+        from .utils import generate_otp
+        email = request.data.get("email")
+
+        if not email:
+            return Response({"error": "Email is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = CustomUser.objects.get(email=email)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Generate OTP
+        otp = generate_otp()
+        user.otp = otp
+        user.otp_created_at = timezone.now()
+        user.save()
+
+        # Send email
+        subject = "Password Reset OTP"
+        message = f"Your OTP for resetting password is: {otp}"
+        email_message = EmailMessage(subject, message, to=[email])
+        email_message.send()
+
+        return Response({"message": "OTP sent successfully"}, status=status.HTTP_200_OK)
+
+class VerifyResetOTP(APIView):
+    def post(self, request):
+        email = request.data.get("email")
+        otp = request.data.get("otp")
+
+        if not email or not otp:
+            return Response({"error": "Email and OTP are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = CustomUser.objects.get(email=email)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check OTP match
+        if user.otp != otp:
+            return Response({"error": "Invalid OTP"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check expiry (valid for 10 minutes)
+        if (timezone.now() - user.otp_created_at).seconds > 600:
+            return Response({"error": "OTP expired"}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"message": "OTP verified successfully"}, status=status.HTTP_200_OK)
+class ResetPassword(APIView):
+    def post(self, request):
+        email = request.data.get("email")
+        new_password = request.data.get("new_password")
+
+        try:
+            user = CustomUser.objects.get(email=email)
+        except CustomUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        user.set_password(new_password)
+        
+        # Clear OTP after successful reset
+        user.otp = None
+        user.otp_created_at = None
+        user.save()
+
+        return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)

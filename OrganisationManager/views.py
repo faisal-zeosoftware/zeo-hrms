@@ -13,12 +13,13 @@ from reportlab.pdfgen import canvas
 from .models import (brnch_mstr,dept_master,DocumentNumbering,
                      desgntn_master,ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,Announcement,
                      AnnouncementComment,AnnouncementView,Asset, AssetAllocation,AssetRequest,AssetCustomField,AssetType,
-                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable)
+                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable,AssetApprovalLevel,AssetApproval,AssetEmailTemplate)
 
 from . serializer import (BranchSerializer,PermissionSerializer,GroupSerializer,permserializer,DocumentNumberingSerializer,
                           CtgrySerializer,DeptSerializer,DesgSerializer,FiscalYearSerializer,PeriodSerializer,DeptUploadSerializer,CtgryUploadSerializer,
                           DesgUploadSerializer,CompanyPolicySerializer,AnnouncementSerializer,AnnouncementCommentSerializer,AssetSerializer,AssetAllocationSerializer,AssetRequestSerializer,AssetCustomFieldSerializer,
-                          AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer,FolderSerializer, DocumentSerializer)
+                          AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer,FolderSerializer, DocumentSerializer,AssetApprovalLevelSerializer,AssetApprovalSerializer,
+                          AssetEmailTemplateSerializer)
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from .resource import (DepartmentResource,DesignationResource,DesgtnReportResource,DeptReportResource,CategoryResource)
 from EmpManagement.models import emp_master
@@ -907,6 +908,7 @@ class AnnouncementCommentViewSet(viewsets.ModelViewSet):
 
         return super().create(request, *args, **kwargs)
 
+from django.db import transaction
 class AssetTypeViewSet(viewsets.ModelViewSet):
     queryset = AssetType.objects.all()
     serializer_class = AssetTypeSerializer
@@ -916,74 +918,59 @@ class AssetMasterViewSet(viewsets.ModelViewSet):
     queryset = Asset.objects.all()
     serializer_class = AssetSerializer
     permission_classes = [AssetMasterPermission]
-
 class AssetRequestViewSet(viewsets.ModelViewSet):
     queryset = AssetRequest.objects.all()
     serializer_class = AssetRequestSerializer
-    permission_classes = [AssetRequestPermission]
-   
-    @action(detail=True, methods=['post'])
-    def approve(self, request, pk=None):
-        asset_request = self.get_object()
-        
-        # Check if an asset is already assigned to the request
-        if not asset_request.requested_asset:
-            # Try to assign an available asset of the requested type
-            available_asset = Asset.objects.filter(
-                asset_type=asset_request.asset_type,
-                status="available"
-            ).first()
+
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            serializer.save()
+
+    # EMPLOYEE REQUEST HISTORY (REMOVED DOCUMENT_NUMBER & BRANCH)
+    @action(detail=False, methods=['get'])
+    def employee_request_history(self, request):
+        employee_id = request.query_params.get('employee_id')
+
+        if not employee_id:
+            return Response({'error': 'Employee ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        requests = AssetRequest.objects.filter(employee_id=employee_id).order_by('-request_date')
+
+        history_data = []
+        for req in requests:
+            history_data.append({
+                'reason': req.reason,
+                'asset_type': req.asset_type.name if req.asset_type else None,
+                'status': req.status,
+                'requested_asset': req.requested_asset.name if req.requested_asset else None,
+                'created_at': req.request_date,
+            })
+
+        return Response(history_data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'])
+    def employee_request_history(self, request):
+            employee_id = request.query_params.get('employee_id')
+            if not employee_id:
+                return Response({'error': 'Employee ID is required'}, status=status.HTTP_400_BAD_REQUEST)
             
-            if not available_asset:
-                return Response(
-                    {"error": "No available asset of the requested type."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Assign the asset to the request
-            asset_request.requested_asset = available_asset
-            asset_request.save()
+            requests = AssetRequest.get_employee_requests(employee_id)
 
-        # Proceed with approval
-        asset = asset_request.requested_asset
+            # Manually serialize the fields you want
+            history_data = []
+            for request in requests:
+                history_data.append({
+                    'document_number': request.document_number,
+                    'reason': request.reason,
+                    'branch': request.branch.branch_name if request.branch else None,
+                    'asset_type': request.asset_type.name if request.asset_type else None,
+                    'status': request.status,
+                    'created_at_date': request.created_at_date,
+                })
 
-        if asset.status != "available":
-            return Response(
-                {"error": f"Asset '{asset.name}' is not available."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Approve the request and allocate the asset
-        with transaction.atomic():  # Ensures all database updates happen together
-            # Update the request status
-            asset_request.status = "approved"
-            asset_request.save()
-
-            # Update the asset status
-            asset.status = "assigned"
-            asset.save()
-
-            # Create the AssetAllocation entry
-            AssetAllocation.objects.create(
-                asset=asset,
-                employee=asset_request.employee,
-                assigned_date=timezone.now().date(),
-            )
-
-        return Response(
-            {
-                "status": "approved",
-                "message": f"Asset '{asset.name}' has been allocated to {asset_request.employee}."
-            },
-            status=status.HTTP_200_OK
-        )
-    @action(detail=True, methods=['post'])
-    def reject(self, request, pk=None):
-        asset_request = self.get_object()
-        asset_request.status = "rejected"
-        asset_request.save()
-        return Response({"status": "rejected"}, status=status.HTTP_200_OK)
-
+            return Response(history_data, status=status.HTTP_200_OK)
+    
 class AssetAllocationViewSet(viewsets.ModelViewSet):
     queryset = AssetAllocation.objects.all()
     serializer_class = AssetAllocationSerializer
@@ -1009,9 +996,99 @@ class AssetAllocationViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
     
+class AssetEmailTemplateViewset(viewsets.ModelViewSet):
+    queryset = AssetEmailTemplate.objects.all()
+    serializer_class = AssetEmailTemplateSerializer
+    # Custom action to get the placeholders dynamically
+    @action(detail=False, methods=['get'], url_path='placeholders')
+    def placeholder_list(self, request):
+        placeholders = {
+            'request': [
+                '{{ asset_type }}',
+                '{{ requested_asset }}',
+                '{{ reason }}',
+                # Add other request-related placeholders here
+            ],
+            'employee': [
+                '{{ asset_type }}',
+                '{{ requested_asset}}',
+                '{{ reason }}',
+                '{{ status }}',
+                '{{ emp_first_name }}',
+                '{{ emp_last_name }}',
+                '{{ emp_gender }}',
+                '{{ emp_date_of_birth }}',
+                '{{ emp_personal_email }}',
+                '{{ emp_company_email }}',
+                '{{ emp_branch_name }}',
+                '{{ emp_department_name }}',
+                '{{ emp_designation_name }}',
+                '{{ emp_joined_date }}'
+            ]
+        }
+        return Response(placeholders)
+
+    # Custom action to fetch the available From and To addresses
+    @action(detail=False, methods=['get'], url_path='from-to-addresses')
+    def from_to_list(self, request):
+        # Fetch active email configurations for "From" addresses
+        from_addresses = EmailConfiguration.objects.filter(is_active=True).values_list('email_host_user', flat=True)
+
+        # Fetch employee emails for "To" addresses
+        to_addresses = emp_master.objects.all().values_list('emp_personal_email', 'emp_company_email')
+
+        to_list = []
+        for emp_personal, emp_company in to_addresses:
+            if emp_personal:
+                to_list.append(emp_personal)
+            if emp_company:
+                to_list.append(emp_company)
+
+        return Response({
+            'from_addresses': from_addresses,
+            'to_addresses': to_list
+        })
+
+class AssetApprovalViewset(viewsets.ModelViewSet):
+    queryset = AssetApproval.objects.all()
+    serializer_class = AssetApprovalSerializer
+    lookup_field = 'pk'
+
+    def get_queryset(self):
+        """
+        Filter approvals based on the authenticated user.
+        """
+        user = self.request.user  # Get the logged-in user
+        if user.is_superuser:
+            return AssetApproval.objects.all()
+        return AssetApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        approval = self.get_object()
+        note = request.data.get('note','')  # Get the note from the request
+        approval.approve(note=note)
+        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        approval = self.get_object()
+        note = request.data.get('note','')  # Get the note from the request
+        approval.reject(note=note)
+        return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+    
+class AssetApprovalLevelViewset(viewsets.ModelViewSet):
+    queryset = AssetApprovalLevel.objects.all()
+    serializer_class = AssetApprovalLevelSerializer
+    #permission_classes = [ApprovalLevelPermission]
+    
 class Asset_CustomFieldValueViewSet(viewsets.ModelViewSet):
     queryset = AssetCustomFieldValue.objects.all()
     serializer_class = AssetCustomFieldValueSerializer
+
+class AssetCustomFieldViewSet(viewsets.ModelViewSet):
+    queryset = AssetCustomField.objects.all()
+    serializer_class = AssetCustomFieldSerializer
 
 class AssetCustomFieldViewSet(viewsets.ModelViewSet):
     queryset = AssetCustomField.objects.all()

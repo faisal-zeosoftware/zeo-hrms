@@ -6,6 +6,11 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q,F
+from django.dispatch import receiver
+from EmpManagement.utils import send_notification_email, get_employee_context
+from  .utils import asset_schedule_escalation
+from EmpManagement.models import RequestNotification
+from django.db.models.signals import post_save
 
 #branch model
 class brnch_mstr(models.Model):
@@ -235,42 +240,28 @@ class AnnouncementComment(models.Model):
     def __str__(self):
         return f"Comment by {self.employee} on {self.announcement}"
 
+class AssetEmailTemplate(models.Model):
+    template_type = models.CharField(max_length=50, choices=[
+        ('asset_created', 'Asset Created'),
+        ('asset_approved', 'Asset Approved'),
+        ('asset_rejected', 'Asset Rejected')
+    ])
+    subject             = models.CharField(max_length=255)
+    body                = models.TextField()
+    created_at          = models.DateTimeField(auto_now_add=True)
+    created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+
+    def __str__(self):
+        return f"{self.template_type} - {self.subject}"
+
 class AssetType(models.Model):
     name        = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True, null=True)
+    min_approvals_required = models.PositiveIntegerField(default=1, help_text="Minimum number of approvals required to complete the request")
 
     def __str__(self):
         return self.name
-class AssetCustomField(models.Model):
-    FIELD_TYPES = (
-        ('dropdown', 'DropdownField'),
-        ('radio', 'RadioButtonField'),
-        ('date', 'DateField'),
-        ('text', 'TextField'),
-        ('checkbox', 'CheckboxField'),
-    )
-    asset_type       = models.ForeignKey(AssetType,on_delete=models.CASCADE,related_name='custom_fields',null=True)
-    custom_field     = models.CharField(unique=True, max_length=100)  # Field name
-    data_type        = models.CharField(max_length=20, choices=FIELD_TYPES, null=True, blank=True)
-    dropdown_values  = models.JSONField(null=True, blank=True)
-    radio_values     = models.JSONField(null=True, blank=True)
-    checkbox_values  = models.JSONField(null=True, blank=True)
 
-    def __str__(self):
-        return f"{self.custom_field} ({self.asset_type})"
-
-    def clean(self):
-        # Validate field values based on type
-        if self.data_type == 'dropdown' and not self.dropdown_values:
-            raise ValidationError("Provide values for the dropdown options.")
-        elif self.data_type == 'radio' and not self.radio_values:
-            raise ValidationError("Provide values for the radio options.")
-        elif self.data_type == 'checkbox' and not self.checkbox_values:
-            raise ValidationError("Provide values for the checkbox options.")
-
-    def save(self, *args, **kwargs):
-        self.clean()
-        super().save(*args, **kwargs)
 
 class Asset(models.Model):
     STATUS_CHOICES = [
@@ -304,40 +295,208 @@ class AssetRequest(models.Model):
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
     ]
-
     employee          = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name="asset_requests")
-    asset_type        = models.ForeignKey(AssetType, on_delete=models.CASCADE, related_name="asset_requests")
+    asset_type        = models.ForeignKey(AssetType,on_delete = models.CASCADE)
     requested_asset   = models.ForeignKey(Asset, on_delete=models.SET_NULL, null=True, blank=True)
     reason            = models.TextField()
     status            = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    # request_date      = models.DateField(auto_now_add=True)
-    request_date        = models.DateTimeField(auto_now=True)
+    # request_date    = models.DateField(auto_now_add=True)
+    request_date      = models.DateTimeField(auto_now=True)
+    created_by        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
-        return f"Request by {self.employee} for {self.asset_category}"
-    def approve(self):
-        if self.status != 'pending':
-            raise ValueError("Request already processed")
-        self.status = 'approved'
-        self.save()
+        return f"Request by {self.employee} for {self.asset_type}"
 
-        # Allocate the asset to the employee
-        if self.requested_asset:
-            self.requested_asset.status = 'assigned'
-            self.requested_asset.save()
+    def get_employee_requests(employee_id):
+        return AssetRequest.objects.filter(employee_id=employee_id).order_by('-created_at_date')
+    
+    def move_to_next_level(self):
 
-            # Create an allocation record
+        if self.approvals.filter(status=AssetApproval.REJECTED).exists():
+            self.status = 'Rejected'
+            self.save()
+            send_notification_email(
+                user=next_level.approver,
+                employee=None,
+                message=f"New request for approval: {self.asset_type.name}, Employee: {self.employee}",
+                template_type="asset_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    'asset_type': self.asset_type.name,
+                    'requested_asset': self.requested_asset,
+                    'request_date ': self.request_date,
+                    'reason': self.reason,
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=RequestNotification,
+            )
+            return
+
+        current_level = self.approvals.filter(
+            status=AssetApproval.APPROVED
+        ).order_by('-level').first()
+
+        current_level_number = current_level.level if current_level else 0
+        next_level = AssetApprovalLevel.objects.filter(
+            asset_type=self.asset_type,
+            branch__id=self.employee.emp_branch_id.id,
+            level=current_level_number + 1
+        ).first()
+
+        if not next_level:
+            self.status = 'Approved'
+            self.save()
             AssetAllocation.objects.create(
                 asset=self.requested_asset,
                 employee=self.employee,
                 assigned_date=timezone.now().date()
             )
 
-    def reject(self):
-        if self.status != 'pending':
-            raise ValueError("Request already processed")
-        self.status = 'rejected'
+            # Update asset status to allocatedAssigned
+            self.requested_asset.status = "Assigned"
+            self.requested_asset.save()
+
+            return
+
+        if not self.approvals.filter(level=next_level.level).exists():
+            approval = AssetApproval.objects.create(
+                asset_request=self,
+                approver=next_level.approver,
+                role=next_level.role,
+                level=next_level.level,
+                status=AssetApproval.PENDING
+            )
+            asset_schedule_escalation(approval, next_level)
+
+            # Notify next approver
+            send_notification_email(
+                user=next_level.approver,
+                employee=None,
+                message=f"New request for approval: {self.asset_type.name}, Employee: {self.employee}",
+                template_type="asset_Approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'asset_type': self.asset_type.name,
+                    'requested_asset': self.requested_asset,
+                    'request_date ': self.request_date,
+                    'reason': self.reason,
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=RequestNotification,
+            )
+
+
+class AssetApprovalLevel(models.Model):
+    level = models.IntegerField()
+    role = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
+    approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
+    asset_type = models.ForeignKey('AssetType', related_name='approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow
+    branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+      # 🆕 Escalation fields
+    escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='asset_escalated_levels')
+    escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
+    escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
+    escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
+
+    def get_escalation_timedelta(self):
+        """Returns the total time delta for escalation."""
+        from datetime import timedelta
+        total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
+        return timedelta(minutes=total_minutes)
+
+class AssetApproval(models.Model):
+    PENDING = 'Pending'
+    APPROVED = 'Approved'
+    REJECTED = 'Rejected'
+    ESCALATED = 'Escalated'
+
+    STATUS_CHOICES = [
+        (PENDING, 'Pending'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Rejected'),
+        (ESCALATED, 'Escalated'),
+    ]
+    asset_request   = models.ForeignKey(AssetRequest,related_name='approvals', on_delete=models.CASCADE)
+    approver        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE)
+    role            = models.CharField(max_length=50, null=True, blank=True)
+    level           = models.IntegerField(default=1)
+    status          = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
+    note            = models.TextField(null=True, blank=True)
+    escalated       = models.BooleanField(default=False)
+    escalated_at    = models.DateTimeField(null=True, blank=True)
+    is_escalation   = models.BooleanField(default=False)
+    created_at      = models.DateField(auto_now_add=True)
+    created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    updated_at      = models.DateField(auto_now=True)
+
+    def approve(self,note=None):
+        self.status = self.APPROVED
+        if note:
+            self.note = note
         self.save()
+
+        self.asset_request.move_to_next_level()
+    def reject(self, note=None):
+        self.status = self.REJECTED
+        if note:
+            self.note = note
+        self.save()
+        self.asset_request.status = 'Rejected'
+        self.asset_request.save()
+        send_notification_email(
+            user=self.asset_request.created_by,
+            employee=self.asset_request.employee,
+            message=f"Your Request {self.asset_request.asset_type} has been Rejected!",
+            template_type='asset_rejected',
+            context={       
+                **get_employee_context(self.asset_request.employee),
+                'asset_type':self.asset_request.asset_type.name,
+                'requested_asset':self.asset_request.requested_asset,
+                'request_date ': self.asset_request.request_date,
+                'reason' : self.asset_request.reason 
+            },
+            email_template_model=AssetEmailTemplate,
+            notification_model=RequestNotification
+        )
+
+@receiver(post_save, sender=AssetRequest)
+def create_initial_approval(sender, instance, created, **kwargs):
+    #if created:
+        # if instance.request_type.use_common_workflow:
+        #     first_level = AssetCommonWorkflow.objects.order_by('level').first()
+    if created:
+        first_level = AssetApprovalLevel.objects.filter(
+        asset_type=instance.asset_type,
+        branch__id=instance.employee.emp_branch_id.id
+        ).order_by('level').first()
+        if first_level:
+            approval=AssetApproval.objects.create(
+            asset_request=instance,
+            approver=first_level.approver,
+            role=first_level.role,
+            level=first_level.level,
+            status=AssetApproval.PENDING
+        )   
+        asset_schedule_escalation(approval, first_level)
+        send_notification_email(
+                user=first_level.approver,
+                employee=None,
+                message=f"New request for approval: {instance.asset_type.name}, Employee: {instance.employee}",
+                template_type="asset_created",
+                context={
+                    **get_employee_context(instance.employee),
+                    'asset_type':instance.asset_type.name,
+                    'requested_asset':instance.requested_asset,
+                    'request_date ': instance.request_date,
+                    'reason' :instance.reason 
+
+
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=RequestNotification
+            )     
+
+
 class AssetAllocation(models.Model):
     CONDITION_CHOICES = [
         ('healthy', 'Healthy'),
@@ -368,6 +527,36 @@ class AssetAllocation(models.Model):
         self.asset.status = "available"
         self.asset.condition = condition
         self.asset.save()
+class AssetCustomField(models.Model):
+    FIELD_TYPES = (
+        ('dropdown', 'DropdownField'),
+        ('radio', 'RadioButtonField'),
+        ('date', 'DateField'),
+        ('text', 'TextField'),
+        ('checkbox', 'CheckboxField'),
+    )
+    asset_type       = models.ForeignKey(AssetType,on_delete=models.CASCADE,related_name='custom_fields',null=True)
+    custom_field     = models.CharField(unique=True, max_length=100)  # Field name
+    data_type        = models.CharField(max_length=20, choices=FIELD_TYPES, null=True, blank=True)
+    dropdown_values  = models.JSONField(null=True, blank=True)
+    radio_values     = models.JSONField(null=True, blank=True)
+    checkbox_values  = models.JSONField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.custom_field} ({self.asset_type})"
+
+    def clean(self):
+        # Validate field values based on type
+        if self.data_type == 'dropdown' and not self.dropdown_values:
+            raise ValidationError("Provide values for the dropdown options.")
+        elif self.data_type == 'radio' and not self.radio_values:
+            raise ValidationError("Provide values for the radio options.")
+        elif self.data_type == 'checkbox' and not self.checkbox_values:
+            raise ValidationError("Provide values for the checkbox options.")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
     
 class AssetCustomFieldValue(models.Model):
     asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name='custom_field_values',null=True)

@@ -24,7 +24,8 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
                         EmpFamilyCustomFieldPermission,EmpJobHistoryCustomFieldPermission,EmpQualificationCustomFieldPermission,ReportPermission,DocReportPermission,GeneralRequestReportPermission,
-                        EmployeeMarketingSkillPermission,EmployeeProgramSkillPermission,EmployeeLangSkillPermission,NotificationPermission,ApprovalLevelPermission,EmployeeMarketingSkillPermission,RequestTypePermission)
+                        EmployeeMarketingSkillPermission,EmployeeProgramSkillPermission,EmployeeLangSkillPermission,NotificationPermission,ApprovalLevelPermission,EmployeeMarketingSkillPermission,RequestTypePermission,
+                        CanViewApprovedResignations,CanCreateEOS,EmployeeResignationPermission)
 from django.core.exceptions import ValidationError
 from rest_framework.decorators import action
 from phonenumber_field.modelfields import PhoneNumberField
@@ -2788,7 +2789,8 @@ class DocRequestNotificationViewset(viewsets.ModelViewSet):
 class EmployeeResignationViewset(viewsets.ModelViewSet):
     queryset = EmployeeResignation.objects.all()
     serializer_class = EmployeeResignationSerializer
-    @action(detail=False, methods=['get'], url_path='approved_resignations')
+    permission_classes = [EmployeeResignationPermission]
+    @action(detail=False, methods=['get'], url_path='approved_resignations',permission_classes=[CanViewApprovedResignations])
     def list_approved_resignations(self, request):
         # Fetch all approved resignations
         approved_resignations = EmployeeResignation.objects.filter(status='Approved')
@@ -2808,7 +2810,7 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
             })
 
         return Response(data, status=status.HTTP_200_OK)
-    @action(detail=False, methods=['post'], url_path='create_eos_by_employee/(?P<employee_id>[^/.]+)')
+    @action(detail=False, methods=['post'], url_path='create_eos_by_employee/(?P<employee_id>[^/.]+)',permission_classes=[CanCreateEOS])
     def create_eos_by_employee(self, request, employee_id=None):
         try:
             # Get the latest approved resignation for this employee

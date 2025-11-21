@@ -699,4 +699,70 @@ class ApprovalPermission(permissions.BasePermission):
                 return True
 
         return False
+class EmployeeResignationPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
 
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_employeeresignation',
+            'retrieve': 'view_employeeresignation',
+            'create': 'add_employeeresignation',
+            'update': 'change_employeeresignation',
+            'partial_update': 'change_employeeresignation',
+            'destroy': 'delete_employeeresignation',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+
+class CanViewApprovedResignations(permissions.BasePermission):
+    def has_permission(self, request, view):
+        # logic to check “view_approved_resignations” permission
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+        try:
+            user_perms = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+        for g in user_perms.groups.all():
+            if g.permissions.filter(codename='view_approved_resignations').exists():
+                return True
+        return False
+class CanCreateEOS(permissions.BasePermission):
+    def has_permission(self, request, view):
+        # logic to check “add_create_eos_for_resignation” permission
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+        try:
+            user_perms = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+        for g in user_perms.groups.all():
+            if g.permissions.filter(codename='add_create_eos_for_resignation').exists():
+                return True
+        return False

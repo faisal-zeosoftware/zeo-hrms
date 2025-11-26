@@ -15,10 +15,10 @@ class IsSuperUserOrHasGeneralRequestPermission(permissions.BasePermission):
 
         # Define required permissions
         required_permissions = [
-            'view_GeneralRequest',
-            'delete_GeneralRequest',
-            'add_GeneralRequest',
-            'change_GeneralRequest'
+            'view_generalrequest',
+            'delete_generalrequest',
+            'add_generalrequest',
+            'change_generalrequest'
         ]
 
         # Check if the user has the necessary permissions

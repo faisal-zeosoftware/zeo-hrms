@@ -18,12 +18,12 @@ class WeekendCalendarPermission(permissions.BasePermission):
 
         # Map view actions to required permissions
         action_permissions = {
-            'list': 'view_weekendcalendar',
-            'retrieve': 'view_weekendcalendar',
-            'create': 'add_weekendcalendar',
-            'update': 'change_weekendcalendar',
-            'partial_update': 'change_weekendcalendar',
-            'destroy': 'delete_weekendcalendar',
+            'list': 'view_weekend_calendar',
+            'retrieve': 'view_weekend_calendar',
+            'create': 'add_weekend_calendar',
+            'update': 'change_weekend_calendar',
+            'partial_update': 'change_weekend_calendar',
+            'destroy': 'delete_weekend_calendar',
         }
 
         required_perm = action_permissions.get(view.action)

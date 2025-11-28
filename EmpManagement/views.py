@@ -2352,7 +2352,7 @@ class EmailConfigurationViewSet(viewsets.ModelViewSet):
 class GeneralReportViewset(viewsets.ModelViewSet):
     queryset = GeneralRequestReport.objects.all()
     serializer_class = GeneralReportSerializer
-    permission_classes = [GeneralRequestReportPermission]
+    # permission_classes = [GeneralRequestReportPermission]
     
     def __init__(self, *args, **kwargs):
         super(GeneralReportViewset, self).__init__(*args, **kwargs)

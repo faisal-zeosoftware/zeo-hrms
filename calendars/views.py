@@ -506,11 +506,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return datetime.strptime(date_string, "%Y-%m-%d").date()
         except (ValueError, TypeError):
             return None
+
+    #frontend automatically send the lat,log,loc
     @action(detail=False, methods=['post'])
     def check_in(self, request):
         emp_id = request.data.get("employee")
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
+
+        # NEW: Location Data From Frontend
+        lat = request.data.get("latitude")
+        lng = request.data.get("longitude")
+        location_name = request.data.get("location_name")
+
+        # if not lat or not lng:
+        #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             employee = emp_master.objects.get(id=emp_id)
@@ -521,21 +531,31 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if attendance.check_in_time:
             return Response({"detail": "Already checked in"}, status=status.HTTP_400_BAD_REQUEST)
 
-        #  Get shift schedules where the employee is directly assigned OR belongs to a department with an assigned shift
+        # Existing logic: get assigned shift
         schedule = EmployeeShiftSchedule.objects.filter(
             Q(employee=employee) | Q(departments=employee.emp_dept_id)
-        ).first()  # Fetch the first matching schedule
+        ).first()
 
-        shift = schedule.get_shift_for_date(date) if schedule else None  #  Fixed this line
+        shift = schedule.get_shift_for_date(date) if schedule else None
 
-        # Get the current time in the tenant's timezone and store only the time
+        # Existing logic: get check-in time
         tenant_time = localtime(now()).time()
         attendance.check_in_time = tenant_time
         attendance.shift = shift
+
+        # NEW: store location
+        attendance.check_in_lat = lat
+        attendance.check_in_lng = lng
+        attendance.check_in_location = location_name
+
         attendance.save()
 
         return Response(
-            {"status": "Check-in recorded successfully", "shift": shift.name if shift else None},
+            {
+                "status": "Check-in recorded successfully",
+                "shift": shift.name if shift else None,
+                "location": location_name,
+            },
             status=status.HTTP_200_OK
         )
     @action(detail=False, methods=['post'])
@@ -543,6 +563,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         emp_id = request.data.get("employee")
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
+
+        # NEW: Location data from frontend
+        lat = request.data.get("latitude")
+        lng = request.data.get("longitude")
+        location_name = request.data.get("location_name")
+
+        # if not lat or not lng:
+        #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             attendance = Attendance.objects.get(employee_id=emp_id, date=date)
@@ -552,13 +580,26 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if attendance.check_out_time:
             return Response({"detail": "Already checked out"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Get the current time in the tenant's timezone and store only the time
-        tenant_time = localtime(now()).time()  # Get the current time in the active timezone
+        # Existing logic: set check-out time
+        tenant_time = localtime(now()).time()
         attendance.check_out_time = tenant_time
+
+        # NEW: store location
+        attendance.check_out_lat = lat
+        attendance.check_out_lng = lng
+        attendance.check_out_location = location_name
+
+        # Existing logic: calculate hours
         attendance.calculate_total_hours()
         attendance.save()
-        return Response({"status": "Check-out recorded successfully"}, status=status.HTTP_200_OK)
-    @action(detail=False, methods=['get'])
+
+        return Response(
+            {
+                "status": "Check-out recorded successfully",
+                "location": location_name,
+            },
+            status=status.HTTP_200_OK
+        )    @action(detail=False, methods=['get'])
     def monthly_late_and_early_attendance(self, request):
         from datetime import datetime, timedelta, datetime as dt
 

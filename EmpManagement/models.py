@@ -1186,7 +1186,7 @@ class CommonWorkflow(models.Model):
 class GeneralRequest(models.Model):
     document_number  = models.CharField(max_length=50, unique=True, blank=True)
     reason           =  models. CharField(max_length=200)
-    # branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete = models.CASCADE)
+    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete = models.CASCADE)
     request_type     =  models.ForeignKey('RequestType',on_delete = models.CASCADE)
     employee         =  models.ForeignKey('emp_master',on_delete = models.CASCADE)
     total            =  models.IntegerField(null=True)
@@ -1370,11 +1370,11 @@ class ApprovalLevel(models.Model):
     escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
     class meta:
         permissions = (
-                ("add_general_escalation", "Can add Escalation"),
-                ("view_general_escalation", "Can view Escalation"),
-                ("change_general_escalation", "Can change Escalation"),
-                ("export_general_escalation", "Can export Escalation"),
-                ("delete_general_escalation", "Can delete Escalation"),
+                ("add_genrl_escalation", "Can add Escalation"),
+                ("view_genrl_escalation", "Can view Escalation"),
+                ("change_genrl_escalation", "Can change Escalation"),
+                ("export_genrl_escalation", "Can export Escalation"),
+                ("delete_genrl_escalation", "Can delete Escalation"),
         )
     def get_escalation_timedelta(self):
         """Returns the total time delta for escalation."""

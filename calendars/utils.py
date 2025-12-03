@@ -1,7 +1,74 @@
 
 from datetime import datetime, timedelta
 from django.utils import timezone
-from .models import leave_entitlement, leave_accrual_transaction
+from .models import leave_entitlement, assign_weekend,assign_holiday
+
+def get_employee_weekend_calendar(employee):
+    """
+    Return weekend model assigned to employee 
+    by priority: employee > branch > department > category.
+    """
+
+    # 1. Direct employee-wise assignment
+    direct = assign_weekend.objects.filter(
+        related_to='employee',
+        employee=employee
+    ).first()
+    if direct:
+        return direct.weekend_model
+
+    # 2. Branch-wise assignment
+    branch_assign = assign_weekend.objects.filter(
+        related_to='branch',
+        branch=employee.emp_branch_id
+    ).first()
+    if branch_assign:
+        return branch_assign.weekend_model
+
+    # 3. Department-wise assignment
+    dept_assign = assign_weekend.objects.filter(
+        related_to='department',
+        department=employee.emp_dept_id
+    ).first()
+    if dept_assign:
+        return dept_assign.weekend_model
+
+    # 4. Category-wise assignment
+    cat_assign = assign_weekend.objects.filter(
+        related_to='category',
+        category=employee.emp_ctgry_id
+    ).first()
+    if cat_assign:
+        return cat_assign.weekend_model
+
+    return None
+def get_employee_holiday_calendar(employee):
+    direct = assign_holiday.objects.filter(related_to='employee', employee=employee).first()
+    if direct:
+        return direct.holiday_model
+
+    branch_assign = assign_holiday.objects.filter(
+        related_to='branch',
+        branch=employee.emp_branch_id
+    ).first()
+    if branch_assign:
+        return branch_assign.holiday_model
+
+    dept_assign = assign_holiday.objects.filter(
+        related_to='department',
+        department=employee.emp_dept_id
+    ).first()
+    if dept_assign:
+        return dept_assign.holiday_model
+
+    cat_assign = assign_holiday.objects.filter(
+        related_to='category',
+        category=employee.emp_ctgry_id
+    ).first()
+    if cat_assign:
+        return cat_assign.holiday_model
+
+    return None
 
 def calculate_leave_entitlement(employee, leave_type):
     today = timezone.now().date()

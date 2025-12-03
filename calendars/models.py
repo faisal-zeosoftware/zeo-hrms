@@ -149,42 +149,54 @@ class assign_weekend(models.Model):
     created_by    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
 
+def assign_weekend_to_employees(employees, weekend_model):
+    """
+    Updates employee weekend calendar and yearly calendar.
+    """
+    # Update emp_weekend_calendar for all
+    employees.update(emp_weekend_calendar=weekend_model)
+
+    # Now update yearly calendar for each employee
+    for emp in employees.iterator():
+        update_employee_yearly_calendar(emp, weekend_model)
+
 @receiver(m2m_changed, sender=assign_weekend.branch.through)
-def update_branch_weekend_calendar(sender, instance, action, **kwargs):
-    if action in ['post_add', 'post_remove', 'post_clear'] and instance.related_to == "branch":
-        branches = instance.branch.all()
-        logger.debug(f"Updating employees for branches: {[branch.id for branch in branches]}")
-        for branch in branches:
-            updated_count = emp_master.objects.filter(emp_branch_id=branch.id).update(emp_weekend_calendar=instance.weekend_model)
-            logger.debug(f"Updated {updated_count} employees for branch ID {branch.id}")
-
 @receiver(m2m_changed, sender=assign_weekend.department.through)
-def update_department_weekend_calendar(sender, instance, action, **kwargs):
-    if action in ['post_add', 'post_remove', 'post_clear'] and instance.related_to == "department":
-        departments = instance.department.all()
-        logger.debug(f"Updating employees for departments: {[department.id for department in departments]}")
-        for department in departments:
-            updated_count = emp_master.objects.filter(emp_dept_id=department.id).update(emp_weekend_calendar=instance.weekend_model)
-            logger.debug(f"Updated {updated_count} employees for department ID {department.id}")
-
 @receiver(m2m_changed, sender=assign_weekend.category.through)
-def update_category_weekend_calendar(sender, instance, action, **kwargs):
-    if action in ['post_add', 'post_remove', 'post_clear'] and instance.related_to == "category":
-        categories = instance.category.all()
-        logger.debug(f"Updating employees for categories: {[category.id for category in categories]}")
-        for category in categories:
-            updated_count = emp_master.objects.filter(emp_ctgry_id=category.id).update(emp_weekend_calendar=instance.weekend_model)
-            logger.debug(f"Updated {updated_count} employees for category ID {category.id}")
-
 @receiver(m2m_changed, sender=assign_weekend.employee.through)
-def update_employee_weekend_calendar(sender, instance, action, **kwargs):
-    if action in ['post_add', 'post_remove', 'post_clear'] and instance.related_to == "employee":
+def update_weekend_assignment(sender, instance, action, **kwargs):
+
+    if action not in ['post_add', 'post_remove', 'post_clear']:
+        return
+    
+    weekend_model = instance.weekend_model
+
+    # --- BRANCH BASED ---------------------------------------------------------
+    if instance.related_to == "branch":
+        branches = instance.branch.all()
+        for branch in branches:
+            employees = emp_master.objects.filter(emp_branch_id=branch.id)
+            assign_weekend_to_employees(employees, weekend_model)
+
+    # --- DEPARTMENT BASED -----------------------------------------------------
+    elif instance.related_to == "department":
+        departments = instance.department.all()
+        for department in departments:
+            employees = emp_master.objects.filter(emp_dept_id=department.id)
+            assign_weekend_to_employees(employees, weekend_model)
+
+    # --- CATEGORY BASED -------------------------------------------------------
+    elif instance.related_to == "category":
+        categories = instance.category.all()
+        for category in categories:
+            employees = emp_master.objects.filter(emp_ctgry_id=category.id)
+            assign_weekend_to_employees(employees, weekend_model)
+
+    # --- EMPLOYEE BASED -------------------------------------------------------
+    elif instance.related_to == "employee":
         employees = instance.employee.all()
-        logger.debug(f"Updating employees: {[employee.id for employee in employees]}")
-        for employee in employees:
-            employee.emp_weekend_calendar = instance.weekend_model
-            employee.save()
-            logger.debug(f"Updated employee ID {employee.id}")
+        assign_weekend_to_employees(employees, weekend_model)
+
 def update_employee_yearly_calendar(employee, weekend_model):
     year = weekend_model.year
     # Check if EmployeeYearlyCalendar for this employee and year already exists
@@ -339,7 +351,9 @@ class leave_type(models.Model):
     allow_half_day                = models.BooleanField(default=False)  # Allows half-day leave if set to True
     valid_from                    = models.DateField(null=True,blank=True)
     valid_to                      = models.DateField(null=True,blank=True)
-    include_weekend_and_holiday   = models.BooleanField(default=False)
+    # include_weekend_and_holiday   = models.BooleanField(default=False)
+    include_weekend               = models.BooleanField(default=False)
+    include_holiday               = models.BooleanField(default=False)
     use_common_workflow           = models.BooleanField(default=False)
     include_dashboard             = models.BooleanField(default=False)
     branch                        = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='leave_types')
@@ -1072,45 +1086,68 @@ class employee_leave_request(models.Model):
             #     self.restore_leave_balance()
             
     def calculate_leave_days(self):
+        from .utils import get_employee_holiday_calendar,get_employee_weekend_calendar
         leave_days = 0
         current_date = self.start_date
 
-        # Determine if weekends and holidays should be included
-        include_weekend_and_holiday = self.leave_type.include_weekend_and_holiday
+        # NEW: read the separated fields
+        include_weekend = self.leave_type.include_weekend
+        include_holiday = self.leave_type.include_holiday
 
-        # Fetch assigned weekend and holiday calendars for the employee
-        assigned_weekend = assign_weekend.objects.filter(employee=self.employee).first()
-        assigned_holiday = assign_holiday.objects.filter(employee=self.employee).first()
-
+        # Weekend Calendar
+        assigned_weekend = get_employee_weekend_calendar(self.employee)
         weekend_days = []
-        if assigned_weekend and not include_weekend_and_holiday:
-            calendar = assigned_weekend.weekend_model
+
+        if assigned_weekend:
+            # map weekend model boolean fields to weekday names
             weekend_days = [
                 day for day, value in {
-                    'monday': calendar.monday,
-                    'tuesday': calendar.tuesday,
-                    'wednesday': calendar.wednesday,
-                    'thursday': calendar.thursday,
-                    'friday': calendar.friday,
-                    'saturday': calendar.saturday,
-                    'sunday': calendar.sunday
+                    'monday': assigned_weekend.monday,
+                    'tuesday': assigned_weekend.tuesday,
+                    'wednesday': assigned_weekend.wednesday,
+                    'thursday': assigned_weekend.thursday,
+                    'friday': assigned_weekend.friday,
+                    'saturday': assigned_weekend.saturday,
+                    'sunday': assigned_weekend.sunday,
                 }.items() if value == 'leave'
             ]
 
+        # Holiday Calendar
+        assigned_holiday = get_employee_holiday_calendar(self.employee)
         holiday_dates = set()
-        if assigned_holiday and not include_weekend_and_holiday:
-            holiday_dates = set(assigned_holiday.holiday_model.holiday.all().values_list('date', flat=True))
 
-        # Iterate over the date range
+        if assigned_holiday:
+            holiday_dates = set(
+                assigned_holiday.holiday_list.all().values_list('start_date', flat=True)
+            )
+
+        # -------------------- DATE LOOP --------------------
         while current_date <= self.end_date:
-            # Check if the day should be counted
-            if include_weekend_and_holiday or (
-                current_date.strftime('%A').lower() not in weekend_days and current_date not in holiday_dates
+
+            weekday_name = current_date.strftime('%A').lower()
+
+            is_weekend_day = weekday_name in weekend_days
+            is_holiday_day = current_date in holiday_dates
+
+            # ---------- Weekend Filter ----------
+            if is_weekend_day and not include_weekend:
+                current_date += timedelta(days=1)
+                continue
+
+            # ---------- Holiday Filter ----------
+            if is_holiday_day and not include_holiday:
+                current_date += timedelta(days=1)
+                continue
+
+            # ---------- Half-day Leave ----------
+            if (
+                self.dis_half_day
+                and self.start_date == self.end_date == current_date
             ):
-                if self.dis_half_day and current_date == self.start_date == self.end_date:
-                    leave_days += 0.5
-                else:
-                    leave_days += 1
+                leave_days += 0.5
+            else:
+                leave_days += 1
+
             current_date += timedelta(days=1)
 
         return leave_days

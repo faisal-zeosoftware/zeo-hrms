@@ -20,6 +20,12 @@ from django.core.files.storage import default_storage
 from .models import NotificationSettings
 from .tasks import send_document_notification
 
+class CaseInsensitiveForeignKeyWidget(ForeignKeyWidget):
+    def clean(self, value, row=None, *args, **kwargs):
+        if not value:
+            return None
+        return self.model.objects.filter(**{f"{self.field}__iexact": value.strip()}).first()
+
 
 class FileWidget(Widget):
     def clean(self, value, row=None, *args, **kwargs):
@@ -62,22 +68,33 @@ class CustomForeignKeyWidget(ForeignKeyWidget):
         if not value:
             return None
 
-        # Fetch branch based on branch name
+        value = value.strip()  # remove spaces
+
+        # Get branch name from Excel
         branch_name = row.get('Employee Branch Code')
-        matching_branch = brnch_mstr.objects.filter(branch_name=branch_name).first()
+
+        matching_branch = brnch_mstr.objects.filter(branch_name__iexact=branch_name.strip()).first()
         if not matching_branch:
             raise ValidationError(f"No matching branch found for Branch Name: {branch_name}")
 
-        # Filter department by branch and name
+        # CASE-INSENSITIVE department lookup
         queryset = self.get_queryset(value, row, *args, **kwargs)
-        queryset = queryset.filter(branch_id=matching_branch.id, dept_name=value)
+        queryset = queryset.filter(
+            branch_id=matching_branch.id,
+            dept_name__iexact=value
+        )
+
         if queryset.count() == 1:
             return queryset.first()
         elif queryset.count() > 1:
-            raise ValidationError(f"Multiple departments found for '{value}' in branch '{branch_name}'")
+            raise ValidationError(
+                f"Multiple departments found for '{value}' in branch '{branch_name}'"
+            )
         else:
-            raise ValidationError(f"No department found for '{value}' in branch '{branch_name}'")
-
+            raise ValidationError(
+                f"No department found for '{value}' in branch '{branch_name}'"
+            )
+        
 # Custom Date Widget to handle the date format
 class MultiTypeWidget(Widget):
     def clean(self, value, row=None, *args, **kwargs):
@@ -136,8 +153,8 @@ class EmployeeResource(resources.ModelResource):
     is_ess = fields.Field(attribute='is_ess', column_name='Iss ESS (True/False)')
     emp_mobile_number_1 = fields.Field(attribute='emp_mobile_number_1', column_name='Employee Personal Mob No')
     emp_mobile_number_2 = fields.Field(attribute='emp_mobile_number_2', column_name='Employee Company Mobile No')
-    emp_country_id = fields.Field(attribute='emp_country_id', column_name='Employee Country Code',widget=ForeignKeyWidget(cntry_mstr, 'country_name'))
-    emp_state_id = fields.Field(attribute='emp_state_id', column_name='Employee State',widget=ForeignKeyWidget(state_mstr, 'state_name'))
+    emp_country_id = fields.Field(attribute='emp_country_id', column_name='Employee Country Code',widget=CaseInsensitiveForeignKeyWidget(cntry_mstr, 'country_name'))
+    emp_state_id = fields.Field(attribute='emp_state_id', column_name='Employee State',widget=CaseInsensitiveForeignKeyWidget(state_mstr, 'state_name'))
     emp_city = fields.Field(attribute='emp_city', column_name='Employee City')
     emp_permenent_address = fields.Field(attribute='emp_permenent_address', column_name='Employee Permanent Address')
     emp_present_address = fields.Field(attribute='emp_present_address', column_name='Employee Current Address')
@@ -146,7 +163,7 @@ class EmployeeResource(resources.ModelResource):
     emp_date_of_confirmation = fields.Field(attribute='emp_date_of_confirmation', column_name='Employee Confirmaton Date(DD/MM/YYYY)', widget=CustomDateWidget())
     emp_relegion = fields.Field(attribute='emp_relegion', column_name='Employee Religion', widget=ForeignKeyWidget(ReligionMaster, 'religion'))
     emp_blood_group = fields.Field(attribute='emp_blood_group', column_name='Employee Blood Group')
-    emp_nationality = fields.Field(attribute='emp_nationality', column_name='Employee Nationality', widget=ForeignKeyWidget(Nationality, 'N_name'))
+    emp_nationality = fields.Field(attribute='emp_nationality', column_name='Employee Nationality', widget=CaseInsensitiveForeignKeyWidget(Nationality, 'N_name'))
     emp_marital_status = fields.Field(attribute='emp_marital_status', column_name='Employee Marital Status')
     emp_father_name = fields.Field(attribute='emp_father_name', column_name='Employee Father Name')
     emp_mother_name = fields.Field(attribute='emp_mother_name', column_name='Employee Mother Name')
@@ -154,7 +171,7 @@ class EmployeeResource(resources.ModelResource):
     emp_ot_applicable = fields.Field(attribute='emp_ot_applicable', column_name='Employee OT applicable(True/False)')
     emp_branch_id = fields.Field(attribute='emp_branch_id', column_name='Employee Branch Code', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
     emp_dept_id = fields.Field(attribute='emp_dept_id', column_name='Employee Department Code', widget=CustomForeignKeyWidget(dept_master, 'dept_name'))
-    emp_desgntn_id = fields.Field(attribute='emp_desgntn_id', column_name='Employee Designation Code', widget=ForeignKeyWidget(desgntn_master, 'desgntn_job_title'))
+    emp_desgntn_id = fields.Field(attribute='emp_desgntn_id', column_name='Employee Designation Code', widget=CaseInsensitiveForeignKeyWidget(desgntn_master, 'desgntn_job_title'))
     emp_ctgry_id = fields.Field(attribute='emp_ctgry_id', column_name='Employee Category Code', widget=ForeignKeyWidget(ctgry_master, 'ctgry_title'))
     person_id = fields.Field(attribute='person_id', column_name='Person ID')
     work_location = fields.Field(attribute='work_locatio', column_name='Employee Work Location', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))

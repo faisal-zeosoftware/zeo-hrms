@@ -14,6 +14,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from UserManagement .models import CustomUser
 from OrganisationManager.serializer import DocumentNumberingSerializer
+import json
 
 
 
@@ -25,42 +26,20 @@ class WeekendDetailSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class WeekendCalendarSerailizer(serializers.ModelSerializer):
+    alternate_weekends = serializers.JSONField(required=False)
     year = serializers.ChoiceField(choices=[(year, year) for year in range(2000, 2040)])
     # details = WeekendDetailSerializer(many=True)
-    details = WeekendDetailSerializer(many=True, read_only=True)
-    
     details = WeekendDetailSerializer(many=True, read_only=True)
     class Meta:
         model = weekend_calendar
         fields = '__all__'
-
-    # def create(self, validated_data):
-    #     details_data = validated_data.pop('details')
-    #     weekend_calendar = weekend_calendar.objects.create(**validated_data)
-    #     for detail_data in details_data:
-    #         WeekendDetail.objects.create(weekend_calendar=weekend_calendar, **detail_data)
-    #     return weekend_calendar
-
-    # def update(self, instance, validated_data):
-    #     details_data = validated_data.pop('details')
-    #     instance.description = validated_data.get('description', instance.description)
-    #     instance.calendar_code = validated_data.get('calendar_code', instance.calendar_code)
-    #     instance.year = validated_data.get('year', instance.year)
-    #     instance.save()
-
-    #     # Update or create details
-    #     for detail_data in details_data:
-    #         detail_id = detail_data.get('id')
-    #         if detail_id:
-    #             detail_instance = WeekendDetail.objects.get(id=detail_id, weekend_calendar=instance)
-    #             detail_instance.weekday = detail_data.get('weekday', detail_instance.weekday)
-    #             detail_instance.day_type = detail_data.get('day_type', detail_instance.day_type)
-    #             detail_instance.week_of_month = detail_data.get('week_of_month', detail_instance.week_of_month)
-    #             detail_instance.save()
-    #         else:
-    #             WeekendDetail.objects.create(weekend_calendar=instance, **detail_data)
-
-    #     return instance
+    def validate_alternate_weekends(self, value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except:
+                raise serializers.ValidationError("Invalid JSON format for alternate_weekends")
+        return value
         
 
 

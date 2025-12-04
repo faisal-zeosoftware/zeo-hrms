@@ -96,7 +96,7 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
                 branch_id=instance,
                 type=doc_type,
                 defaults={
-                    'prefix': f"{doc_type.upper().replace('_', '')}",
+                    'prefix' : f"{instance.branch_code}-{doc_type.upper().replace('_', '')}",
                     'suffix': '',
                     'current_number': 0,
                     'total_length': 12,

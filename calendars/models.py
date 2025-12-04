@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from django.db.models import Q
 from decimal import Decimal
 from PayrollManagement .models import PayrollRun
+from django.db.models import JSONField
 
 
 # Create your models here.
@@ -47,6 +48,12 @@ class weekend_calendar(models.Model):
     friday            = models.CharField(choices=DAY_TYPE_CHOICES,default='fullday')
     saturday          = models.CharField(choices=DAY_TYPE_CHOICES,default='fullday')
     sunday            = models.CharField(choices=DAY_TYPE_CHOICES,default='fullday')
+    is_alternate     = models.BooleanField(default=False)
+    alternate_weekends = JSONField(
+        default=dict, 
+        blank=True,
+        help_text="Example: { 'Friday': '1,3', 'Sunday': '2,4' }",null=True,
+    )
     created_at        = models.DateTimeField(auto_now_add=True)
     created_by        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
@@ -93,6 +100,8 @@ class WeekendDetail(models.Model):
     week_of_month    = models.PositiveIntegerField(null=True, blank=True)  # 1 to 5 for specifying specific weeks
     month_of_year    = models.PositiveIntegerField(null=True, blank=True)
     date             = models.DateField(null=True, blank=True)  # Specific date for the day
+    is_alternate     = models.BooleanField(default=False)
+    alternate_pattern = models.CharField(max_length=50, null=True, blank=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     created_by       = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
@@ -100,34 +109,70 @@ class WeekendDetail(models.Model):
         ordering = [ 'pk']
 @receiver(post_save, sender=weekend_calendar)
 def create_weekend_details(sender, instance, created, **kwargs):
-    if created:
-        weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-        day_types = {
-            'monday': instance.monday,
-            'tuesday': instance.tuesday,
-            'wednesday': instance.wednesday,
-            'thursday': instance.thursday,
-            'friday': instance.friday,
-            'saturday': instance.saturday,
-            'sunday': instance.sunday,
-        }
+    if not created:
+        return
 
-        year = instance.year
-        start_date = datetime(year, 1, 1)
-        end_date = datetime(year, 12, 31)
-        delta = timedelta(days=1)
+    day_types = {
+        'monday': instance.monday,
+        'tuesday': instance.tuesday,
+        'wednesday': instance.wednesday,
+        'thursday': instance.thursday,
+        'friday': instance.friday,
+        'saturday': instance.saturday,
+        'sunday': instance.sunday,
+    }
 
-        while start_date <= end_date:
-            weekday_name = calendar.day_name[start_date.weekday()].lower()
-            WeekendDetail.objects.create(
-                weekend_calendar=instance,
-                weekday=weekday_name.capitalize(),
-                day_type=day_types[weekday_name],
-                week_of_month=(start_date.day - 1) // 7 + 1,
-                month_of_year=start_date.month,
-                date=start_date.date()
-            )
-            start_date += delta
+    year = instance.year
+    start_date = datetime(year, 1, 1)
+    end_date = datetime(year, 12, 31)
+
+    # Convert alternates to dict {"saturday": [2,4]}
+    alternate_patterns = {}
+    for day, pattern in (instance.alternate_weekends or {}).items():
+        alternate_patterns[day.lower()] = [
+            int(x) for x in pattern.split(",") if x.strip().isdigit()
+        ]
+
+    current_date = start_date
+
+    while current_date <= end_date:
+
+        weekday_name = calendar.day_name[current_date.weekday()].lower()
+        week_of_month = ((current_date.day - 1) // 7) + 1
+
+        is_alternate = False
+        alt_pattern = None
+
+        # DEFAULT from main calendar
+        final_day_type = day_types[weekday_name]
+
+        # If the weekday has alternate weekend pattern
+        if weekday_name in alternate_patterns:
+
+            alt_weeks = alternate_patterns[weekday_name]
+
+            # If this week is alternate → leave
+            if week_of_month in alt_weeks:
+                is_alternate = False
+                alt_pattern = instance.alternate_weekends.get(weekday_name.capitalize())
+                final_day_type = "leave"
+            else:
+                # Non alternate weeks must be fullday
+                final_day_type = "fullday"
+
+        # Create WeekendDetail
+        WeekendDetail.objects.create(
+            weekend_calendar=instance,
+            weekday=weekday_name.capitalize(),
+            day_type=final_day_type,
+            week_of_month=week_of_month,
+            month_of_year=current_date.month,
+            date=current_date.date(),
+            is_alternate=is_alternate,
+            alternate_pattern=alt_pattern
+        )
+
+        current_date += timedelta(days=1)
 
     def __str__(self):
         return f"{self.weekday} - {self.day_type}"

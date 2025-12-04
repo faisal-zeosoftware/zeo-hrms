@@ -226,7 +226,7 @@ class AssetAllocationSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super(AssetAllocationSerializer, self).to_representation(instance)
         if instance.asset:
-            rep['asset'] =instance.asset.asset_type.name
+            rep['asset'] =instance.asset.name
         if instance.employee:
             rep['employee'] =instance.employee.emp_code
         return rep

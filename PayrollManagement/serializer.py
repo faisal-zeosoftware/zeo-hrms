@@ -210,6 +210,16 @@ class LoanTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanType
         fields = '__all__'
+    def validate(self, attrs):
+        loan_type=attrs.get("loan_type")
+        loan=LoanType.objects.filter(loan_type=loan_type)
+        if self.instance:
+            loan=loan.exclude(id=self.instance.id)
+        if loan.exists():
+            raise serializers.ValidationError({ f"{loan_type} is already exists."
+        })
+        return attrs
+
 class LoanApplicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApplication

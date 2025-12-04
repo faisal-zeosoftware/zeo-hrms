@@ -41,7 +41,15 @@ class WeekendCalendarSerailizer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Invalid JSON format for alternate_weekends")
         return value
         
-
+    def validate(self, attrs):
+        calendar_code=attrs.get("calendar_code")
+        calendar=weekend_calendar.objects.filter(calendar_code=calendar_code)
+        if self.instance:
+            calendar=calendar.exclude(id=self.instance.id)
+        if calendar.exists():
+            raise serializers.ValidationError({f"{calendar_code} is already exists."
+        })
+        return attrs
 
 class WeekendAssignSerializer(serializers.ModelSerializer):
     
@@ -124,7 +132,15 @@ class HolidayCalandarSerializer(serializers.ModelSerializer):
     class Meta:
         model = holiday_calendar
         fields = '__all__'
-
+    def validate(self, attrs):
+        calendar_title=attrs.get("calendar_title")
+        calendar=holiday_calendar.objects.filter(calendar_title=calendar_title)
+        if self.instance:
+            calendar=calendar.exclude(id=self.instance.id)
+        if calendar.exists():
+            raise serializers.ValidationError({f"{calendar_title} is already exists."
+        })
+        return attrs
 
 class HolidayAssignSerializer(serializers.ModelSerializer):
     class Meta:

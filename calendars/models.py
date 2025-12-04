@@ -183,11 +183,13 @@ class assign_weekend(models.Model):
         ("department", "Department"),
         ("category", "Category"),
         ("employee", "Employee"),
+        ("designation", "Designation"),
     ]
     related_to    = models.CharField(max_length=20, choices=EMP_CHOICES,null=True)
     branch        = models.ManyToManyField('OrganisationManager.brnch_mstr',  null=True, blank=True)
     department    = models.ManyToManyField('OrganisationManager.dept_master',  null=True, blank=True)
     category      = models.ManyToManyField('OrganisationManager.ctgry_master', null=True, blank=True)
+    designation      = models.ManyToManyField('OrganisationManager.desgntn_master',  null=True, blank=True)    
     employee      = models.ManyToManyField('EmpManagement.emp_master',  null=True, blank=True)
     weekend_model = models.ForeignKey(weekend_calendar,on_delete=models.CASCADE)
     created_at    = models.DateTimeField(auto_now_add=True)
@@ -229,7 +231,12 @@ def update_weekend_assignment(sender, instance, action, **kwargs):
         for department in departments:
             employees = emp_master.objects.filter(emp_dept_id=department.id)
             assign_weekend_to_employees(employees, weekend_model)
-
+    # --- Designation BASED -------------------------------------------------------
+    elif instance.related_to == "designation":
+        designations = instance.designation.all()
+        for designation in designations:
+            employees = emp_master.objects.filter(emp_desgntn_id=designation.id)
+            assign_weekend_to_employees(employees, weekend_model)
     # --- CATEGORY BASED -------------------------------------------------------
     elif instance.related_to == "category":
         categories = instance.category.all()

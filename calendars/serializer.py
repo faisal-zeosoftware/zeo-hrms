@@ -115,7 +115,8 @@ class WeekendAssignSerializer(serializers.ModelSerializer):
         
         if instance.department.exists():
             rep['department'] = [dept.dept_name for dept in instance.department.all()]
-        
+        if instance.designation.exists():
+            rep['designation'] = [dept.desgntn_job_title for dept in instance.designation.all()]
         if instance.employee.exists():
             rep['employee'] = [emp.emp_code for emp in instance.employee.all()]
     

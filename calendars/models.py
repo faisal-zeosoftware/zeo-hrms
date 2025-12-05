@@ -1694,6 +1694,9 @@ class EmployeeShiftSchedule(models.Model):
     schedule_name = models.CharField(max_length=50, null=True, blank=True)
     employee = models.ManyToManyField('EmpManagement.emp_master', blank=True, related_name="shift_schedules")
     departments = models.ManyToManyField('OrganisationManager.dept_master', blank=True, related_name="shift_schedules")
+    branches = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True,related_name="shift_schedules")
+    designations = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True,related_name="shift_schedules")
+    categories = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True,related_name="shift_schedules")
     shift_type = models.CharField(max_length=10, choices=SHIFT_TYPES, default="rotating")
     rotation_cycle_weeks = models.IntegerField(default=4, null=True, blank=True)  # Only for rotating
     start_date = models.DateField(default=timezone.now)

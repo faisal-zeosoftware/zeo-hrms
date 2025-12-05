@@ -376,11 +376,52 @@ class ShiftOverrideSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class EmployeeShiftScheduleSerializer(serializers.ModelSerializer):
+    branch_names = serializers.SerializerMethodField(read_only=True)
+    department_names = serializers.SerializerMethodField(read_only=True)
+    designation_names = serializers.SerializerMethodField(read_only=True)
+    category_names = serializers.SerializerMethodField(read_only=True)
+    employee_names = serializers.SerializerMethodField(read_only=True)
     # week_patterns = ShiftPatternSerializer(many=True, read_only=True)
     start_date = serializers.DateField(default=timezone.now().date)
     class Meta:
         model = EmployeeShiftSchedule
         fields = '__all__'
+    def perform_create(self, serializer):
+        schedule = serializer.save(created_by=self.request.user)
+
+        # collect employees using branch, dept, cateogry, designation
+        employees = emp_master.objects.all()
+
+        if schedule.branches.exists():
+            employees = employees.filter(emp_branch_id__in=schedule.branches.all())
+
+        if schedule.departments.exists():
+            employees = employees.filter(emp_dept_id__in=schedule.departments.all())
+
+        if schedule.designations.exists():
+            employees = employees.filter(emp_desgntn_id__in=schedule.designations.all())
+
+        if schedule.categories.exists():
+            employees = employees.filter(emp_ctgry_id__in=schedule.categories.all())
+
+        # assign employees automatically
+        schedule.employee.add(*employees)
+
+        schedule.save()
+    def get_branch_names(self, obj):
+        return list(obj.branches.values('id', 'branch_name'))
+
+    def get_department_names(self, obj):
+        return list(obj.departments.values('id', 'dept_name'))
+
+    def get_designation_names(self, obj):
+        return list(obj.designations.values('id', 'desgntn_job_title'))
+
+    def get_category_names(self, obj):
+        return list(obj.categories.values('id', 'ctgry_title'))
+
+    def get_employee_names(self, obj):
+        return list(obj.employee.values('id', 'emp_code', 'emp_first_name', 'emp_last_name'))
 class EmployeeMappingSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeMachineMapping

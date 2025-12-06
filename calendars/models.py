@@ -481,7 +481,10 @@ class leave_entitlement(models.Model):
     # round_of                       = models.CharField(choices=ROUND_OF_TYPE,max_length=20)
     
     prorate_accrual                = models.BooleanField(default=False, help_text="Enable prorate accrual for this leave type.")
-    # prorate_type                   = models.CharField(max_length=30, choices=PRORATE_CHOICES, null=True, blank=True, help_text="Prorate accrual type.")
+    departments                    = models.ManyToManyField('OrganisationManager.dept_master', blank=True, related_name="shift_schedules")
+    branches                       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True,related_name="shift_schedules")
+    designations                   = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True,related_name="shift_schedules")
+    categories                     = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True,related_name="shift_schedules")
     created_at                     = models.DateTimeField(auto_now_add=True)
     created_by                     = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
@@ -562,7 +565,11 @@ class LeaveResetPolicy(models.Model):
     encashment_value               = models.PositiveIntegerField(default=50)
     encashment_unit_or_percentage  = models.CharField(max_length=50,choices=UNIT_CHOICES,null=True,blank=True)
     encashment_max_limit           = models.PositiveIntegerField(null=True,blank=True)
-    
+    departments                    = models.ManyToManyField('OrganisationManager.dept_master', blank=True, related_name="shift_schedules")
+    branches                       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True,related_name="shift_schedules")
+    designations                   = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True,related_name="shift_schedules")
+    categories                     = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True,related_name="shift_schedules")
+
 # from django.db.models import Q
 
 class emp_leave_balance(models.Model):

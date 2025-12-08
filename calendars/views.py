@@ -248,7 +248,7 @@ class LeaveEncashmentTransactionviewset(viewsets.ModelViewSet):
 class Applicableviewset(viewsets.ModelViewSet):
     queryset = applicablity_critirea.objects.all()
     serializer_class = ApplicableSerializer
-    permission_classes = [ApplicabilityCriteriaPermission] 
+    # permission_classes = [ApplicabilityCriteriaPermission] 
 
 
 

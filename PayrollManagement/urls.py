@@ -2,7 +2,8 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (SalaryComponentViewSet,EmployeeSalaryStructureViewSet,PayslipViewSet,PayrollRunViewSet,PayslipComponentViewSet,LoanTypeviewset,LoanApplicationviewset,LoanRepaymentviewset,LoanApprovalviewset,LoanApprovalLevelsviewset,
                     EmpBulkuploadSalaryStructureViewSet,PayslipConfirmedViewSet,SIFDataView,AdvanceSalaryRequestViewset,AdvanceSalaryApprovalViewSet,AdvanceCommonWorkflowViewSet,PayslipCommonWorkflowViewSet,PayslipApprovalViewSet,AirTicketPolicyViewSet,AirTicketAllocationViewSet,AirTicketRequestViewSet,
-                    LoanEmailTemplateViewSet,LoanNotificationViewSet,AdvSalaryNotificationViewSet,AdvSalaryEmailTemplateViewSet,AirTicketRuleViewSet
+                    LoanEmailTemplateViewSet,LoanNotificationViewSet,AdvSalaryNotificationViewSet,AdvSalaryEmailTemplateViewSet,AirTicketRuleViewSet,LoanEscalationRuleViewSet,AdvSalaryEscalationRuleViewSet,AirticketWorkflowViewSet,AirticketApprovalViewSet,
+                    AirticketEmailTemplateViewSet,AirticketEscalationRuleViewSet
                     
                     )
 
@@ -34,6 +35,12 @@ router.register(r'airticket-rule', AirTicketRuleViewSet,basename='airticket-rule
 router.register(r'airticket-allocation', AirTicketAllocationViewSet,basename='airticket-allocation')
 router.register(r'airticket-policy', AirTicketPolicyViewSet,basename='airticket-policy')
 router.register(r'airticket-request', AirTicketRequestViewSet,basename='airticket-request')
+router.register(r'airticket-approval-levels',AirticketWorkflowViewSet,basename='airticket-approval-levels')
+router.register(r'airticket-approval', AirticketApprovalViewSet, basename='airticket-approval')
+router.register(r'airticket-email-template', AirticketEmailTemplateViewSet,basename='airticket-email-template')
+router.register(r'airticket-approval-escalation', AirticketEscalationRuleViewSet,basename='airticket-approval-escalation')
+router.register(r'adv-salary-escalation', AdvSalaryEscalationRuleViewSet,basename='adv-salary-escalation')
+router.register(r'loan-approval-escalation', LoanEscalationRuleViewSet,basename='loan-approval-escalation')
 
 urlpatterns = [
     path('api/', include(router.urls)),

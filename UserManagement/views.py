@@ -21,6 +21,7 @@ from django_tenants.utils import schema_context
 from .models import CustomUser
 from .serializers import UserListSerializer
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 
 # from .permissions import CompanyPermission
 from django.http import Http404
@@ -130,10 +131,11 @@ class NoEssUerListView(generics.ListAPIView):
 
         # Use schema_context to access the correct tenant's users
         with schema_context(schema_name):
-            # Filter users based on schema_name and only show active users
             return CustomUser.objects.filter(
                 tenants__schema_name=schema_name,
-                is_active=True,is_ess=False  # Filter for users that are active
+                is_active=True
+            ).filter(
+                Q(is_ess=False) | Q(is_ess__isnull=True)
             )
 
 class GroupPermTenantUserListView(generics.ListAPIView):

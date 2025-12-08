@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule)
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow)
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
@@ -467,6 +467,39 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         if instance.allocation:  
             rep['allocation'] = instance.allocation.policy.name
         return rep
+class AirtcketApprovalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AirticketApproval
+        fields = '__all__'
+class AirticketWorkflowSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AirticketWorkflow
+        fields = '__all__'
+class AirticketEmailTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AirticketEmailTemplate
+        fields = '__all__'
+class AirticketEscalationRuleSerializer(serializers.ModelSerializer):
+    approver_name = serializers.CharField(source='approver.username', read_only=True)
+    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+
+    class Meta:
+        model = AirticketWorkflow
+        fields = [
+            'id',
+            'level',
+            'role',
+            'approver',
+            'approver_name',
+            'escalate_to',
+            'escalate_to_name',
+            'escalate_after_days',
+            'escalate_after_hours',
+            'escalate_after_minutes',
+        ]
+        read_only_fields = [
+            'level', 'role', 'approver',  'approver_name', 'escalate_to_name'
+        ]
 
 class LoanEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -502,3 +535,50 @@ class AdvSalaryNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceSalaryNotification
         fields = '__all__'
+
+class AdvSalaryEscalationRuleSerializer(serializers.ModelSerializer):
+    approver_name = serializers.CharField(source='approver.username', read_only=True)
+    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+
+    class Meta:
+        model = AdvanceCommonWorkflow
+        fields = [
+            'id',
+            'level',
+            'role',
+            'approver',
+            'approver_name',
+            'escalate_to',
+            'escalate_to_name',
+            'escalate_after_days',
+            'escalate_after_hours',
+            'escalate_after_minutes',
+        ]
+        read_only_fields = [
+            'level', 'role', 'approver',  'approver_name', 'escalate_to_name'
+        ]
+class LoanEscalationRuleSerializer(serializers.ModelSerializer):
+    loan_type_name = serializers.CharField(source='loan_type.name', read_only=True)
+    approver_name = serializers.CharField(source='approver.username', read_only=True)
+    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+
+    class Meta:
+        model = LoanApprovalLevels
+        fields = [
+            'id',
+            'level',
+            'role',
+            'loan_type',
+            'loan_type_name',
+            'approver',
+            'approver_name',
+            'escalate_to',
+            'escalate_to_name',
+            'escalate_after_days',
+            'escalate_after_hours',
+            'escalate_after_minutes',
+        ]
+        read_only_fields = [
+            'level', 'role', 'approver', 'loan_type', 
+            'loan_type_name', 'approver_name', 'escalate_to_name'
+        ]

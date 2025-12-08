@@ -477,24 +477,24 @@ def create_initial_approval(sender, instance, created, **kwargs):
             level=first_level.level,
             status=AssetApproval.PENDING
         )   
-        asset_schedule_escalation(approval, first_level)
-        send_notification_email(
-                user=first_level.approver,
-                employee=None,
-                message=f"New request for approval: {instance.asset_type.name}, Employee: {instance.employee}",
-                template_type="asset_created",
-                context={
-                    **get_employee_context(instance.employee),
-                    'asset_type':instance.asset_type.name,
-                    'requested_asset':instance.requested_asset,
-                    'request_date ': instance.request_date,
-                    'reason' :instance.reason 
+            asset_schedule_escalation(approval, first_level)
+            send_notification_email(
+                    user=first_level.approver,
+                    employee=None,
+                    message=f"New request for approval: {instance.asset_type.name}, Employee: {instance.employee}",
+                    template_type="asset_created",
+                    context={
+                        **get_employee_context(instance.employee),
+                        'asset_type':instance.asset_type.name,
+                        'requested_asset':instance.requested_asset,
+                        'request_date ': instance.request_date,
+                        'reason' :instance.reason 
 
 
-                },
-                email_template_model=AssetEmailTemplate,
-                notification_model=RequestNotification
-            )     
+                    },
+                    email_template_model=AssetEmailTemplate,
+                    notification_model=RequestNotification
+                )     
 
 
 class AssetAllocation(models.Model):

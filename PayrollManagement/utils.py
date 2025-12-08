@@ -6,6 +6,8 @@ import calendar
 import logging
 from datetime import datetime
 from calendar import monthrange
+from django_tenants.utils import connection
+
 
 
 # Set up logging
@@ -249,3 +251,49 @@ def send_payslip_email(payslip):
     except Exception as e:
         logger.exception(f"Failed to send payslip email to {employee_email}: {str(e)}")
         return False
+
+def schedule_escalation(approval, level_rule):
+    from .tasks import advance_salary_escalate_approval_task
+    """
+    Schedule a Celery countdown task for automatic escalation.
+    """
+    total_seconds = (
+        (level_rule.escalate_after_days or 0) * 86400 +
+        (level_rule.escalate_after_hours or 0) * 3600 +
+        (level_rule.escalate_after_minutes or 0) * 60
+    )
+
+    if total_seconds > 0 and level_rule.escalate_to:
+        schema_name = connection.schema_name
+        advance_salary_escalate_approval_task.apply_async((approval.id, schema_name), countdown=total_seconds)
+        print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
+def loan_schedule_escalation(approval, level_rule):
+    from .tasks import loan_escalate_approval_task
+    """
+    Schedule a Celery countdown task for automatic escalation.
+    """
+    total_seconds = (
+        (level_rule.escalate_after_days or 0) * 86400 +
+        (level_rule.escalate_after_hours or 0) * 3600 +
+        (level_rule.escalate_after_minutes or 0) * 60
+    )
+
+    if total_seconds > 0 and level_rule.escalate_to:
+        schema_name = connection.schema_name
+        loan_escalate_approval_task.apply_async((approval.id, schema_name), countdown=total_seconds)
+        print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
+def airticket_schedule_escalation(approval, level_rule):
+    from .tasks import airticket_escalate_approval_task
+    """
+    Schedule a Celery countdown task for automatic escalation.
+    """
+    total_seconds = (
+        (level_rule.escalate_after_days or 0) * 86400 +
+        (level_rule.escalate_after_hours or 0) * 3600 +
+        (level_rule.escalate_after_minutes or 0) * 60
+    )
+
+    if total_seconds > 0 and level_rule.escalate_to:
+        schema_name = connection.schema_name
+        airticket_escalate_approval_task.apply_async((approval.id, schema_name), countdown=total_seconds)
+        print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")

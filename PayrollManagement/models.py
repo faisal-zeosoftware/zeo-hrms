@@ -6,6 +6,7 @@ from django.core.validators import FileExtensionValidator
 from django.utils import timezone
 from datetime import datetime,timedelta
 from EmpManagement .utils import send_notification_email,get_employee_context
+from EmpManagement .models import RequestNotification
 # from calendars .models import LeaveApproval
 
 # Create your models here.
@@ -289,6 +290,7 @@ class LoanType(models.Model):
     loan_type           = models.CharField(max_length=255)  # e.g., Personal, Housing, Car
     max_amount          = models.DecimalField(max_digits=10, decimal_places=2)
     repayment_period    = models.PositiveIntegerField()  # in months
+    min_approvals_required        = models.PositiveIntegerField(null=True, blank=True, help_text="Minimum number of approvals required to approve the request")
     created_at          = models.DateTimeField(auto_now_add=True)
     updated_at          = models.DateTimeField(auto_now=True)
     use_common_workflow = models.BooleanField(default=False)
@@ -376,6 +378,7 @@ class  LoanApplication(models.Model):
       
     
     def move_to_next_level(self):
+        from .utils import loan_schedule_escalation
         if self.approvals.filter(status=LoanApproval.REJECTED).exists():
             self.status = 'Rejected'
             self.save()
@@ -384,6 +387,37 @@ class  LoanApplication(models.Model):
                 employee=self.employee,
                 message=f"Your request {self.loan_type} has been rejected.",
                 template_type="request_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    'document_number': self.document_number,
+                    'loan_type': self.loan_type.loan_type,
+                    'amount_requested': self.amount_requested,
+                    'repayment_period': self.repayment_period,
+                    'emi_amount': self.emi_amount,
+                    'remaining_balance': self.remaining_balance,
+                    'status': self.status,
+                    'rejection_reason': self.rejection_reason, 
+
+                    
+                },
+                email_template_model=LoanEmailTemplate,
+                notification_model=LoanNotification
+            )
+            return  # Important: Stop here if rejected
+        # -------- 2️⃣ MINIMUM APPROVALS CHECK -------- #
+        min_required = self.loan_type.min_approvals_required
+        approved_count = self.approvals.filter(status=LoanApproval.APPROVED).count()
+
+        if min_required and approved_count >= min_required:
+            self.status = 'approved'
+            self.save()
+
+            # Notify request creator
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your leave request has been approved.",
+                template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
                     'loan_type': self.loan_type.loan_type,
@@ -398,8 +432,7 @@ class  LoanApplication(models.Model):
                 email_template_model=LoanEmailTemplate,
                 notification_model=LoanNotification
             )
-            return  # Important: Stop here if rejected
-            
+            return
         current_approved_levels = self.approvals.filter(status=LoanApproval.APPROVED).count()
 
         if self.loan_type.use_common_workflow:
@@ -408,15 +441,36 @@ class  LoanApplication(models.Model):
             next_level = LoanApprovalLevels.objects.filter(loan_type=self.loan_type, level=current_approved_levels + 1).first()
 
         if next_level:
-            last_approval = self.approvals.order_by('-level').first()
-            LoanApproval.objects.create(
+            # last_approval = self.approvals.order_by('-level').first()
+            last_approval = self.approvals.order_by('-level', '-id').first()
+
+            next_level = LoanApprovalLevels.objects.filter(
+                loan_type=self.loan_type,
+                level__gt=last_approval.level
+            ).order_by('level').first()
+
+            if not next_level:
+                self.status = "Approved"
+                self.save()
+                return
+
+            # ✅ Keep normal user comments, skip escalation-related notes only
+            note_to_carry = None
+            if last_approval and last_approval.note:
+                if not (
+                    last_approval.note.startswith("Escalated to") or
+                    last_approval.note.startswith("Escalated from")
+                ):
+                    note_to_carry = last_approval.note
+            new_approval=LoanApproval.objects.create(
                 loan_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
                 status=LoanApproval.PENDING,
-                note=last_approval.note if last_approval else None
+                note=note_to_carry
             )
+            loan_schedule_escalation(new_approval, next_level)
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
@@ -481,6 +535,17 @@ class LoanApprovalLevels(models.Model):
     role             = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
     approver         = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
     loan_type        = models.ForeignKey('LoanType', related_name='loan_approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow
+    escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='loan_escalated_levels')
+    escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
+    escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
+    escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
+
+    def get_escalation_timedelta(self):
+        """Returns the total time delta for escalation."""
+        from datetime import timedelta
+        total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
+        return timedelta(minutes=total_minutes)
+
     class Meta:
         unique_together = ('level', 'loan_type')
 
@@ -488,11 +553,13 @@ class LoanApproval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
     REJECTED = 'Rejected'
+    ESCALATED = 'Escalated'
 
     STATUS_CHOICES = [
         (PENDING, 'Pending'),
         (APPROVED, 'Approved'),
         (REJECTED, 'Rejected'),
+        (ESCALATED, 'Escalated'),
     ]
     loan_request         = models.ForeignKey(LoanApplication, related_name='approvals', on_delete=models.CASCADE,null=True, blank=True)
     approver             = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE)
@@ -500,6 +567,9 @@ class LoanApproval(models.Model):
     level                = models.IntegerField(default=1)
     status               = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
     note                 = models.TextField(null=True, blank=True)
+    escalated = models.BooleanField(default=False)
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    is_escalation = models.BooleanField(default=False)
     rejection_reason     = models.TextField(null=True, blank=True)
     created_at           = models.DateField(auto_now_add=True)
     updated_at           = models.DateField(auto_now=True)
@@ -548,6 +618,7 @@ class LoanApproval(models.Model):
         
 @receiver(post_save, sender=LoanApplication)
 def create_initial_approval(sender, instance, created, **kwargs):
+    from .utils import loan_schedule_escalation
     if created:
         if instance.loan_type.use_common_workflow:
             first_level = LoanCommonWorkflow.objects.order_by('level').first()
@@ -558,7 +629,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         if first_level:
             # Prevent duplicate creation of approvals at the same level
             if not instance.approvals.filter(level=first_level.level).exists():
-                LoanApproval.objects.create(
+                approval=LoanApproval.objects.create(
                     loan_request=instance,
                     approver=first_level.approver,
                     role=first_level.role,
@@ -566,6 +637,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     status=LoanApproval.PENDING,
                     employee_id=instance.employee_id
                 )
+                loan_schedule_escalation(approval, first_level)
                 send_notification_email(
                 user=first_level.approver,
                 employee=None,
@@ -639,6 +711,8 @@ class AdvanceSalaryRequest(models.Model):
         return f"{self.employee} - {self.requested_amount} - {self.status}"
     
     def move_to_next_level(self):
+        from .utils import schedule_escalation
+
         """
         Moves to the next approval level only if all current levels are approved.
         Stops if any level was rejected.
@@ -668,14 +742,35 @@ class AdvanceSalaryRequest(models.Model):
         next_level = AdvanceCommonWorkflow.objects.filter(level=current_approved_levels + 1).first()
 
         if next_level:
-            AdvanceSalaryApproval.objects.create(
+            last_approval = self.approvals.order_by('-level', '-id').first()
+
+            next_level = AdvanceCommonWorkflow.objects.filter(
+                level__gt=last_approval.level
+            ).order_by('level').first()
+
+            if not next_level:
+                self.status = "Approved"
+                self.save()
+                return
+
+            # ✅ Keep normal user comments, skip escalation-related notes only
+            note_to_carry = None
+            if last_approval and last_approval.note:
+                if not (
+                    last_approval.note.startswith("Escalated to") or
+                    last_approval.note.startswith("Escalated from")
+                ):
+                    note_to_carry = last_approval.note
+            new_approval=AdvanceSalaryApproval.objects.create(
                 request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
                 status='Pending',
-                employee=self.employee
+                employee=self.employee,
+                note=note_to_carry
             )
+            schedule_escalation(new_approval, next_level)
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
@@ -735,17 +830,33 @@ class AdvanceCommonWorkflow(models.Model):
     level = models.PositiveIntegerField()
     approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
     role = models.CharField(max_length=100)
+    escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='adv_salary_escalated_levels')
+    escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
+    escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
+    escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
 
+    def get_escalation_timedelta(self):
+        """Returns the total time delta for escalation."""
+        from datetime import timedelta
+        total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
+        return timedelta(minutes=total_minutes)
     class Meta:
         ordering = ['level']
 
     def __str__(self):
         return f"Level {self.level} - {self.role} ({self.approver})"
 class AdvanceSalaryApproval(models.Model):
+    
+    PENDING = 'Pending'
+    APPROVED = 'Approved'
+    REJECTED = 'Rejected'
+    ESCALATED = 'Escalated'
+
     STATUS_CHOICES = [
-        ('Pending', 'Pending'),
-        ('Approved', 'Approved'),
-        ('Rejected', 'Rejected'),
+        (PENDING, 'Pending'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Rejected'),
+        (ESCALATED, 'Escalated'),
     ]
 
     request = models.ForeignKey(AdvanceSalaryRequest, on_delete=models.CASCADE, related_name='approvals')
@@ -754,9 +865,14 @@ class AdvanceSalaryApproval(models.Model):
     role = models.CharField(max_length=100, null=True, blank=True)
     level = models.PositiveIntegerField()
     note = models.TextField(null=True, blank=True)
+    escalated = models.BooleanField(default=False)
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    is_escalation = models.BooleanField(default=False)
     rejection_reason     = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
     created_at = models.DateTimeField(auto_now_add=True)
+    created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+
 
     def __str__(self):
         return f"{self.request} - {self.approver} - {self.status}"
@@ -795,10 +911,11 @@ class AdvanceSalaryApproval(models.Model):
     )
 @receiver(post_save, sender=AdvanceSalaryRequest)
 def create_initial_advance_approval(sender, instance, created, **kwargs):
+    from .utils import schedule_escalation
     if created:
         first_level = AdvanceCommonWorkflow.objects.order_by('level').first()
         if first_level:
-            AdvanceSalaryApproval.objects.create(
+            approval=AdvanceSalaryApproval.objects.create(
                 request=instance,
                 approver=first_level.approver,
                 role=first_level.role,
@@ -806,7 +923,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
                 status='Pending',
                 employee=instance.employee
             )
-
+            schedule_escalation(approval, first_level)
             send_notification_email(
             user=first_level.approver,
             employee=None,
@@ -894,6 +1011,18 @@ class AirTicketAllocation(models.Model):
     def __str__(self):
         return f"{self.employee} - {self.amount} ({self.status})"
 
+class AirticketEmailTemplate(models.Model):
+    template_type = models.CharField(max_length=50, choices=[
+        ('request_created', 'Request Created'),
+        ('request_approved', 'Request Approved'),
+        ('request_rejected', 'Request Rejected')
+    ])
+    subject             = models.CharField(max_length=255)
+    body                = models.TextField()
+    created_at          = models.DateTimeField(auto_now_add=True)
+    created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    def __str__(self):
+        return f"{self.template_type} - {self.subject}"
 
 
 class AirTicketRequest(models.Model):
@@ -922,7 +1051,210 @@ class AirTicketRequest(models.Model):
     approved_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+
 
 
     def __str__(self):
         return f"{self.employee} - {self.get_request_type_display()} ({self.get_status_display()})"
+    def move_to_next_level(self):
+        from .utils import airticket_schedule_escalation
+
+        """
+        Moves to the next approval level only if all current levels are approved.
+        Stops if any level was rejected.
+        """
+        if self.approvals.filter(status='Rejected').exists():
+            self.status = 'Rejected'
+            self.save()
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request {self.document_number} has been rejected.",
+                template_type="request_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    'document_number': self.document_number,
+                    'request_type': self.request_type,
+                    'notes': self.notes,
+                    
+                    
+                },
+                email_template_model=AirticketEmailTemplate,
+                notification_model=RequestNotification
+            )
+            return  # Important: Stop here if rejected
+
+        current_approved_levels = self.approvals.filter(status='Approved').count()
+        next_level = AirticketWorkflow.objects.filter(level=current_approved_levels + 1).first()
+
+        if next_level:
+            last_approval = self.approvals.order_by('-level', '-id').first()
+
+            next_level = AirticketWorkflow.objects.filter(
+                level__gt=last_approval.level
+            ).order_by('level').first()
+
+            if not next_level:
+                self.status = "Approved"
+                self.save()
+                return
+
+            # ✅ Keep normal user comments, skip escalation-related notes only
+            note_to_carry = None
+            if last_approval and last_approval.note:
+                if not (
+                    last_approval.note.startswith("Escalated to") or
+                    last_approval.note.startswith("Escalated from")
+                ):
+                    note_to_carry = last_approval.note
+            new_approval=AirticketApproval.objects.create(
+                request=self,
+                approver=next_level.approver,
+                role=next_level.role,
+                level=next_level.level,
+                status='Pending',
+                employee=self.employee,
+                note=note_to_carry
+            )
+            airticket_schedule_escalation(new_approval, next_level)
+            send_notification_email(
+                user=next_level.approver,
+                employee=None,
+                message=f"New Salary Advance request for approval: {self.document_number}, Employee: {self.employee}",
+                template_type="request_created",
+                context={
+                    **get_employee_context(self.employee),
+                    'document_number': self.document_number,
+                    
+                    
+                },
+                email_template_model=AirticketEmailTemplate,
+                notification_model=RequestNotification
+            )
+        else:
+            self.status = 'Approved'
+            self.approval_date = timezone.now()
+            self.save()
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request {self.document_number} has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'document_number': self.document_number,
+                    
+                },
+                email_template_model=AirticketEmailTemplate,
+                notification_model=RequestNotification
+            )
+    
+
+class AirticketWorkflow(models.Model):
+    level = models.PositiveIntegerField()
+    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    role = models.CharField(max_length=100)
+    escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='airticket_escalated_levels')
+    escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
+    escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
+    escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
+
+    def get_escalation_timedelta(self):
+        """Returns the total time delta for escalation."""
+        from datetime import timedelta
+        total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
+        return timedelta(minutes=total_minutes)
+    class Meta:
+        ordering = ['level']
+
+    def __str__(self):
+        return f"Level {self.level} - {self.role} ({self.approver})"
+class AirticketApproval(models.Model):
+    
+    PENDING = 'Pending'
+    APPROVED = 'Approved'
+    REJECTED = 'Rejected'
+    ESCALATED = 'Escalated'
+
+    STATUS_CHOICES = [
+        (PENDING, 'Pending'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Rejected'),
+        (ESCALATED, 'Escalated'),
+    ]
+
+    request = models.ForeignKey(AirTicketRequest, on_delete=models.CASCADE, related_name='approvals')
+    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
+    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    role = models.CharField(max_length=100, null=True, blank=True)
+    level = models.PositiveIntegerField()
+    note = models.TextField(null=True, blank=True)
+    escalated = models.BooleanField(default=False)
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    is_escalation = models.BooleanField(default=False)
+    rejection_reason     = models.TextField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+
+
+    def __str__(self):
+        return f"{self.request} - {self.approver} - {self.status}"
+
+    def approve(self, note=None):
+        self.status = 'Approved'
+        if note:
+            self.note = note
+        self.save()
+        self.request.move_to_next_level()
+
+    def reject(self, rejection_reason, note=None):
+        self.status = 'Rejected'
+        if note:
+            self.note = note
+        self.save()
+        self.request.status = 'Rejected'
+        self.request.remarks = rejection_reason
+        self.request.save()
+        send_notification_email(
+        user=self.request.created_by,
+        employee=self.request.employee,
+        message=f"Your air ticket  request {self.request} has been rejected.",
+        template_type="request_rejected",
+        context={
+            **get_employee_context(self.request.employee),
+            'document_number': self.request.document_number,
+                      
+        },
+        email_template_model=AirticketEmailTemplate,
+        notification_model=RequestNotification
+    )
+@receiver(post_save, sender=AirTicketRequest)
+def create_initial_advance_approval(sender, instance, created, **kwargs):
+    from .utils import airticket_schedule_escalation
+    if created:
+        first_level = AirticketWorkflow.objects.order_by('level').first()
+        if first_level:
+            approval=AirticketApproval.objects.create(
+                request=instance,
+                approver=first_level.approver,
+                role=first_level.role,
+                level=first_level.level,
+                status='Pending',
+                employee=instance.employee
+            )
+            airticket_schedule_escalation(approval, first_level)
+            send_notification_email(
+            user=first_level.approver,
+            employee=None,
+            message=f"New request for approval: {instance.document_number}, Employee: {instance.employee}",
+            template_type="request_created",
+            context={
+                **get_employee_context(instance.employee),
+                'document_number': instance.document_number,
+                
+            },
+            email_template_model=AirticketEmailTemplate,
+            notification_model=RequestNotification
+    )

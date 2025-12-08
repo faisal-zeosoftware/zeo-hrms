@@ -1,11 +1,12 @@
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule)
+                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
-                         ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer
+                         ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
+                         AdvSalaryEscalationRuleSerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -612,6 +613,100 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
                 document_number = doc_config.get_next_number()
 
             serializer.save(document_number=document_number)
+class AirticketWorkflowViewSet(viewsets.ModelViewSet):
+    queryset = AirticketWorkflow.objects.all()
+    serializer_class = AirticketWorkflowSerializer
+
+class AirticketApprovalViewSet(viewsets.ModelViewSet):
+    queryset = AirticketApproval.objects.all()
+    serializer_class = AirtcketApprovalSerializer
+    # def get_queryset(self):
+    #     """
+    #     Filter approvals based on the authenticated user.
+    #     """
+    #     user = self.request.user  # Get the logged-in user
+    #     if user.is_superuser:
+    #         return AirticketApproval.objects.all()
+    #     return AirticketApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        approval = self.get_object()
+        note = request.data.get('note')
+        if approval.status != 'Pending':
+            raise ValidationError("This approval has already been processed.")
+        approval.approve(note=note)
+        return Response({'status': 'approved'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        approval = self.get_object()
+        note = request.data.get('note')
+        rejection_reason = request.data.get('rejection_reason')
+
+        if not rejection_reason:
+            raise ValidationError("Rejection reason is required.")
+
+        # if approval.status != 'Pending':
+        #     raise ValidationError("This approval has already been processed.")
+
+        approval.reject(rejection_reason=rejection_reason, note=note)
+        return Response({'status': 'rejected'}, status=status.HTTP_200_OK)  
+class AirticketEmailTemplateViewSet(viewsets.ModelViewSet):
+    queryset = AirticketEmailTemplate.objects.all()
+    serializer_class = AirticketEmailTemplateSerializer
+    @action(detail=False, methods=['get'], url_path='placeholders')
+    def placeholder_list(self, request):
+        placeholders = {
+            'employee': [
+                '{{ document_number }}',
+                '{{ recipient_name }}',
+                '{{ emp_first_name }}',
+                '{{ emp_last_name }}',
+                '{{ emp_gender }}',
+                '{{ emp_date_of_birth }}',
+                '{{ emp_personal_email }}',
+                '{{ emp_company_email }}',
+                '{{ emp_branch_name }}',
+                '{{ emp_department_name }}',
+                '{{ emp_designation_name }}',
+                '{{ requested_amount }}',
+                '{{ reason }}',
+                '{{ remarks }}',
+                '{{ rejection_reason }}',
+
+            ]
+        }
+        return Response(placeholders)
+class AirticketEscalationRuleViewSet(viewsets.ModelViewSet):
+    """
+    API for managing escalation settings on each approval level.
+    """
+    serializer_class = AirticketEscalationRuleSerializer
+    queryset = AirticketWorkflow.objects.all().order_by('level')
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update only escalation fields for a level.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({
+            "message": "Escalation rule updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['post'])
+    def reset(self, request, pk=None):
+        instance = self.get_object()
+        instance.escalate_to = None
+        instance.escalate_after_days = 0
+        instance.escalate_after_hours = 0
+        instance.escalate_after_minutes = 0
+        instance.save()
+        return Response({"message": "Escalation rule reset successfully"}, status=200)
     
 class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
     queryset = LoanEmailTemplate.objects.all()
@@ -704,3 +799,73 @@ class AdvSalaryNotificationViewSet(viewsets.ModelViewSet):
         ).order_by('-created_at')
 
         return qs
+
+class AdvSalaryEscalationRuleViewSet(viewsets.ModelViewSet):
+    """
+    API for managing escalation settings on each approval level.
+    """
+    serializer_class = AdvSalaryEscalationRuleSerializer
+    queryset = AdvanceCommonWorkflow.objects.all().order_by('level')
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update only escalation fields for a level.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({
+            "message": "Escalation rule updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['post'])
+    def reset(self, request, pk=None):
+        instance = self.get_object()
+        instance.escalate_to = None
+        instance.escalate_after_days = 0
+        instance.escalate_after_hours = 0
+        instance.escalate_after_minutes = 0
+        instance.save()
+        return Response({"message": "Escalation rule reset successfully"}, status=200)
+
+class LoanEscalationRuleViewSet(viewsets.ModelViewSet):
+    """
+    API for managing escalation settings on each approval level.
+    """
+    serializer_class = LoanEscalationRuleSerializer
+    queryset = LoanApprovalLevels.objects.all().order_by('loan_type', 'level')
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        request_type_id = self.request.query_params.get('loan_type')
+
+        if request_type_id:
+            queryset = queryset.filter(loan_type_id=request_type_id)
+        
+        return queryset.distinct()
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update only escalation fields for a level.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({
+            "message": "Escalation rule updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['post'])
+    def reset(self, request, pk=None):
+        instance = self.get_object()
+        instance.escalate_to = None
+        instance.escalate_after_days = 0
+        instance.escalate_after_hours = 0
+        instance.escalate_after_minutes = 0
+        instance.save()
+        return Response({"message": "Escalation rule reset successfully"}, status=200)
+

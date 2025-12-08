@@ -1,6 +1,7 @@
 from celery import shared_task
 from .utils import send_payslip_email 
-from .models import Payslip 
+from .models import (Payslip,AdvanceSalaryApproval,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AdvanceCommonWorkflow,
+                     LoanApprovalLevels,LoanApproval,LoanNotification,LoanEmailTemplate,AirticketApproval,AirticketWorkflow,AirticketEmailTemplate)
 from django_tenants.utils import schema_context 
 from django_tenants.utils import get_tenant_model                                 
 from django.utils import timezone 
@@ -8,7 +9,8 @@ import logging
 from django.core.exceptions import ValidationError
 from datetime import timedelta
 from .models import AirTicketPolicy,AirTicketAllocation
-from EmpManagement.models import emp_master
+from EmpManagement.models import emp_master,RequestNotification
+from EmpManagement .utils import send_notification_email,get_employee_context
 logger = logging.getLogger(__name__)
 
 @shared_task
@@ -129,3 +131,203 @@ def get_all_tenant_schemas():
     # Implement this function based on your tenant management system 
     TenantModel = get_tenant_model() 
     return TenantModel.objects.values_list('schema_name', flat=True)
+
+@shared_task
+def advance_salary_escalate_approval_task(approval_id, schema_name):
+    """
+    Automatically escalates a pending approval when its escalation time expires.
+    """
+    from django.db import connection
+
+    with schema_context(schema_name):
+        try:
+            approval = AdvanceSalaryApproval.objects.get(id=approval_id)
+
+            # Skip if approval already handled
+            if approval.status != AdvanceSalaryApproval.PENDING or approval.escalated:
+                return
+
+            # Find escalation rule
+            level_rule = AdvanceCommonWorkflow.objects.filter(
+                level=approval.level
+            ).first()
+
+            if not level_rule or not level_rule.escalate_to:
+                return  # No escalation rule defined
+
+            old_approver = approval.approver
+            new_approver = level_rule.escalate_to
+
+            # 🔥 Mark current approval as escalated
+            approval.status = AdvanceSalaryApproval.ESCALATED
+            approval.note = f"Escalated to {new_approver.username}"
+            approval.escalated = True
+            approval.escalated_at = timezone.now()
+            approval.save()
+
+            # 🔥 Create a new approval entry for the escalated user
+            new_approval = AdvanceSalaryApproval.objects.create(
+                request=approval.request,
+                employee=approval.request.employee,
+                approver=new_approver,
+                role=approval.role,
+                level=approval.level,
+                status=AdvanceSalaryApproval.PENDING,
+                note=f"Escalated from {old_approver.username}",
+                is_escalation=True,
+                # created_by=old_approver,
+            )
+
+            # Send escalation notification email
+            send_notification_email(
+                user=new_approver,
+                employee=None,
+                message=f"This request has been escalated to you for approval: {approval.request.document_number}",
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.request.employee),
+                    'doc_number': approval.request.document_number,
+                },
+                email_template_model=AdvanceSalaryEmailTemplate,
+                notification_model=AdvanceSalaryNotification
+            )
+
+            print(f"⚡ Escalation triggered for {approval.request.document_number} → {new_approver.username}")
+
+        except AdvanceSalaryApproval.DoesNotExist:
+            print(f"⚠️ Approval {approval_id} not found for escalation.")
+@shared_task
+def loan_escalate_approval_task(approval_id, schema_name):
+    """
+    Automatically escalates a pending approval when its escalation time expires.
+    """
+    from django.db import connection
+
+    with schema_context(schema_name):
+        try:
+            approval = LoanApproval.objects.get(id=approval_id)
+
+            # Skip if approval already handled
+            if approval.status != LoanApproval.PENDING or approval.escalated:
+                return
+
+            # Find escalation rule
+            level_rule = LoanApprovalLevels.objects.filter(
+                loan_type=approval.loan_request.loan_type,
+                level=approval.level
+            ).first()
+
+            if not level_rule or not level_rule.escalate_to:
+                return  # No escalation rule defined
+
+            old_approver = approval.approver
+            new_approver = level_rule.escalate_to
+
+            # 🔥 Mark current approval as escalated
+            approval.status = LoanApproval.ESCALATED
+            approval.note = f"Escalated to {new_approver.username}"
+            approval.escalated = True
+            approval.escalated_at = timezone.now()
+            approval.save()
+
+            # 🔥 Create a new approval entry for the escalated user
+            new_approval = LoanApproval.objects.create(
+                loan_request=approval.loan_request,
+                approver=new_approver,
+                role=approval.role,
+                level=approval.level,
+                status=LoanApproval.PENDING,
+                note=f"Escalated from {old_approver.username}",
+                is_escalation=True,
+                # created_by=old_approver,
+            )
+
+            # Send escalation notification email
+            send_notification_email(
+                user=new_approver,
+                employee=None,
+                message=f"This request has been escalated to you for approval: {approval.loan_request.loan_type.loan_type}",
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.loan_request.employee),
+                    'doc_number': approval.loan_request.document_number,
+                    'loan_type': approval.loan_request.loan_type.loan_type,
+                    'amount_requested': approval.loan_request.amount_requested,
+                    'repayment_period': approval.loan_request.repayment_period,
+                    'emi_amount': approval.loan_request.emi_amount,
+                    'remaining_balance': approval.loan_request.remaining_balance,
+                    'status': approval.loan_request.status
+                },
+                email_template_model=LoanEmailTemplate,
+                notification_model=LoanNotification
+            )
+
+            print(f"⚡ Escalation triggered for {approval.loan_request.document_number} → {new_approver.username}")
+
+        except LoanApproval.DoesNotExist:
+            print(f"⚠️ Approval {approval_id} not found for escalation.")
+
+@shared_task
+def airticket_escalate_approval_task(approval_id, schema_name):
+    """
+    Automatically escalates a pending approval when its escalation time expires.
+    """
+    from django.db import connection
+
+    with schema_context(schema_name):
+        try:
+            approval = AirticketApproval.objects.get(id=approval_id)
+
+            # Skip if approval already handled
+            if approval.status != AirticketApproval.PENDING or approval.escalated:
+                return
+
+            # Find escalation rule
+            level_rule = AirticketWorkflow.objects.filter(
+                level=approval.level
+            ).first()
+
+            if not level_rule or not level_rule.escalate_to:
+                return  # No escalation rule defined
+
+            old_approver = approval.approver
+            new_approver = level_rule.escalate_to
+
+            # 🔥 Mark current approval as escalated
+            approval.status = AirticketApproval.ESCALATED
+            approval.note = f"Escalated to {new_approver.username}"
+            approval.escalated = True
+            approval.escalated_at = timezone.now()
+            approval.save()
+
+            # 🔥 Create a new approval entry for the escalated user
+            new_approval = AirticketApproval.objects.create(
+                request=approval.request,
+                employee=approval.request.employee,
+                approver=new_approver,
+                role=approval.role,
+                level=approval.level,
+                status=AirticketApproval.PENDING,
+                note=f"Escalated from {old_approver.username}",
+                is_escalation=True,
+                # created_by=old_approver,
+            )
+
+            # Send escalation notification email
+            send_notification_email(
+                user=new_approver,
+                employee=None,
+                message=f"This request has been escalated to you for approval: {approval.request.document_number}",
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.request.employee),
+                    'document_number': approval.request.document_number,
+                },
+                email_template_model=AirticketEmailTemplate,
+                notification_model=RequestNotification
+            )
+
+            print(f"⚡ Escalation triggered for {approval.request.document_number} → {new_approver.username}")
+
+        except AdvanceSalaryApproval.DoesNotExist:
+            print(f"⚠️ Approval {approval_id} not found for escalation.")

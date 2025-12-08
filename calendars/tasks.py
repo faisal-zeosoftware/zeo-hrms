@@ -58,7 +58,21 @@ def accrue_leaves():
                             if entitlement.effective_after_unit == "years"
                             else entitlement.min_experience
                         )
+                        # 1️⃣ Filter by designation
+                        if entitlement.designations.exists() and employee.emp_desgntn_id not in entitlement.designations.all():
+                            continue
 
+                        # 2️⃣ Filter by department
+                        if entitlement.departments.exists() and employee.emp_dept_id not in entitlement.departments.all():
+                            continue
+
+                        # 3️⃣ Filter by category
+                        if entitlement.categories.exists() and employee.emp_ctgry_id not in entitlement.categories.all():
+                            continue
+
+                        # 4️⃣ Filter by branch
+                        if entitlement.branches.exists() and employee.emp_branch_id not in entitlement.branches.all():
+                            continue
                         # Select the most specific entitlement for each leave type
                         if (
                             experience_in_months >= min_experience_months and

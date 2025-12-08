@@ -502,21 +502,63 @@ class leave_entitlement(models.Model):
         return 0
 
     def clean(self):
-        """Ensure no overlapping entitlement criteria for the same leave type."""
-        self_min_months = self.experience_to_months(self.min_experience, self.effective_after_unit)
+        """Prevent overlapping entitlements ONLY if they target the same employee group."""
+        
+        self_min_months = self.experience_to_months(
+            self.min_experience,
+            self.effective_after_unit
+        )
 
         overlapping_entitlements = leave_entitlement.objects.filter(
             leave_type=self.leave_type,
             effective_after_from=self.effective_after_from
-        ).exclude(id=self.id)  # Exclude current record during updates
+        ).exclude(id=self.id)
 
-        for entitlement in overlapping_entitlements:
-            other_min_months = entitlement.experience_to_months(entitlement.min_experience, entitlement.effective_after_unit)
-            
-            if self_min_months == other_min_months:
+        for other in overlapping_entitlements:
+            other_min_months = other.experience_to_months(
+                other.min_experience,
+                other.effective_after_unit
+            )
+
+            # Experience must match to even consider conflict
+            if self_min_months != other_min_months:
+                continue
+
+            # ------ NEW ROLE/DEPT/CATEGORY/BRANCH CHECKS ------
+
+            same_designation = (
+                not self.designations.exists() and not other.designations.exists()
+            ) or (
+                self.designations.exists() and other.designations.exists() and 
+                set(self.designations.all()) == set(other.designations.all())
+            )
+
+            same_department = (
+                not self.departments.exists() and not other.departments.exists()
+            ) or (
+                self.departments.exists() and other.departments.exists() and 
+                set(self.departments.all()) == set(other.departments.all())
+            )
+
+            same_category = (
+                not self.categories.exists() and not other.categories.exists()
+            ) or (
+                self.categories.exists() and other.categories.exists() and 
+                set(self.categories.all()) == set(other.categories.all())
+            )
+
+            same_branch = (
+                not self.branches.exists() and not other.branches.exists()
+            ) or (
+                self.branches.exists() and other.branches.exists() and 
+                set(self.branches.all()) == set(other.branches.all())
+            )
+
+            # If ALL FILTER GROUPS MATCH → conflict
+            if same_designation and same_department and same_category and same_branch:
                 raise ValidationError(
-                    f"Conflicting entitlement exists with ID {entitlement.id}. "
-                    f"Min experience {self.min_experience} ({self.effective_after_unit}) overlaps."
+                    f"Entitlement conflict with ID {other.id}: "
+                    f"same experience & same employee group."
                 )
 
     def save(self, *args, **kwargs):

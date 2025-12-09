@@ -497,7 +497,7 @@ class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
 class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
-    permission_classes = [AttendancePermission]
+    # permission_classes = [AttendancePermission]
     
     @staticmethod
     def parse_date(date_string):
@@ -506,7 +506,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return datetime.strptime(date_string, "%Y-%m-%d").date()
         except (ValueError, TypeError):
             return None
-
     #frontend automatically send the lat,log,loc
     @action(detail=False, methods=['post'])
     def check_in(self, request):
@@ -514,10 +513,26 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
-        # NEW: Location Data From Frontend
+        #NEW: Location Data From Frontend
         lat = request.data.get("check_in_lat")
         lng = request.data.get("check_in_lng")
         location_name = request.data.get("check_in_location")
+        # lat = (
+        #     request.data.get("latitude")
+        #     or request.data.get("check_in_lat")
+            
+        # )
+
+        # lng = (
+        #     request.data.get("longitude")
+        #     or request.data.get("check_in_lng")
+            
+        # )
+
+        # location_name = (
+        #     request.data.get("location_name")
+        #     or request.data.get("check_in_location")
+        # )
 
         # if not lat or not lng:
         #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -599,7 +614,79 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 "location": location_name,
             },
             status=status.HTTP_200_OK
-        )    @action(detail=False, methods=['get'])
+        ) 
+    @action(detail=False, methods=['get'])
+    def employee_attendance(self, request):
+        """
+        Multi-mode attendance report:
+        - No filters → all employees, all dates
+        - employee_id → all dates of that employee
+        - date filters → filtered attendance (all employees or single employee)
+        - month/year → monthly summary (all employees or single employee)
+        """
+
+        emp_id = request.query_params.get("employee_id")
+        month = request.query_params.get("month")
+        year = request.query_params.get("year")
+        from_date = request.query_params.get("from_date")
+        to_date = request.query_params.get("to_date")
+
+        qs = Attendance.objects.all().select_related("employee", "shift")
+
+        # ------------------------------------------------------------
+        # 1️⃣ IF EMPLOYEE SELECTED → SHOW ONLY THAT EMPLOYEE
+        # ------------------------------------------------------------
+        if emp_id:
+            qs = qs.filter(employee=emp_id)
+
+        # ------------------------------------------------------------
+        # 2️⃣ APPLY DATE FILTERS IF GIVEN
+        # ------------------------------------------------------------
+        if month and year:
+            qs = qs.filter(date__month=month, date__year=year)
+
+        if from_date and to_date:
+            qs = qs.filter(date__range=[from_date, to_date])
+
+        if from_date and not to_date:
+            qs = qs.filter(date=from_date)
+
+        # ------------------------------------------------------------
+        # 3️⃣ NO FILTER AT ALL → LIST ALL EMPLOYEES WITH ALL DATES
+        # ------------------------------------------------------------
+        qs = qs.order_by("employee__emp_first_name", "-date")
+
+        result = {}
+
+        for att in qs:
+            emp_key = f"{att.employee.id} - {att.employee.emp_first_name}"
+
+            if emp_key not in result:
+                result[emp_key] = []
+
+            # Convert durations to readable string
+            total_hours = str(att.total_hours) if att.total_hours else "00:00:00"
+            overtime = getattr(att, "overtime_hours", None)
+            overtime_str = str(overtime) if overtime else "00:00:00"
+
+            result[emp_key].append({
+                "date": att.date,
+                "day": att.date.strftime("%A"),
+                "shift": att.shift.name if att.shift else None,
+                "check_in": att.check_in_time,
+                "check_out": att.check_out_time,
+                "check_in_location": att.check_in_location,
+                "check_out_location": att.check_out_location,
+                "total_hours": total_hours,
+                "overtime": overtime_str,
+            })
+
+        return Response({
+            "filtered_employee": emp_id,
+            "attendance": result
+        })
+   
+    @action(detail=False, methods=['get'])
     def monthly_late_and_early_attendance(self, request):
         from datetime import datetime, timedelta, datetime as dt
 

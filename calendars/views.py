@@ -515,9 +515,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
         # NEW: Location Data From Frontend
-        lat = request.data.get("latitude")
-        lng = request.data.get("longitude")
-        location_name = request.data.get("location_name")
+        lat = request.data.get("check_in_lat")
+        lng = request.data.get("check_in_lng")
+        location_name = request.data.get("check_in_location")
 
         # if not lat or not lng:
         #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -565,9 +565,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
         # NEW: Location data from frontend
-        lat = request.data.get("latitude")
-        lng = request.data.get("longitude")
-        location_name = request.data.get("location_name")
+        lat = request.data.get("check_out_lat")
+        lng = request.data.get("check_out_lng")
+        location_name = request.data.get("check_out_location")
 
         # if not lat or not lng:
         #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)

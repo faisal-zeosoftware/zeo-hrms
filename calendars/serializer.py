@@ -374,6 +374,14 @@ class ShiftOverrideSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShiftOverride
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(ShiftOverrideSerializer, self).to_representation(instance)
+        if instance.override_shift:  
+            rep['override_shift'] = instance.override_shift.name
+        if instance.employee:  
+            rep['employee'] = instance.employee.emp_code
+        return rep
+
 
 class EmployeeShiftScheduleSerializer(serializers.ModelSerializer):
     branch_names = serializers.SerializerMethodField(read_only=True)
@@ -468,13 +476,13 @@ class LvApprovalSerializer(serializers.ModelSerializer):
         if instance.approver:
             rep['approver'] = instance.approver.username   
         if instance.leave_request:
-            rep['leave_request'] = instance.leave_request.document_number
+            rep['leave_request'] = instance.leave_request.document_number 
         if instance.employee_id:
             try:
                 emp = emp_master.objects.get(id=instance.employee_id)
                 rep['employee_id'] = emp.emp_code
             except emp_master.DoesNotExist:
-                rep['employee_id'] = None
+                rep['employee_id'] = None 
         return rep
    
 
@@ -591,5 +599,33 @@ class EmployeeOvertimeSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super(EmployeeOvertimeSerializer, self).to_representation(instance)
         if instance.employee:  
-            rep['employee'] = instance.employee.emp_code           
+            rep['employee'] = instance.employee.emp_code  
+        if instance.approved_by:
+            rep['approved_by'] = instance.approved_by.username    
         return rep
+
+class LVEscalationRuleSerializer(serializers.ModelSerializer):
+    request_type_name = serializers.CharField(source='request_type.name', read_only=True)
+    approver_name = serializers.CharField(source='approver.username', read_only=True)
+    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+
+    class Meta:
+        model = LeaveApprovalLevels
+        fields = [
+            'id',
+            'level',
+            'request_type',
+            'request_type_name',
+            'approver',
+            'approver_name',
+            'branch',
+            'escalate_to',
+            'escalate_to_name',
+            'escalate_after_days',
+            'escalate_after_hours',
+            'escalate_after_minutes',
+        ]
+        read_only_fields = [
+            'level','approver', 'request_type', 'branch',
+            'request_type_name', 'approver_name', 'escalate_to_name'
+        ]

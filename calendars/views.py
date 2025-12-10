@@ -8,7 +8,7 @@ from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,Holi
                          AttendanceSerializer,ShiftSerializer,ImportAttendanceSerializer,EmployeeMappingSerializer,LeaveReportSerializer,LvApprovalLevelSerializer,EmployeeYearlyCalendarSerializer,
                          LvApprovalSerializer,LvEmailTemplateSerializer,LvApprovalNotifySerializer,LvCommonWorkflowSerializer,LvRejectionReasonSerializer,LvApprovalReportSerializer,AttendanceReportSerializer,lvBalanceReportSerializer,
                          CompensatoryLeaveRequestSerializer,CompensatoryLeaveTransactionSerializer,CompensatoryLeaveBalanceSerializer,ShiftOverrideSerializer,ShiftPatternSerializer,EmployeeShiftScheduleSerializer,LeaveResetPolicySerializer,LeaveCarryForwardTransactionSerializer,
-                         LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer
+                         LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer
                          )
 from rest_framework import viewsets,filters,status
 from rest_framework.response import Response
@@ -2499,3 +2499,45 @@ class BulkuploadAttendanceViewSet(viewsets.ModelViewSet):
             return Response({"message": "Monthly attendance imported successfully."})
         except Exception as e:
             return Response({"error": str(e)}, status=400)
+
+class LVEscalationRuleViewSet(viewsets.ModelViewSet):
+    """
+    API for managing escalation settings on each approval level.
+    """
+    serializer_class = LVEscalationRuleSerializer
+    queryset = LeaveApprovalLevels.objects.all().order_by('request_type', 'level')
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        request_type_id = self.request.query_params.get('request_type')
+        branch_id = self.request.query_params.get('branch')
+
+        if request_type_id:
+            queryset = queryset.filter(request_type_id=request_type_id)
+        if branch_id:
+            queryset = queryset.filter(branch__id=branch_id)
+
+        return queryset.distinct()
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update only escalation fields for a level.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({
+            "message": "Escalation rule updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['post'])
+    def reset(self, request, pk=None):
+        instance = self.get_object()
+        instance.escalate_to = None
+        instance.escalate_after_days = 0
+        instance.escalate_after_hours = 0
+        instance.escalate_after_minutes = 0
+        instance.save()
+        return Response({"message": "Escalation rule reset successfully"}, status=200)

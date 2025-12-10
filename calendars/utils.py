@@ -201,3 +201,62 @@ def get_attendance_summary(employee, start_date, end_date):
         "total_present": total_present,
         "total_absent": total_absent
     }
+
+def schedule_escalation(approval, level_rule):
+    from django.db import connection
+    from .tasks import escalate_approval_task
+    """
+    Schedule a Celery countdown task for automatic escalation.
+    """
+    total_seconds = (
+        (level_rule.escalate_after_days or 0) * 86400 +
+        (level_rule.escalate_after_hours or 0) * 3600 +
+        (level_rule.escalate_after_minutes or 0) * 60
+    )
+
+    if total_seconds > 0 and level_rule.escalate_to:
+        schema_name = connection.schema_name
+        escalate_approval_task.apply_async((approval.id, schema_name), countdown=total_seconds)
+        print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
+
+def get_employee_group_values(employee):
+    """
+    Return (designation, department, category) for the employee.
+    Adjust attribute names here if your emp_master uses different field names.
+    """
+    # Common field name guesses — if your emp_master fields differ, edit here:
+    desig = getattr(employee, 'designation', None) or getattr(employee, 'desig', None) or getattr(employee, 'emp_designation', None)
+    dept  = getattr(employee, 'department', None) or getattr(employee, 'dept', None) or getattr(employee, 'emp_dept', None)
+    cat   = getattr(employee, 'category', None) or getattr(employee, 'cat', None) or getattr(employee, 'emp_category', None)
+    return desig, dept, cat
+
+def rule_matches_employee(rule_obj, employee):
+    """
+    rule_obj: leave_entitlement or LeaveResetPolicy instance
+    employee: emp_master instance
+    Rule fields are nullable; NULL means 'any'.
+    """
+    emp_desig, emp_dept, emp_cat = get_employee_group_values(employee)
+
+    # Compare by id if both sides are model instances, else direct equality works
+    if rule_obj.designation and emp_desig:
+        if getattr(rule_obj.designation, 'id', rule_obj.designation) != getattr(emp_desig, 'id', emp_desig):
+            return False
+    elif rule_obj.designation and not emp_desig:
+        # rule requires a designation but employee doesn't have one -> no match
+        return False
+
+    if rule_obj.department and emp_dept:
+        if getattr(rule_obj.department, 'id', rule_obj.department) != getattr(emp_dept, 'id', emp_dept):
+            return False
+    elif rule_obj.department and not emp_dept:
+        return False
+
+    if rule_obj.category and emp_cat:
+        if getattr(rule_obj.category, 'id', rule_obj.category) != getattr(emp_cat, 'id', emp_cat):
+            return False
+    elif rule_obj.category and not emp_cat:
+        return False
+
+    # if no failing condition, it matches
+    return True

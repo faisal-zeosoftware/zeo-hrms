@@ -24,6 +24,7 @@ class CompanyPolicySerializer(serializers.ModelSerializer):
             rep['category'] =instance.category.ctgry_title
         return rep
 
+
     
 #DEPARTMENT SERIALIZER
 class DeptSerializer(serializers.ModelSerializer):

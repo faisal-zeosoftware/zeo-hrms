@@ -331,3 +331,69 @@ def get_all_tenant_schemas():
     # Implement this function based on your tenant management system 
     TenantModel = get_tenant_model() 
     return TenantModel.objects.values_list('schema_name', flat=True)
+
+@shared_task
+def escalate_approval_task(approval_id, schema_name):
+    """
+    Automatically escalates a pending approval when its escalation time expires.
+    """
+    from django.db import connection
+
+    with schema_context(schema_name):
+        try:
+            approval = LeaveApproval.objects.get(id=approval_id)
+
+            # Skip if approval already handled
+            if approval.status != LeaveApproval.PENDING or approval.escalated:
+                return
+
+            # Find escalation rule
+            level_rule = LeaveApprovalLevels.objects.filter(
+                request_type=approval.leave_request.leave_type,
+                level=approval.level
+            ).first()
+
+            if not level_rule or not level_rule.escalate_to:
+                return  # No escalation rule defined
+
+            old_approver = approval.approver
+            new_approver = level_rule.escalate_to
+
+            # 🔥 Mark current approval as escalated
+            approval.status = LeaveApproval.ESCALATED
+            approval.note = f"Escalated to {new_approver.username}"
+            approval.escalated = True
+            approval.escalated_at = timezone.now()
+            approval.save()
+
+            # 🔥 Create a new approval entry for the escalated user
+            LeaveApproval.objects.create(
+                leave_request=approval.leave_request,
+                approver=new_approver,
+                level=approval.level,
+                employee_id=approval.employee_id,
+                status=LeaveApproval.PENDING,
+                note=f"Escalated from {old_approver.username}",
+                is_escalation=True,
+                created_by=old_approver,
+            )
+
+            # Send escalation notification email
+            send_notification_email(
+                user=new_approver,
+                employee=None,
+                message=f"This request has been escalated to you for approval: {approval.leave_request.leave_type.name}",
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.leave_request.employee),
+                    'doc_number': approval.leave_request.document_number,
+                    'leave_type': approval.leave_request.leave_type.name
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model=LvApprovalNotify
+            )
+
+            print(f"⚡ Escalation triggered for {approval.leave_request.document_number} → {new_approver.username}")
+
+        except LeaveApproval.DoesNotExist:
+            print(f"⚠️ Approval {approval_id} not found for escalation.")

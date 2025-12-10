@@ -1482,17 +1482,29 @@ class LeaveApprovalLevels(models.Model):
     branch           = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     created_by       = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='lv_escalated_levels')
+    escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
+    escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
+    escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
+
+    def get_escalation_timedelta(self):
+        """Returns the total time delta for escalation."""
+        from datetime import timedelta
+        total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
+        return timedelta(minutes=total_minutes)
 
 
 class LeaveApproval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
     REJECTED = 'Rejected'
+    ESCALATED = 'Escalated'
 
     STATUS_CHOICES = [
         (PENDING, 'Pending'),
         (APPROVED, 'Approved'),
         (REJECTED, 'Rejected'),
+        (ESCALATED, 'Escalated'),
     ]
     leave_request        = models.ForeignKey(employee_leave_request, related_name='approvals', on_delete=models.CASCADE,null=True, blank=True)
     compensatory_request = models.ForeignKey(CompensatoryLeaveRequest, related_name='approvals', on_delete=models.CASCADE, null=True, blank=True)
@@ -1508,6 +1520,10 @@ class LeaveApproval(models.Model):
     created_by           = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at           = models.DateField(auto_now=True)
     employee_id          = models.IntegerField(null=True, blank=True)
+    escalated = models.BooleanField(default=False)
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    is_escalation = models.BooleanField(default=False)
+
     def approve(self, note=None, approved_days=None):
         self.status = self.APPROVED
         if note:

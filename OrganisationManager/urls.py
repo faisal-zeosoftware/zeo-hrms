@@ -3,7 +3,7 @@ from . views import (FiscalYearViewSet,PeriodViewSet,BranchViewSet,DepartmentVie
                      DesignationViewSet,CatogoryViewSet,CompanyFiscalData,permissionviewset,Groupviewset,permviewset,FiscalYearDatesView,DeptBulkUploadViewSet,DesignationBulkUploadViewSet,
                    save_notification_settings,CompanyPolicyViewSet,list_data_in_schema,CategoryBulkUploadViewSet,AnnouncementViewSet,
                    AnnouncementCommentViewSet,AssetTypeViewSet,AssetMasterViewSet,Asset_CustomFieldValueViewSet,AssetReportViewset,AssetTransactionReportViewset,AssetAllocationViewSet,AssetRequestViewSet,AssetCustomFieldViewSet,
-                   GratuityTableViewset,FolderViewSet,DocumentViewSet,AssetEmailTemplateViewset,AssetApprovalLevelViewset,AssetApprovalViewset
+                   GratuityTableViewset,FolderViewSet,DocumentViewSet,AssetEmailTemplateViewset,AssetApprovalLevelViewset,AssetApprovalViewset,EscalationRuleViewSet
                    )
 from rest_framework.routers import DefaultRouter
 
@@ -35,7 +35,7 @@ router.register(r'asset-Request', AssetRequestViewSet, basename='assets-Request'
 router.register(r'asset-email-template', AssetEmailTemplateViewset, basename='asset-email-template')
 router.register(r'asset-request-approvals', AssetApprovalViewset,basename='asset_request_approvals')
 router.register(r'asset-request-approvals-levels', AssetApprovalLevelViewset,basename='asset_request_approvals_levels')
-
+router.register(r'asset-escalation-rules',EscalationRuleViewSet, basename='asset-escalation-rules')
 router.register(r'asset-customfield', AssetCustomFieldViewSet, basename='assets-customfield')
 router.register(r'asset-customfield-value', Asset_CustomFieldValueViewSet, basename='assets-customfield-value')
 router.register(r'asset-Report', AssetReportViewset, basename='assets-Report')

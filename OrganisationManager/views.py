@@ -19,7 +19,7 @@ from . serializer import (BranchSerializer,PermissionSerializer,GroupSerializer,
                           CtgrySerializer,DeptSerializer,DesgSerializer,FiscalYearSerializer,PeriodSerializer,DeptUploadSerializer,CtgryUploadSerializer,
                           DesgUploadSerializer,CompanyPolicySerializer,AnnouncementSerializer,AnnouncementCommentSerializer,AssetSerializer,AssetAllocationSerializer,AssetRequestSerializer,AssetCustomFieldSerializer,
                           AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer,FolderSerializer, DocumentSerializer,AssetApprovalLevelSerializer,AssetApprovalSerializer,
-                          AssetEmailTemplateSerializer)
+                          AssetEmailTemplateSerializer,EscalationRuleSerializer)
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from .resource import (DepartmentResource,DesignationResource,DesgtnReportResource,DeptReportResource,CategoryResource)
 from EmpManagement.models import emp_master
@@ -1684,3 +1684,44 @@ class DocumentViewSet(viewsets.ModelViewSet):
         docs = Document.objects.filter(folder_id=folder_id)
         serializer = self.get_serializer(docs, many=True)
         return Response(serializer.data)
+class EscalationRuleViewSet(viewsets.ModelViewSet):
+    """
+    API for managing escalation settings on each approval level.
+    """
+    serializer_class = EscalationRuleSerializer
+    queryset = AssetApprovalLevel.objects.all().order_by('asset_type','level')
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        asset_type_id = self.request.query_params.get('asset_type')
+        branch_id = self.request.query_params.get('branch')
+
+        if asset_type_id:
+            queryset = queryset.filter(asset_type_id=asset_type_id)
+        if branch_id:
+            queryset = queryset.filter(branch_id=branch_id)
+
+        return queryset.distinct()
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update only escalation fields for a level.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({
+            "message": "Escalation rule updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['post'])
+    def reset(self, request, pk=None):
+        instance = self.get_object()
+        instance.escalate_to = None
+        instance.escalate_after_days = 0
+        instance.escalate_after_hours = 0
+        instance.escalate_after_minutes = 0
+        instance.save()
+        return Response({"message": "Escalation rule reset successfully"}, status=200)

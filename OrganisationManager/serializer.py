@@ -224,11 +224,12 @@ class AssetAllocationSerializer(serializers.ModelSerializer):
         model = AssetAllocation
         fields = '__all__'
     def to_representation(self, instance):
-        rep = super(AssetAllocationSerializer, self).to_representation(instance)
+        rep = super().to_representation(instance)
         if instance.asset:
-            rep['asset'] =instance.asset.name
+            rep['asset'] = instance.asset.name  
         if instance.employee:
-            rep['employee'] =instance.employee.emp_code
+            rep['employee'] = instance.employee.emp_code
+
         return rep
     
 class AssetEmailTemplateSerializer(serializers.ModelSerializer):
@@ -374,3 +375,30 @@ class BranchSerializer(serializers.ModelSerializer):
             models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=timezone.now())
         )
         return AnnouncementSerializer(announcements, many=True).data
+
+class EscalationRuleSerializer(serializers.ModelSerializer):
+    asset_type_name = serializers.CharField(source='asset_type.name', read_only=True)
+    approver_name = serializers.CharField(source='approver.username', read_only=True)
+    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+
+    class Meta:
+        model = AssetApprovalLevel
+        fields = [
+            'id',
+            'level',
+            'role',
+            'asset_type',
+            'asset_type_name',
+            'approver',
+            'approver_name',
+            'branch',
+            'escalate_to',
+            'escalate_to_name',
+            'escalate_after_days',
+            'escalate_after_hours',
+            'escalate_after_minutes',
+        ]
+        read_only_fields = [
+            'level', 'role', 'approver', 'asset_type', 'branch',
+            'asset_type_name', 'approver_name', 'escalate_to_name'
+        ]

@@ -52,7 +52,55 @@ class PayrollRunSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayrollRun
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(PayrollRunSerializer, self).to_representation(instance)
+        if instance.branch:
+            rep['branch'] = instance.branch.branch_name 
+        if instance.department:
+            rep['department'] = instance.department.dept_name 
+        if instance.category:
+            rep['category'] = instance.category.ctgry_title 
+        return rep
+    def validate(self, data):
+        month = data.get('month')
+        year = data.get('year')
+        branch = data.get('branch')
+        department = data.get('department')
+        category = data.get('category')
+        employees = data.get('employees', [])
 
+        # Collect all employees for this payroll run
+        employee_set = set(employees)  # selected employees
+        qs = emp_master.objects.filter(is_active=True)
+        if branch:
+            qs = qs.filter(emp_branch_id=branch)
+        if department:
+            qs = qs.filter(emp_dept_id=department)
+        if category:
+            qs = qs.filter(emp_ctgry_id=category)
+
+        employee_set.update(qs)
+
+        # Check if any of these employees already have payroll for the month
+        duplicate_emps = []
+        for emp in employee_set:
+            exists = PayrollRun.objects.filter(
+                month=month,
+                year=year,
+                employees__id=emp.id
+            )
+            # Exclude self in case of update
+            if self.instance:
+                exists = exists.exclude(pk=self.instance.pk)
+            if exists.exists():
+                duplicate_emps.append(emp.emp_code)  # using emp_code instead of id
+
+        if duplicate_emps:
+            raise serializers.ValidationError(
+                f"Payroll already exists for employees in {month}/{year}: {', '.join(duplicate_emps)}"
+            )
+
+        return data
 class PaySlipComponentSerializer(serializers.ModelSerializer):
     component_name = serializers.CharField(source='component.name', read_only=True)
     component_type = serializers.CharField(source='component.get_component_type_display', read_only=True)
@@ -265,8 +313,10 @@ class LoanApprovalSerializer(serializers.ModelSerializer):
                 rep['employee_id'] = emp.emp_code
             except emp_master.DoesNotExist:
                 rep['employee_id'] = None
+        if instance.loan_request:
+            rep['document_number']= getattr(instance.loan_request,'document_number')
         return rep
-
+    
 class SIFSerializer(serializers.Serializer):
     payroll_run_id = serializers.IntegerField()
     department_ids = serializers.ListField(
@@ -393,6 +443,17 @@ class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceSalaryApproval
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(AdvanceSalaryApprovalSerializer, self).to_representation(instance)
+        if instance.approver:  
+            rep['approver'] = instance.approver.username
+        if instance.request:
+            rep['request'] = instance.request.document_number
+        if instance.employee:  
+            rep['employee'] = instance.employee.emp_code
+
+    
+        return rep
 class AdvanceCommonWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceCommonWorkflow

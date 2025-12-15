@@ -548,7 +548,13 @@ class LoanApprovalLevels(models.Model):
 
     class Meta:
         unique_together = ('level', 'loan_type')
-
+        permissions = (
+                    ("add_loan_escalation", "Can add Escalation"),
+                    ("view_loan_escalation", "Can view Escalation"),
+                    ("change_loan_escalation", "Can change Escalation"),
+                    ("export_loan_escalation", "Can export Escalation"),
+                    ("delete_loan_escalation", "Can delete Escalation"),
+            )
 class LoanApproval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
@@ -834,14 +840,22 @@ class AdvanceCommonWorkflow(models.Model):
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
     escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
-
+    class meta:
+        ordering = ['level']
+        permissions = (
+                ("add_advsalary_escalation", "Can add Escalation"),
+                ("view_advsalary_escalation", "Can view Escalation"),
+                ("change_advsalary_escalation", "Can change Escalation"),
+                ("export_advsalary_escalation", "Can export Escalation"),
+                ("delete_advsalary_escalation", "Can delete Escalation"),
+        )
     def get_escalation_timedelta(self):
         """Returns the total time delta for escalation."""
         from datetime import timedelta
         total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
         return timedelta(minutes=total_minutes)
-    class Meta:
-        ordering = ['level']
+
+        
 
     def __str__(self):
         return f"Level {self.level} - {self.role} ({self.approver})"
@@ -1167,7 +1181,13 @@ class AirticketWorkflow(models.Model):
         return timedelta(minutes=total_minutes)
     class Meta:
         ordering = ['level']
-
+        permissions = (
+                    ("add_airticket_escalation", "Can add Escalation"),
+                    ("view_airticket_escalation", "Can view Escalation"),
+                    ("change_airticket_escalation", "Can change Escalation"),
+                    ("export_airticket_escalation", "Can export Escalation"),
+                    ("delete_airticket_escalation", "Can delete Escalation"),
+            )
     def __str__(self):
         return f"Level {self.level} - {self.role} ({self.approver})"
 class AirticketApproval(models.Model):

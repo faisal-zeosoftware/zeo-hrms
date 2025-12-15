@@ -1486,7 +1486,14 @@ class LeaveApprovalLevels(models.Model):
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
     escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
-
+    class Meta:
+        permissions = (
+                    ("add_leave_escalation", "Can add Escalation"),
+                    ("view_leave_escalation", "Can view Escalation"),
+                    ("change_leave_escalation", "Can change Escalation"),
+                    ("export_leave_escalation", "Can export Escalation"),
+                    ("delete_leave_escalation", "Can delete Escalation"),
+            )
     def get_escalation_timedelta(self):
         """Returns the total time delta for escalation."""
         from datetime import timedelta

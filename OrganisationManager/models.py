@@ -397,7 +397,14 @@ class AssetApprovalLevel(models.Model):
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
     escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
-
+    class meta:
+        permissions = (
+                ("add_asset_escalation", "Can add Escalation"),
+                ("view_asset_escalation", "Can view Escalation"),
+                ("change_asset_escalation", "Can change Escalation"),
+                ("export_asset_escalation", "Can export Escalation"),
+                ("delete_asset_escalation", "Can delete Escalation"),
+        )
     def get_escalation_timedelta(self):
         """Returns the total time delta for escalation."""
         from datetime import timedelta

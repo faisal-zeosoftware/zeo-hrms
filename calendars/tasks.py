@@ -6,7 +6,7 @@ from django.apps import apps
 from datetime import datetime, timedelta
 from EmpManagement.models import emp_master
 from .models import( leave_entitlement,leave_accrual_transaction,emp_leave_balance,leave_reset_transaction,LeaveResetPolicy,LeaveEncashmentTransaction,
-                    LeaveCarryForwardTransaction)
+                    LeaveCarryForwardTransaction,LeaveApprovalLevels,LeaveApproval,LvEmailTemplate,LvApprovalNotify)
 from celery.schedules import crontab
 from dateutil.relativedelta import relativedelta
 import calendar
@@ -14,6 +14,7 @@ from django.db.models import F
 from django.db import transaction
 import logging
 logger = logging.getLogger(__name__)
+from EmpManagement .utils import send_notification_email,get_employee_context
 
 
 @shared_task

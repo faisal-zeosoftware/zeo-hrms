@@ -682,20 +682,51 @@ class DocApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentApproval
         fields = '__all__'
-
+    def to_representation(self, instance):
+        rep = super(DocApprovalSerializer, self).to_representation(instance)
+        if instance.approver:  
+            rep['approver'] = instance.approver.username
+        if instance.general_request:
+            rep['general_request'] = instance.general_request.request_type.type_name
+        return rep
 class DocApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentApprovalLevel
         fields = '__all__'
-
+    def to_representation(self, instance):
+        rep = super(DocApprovalLevelSerializer, self).to_representation(instance)
+        if instance.request_type:  
+            rep['request_type'] = instance.request_type.type_name
+        if instance.approver:  
+            rep['approver'] = instance.approver.username
+        if instance.branch.exists():  
+            rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
+        return rep
 class ResignationApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResignationApprovalLevel
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(DocApprovalLevelSerializer,self).to_representation(instance)
+        if instance.request_type:  
+            rep['request_type'] = instance.request_type.type_name
+        if instance.approver:  
+            rep['approver'] = instance.approver.username
+        if instance.branch.exists():  
+            rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
+        return rep
+
 class ResignationApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResignationApproval
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(ResignationApprovalSerializer, self).to_representation(instance)
+        if instance.resignation_request:
+            rep['resignation_request'] = instance.resignation_request.termination_type
+        if instance.approver:
+            rep['approver'] = instance.approver.username
+        return rep
 class DocRequestEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestEmailTemplate
@@ -717,6 +748,12 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeResignation
         fields = '__all__'
+    def to_representation(self, instance):
+            rep = super( EmployeeResignationSerializer, self).to_representation(instance)
+            if instance.employee:  
+                rep['employee'] = instance.employee.emp_code
+            return rep
+
 class EndOfServiceSerializer(serializers.ModelSerializer):
     employee_code = serializers.CharField(source='resignation.employee.emp_code', read_only=True)
     employee_name = serializers.CharField(source='resignation.employee.emp_first_name', read_only=True)

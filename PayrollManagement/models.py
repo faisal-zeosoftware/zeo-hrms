@@ -840,7 +840,7 @@ class AdvanceCommonWorkflow(models.Model):
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
     escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
-    class meta:
+    class Meta:
         ordering = ['level']
         permissions = (
                 ("add_advsalary_escalation", "Can add Escalation"),

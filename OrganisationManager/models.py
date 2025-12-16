@@ -397,7 +397,7 @@ class AssetApprovalLevel(models.Model):
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
     escalate_after_minutes = models.PositiveIntegerField(default=0, help_text="Escalate after X minutes if pending")
-    class meta:
+    class Meta:
         permissions = (
                 ("add_asset_escalation", "Can add Escalation"),
                 ("view_asset_escalation", "Can view Escalation"),

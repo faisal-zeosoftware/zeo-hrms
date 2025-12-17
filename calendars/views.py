@@ -2390,41 +2390,66 @@ class EmployeeOvertimeViewset(viewsets.ModelViewSet):
     queryset = EmployeeOvertime.objects.all()
     serializer_class = EmployeeOvertimeSerializer
 
+import calendar
+
+def get_month_number(month):
+    if isinstance(month, int):
+        return month
+    if isinstance(month, str):
+        month = month.strip().lower()
+        month_map = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+        return month_map.get(month)
+    return None
 class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
     queryset = MonthlyAttendanceSummary.objects.all()
     serializer_class = MonthlyAttendanceSummarySerializer
+
     @action(detail=False, methods=['post'])
     def generate(self, request):
-        month = int(request.data.get("month", date.today().month))
+
         year = int(request.data.get("year", date.today().year))
+
+        month_input = request.data.get("month", date.today().month)
+        month = get_month_number(month_input)
+
+        if not month:
+            return Response(
+                {"error": "Invalid month. Use month name or number."},
+                status=400
+            )
+
         start_date = date(year, month, 1)
         end_date = start_date + relativedelta(months=1) - relativedelta(days=1)
 
-        # Filters
-        employee_ids = request.data.get("employee_id")  # list of IDs
-        branch_id = request.data.get("branch_id")
-        department_id = request.data.get("department_id")
-        category_id = request.data.get("category_id")
+        # 🔹 Multiple-selection filters
+        employee_ids    = request.data.get("employee_ids", [])
+        branch_ids      = request.data.get("branch_ids", [])
+        department_ids  = request.data.get("department_ids", [])
+        category_ids    = request.data.get("category_ids", [])
+        designation_ids = request.data.get("designation_ids", [])
 
-        # Filter employees
         employees = emp_master.objects.all()
 
         if employee_ids:
             employees = employees.filter(id__in=employee_ids)
 
-        if branch_id:
-            employees = employees.filter(emp_branch_id=branch_id)
+        if branch_ids:
+            employees = employees.filter(emp_branch_id__in=branch_ids)
 
-        if department_id:
-            employees = employees.filter(emp_dept_id=department_id)
+        if department_ids:
+            employees = employees.filter(emp_dept_id__in=department_ids)
 
-        if category_id:
-            employees = employees.filter(emp_ctgry_id=category_id)
+        if category_ids:
+            employees = employees.filter(emp_ctgry_id__in=category_ids)
+
+        if designation_ids:
+            employees = employees.filter(emp_desgntn_id__in=designation_ids)
 
         result = []
 
         for employee in employees:
             summary_data = get_attendance_summary(employee, start_date, end_date)
+
             if not summary_data:
                 continue
 
@@ -2441,7 +2466,18 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
                 }
             )
 
-            result.append(MonthlyAttendanceSummarySerializer(summary_obj).data)
+            result.append({
+                "employee_id": employee.id,
+                "employee_code": employee.emp_code,
+                "employee_name": f"{employee.emp_first_name} {employee.emp_last_name}",
+                "branch": employee.emp_branch_id.branch_name if employee.emp_branch_id else None,
+                "department": employee.emp_dept_id.dept_name if employee.emp_dept_id else None,
+                "category": employee.emp_ctgry_id.ctgry_title if employee.emp_ctgry_id else None,
+                "designation": employee.emp_desgntn_id.desgntn_job_title if employee.emp_desgntn_id else None,
+                "month": calendar.month_name[month],
+                "year": year,
+                "attendance": MonthlyAttendanceSummarySerializer(summary_obj).data
+            })
 
         return Response(result)
 

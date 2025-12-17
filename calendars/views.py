@@ -513,66 +513,37 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
-        #NEW: Location Data From Frontend
         lat = request.data.get("check_in_lat")
         lng = request.data.get("check_in_lng")
         location_name = request.data.get("check_in_location")
-        # lat = (
-        #     request.data.get("latitude")
-        #     or request.data.get("check_in_lat")
-            
-        # )
-
-        # lng = (
-        #     request.data.get("longitude")
-        #     or request.data.get("check_in_lng")
-            
-        # )
-
-        # location_name = (
-        #     request.data.get("location_name")
-        #     or request.data.get("check_in_location")
-        # )
-
-        # if not lat or not lng:
-        #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             employee = emp_master.objects.get(id=emp_id)
         except emp_master.DoesNotExist:
-            return Response({"detail": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Employee not found"}, status=404)
 
-        attendance, created = Attendance.objects.get_or_create(employee=employee, date=date)
+        attendance, created = Attendance.objects.get_or_create(
+            employee=employee,
+            date=date
+        )
+
         if attendance.check_in_time:
-            return Response({"detail": "Already checked in"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Already checked in"}, status=400)
 
-        # Existing logic: get assigned shift
-        schedule = EmployeeShiftSchedule.objects.filter(
-            Q(employee=employee) | Q(departments=employee.emp_dept_id)
-        ).first()
+        attendance.check_in_time = localtime(now()).time()
 
-        shift = schedule.get_shift_for_date(date) if schedule else None
-
-        # Existing logic: get check-in time
-        tenant_time = localtime(now()).time()
-        attendance.check_in_time = tenant_time
-        attendance.shift = shift
-
-        # NEW: store location
+        # 📌 DO NOT SET SHIFT HERE
         attendance.check_in_lat = lat
         attendance.check_in_lng = lng
         attendance.check_in_location = location_name
 
-        attendance.save()
+        attendance.save()  # ← fetch_shift() runs here
 
-        return Response(
-            {
-                "status": "Check-in recorded successfully",
-                "shift": shift.name if shift else None,
-                "location": location_name,
-            },
-            status=status.HTTP_200_OK
-        )
+        return Response({
+            "status": "Check-in recorded successfully",
+            "shift": attendance.shift.name if attendance.shift else None,
+            "location": location_name
+        })
     @action(detail=False, methods=['post'])
     def check_out(self, request):
         emp_id = request.data.get("employee")

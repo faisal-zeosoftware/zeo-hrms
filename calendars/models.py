@@ -1772,6 +1772,7 @@ class EmployeeShiftSchedule(models.Model):
     shift_type = models.CharField(max_length=10, choices=SHIFT_TYPES, default="rotating")
     rotation_cycle_weeks = models.IntegerField(default=4, null=True, blank=True)  # Only for rotating
     start_date = models.DateField(default=timezone.now)
+    end_date = models.DateField(null=True, blank=True)
     single_shift_pattern = models.ForeignKey(ShiftPattern, null=True, blank=True, on_delete=models.SET_NULL, related_name='fixed_shift_patterns')  # Used for fixed shifts
 
     # For rotating shift pattern per week
@@ -1782,7 +1783,6 @@ class EmployeeShiftSchedule(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
-
     def get_shift_for_date(self, date):
         """Determine the shift for a given date based on the schedule type."""
         if self.shift_type == "fixed" and self.single_shift_pattern:
@@ -1806,7 +1806,18 @@ class EmployeeShiftSchedule(models.Model):
         start_date = self.start_date.date() if isinstance(self.start_date, datetime) else self.start_date
         delta_weeks = (date - start_date).days // 7
         return (delta_weeks % self.rotation_cycle_weeks) + 1
+    
+    def clean(self):
+        from django.core.exceptions import ValidationError
 
+        if self.end_date and self.start_date > self.end_date:
+            raise ValidationError({
+                "end_date": "End date must be greater than or equal to start date"
+            })
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
     def __str__(self):
         return f"Shift Schedule {self.schedule_name}"
 
@@ -1902,12 +1913,21 @@ class Attendance(models.Model):
                 self.overtime_hours = timedelta(0)
 
     def fetch_shift(self):
-        from .models import EmployeeShiftSchedule  # Avoid circular import
-        schedule = EmployeeShiftSchedule.objects.filter(
-            Q(employee=self.employee) | Q(departments=self.employee.emp_dept_id)
-        ).first()
-        return schedule.get_shift_for_date(self.date) if schedule else None
+        from calendars.models import EmployeeShiftSchedule
 
+        schedule = EmployeeShiftSchedule.objects.filter(
+            employee=self.employee,
+            start_date__lte=self.date
+        ).filter(
+            Q(end_date__gte=self.date) | Q(end_date__isnull=True)
+        ).order_by('-start_date').first()
+
+        # ⛔ No active schedule → shift is NULL
+        if not schedule:
+            return None
+
+        return schedule.get_shift_for_date(self.date)
+    
     def get_shift_duration(self):
         if not self.shift:
             return timedelta(0)

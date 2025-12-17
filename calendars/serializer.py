@@ -394,28 +394,65 @@ class EmployeeShiftScheduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeShiftSchedule
         fields = '__all__'
-    def perform_create(self, serializer):
-        schedule = serializer.save(created_by=self.request.user)
+    def validate(self, attrs):
+        from EmpManagement.models import emp_master
+        from django.db.models import Q
+        from datetime import date
 
-        # collect employees using branch, dept, cateogry, designation
-        employees = emp_master.objects.all()
+        start_date = attrs.get('start_date')
+        end_date = attrs.get('end_date')
 
-        if schedule.branches.exists():
-            employees = employees.filter(emp_branch_id__in=schedule.branches.all())
+        if end_date and start_date > end_date:
+            raise serializers.ValidationError(
+                "End date must be greater than or equal to start date"
+            )
 
-        if schedule.departments.exists():
-            employees = employees.filter(emp_dept_id__in=schedule.departments.all())
+        request = self.context['request']
 
-        if schedule.designations.exists():
-            employees = employees.filter(emp_desgntn_id__in=schedule.designations.all())
+        # M2M data from request
+        employees = request.data.get('employee', [])
+        branches = request.data.get('branches', [])
+        departments = request.data.get('departments', [])
+        designations = request.data.get('designations', [])
+        categories = request.data.get('categories', [])
 
-        if schedule.categories.exists():
-            employees = employees.filter(emp_ctgry_id__in=schedule.categories.all())
+        # Resolve ALL affected employees
+        affected_employees = emp_master.objects.none()
 
-        # assign employees automatically
-        schedule.employee.add(*employees)
+        if employees:
+            affected_employees |= emp_master.objects.filter(id__in=employees)
 
-        schedule.save()
+        if branches:
+            affected_employees |= emp_master.objects.filter(emp_branch_id__in=branches)
+
+        if departments:
+            affected_employees |= emp_master.objects.filter(emp_dept_id__in=departments)
+
+        if designations:
+            affected_employees |= emp_master.objects.filter(emp_desgntn_id__in=designations)
+
+        if categories:
+            affected_employees |= emp_master.objects.filter(emp_ctgry_id__in=categories)
+
+        affected_employees = affected_employees.distinct()
+
+        for emp in affected_employees:
+            overlap = EmployeeShiftSchedule.objects.filter(
+                employee=emp,
+                start_date__lte=end_date or date.max
+            ).filter(
+                Q(end_date__gte=start_date) | Q(end_date__isnull=True)
+            )
+
+            if self.instance:
+                overlap = overlap.exclude(id=self.instance.id)
+
+            if overlap.exists():
+                raise serializers.ValidationError(
+                    f"Shift overlap detected for employee {emp.emp_code}"
+                )
+
+        return attrs
     def get_branch_names(self, obj):
         return list(obj.branches.values('id', 'branch_name'))
 

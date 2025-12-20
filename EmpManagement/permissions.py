@@ -343,7 +343,11 @@ class GeneralRequestReportPermission(permissions.BasePermission):
             'update': 'change_generalrequestreport',
             'partial_update': 'change_generalrequestreport',
             'destroy': 'delete_generalrequestreport',
-            'export': 'export_report'
+            'export': 'export_report',
+            'std_report': 'view_generalrequestreport',
+            'select_generalreport_fields': 'view_generalrequestreport',
+            'generate_general_report': 'export_general_request_report',
+            'select_filter_fields': 'view_generalrequestreport',
         }
 
         required_perm = action_permissions.get(view.action)

@@ -285,7 +285,17 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError("Please specify whether the half-day is in the first or second half.")
             # elif data['leave_duration'] != 1:
             #     raise serializers.ValidationError("For daily leave types, duration must be a full day (1 day).")
-        
+        request_type = data.get('leave_type')
+        employee = data.get('employee')
+        has_levels = LeaveApprovalLevels.objects.filter(
+                request_type=request_type,
+                branch__in=[employee.emp_branch_id]
+            ).exists()
+
+        if not has_levels:
+            raise serializers.ValidationError({
+                "request_type": "Approval levels are not configured for this leave type  or branch."
+            })
         return data
 
 class EmployeeLeaveBalanceSerializer(serializers.ModelSerializer):

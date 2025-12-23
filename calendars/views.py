@@ -2407,19 +2407,30 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def generate(self, request):
 
-        year = int(request.data.get("year", date.today().year))
+        # 🔹 Date range input
+        start_date_str = request.data.get("start_date")
+        end_date_str = request.data.get("end_date")
 
-        month_input = request.data.get("month", date.today().month)
-        month = get_month_number(month_input)
-
-        if not month:
+        if not start_date_str or not end_date_str:
             return Response(
-                {"error": "Invalid month. Use month name or number."},
+                {"error": "start_date and end_date are required (YYYY-MM-DD)."},
                 status=400
             )
 
-        start_date = date(year, month, 1)
-        end_date = start_date + relativedelta(months=1) - relativedelta(days=1)
+        try:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return Response(
+                {"error": "Invalid date format. Use YYYY-MM-DD."},
+                status=400
+            )
+
+        if start_date > end_date:
+            return Response(
+                {"error": "start_date cannot be greater than end_date."},
+                status=400
+            )
 
         # 🔹 Multiple-selection filters
         employee_ids    = request.data.get("employee_ids", [])
@@ -2455,17 +2466,6 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
 
             serializer = AttendanceSummarySerializer(summary_data)
 
-            summary_obj, _ = MonthlyAttendanceSummary.objects.update_or_create(
-                employee=employee,
-                month=month,
-                year=year,
-                defaults={
-                    "summary_data": serializer.data["summary"],
-                    "total_present": serializer.data["total_present"],
-                    "total_absent": serializer.data["total_absent"],
-                }
-            )
-
             result.append({
                 "employee_id": employee.id,
                 "employee_code": employee.emp_code,
@@ -2474,9 +2474,9 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
                 "department": employee.emp_dept_id.dept_name if employee.emp_dept_id else None,
                 "category": employee.emp_ctgry_id.ctgry_title if employee.emp_ctgry_id else None,
                 "designation": employee.emp_desgntn_id.desgntn_job_title if employee.emp_desgntn_id else None,
-                "month": calendar.month_name[month],
-                "year": year,
-                "attendance": MonthlyAttendanceSummarySerializer(summary_obj).data
+                "start_date": start_date,
+                "end_date": end_date,
+                "attendance": serializer.data
             })
 
         return Response(result)

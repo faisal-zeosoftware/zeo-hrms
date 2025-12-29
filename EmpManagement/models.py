@@ -1892,7 +1892,7 @@ class ResignationApproval(models.Model):
         (APPROVED, 'Approved'),
         (REJECTED, 'Rejected'),
     ]
-    general_request = models.ForeignKey(EmployeeResignation, related_name='resign_approvals', on_delete=models.CASCADE)
+    resignation_request = models.ForeignKey(EmployeeResignation, related_name='resign_approvals', on_delete=models.CASCADE)   
     approver        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE,null=True)
     role            = models.CharField(max_length=50, null=True, blank=True)
     level           = models.IntegerField(default=1)

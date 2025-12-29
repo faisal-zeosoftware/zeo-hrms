@@ -23,7 +23,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer

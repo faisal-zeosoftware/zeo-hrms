@@ -9,7 +9,7 @@ from .views import (EmpFamViewSet, EmpJobHistoryvSet, EmpViewSet,NotificationVie
                     EmailConfigurationViewSet,UpdateESSUserView,ESSUserListView,NotificationSettingsViewSet,DocExpEmailTemplateViewset,CommonWorkflowViewSet,Doc_CustomFieldValueViewSet,EmployeeBankDetailViewset,
                     EmpBankBulkuploadViewSet,EmplistViewSet,Fam_CustomFieldValueViewSet,JobHistory_CustomFieldValueViewSet,Qf_CustomFieldValueViewSet,DocumentRequestViewset,
                     DocumentApprovalViewset,DocumentApprovalLevelViewset,DocRequestEmailTemplateViewset,DocRequestNotificationViewset,EmployeeResignationViewset,ResignationApprovalLevelViewset,ResignationApprovalViewset,EndOfServiceViewset,
-                    DocRequestTypeViewset,EmployeeByUserViewSet,EscalationRuleViewSet,
+                    DocRequestTypeViewset,EmployeeByUserViewSet,EscalationRuleViewSet,ResignationEmailTemplateViewset
                     )
 
 # Define the main router for top-level routes
@@ -63,6 +63,7 @@ router.register(r'Doc-request-approval-levels', DocumentApprovalLevelViewset, ba
 router.register(r'Doc-request-emailtemplate', DocRequestEmailTemplateViewset, basename='Doc-request-emailtemplate')
 router.register(r'Doc-request-noification', DocRequestNotificationViewset, basename='Doc-request-noification')
 router.register(r'employee-resignation', EmployeeResignationViewset, basename='employee-resignation')
+router.register(r'resignation-email-template', ResignationEmailTemplateViewset, basename='resignation-email-template')
 router.register(r'resign-approval-level', ResignationApprovalLevelViewset, basename='resign-approval-level')
 router.register(r'resign-approval', ResignationApprovalViewset, basename='resign-approval')
 router.register(r'end-of-service',EndOfServiceViewset, basename='end-of-service')

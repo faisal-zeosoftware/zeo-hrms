@@ -1749,6 +1749,32 @@ def create_initial_approval(sender, instance, created, **kwargs):
         email_template_model=DocRequestEmailTemplate,
         notification_model=DocRequestNotification
     )
+class ResignationEmailTemplate(models.Model):
+    template_type = models.CharField(max_length=50, choices=[
+        ('resignation_created', 'Resignation Created'),
+        ('resignation_approved', 'Resignation Approved'),
+        ('resignation_rejected', 'Resignation Rejected')
+    ])
+    subject             = models.CharField(max_length=255)
+    body                = models.TextField()
+    created_at          = models.DateTimeField(auto_now_add=True)
+    created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    def __str__(self):
+        return f"{self.template_type} - {self.subject}"
+    
+class ResignationRequestNotification(models.Model):
+    recipient_user = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.CASCADE)
+    recipient_employee = models.ForeignKey(emp_master, null=True, blank=True, on_delete=models.CASCADE, related_name='resignation_notification')
+    message = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False)
+
+    def __str__(self):
+        if self.recipient_user:
+            return f"Notification for {self.recipient_user.emp_code}: {self.message}"
+        else:
+            return f"Notification for employee: {self.message}"
+
 class EmployeeResignation(models.Model):
     TERMINATION_TYPE_CHOICES = [
         ('resignation', 'Resignation'),
@@ -1773,15 +1799,34 @@ class EmployeeResignation(models.Model):
             ("view_approved_resignations", "Can view approved resignations"),
             ("add_create_eos_for_resignation", "Can add  EOS for approved resignation"),
         ]
+
     def __str__(self):
         return f"{self.employee} - {self.termination_type.title()} on {self.resigned_on}"
     def move_to_next_level(self):
         if self.resign_approvals.filter(status=Approval.REJECTED).exists():
             self.status = 'Rejected'
             self.save()
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your resignation request {self.termination_type} has been rejected.",
+                template_type="resignation_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    'document_date':self.document_date,
+                   'resigned_on':self.resigned_on,
+                    'notice_period':self.notice_period,
+                    'last_working_date':self.last_working_date,
+                    'location':self.location,
+                    'termination_type':self.termination_type,
+                    'reason_for_leaving':self.reason_for_leaving,
+                    'status':self.status,
+                },
+                    email_template_model=ResignationEmailTemplate,
+                    notification_model=ResignationRequestNotification
+                )
             return  # Important: Stop here if rejected
             
-
         current_approved_levels = self.resign_approvals.filter(status=Approval.APPROVED).count()
         next_level = None
 
@@ -1804,6 +1849,25 @@ class EmployeeResignation(models.Model):
         else:
             self.status = 'Approved'
             self.save()
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your resignation request {self.termination_type} has been approved.",
+                template_type="resignation_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'document_date':self.document_date,
+                   'resigned_on':self.resigned_on,
+                    'notice_period':self.notice_period,
+                    'last_working_date':self.last_working_date,
+                    'location':self.location,
+                    'termination_type':self.termination_type,
+                    'reason_for_leaving':self.reason_for_leaving,
+                    'status':self.status,
+                },
+                    email_template_model=ResignationEmailTemplate,
+                    notification_model=ResignationRequestNotification
+                )
             
 
             
@@ -1851,6 +1915,25 @@ class ResignationApproval(models.Model):
         self.save()
         self.general_request.status = 'Rejected'
         self.general_request.save()
+        send_notification_email(
+                user=self.created_by,
+                employee=self.resignation_request.employee,
+                message=f"Your resignation request {self.resignation_request.termination_type} has been rejected.",
+                template_type="resignation_rejected",
+                context={
+                    **get_employee_context(self.resignation_request.employee),
+                    'document_date':self.resignation_request.document_date,
+                    'resigned_on':self.resignation_request.resigned_on,
+                    'notice_period':self.resignation_request.notice_period,
+                    'last_working_date':self.resignation_request.last_working_date,
+                    'location':self.resignation_request.location,
+                    'termination_type':self.resignation_request.termination_type,
+                    'reason_for_leaving':self.resignation_request.reason_for_leaving,
+                    'status':self.status,
+                },
+                    email_template_model=ResignationEmailTemplate,
+                    notification_model=ResignationRequestNotification
+                )
 
 
 @receiver(post_save, sender=EmployeeResignation)
@@ -1866,6 +1949,25 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
                 status='Pending',
                 
             )
+            send_notification_email(
+                user=instance.created_by,
+                employee=instance.employee,
+                message=f"Your resignation request {instance.termination_type} has been approved.",
+                template_type="resignation_created",
+                context={
+                    **get_employee_context(instance.employee),
+                    'document_date':instance.document_date,
+                   'resigned_on':instance.resigned_on,
+                    'notice_period':instance.notice_period,
+                    'last_working_date':instance.last_working_date,
+                    'location':instance.location,
+                    'termination_type':instance.termination_type,
+                    'reason_for_leaving':instance.reason_for_leaving,
+                    'status':instance.status,
+                },
+                    email_template_model=ResignationEmailTemplate,
+                    notification_model=ResignationRequestNotification
+                )
 class EndOfService(models.Model):
     resignation = models.OneToOneField(EmployeeResignation, on_delete=models.CASCADE, related_name='eos')
     years_of_service = models.FloatField(help_text="Years of service calculated")

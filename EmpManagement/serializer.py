@@ -707,26 +707,51 @@ class ResignationApprovalLevelSerializer(serializers.ModelSerializer):
         model = ResignationApprovalLevel
         fields = '__all__'
     def to_representation(self, instance):
-        rep = super(DocApprovalLevelSerializer,self).to_representation(instance)
-        if instance.request_type:  
-            rep['request_type'] = instance.request_type.type_name
+        rep = super(ResignationApprovalLevelSerializer, self).to_representation(instance)
         if instance.approver:  
             rep['approver'] = instance.approver.username
-        if instance.branch.exists():  
-            rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
-        return rep
-
+            return rep
 class ResignationApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResignationApproval
         fields = '__all__'
+
     def to_representation(self, instance):
         rep = super(ResignationApprovalSerializer, self).to_representation(instance)
-        if instance.resignation_request:
+        # if instance.employee:  
+        #     rep['employee'] = instance.employee.emp_first_name
+        #     return rep
+        if instance.resignation_request:  
             rep['resignation_request'] = instance.resignation_request.termination_type
-        if instance.approver:
+            return rep
+        if instance.approver:  
             rep['approver'] = instance.approver.username
-        return rep
+            return rep
+        
+        
+class ResignationTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResignationEmailTemplate
+        fields = '__all__'
+    def validate(self, attrs):
+        template_type=attrs.get("template_type")
+        temp=ResignationEmailTemplate.objects.filter(template_type=template_type)
+        if self.instance:
+            temp=temp.exclude(id=self.instance.id)
+        if temp.exists():
+            raise serializers.ValidationError({"template_type": f"{template_type} template already exists."
+        })
+        return attrs
+class EmployeeResignationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeResignation
+        fields = '__all__'
+    
+    def to_representation(self, instance):
+            rep = super( EmployeeResignationSerializer, self).to_representation(instance)
+            if instance.employee:  
+                rep['employee'] = instance.employee.emp_first_name
+            return rep
 class DocRequestEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestEmailTemplate

@@ -9,7 +9,7 @@ from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQ
                      EmpQualification_CustomField,EmpDocuments_CustomField,LanguageSkill,MarketingSkill,ProgrammingLanguageSkill,Emp_CustomField,Report,Doc_Report,GeneralRequest,RequestType,GeneralRequestReport,EmployeeLangSkill,EmployeeProgramSkill,
                      EmployeeMarketingSkill,Approval,ApprovalLevel,RequestNotification,Emp_CustomFieldValue,
                      EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,JobHistory_CustomFieldValue,
-                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType
+                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate
                      )
 from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,NotificationSerializer,RequestTypeSerializer,
                          EmpJobHistorySerializer,EmpLeaveRequestSerializer,DocumentSerializer,GeneralRequestSerializer,
@@ -19,7 +19,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          ReqNotifySerializer,Emp_CustomFieldValueSerializer,EmailTemplateSerializer,EmployeeFilterSerializer,EmailConfigurationSerializer,SelectedEmpNotifySerializer,
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
-                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer)
+                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer,ResignationTemplateSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2789,7 +2789,7 @@ class DocRequestNotificationViewset(viewsets.ModelViewSet):
 class EmployeeResignationViewset(viewsets.ModelViewSet):
     queryset = EmployeeResignation.objects.all()
     serializer_class = EmployeeResignationSerializer
-    permission_classes = [EmployeeResignationPermission]
+    # permission_classes = [EmployeeResignationPermission]
     @action(detail=False, methods=['get'], url_path='approved_resignations',permission_classes=[CanViewApprovedResignations])
     def list_approved_resignations(self, request):
         # Fetch all approved resignations
@@ -2900,6 +2900,51 @@ class ResignationApprovalViewset(viewsets.ModelViewSet):
         note = request.data.get('note')  # Get the note from the request
         approval.reject(note=note)
         return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+
+class ResignationEmailTemplateViewset(viewsets.ModelViewSet):
+    queryset = ResignationEmailTemplate.objects.all()
+    serializer_class = ResignationTemplateSerializer
+    @action(detail=False, methods=['get'], url_path='placeholders')
+    def placeholder_list(self, request):
+        placeholders = {
+            
+            'employee': [
+                '{{ emp_first_name }}',
+                '{{ emp_last_name }}',
+                '{{ emp_branch_name }}',
+                '{{ emp_department_name }}',
+                '{{ emp_designation_name }}',
+                '{{document_date}}',
+                '{{resigned_on}}',
+                '{{notice_period}}',
+                '{{last_working_date}}',
+                '{{location}}',
+                '{{termination_type}}',
+                '{{reason_for_leaving}}',
+                '{{status}}',
+            ]
+        }
+        return Response(placeholders)
+    # Custom action to fetch the available From and To addresses
+    @action(detail=False, methods=['get'], url_path='from-to-addresses')
+    def from_to_list(self, request):
+        # Fetch active email configurations for "From" addresses
+        from_addresses = EmailConfiguration.objects.filter(is_active=True).values_list('email_host_user', flat=True)
+
+        # Fetch employee emails for "To" addresses
+        to_addresses = emp_master.objects.all().values_list('emp_personal_email', 'emp_company_email')
+
+        to_list = []
+        for emp_personal, emp_company in to_addresses:
+            if emp_personal:
+                to_list.append(emp_personal)
+            if emp_company:
+                to_list.append(emp_company)
+
+        return Response({
+            'from_addresses': from_addresses,
+            'to_addresses': to_list
+        })
 from rest_framework.response import Response
 from django.http import FileResponse
 from io import BytesIO

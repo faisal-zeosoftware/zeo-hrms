@@ -4,7 +4,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     LvApprovalViewset,LvEmailTemplateviewset,LvApprovalNotifyviewset,LvCommonWorkflowViewset,LvRejectionViewset,Lv_Approval_ReportViewset,
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
-                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet
+                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset
                     )
 
 from rest_framework.routers import DefaultRouter
@@ -36,7 +36,9 @@ router.register(r'shiftpattern', ShiftPatternViewSet, basename='shiftpattern')
 router.register(r'employee-shift', EmployeeShiftScheduleViewSet, basename='employee-shift')
 router.register(r'shift-overrides', ShiftOverrideViewSet, basename='shift-overrides')
 router.register(r'employee-leave-rejoins', EmployeeRejoiningViewset, basename='employee-leave-rejoins')
-
+router.register(r'compensatory-leave-request',CompensatoryLeaveRequestviewset, basename='compensatory-leave-request')
+router.register(r'compensatory-leave-balance',CompensatoryLeaveBalancetviewset, basename='compensatory-leave-balance')
+router.register(r'emp-cmpnstry-lv-transaction',CompensatoryLeaveTransactionviewset, basename='emp-cmpnstry-lv-transaction')
 router.register(r'import-attendance', ImportAttendanceViewSet,basename='import-attendance')
 router.register(r'employee-mapping', EmployeeMachineMappingViewset, basename='employee-mapping')
 router.register(r'leave-report', Leave_ReportViewset, basename='leave-report')

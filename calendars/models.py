@@ -394,7 +394,7 @@ class leave_type(models.Model):
     ]
     
     name                          = models.CharField(max_length=50)
-    image                         = models.ImageField(upload_to='leave_images/')
+    # image                         = models.ImageField(upload_to='leave_images/')
     code                          = models.CharField(max_length=30)
     type                          = models.CharField(max_length=20,choices=type_choice)
     unit                          = models.CharField(max_length=10,choices=unit_choice)

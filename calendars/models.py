@@ -1981,7 +1981,7 @@ class EmployeeOvertime(models.Model):
 
     ot_type = models.CharField(
         max_length=10,
-        choices=OT_TYPE_CHOICES
+        choices=OT_TYPE_CHOICES,null=True, blank=True
     )
 
     hours = models.DecimalField(max_digits=6, decimal_places=2)
@@ -2017,7 +2017,7 @@ class OvertimePolicy(models.Model):
         ('HOLIDAY', 'Holiday OT'),
     )
     name = models.CharField(max_length=100)
-    ot_type = models.CharField(max_length=10,choices=OT_TYPE_CHOICES)
+    ot_type = models.CharField(max_length=10,choices=OT_TYPE_CHOICES,null=True, blank=True)
     rate_multiplier = models.DecimalField( max_digits=4, decimal_places=2,help_text="Example: 1.5, 2.0")
     # Applicability (ALL OPTIONAL)
     branch = models.ForeignKey( 'OrganisationManager.brnch_mstr', null=True, blank=True, on_delete=models.CASCADE )

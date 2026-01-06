@@ -1150,7 +1150,9 @@ class employee_leave_request(models.Model):
             raise ValidationError("Half-day leave should be on the same day.")
         # Calculate number of leave days
         leave_days_requested = self.calculate_leave_days()
-
+        #
+        if self.leave_type.type == 'unpaid':
+            return
         # Fetch or create leave balance for the employee
         leave_balance, created = emp_leave_balance.objects.get_or_create(
             employee=self.employee,
@@ -1839,13 +1841,15 @@ class Attendance(models.Model):
     shift           = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True)
     date            = models.DateField()
     check_in_time   = models.TimeField(null=True, blank=True)
+
     check_in_lat    = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     check_in_lng    = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    check_in_location = models.CharField(max_length=255, null=True, blank=True)
 
     check_out_time  = models.TimeField(null=True, blank=True)
+    
     check_out_lat   = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     check_out_lng   = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    check_in_location = models.CharField(max_length=255, null=True, blank=True)
     check_out_location = models.CharField(max_length=255, null=True, blank=True)    
     total_hours     = models.DurationField(null=True, blank=True)
     created_at      = models.DateTimeField(auto_now_add=True)
@@ -1853,64 +1857,20 @@ class Attendance(models.Model):
 
     class Meta:
         unique_together = ('employee', 'date')
-    
-    def save(self, *args, **kwargs):
-        if self.check_in_time and self.check_out_time:
-            self.calculate_total_hours()
+    def __str__(self):
+        return f"attendance {self.employee} on {self.date}"
+    def calculate_total_hours(self):
+        if not (self.check_in_time and self.check_out_time):
+            self.total_hours = None
+            return
 
-        if not self.shift:
-            self.shift = self.fetch_shift()
+        start = datetime.combine(self.date, self.check_in_time)
+        end = datetime.combine(self.date, self.check_out_time)
 
-        super().save(*args, **kwargs)
+        if end < start:
+            end += timedelta(days=1)
 
-        if self.employee.emp_ot_applicable and self.total_hours and self.shift:
-            shift_duration = self.get_shift_duration()
-            print(f"[DEBUG] total_hours={self.total_hours}, shift_duration={shift_duration}")
-            if self.total_hours > shift_duration:
-                overtime_duration = self.total_hours - shift_duration
-                overtime_hours = Decimal(overtime_duration.total_seconds()) / Decimal(3600)
-
-                print(f"[DEBUG] Overtime calculated: {overtime_hours} hours for {self.employee}")
-
-                from .models import EmployeeOvertime  # local import to avoid circular import
-                overtime_obj, created = EmployeeOvertime.objects.update_or_create(
-                    employee=self.employee,
-                    date=self.date,
-                    defaults={
-                        'hours': overtime_hours.quantize(Decimal('0.01')),
-                        'rate_multiplier': Decimal('1.5'),
-                        'approved': False,
-                        'created_by': self.created_by,
-                    }
-                )
-                print(f"[DEBUG] Overtime saved. Created: {created}, Object: {overtime_obj}")
-            else:
-                print("[DEBUG] No overtime: total hours are not greater than shift duration.")
-        else:
-            print("[DEBUG] Conditions not met for overtime. Skipping overtime logic.")
-
-    def calculate_total_hours(self, auto_save=True):
-        if self.check_in_time and self.check_out_time:
-            check_in_time = self.check_in_time if isinstance(self.check_in_time, time) else self.check_in_time.time()
-            check_out_time = self.check_out_time if isinstance(self.check_out_time, time) else self.check_out_time.time()
-
-            check_in_datetime = datetime.combine(self.date, check_in_time)
-            check_out_datetime = datetime.combine(self.date, check_out_time)
-
-            if check_out_datetime < check_in_datetime:
-                check_out_datetime += timedelta(days=1)
-
-            total_duration = check_out_datetime - check_in_datetime
-            self.total_hours = total_duration
-
-            if self.shift:
-                shift_duration = self.get_shift_duration()
-                if total_duration > shift_duration:
-                    self.overtime_hours = total_duration - shift_duration
-                else:
-                    self.overtime_hours = timedelta(0)
-            else:
-                self.overtime_hours = timedelta(0)
+        self.total_hours = end - start
 
     def fetch_shift(self):
         from calendars.models import EmployeeShiftSchedule
@@ -1920,24 +1880,38 @@ class Attendance(models.Model):
             start_date__lte=self.date
         ).filter(
             Q(end_date__gte=self.date) | Q(end_date__isnull=True)
-        ).order_by('-start_date').first()
+        ).order_by("-start_date").first()
 
-        # ⛔ No active schedule → shift is NULL
-        if not schedule:
-            return None
+        return schedule.get_shift_for_date(self.date) if schedule else None
 
-        return schedule.get_shift_for_date(self.date)
-    
     def get_shift_duration(self):
         if not self.shift:
             return timedelta(0)
+
         start = datetime.combine(self.date, self.shift.start_time)
         end = datetime.combine(self.date, self.shift.end_time)
+
         if end < start:
             end += timedelta(days=1)
-        return (end - start)
-    
 
+        return end - start
+
+    def is_weekend(self):
+        from calendars.utils import get_employee_weekend_days
+        return self.date.strftime("%A") in get_employee_weekend_days(self.employee)
+
+    def is_holiday(self):
+        from calendars.utils import get_employee_holidays
+        return self.date in get_employee_holidays(self.employee, self.date, self.date)
+
+    def save(self, *args, **kwargs):
+        if self.check_in_time and self.check_out_time:
+            self.calculate_total_hours()
+
+        if not self.shift:
+            self.shift = self.fetch_shift()
+
+        super().save(*args, **kwargs)
         
 @receiver(post_save, sender=Attendance)
 def handle_rejoining(sender, instance, **kwargs):
@@ -1978,24 +1952,91 @@ def handle_rejoining(sender, instance, **kwargs):
         }
     )
 
-class EmployeeOvertime(models.Model):
-    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
-    date = models.DateField()
-    hours = models.DecimalField(max_digits=5, decimal_places=2, help_text="Number of overtime hours")
-    rate_multiplier = models.DecimalField(max_digits=3, decimal_places=2, default=1.5, 
-                                         help_text="Multiplier for overtime rate (e.g., 1.5 for time-and-a-half)")
-    approved = models.BooleanField(default=False)
-    approved_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, 
-                                   null=True, blank=True, related_name='approved_overtimes')
-    created_at = models.DateTimeField(auto_now_add=True)
-    created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, 
-                                  null=True, related_name='%(class)s_created_by')
-    
+class AttendanceRecheck(models.Model):
+    attendance = models.ForeignKey(Attendance,on_delete=models.CASCADE,related_name='rechecks')
+    checked_at = models.DateTimeField(auto_now_add=True)
+    lat = models.DecimalField(max_digits=9, decimal_places=6)
+    lng = models.DecimalField(max_digits=9, decimal_places=6)
+    location = models.CharField(max_length=255)
+
+    requested_by = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,related_name='attendance_rechecks')
+
     class Meta:
-        unique_together = ('employee', 'date')
-    
+        ordering = ['-checked_at']
     def __str__(self):
-        return f"{self.employee} - {self.date} ({self.hours} hours)" 
+        return f"{self.attendance} " 
+class EmployeeOvertime(models.Model):
+
+    OT_TYPE_CHOICES = (
+        ('NORMAL', 'Normal OT'),
+        ('WEEKEND', 'Weekend OT'),
+        ('HOLIDAY', 'Holiday OT'),
+    )
+
+    employee = models.ForeignKey(
+        'EmpManagement.emp_master',
+        on_delete=models.CASCADE
+    )
+    date = models.DateField()
+
+    ot_type = models.CharField(
+        max_length=10,
+        choices=OT_TYPE_CHOICES
+    )
+
+    hours = models.DecimalField(max_digits=6, decimal_places=2)
+
+    approved = models.BooleanField(default=False)
+    approved_by = models.ForeignKey(
+        'UserManagement.CustomUser',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='approved_overtimes'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        'UserManagement.CustomUser',
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name='%(class)s_created_by'
+    )
+
+    class Meta:
+        unique_together = ('employee', 'date', 'ot_type')
+
+    def __str__(self):
+        return f"{self.employee} - {self.ot_type} - {self.date}"
+
+
+class OvertimePolicy(models.Model):
+
+    OT_TYPE_CHOICES = (
+        ('NORMAL', 'Normal OT'),
+        ('WEEKEND', 'Weekend OT'),
+        ('HOLIDAY', 'Holiday OT'),
+    )
+    name = models.CharField(max_length=100)
+    ot_type = models.CharField(max_length=10,choices=OT_TYPE_CHOICES)
+    rate_multiplier = models.DecimalField( max_digits=4, decimal_places=2,help_text="Example: 1.5, 2.0")
+    # Applicability (ALL OPTIONAL)
+    branch = models.ForeignKey( 'OrganisationManager.brnch_mstr', null=True, blank=True, on_delete=models.CASCADE )
+    department = models.ForeignKey('OrganisationManager.dept_master',null=True, blank=True,on_delete=models.CASCADE)
+    designation = models.ForeignKey('OrganisationManager.desgntn_master',null=True, blank=True,on_delete=models.CASCADE)
+    category = models.ForeignKey('OrganisationManager.ctgry_master',null=True, blank=True,on_delete=models.CASCADE)
+
+    # priority = models.PositiveIntegerField(
+    #     default=1,
+    #     help_text="Lower value = higher priority"
+    # )
+
+    is_active = models.BooleanField(default=True)
+
+    # class Meta:
+    #     ordering = ['priority']
+
+    def __str__(self):
+        return f"{self.name} ({self.ot_type})"
 
 class LeaveReport(models.Model):
     file_name   = models.CharField(max_length=100,unique=True)

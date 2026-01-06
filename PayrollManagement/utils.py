@@ -7,7 +7,8 @@ import logging
 from datetime import datetime
 from calendar import monthrange
 from django_tenants.utils import connection
-
+from django.apps import apps
+from django.db.models import Q
 
 
 # Set up logging
@@ -297,3 +298,21 @@ def airticket_schedule_escalation(approval, level_rule):
         schema_name = connection.schema_name
         airticket_escalate_approval_task.apply_async((approval.id, schema_name), countdown=total_seconds)
         print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
+
+def get_ot_rate(employee, ot_type):
+    OvertimePolicy = apps.get_model(
+        'calendars', 'OvertimePolicy'
+    )
+
+    qs = OvertimePolicy.objects.filter(
+        ot_type=ot_type,
+        is_active=True
+    ).filter(
+        Q(branch__isnull=True) | Q(branch=employee.emp_branch_id),
+        Q(department__isnull=True) | Q(department=employee.emp_dept_id),
+        Q(designation__isnull=True) | Q(designation=employee.emp_desgntn_id),
+        Q(category__isnull=True) | Q(category=employee.emp_ctgry_id),
+    )
+
+    policy = qs.first()
+    return policy.rate_multiplier if policy else Decimal('0.00')

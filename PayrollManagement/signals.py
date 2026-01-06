@@ -19,7 +19,8 @@ from django.dispatch import receiver
 from django.apps import apps
 from decimal import Decimal
 from django.db.models import Count
-from django.db import transaction
+from django.core.exceptions import ValidationError
+from EmpManagement.models import emp_master
 
 from datetime import date
 import logging
@@ -31,6 +32,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from simpleeval import SimpleEval, NameNotDefined, FunctionNotDefined
 from calendars .utils import get_employee_holidays,get_employee_weekend_days
+from .utils import get_ot_rate
 
 
 def evaluate_formula(formula, variables, employee, component):
@@ -143,6 +145,7 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     EmployeeSalaryStructure = apps.get_model('PayrollManagement', 'EmployeeSalaryStructure')
     AirTicketRequest = apps.get_model('PayrollManagement', 'AirTicketRequest')
     AirTicketAllocation = apps.get_model('PayrollManagement', 'AirTicketAllocation')
+    EmployeeOvertime = apps.get_model('calendars', 'EmployeeOvertime')
 
     if not start_date or not end_date:
         today = datetime.today().date()
@@ -209,7 +212,31 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         reset_date__range=(start_date, end_date)
     ).aggregate(total_encashment=Sum('encashment_amount'))['total_encashment'] or Decimal('0.00')
     variables['encashed_days'] = encashment_amount
+    overtimes = EmployeeOvertime.objects.filter(
+    employee=employee,
+    date__range=(start_date, end_date),
+    # approved=True
+    )
 
+    variables['normal_ot_hours'] = (
+        overtimes.filter(ot_type='NORMAL')
+        .aggregate(s=Sum('hours'))['s'] or Decimal('0.00')
+    )
+
+    variables['weekend_ot_hours'] = (
+        overtimes.filter(ot_type='WEEKEND')
+        .aggregate(s=Sum('hours'))['s'] or Decimal('0.00')
+    )
+
+    variables['holiday_ot_hours'] = (
+        overtimes.filter(ot_type='HOLIDAY')
+        .aggregate(s=Sum('hours'))['s'] or Decimal('0.00')
+    )
+
+    # OT rate variables (Zoho-style)
+    variables['ot_normal_rate'] = get_ot_rate(employee, 'NORMAL')
+    variables['ot_weekend_rate'] = get_ot_rate(employee, 'WEEKEND')
+    variables['ot_holiday_rate'] = get_ot_rate(employee, 'HOLIDAY')
     # salary_components = EmployeeSalaryStructure.objects.filter(employee=employee, is_active=True)
     # for sc in salary_components:
     #     if sc.component and sc.amount is not None:
@@ -265,49 +292,59 @@ from calendar import monthrange
 from datetime import datetime
 from decimal import Decimal
 import logging
+from django.db.models.signals import m2m_changed
+logger = logging.getLogger(__name__)
+
+# PayrollManagement/signals.py
+import logging
+from decimal import Decimal
+from calendar import monthrange
+from datetime import datetime
+from django.db.models import Sum, Q
+from django.db.models.signals import post_save, m2m_changed,pre_save
+from django.dispatch import receiver
+from django.apps import apps
 
 logger = logging.getLogger(__name__)
-@receiver(post_save, sender="PayrollManagement.PayrollRun")
-def run_payroll_on_save(sender, instance, created, **kwargs):
-    """
-    Payroll run logic:
-    - Fixed components → EmployeeSalaryStructure.amount
-    - Variable formula components → recalculated each payroll
-    - Variable manual entry → used once, reset to 0
-    - General Requests, Loans, Advance Salary, Air Ticket included
-    - Deduct unpaid leaves only from components with deduct_leave=True
-    """
-    if not created or instance.status != "pending":
-        return
 
-    EmpMaster = apps.get_model("EmpManagement", "emp_master")
+# --- helpers you already have (import or define here) ---
+# The code expects evaluate_formula, get_formula_variables, daterange, get_working_days to exist
+# If they're already in this file, keep them. If not, import them:
+# from .utils import evaluate_formula, get_formula_variables, daterange, get_working_days
+# (For brevity I assume they exist in this module as in your provided code.)
+
+# ---------- Core payroll processing helper ----------
+def process_payroll(instance, employees_qs, start_date, end_date, total_days):
+    """
+    Create payslips for employees_qs for the given PayrollRun instance.
+    Idempotent: skips employee if Payslip already exists for payroll_run+employee.
+    """
+    # Resolve models
     SalaryComponent = apps.get_model("PayrollManagement", "SalaryComponent")
     EmployeeSalaryStructure = apps.get_model("PayrollManagement", "EmployeeSalaryStructure")
     Payslip = apps.get_model("PayrollManagement", "Payslip")
     PayslipComponent = apps.get_model("PayrollManagement", "PayslipComponent")
-    employee_leave_request = apps.get_model("calendars", "employee_leave_request")
 
-    # Extra models
     GeneralRequest = apps.get_model("EmpManagement", "GeneralRequest")
     LoanRequest = apps.get_model("PayrollManagement", "LoanApplication")
     LoanRepayment = apps.get_model("PayrollManagement", "LoanRepayment")
     AirTicketRequest = apps.get_model("PayrollManagement", "AirTicketRequest")
     AdvanceSalaryRequest = apps.get_model("PayrollManagement", "AdvanceSalaryRequest")
+    employee_leave_request = apps.get_model("calendars", "employee_leave_request")
 
-    try:
-        total_days = monthrange(instance.year, instance.month)[1]
-        start_date = datetime(instance.year, instance.month, 1).date()
-        end_date = datetime(instance.year, instance.month, total_days).date()
-    except Exception as e:
-        logger.error(f"Invalid date setup for PayrollRun {instance.id}: {e}")
-        return
+    for employee in employees_qs:
+        # Skip if payslip already exists for this run+employee (idempotency)
+        if Payslip.objects.filter(payroll_run=instance, employee=employee).exists():
+            logger.info(f"Payslip exists, skipping employee {employee} for PayrollRun {instance.id}")
+            continue
 
-    employees = EmpMaster.objects.filter(is_active=True)
+        try:
+            variables = get_formula_variables(employee, start_date, end_date)
+        except Exception as e:
+            logger.exception(f"Error getting formula variables for {employee}: {e}")
+            variables = {}
 
-    for employee in employees:
-        variables = get_formula_variables(employee, start_date, end_date)
-
-        # ===== Unpaid Leave Calculation =====
+        # Unpaid leave calculation
         approved_unpaid_leaves = employee_leave_request.objects.filter(
             employee=employee,
             status="approved",
@@ -318,16 +355,17 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
 
         leave_days = Decimal("0.00")
         for leave in approved_unpaid_leaves:
-            if leave.dis_half_day:  
-                leave_days += Decimal("0.5")   # ✅ half-day leave
+            if getattr(leave, "dis_half_day", False):
+                leave_days += Decimal("0.5")
             else:
-                leave_days += Decimal(str(leave.number_of_days or 0))
+                leave_days += Decimal(str(getattr(leave, "number_of_days", 0) or 0))
 
         unpaid_leave_days = leave_days
         days_worked = Decimal(total_days) - unpaid_leave_days
         if days_worked < 0:
             days_worked = Decimal("0.00")
-        # ===== Create Payslip =====
+
+        # Create payslip
         payslip = Payslip.objects.create(
             payroll_run=instance,
             employee=employee,
@@ -338,24 +376,24 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
         total_additions = Decimal("0.00")
         total_deductions = Decimal("0.00")
 
-        # ===== Employee Salary Structure =====
+        # Salary structure processing
         salary_structs = EmployeeSalaryStructure.objects.filter(employee=employee, is_active=True)
-
         for sc in salary_structs:
             comp = sc.component
             amount = Decimal("0.00")
+            try:
+                if comp.is_fixed:
+                    amount = Decimal(str(sc.amount or "0.00"))
+                elif comp.formula:
+                    amount = Decimal(str(evaluate_formula(comp.formula, variables, employee, comp)))
+                else:
+                    amount = Decimal(str(sc.amount or "0.00"))
+            except Exception as e:
+                logger.exception(f"Error calculating component {comp} for {employee}: {e}")
+                amount = Decimal("0.00")
 
-            if comp.is_fixed:
-                amount = Decimal(str(sc.amount or "0.00"))
-
-            elif comp.formula:  # formula variable
-                amount = Decimal(str(evaluate_formula(comp.formula, variables, employee, comp)))
-
-            else:  # manual variable
-                amount = Decimal(str(sc.amount or "0.00"))
-
-            # Deduct unpaid leave only from marked components
-            if comp.deduct_leave and unpaid_leave_days > 0 and total_days > 0:
+            # Deduct unpaid leave only from components flagged for it
+            if getattr(comp, "deduct_leave", False) and unpaid_leave_days > 0 and total_days > 0:
                 per_day = amount / Decimal(total_days)
                 amount -= per_day * unpaid_leave_days
 
@@ -363,12 +401,12 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
                 payslip=payslip, component=comp, defaults={"amount": amount}
             )
 
-            if comp.component_type == "addition":
+            if getattr(comp, "component_type", "") == "addition":
                 total_additions += amount
-            elif comp.component_type == "deduction":
+            elif getattr(comp, "component_type", "") == "deduction":
                 total_deductions += amount
 
-        # ===== General Requests =====
+        # GeneralRequests that affect salary
         approved_requests = GeneralRequest.objects.filter(
             employee=employee,
             status="Approved",
@@ -380,20 +418,17 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
             comp = request.request_type.salary_component
             if comp and request.total is not None:
                 amount = Decimal(str(request.total))
-
                 PayslipComponent.objects.update_or_create(
                     payslip=payslip, component=comp, defaults={"amount": amount}
                 )
-
-                if comp.component_type == "addition":
+                if getattr(comp, "component_type", "") == "addition":
                     total_additions += amount
                 else:
                     total_deductions += amount
-
                 request.is_processed = True
                 request.save(update_fields=["is_processed"])
 
-        # ===== Loan Requests =====
+        # Loans
         active_loans = LoanRequest.objects.filter(employee=employee, status="Approved")
         for loan in active_loans:
             repayment_count = LoanRepayment.objects.filter(loan=loan).count()
@@ -424,10 +459,9 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
                         loan.status = "Closed"
                         loan.save()
 
-        # ===== Advance Salary Requests =====
+        # Advance Salary
         advance_component = SalaryComponent.objects.filter(is_advance_salary=True).first()
         approved_advances = AdvanceSalaryRequest.objects.filter(employee=employee, status="Approved")
-
         for advance in approved_advances:
             if advance_component and advance.requested_amount > 0:
                 amount = Decimal(str(advance.requested_amount))
@@ -438,14 +472,13 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
                 advance.status = "Deducted"
                 advance.save(update_fields=["status"])
 
-        # ===== Air Ticket Requests =====
+        # Air tickets
         air_ticket_component = SalaryComponent.objects.filter(is_air_ticket=True).first()
         approved_tickets = AirTicketRequest.objects.filter(
             employee=employee, status="APPROVED", request_type="ENCASHMENT"
         )
-
         for ticket in approved_tickets:
-            if air_ticket_component and ticket.allocation:
+            if air_ticket_component and getattr(ticket, "allocation", None):
                 amount = Decimal(str(ticket.allocation.amount))
                 PayslipComponent.objects.update_or_create(
                     payslip=payslip, component=air_ticket_component, defaults={"amount": amount}
@@ -454,7 +487,7 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
                 ticket.status = "PROCESSED"
                 ticket.save(update_fields=["status"])
 
-        # ===== Reset Manual Variable Components =====
+        # Reset manual variable components
         EmployeeSalaryStructure.objects.filter(
             employee=employee,
             is_active=True,
@@ -463,15 +496,105 @@ def run_payroll_on_save(sender, instance, created, **kwargs):
             Q(component__formula__isnull=True) | Q(component__formula__exact="")
         ).update(amount=Decimal("0.00"))
 
-        # ===== Finalize Payslip =====
+        # Finalize payslip totals
         payslip.total_additions = total_additions
         payslip.total_deductions = total_deductions
         payslip.gross_salary = total_additions
         payslip.net_salary = total_additions - total_deductions
         payslip.save()
 
+    # Mark run processed (caller may prefer to control this; keep as you had)
     instance.status = "processed"
-    instance.save()
+    instance.save(update_fields=["status"])
+
+
+# ---------- post_save handler: for runs that are NOT employee-wise (no M2M provided) ----------
+@receiver(post_save, sender="PayrollManagement.PayrollRun")
+def payrollrun_post_save(sender, instance, created, **kwargs):
+    """
+    Trigger payroll when a PayrollRun is created and employees M2M is not used.
+    If employees are later added via M2M, m2m_changed handler will handle that case.
+    """
+    if not created:
+        return
+
+    # Only trigger if status is pending (your original check)
+    if instance.status != "pending":
+        return
+
+    EmpMaster = apps.get_model("EmpManagement", "emp_master")
+
+    # Try to build date range
+    try:
+        total_days = monthrange(instance.year, instance.month)[1]
+        start_date = datetime(instance.year, instance.month, 1).date()
+        end_date = datetime(instance.year, instance.month, total_days).date()
+    except Exception as e:
+        logger.exception(f"Invalid date for PayrollRun {getattr(instance, 'id', None)}: {e}")
+        return
+
+    # If employees were set already (unlikely in post_save because M2M isn't saved yet),
+    # prefer employee list. Otherwise use branch/department/all approach.
+    if hasattr(instance, "employees") and instance.employees.exists():
+        employees_qs = instance.employees.all()
+    elif getattr(instance, "branch", None):
+        EmpMaster = apps.get_model("EmpManagement", "emp_master")
+        employees_qs = EmpMaster.objects.filter(is_active=True, emp_branch_id=instance.branch_id)
+    elif getattr(instance, "department", None):
+        EmpMaster = apps.get_model("EmpManagement", "emp_master")
+        employees_qs = EmpMaster.objects.filter(is_active=True, emp_dept_id=instance.department_id)
+    else:
+        EmpMaster = apps.get_model("EmpManagement", "emp_master")
+        employees_qs = EmpMaster.objects.filter(is_active=True)
+
+    if not employees_qs.exists():
+        logger.warning(f"No employees found for PayrollRun {instance.id} in post_save path")
+        return
+
+    # Process payroll for the chosen set
+    process_payroll(instance, employees_qs, start_date, end_date, total_days)
+
+
+# ---------- m2m_changed handler: fires after employees are added to M2M ----------
+def payrollrun_m2m_changed(sender, instance, action, pk_set, **kwargs):
+    """
+    Triggered when M2M 'employees' changes. We only act on post_add,
+    i.e. after employees have been attached to a PayrollRun.
+    """
+    if action != "post_add":
+        return
+
+    # Only process pending runs
+    if instance.status != "pending":
+        logger.info(f"PayrollRun {instance.id} status is {instance.status}; skipping m2m processing.")
+        return
+
+    try:
+        total_days = monthrange(instance.year, instance.month)[1]
+        start_date = datetime(instance.year, instance.month, 1).date()
+        end_date = datetime(instance.year, instance.month, total_days).date()
+    except Exception as e:
+        logger.exception(f"Invalid date for PayrollRun {getattr(instance,'id', None)} in m2m handler: {e}")
+        return
+
+    # employees have been added; process only those employees attached to instance
+    employees_qs = instance.employees.all()
+    if not employees_qs.exists():
+        logger.warning(f"No employees in PayrollRun {instance.id} after m2m post_add")
+        return
+
+    process_payroll(instance, employees_qs, start_date, end_date, total_days)
+
+
+# Connect m2m handler to the through model. We fetch PayrollRun model and connect here.
+try:
+    PayrollRun = apps.get_model("PayrollManagement", "PayrollRun")
+    # connect handler to the through model for the employees m2m
+    m2m_changed.connect(payrollrun_m2m_changed, sender=PayrollRun.employees.through)
+except Exception as e:
+    # When this file is imported earlier than app registry ready, apps.get_model might fail
+    # but your apps.py should import signals in ready() so this normally won't happen.
+    logger.exception(f"Could not connect m2m_changed for PayrollRun.employees: {e}")
 
 @receiver(post_save, sender="PayrollManagement.EmployeeSalaryStructure")
 def update_dependents_on_fixed_change(sender, instance, **kwargs):
@@ -498,3 +621,4 @@ def update_dependents_on_fixed_change(sender, instance, **kwargs):
                 emp_struct.save(update_fields=["amount"])
             except Exception as e:
                 logger.error(f"Error updating dependent component {comp.name} for {instance.employee}: {e}")
+

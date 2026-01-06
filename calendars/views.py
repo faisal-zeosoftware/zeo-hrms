@@ -2,13 +2,13 @@ from django.shortcuts import render
 from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,assign_holiday,WeekendDetail,leave_type,leave_entitlement,applicablity_critirea,emp_leave_balance,leave_accrual_transaction,leave_reset_transaction,employee_leave_request,Attendance,Shift,
                      EmployeeMachineMapping,LeaveReport,LeaveApprovalLevels,LeaveApproval,LvEmailTemplate,LvApprovalNotify,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                      AttendanceReport,lvBalanceReport,EmployeeYearlyCalendar,CompensatoryLeaveRequest,CompensatoryLeaveTransaction,CompensatoryLeaveBalance,ShiftPattern,EmployeeShiftSchedule,ShiftOverride,LeaveResetPolicy,LeaveCarryForwardTransaction,
-                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary
+                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy
                     )
 from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,HolidayAssignSerializer,HolidayCalandarSerializer,HolidaySerializer,WeekendDetailSerializer,LeaveTypeSerializer,LeaveEntitlementSerializer,ApplicableSerializer,EmployeeLeaveBalanceSerializer,AccrualSerializer,ResetSerializer,LeaveRequestSerializer,
                          AttendanceSerializer,ShiftSerializer,ImportAttendanceSerializer,EmployeeMappingSerializer,LeaveReportSerializer,LvApprovalLevelSerializer,EmployeeYearlyCalendarSerializer,
                          LvApprovalSerializer,LvEmailTemplateSerializer,LvApprovalNotifySerializer,LvCommonWorkflowSerializer,LvRejectionReasonSerializer,LvApprovalReportSerializer,AttendanceReportSerializer,lvBalanceReportSerializer,
                          CompensatoryLeaveRequestSerializer,CompensatoryLeaveTransactionSerializer,CompensatoryLeaveBalanceSerializer,ShiftOverrideSerializer,ShiftPatternSerializer,EmployeeShiftScheduleSerializer,LeaveResetPolicySerializer,LeaveCarryForwardTransactionSerializer,
-                         LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer
+                         LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer
                          )
 from rest_framework import viewsets,filters,status
 from rest_framework.response import Response
@@ -397,6 +397,10 @@ class ShiftOverrideViewSet(viewsets.ModelViewSet):
     serializer_class = ShiftOverrideSerializer
     permission_classes = [ShiftOverridePermission]
 
+class OvertimePolicyViewSet(viewsets.ModelViewSet):
+    queryset = OvertimePolicy.objects.all()
+    serializer_class = OvertimePolicySerializer
+
 class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
     queryset = EmployeeShiftSchedule.objects.all()
     serializer_class = EmployeeShiftScheduleSerializer
@@ -506,7 +510,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return datetime.strptime(date_string, "%Y-%m-%d").date()
         except (ValueError, TypeError):
             return None
-    #frontend automatically send the lat,log,loc
+        
     @action(detail=False, methods=['post'])
     def check_in(self, request):
         emp_id = request.data.get("employee")
@@ -578,6 +582,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         # Existing logic: calculate hours
         attendance.calculate_total_hours()
         attendance.save()
+        from calendars.utils import calculate_employee_overtime
+        calculate_employee_overtime(attendance)
 
         return Response(
             {
@@ -585,7 +591,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 "location": location_name,
             },
             status=status.HTTP_200_OK
-        ) 
+        )
+
     @action(detail=False, methods=['get'])
     def employee_attendance(self, request):
         """
@@ -656,7 +663,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             "filtered_employee": emp_id,
             "attendance": result
         })
-   
+
+
     @action(detail=False, methods=['get'])
     def monthly_late_and_early_attendance(self, request):
         from datetime import datetime, timedelta, datetime as dt
@@ -730,6 +738,70 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 })
 
         return Response(result, status=200)
+class AttendanceRecheckViewSet(viewsets.ModelViewSet):
+    queryset = AttendanceRecheck.objects.all()
+    serializer_class = AttendanceRecheckSerializer
+    @staticmethod
+    def parse_date(date_string):
+        try:
+            # Parse the date from string to a datetime.date object
+            return datetime.strptime(date_string, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return None
+    @action(detail=False, methods=['post'])
+    def recheck_location(self, request):
+        emp_id = request.data.get("employee")
+        date_str = request.data.get("date")
+
+        lat = request.data.get("lat")
+        lng = request.data.get("lng")
+        location_name = request.data.get("location")
+
+        if not all([emp_id, lat, lng, location_name]):
+            return Response(
+                {"detail": "Employee, latitude, longitude and location are required"},
+                status=400
+            )
+
+        date = self.parse_date(date_str) if date_str else timezone.now().date()
+
+        try:
+            attendance = Attendance.objects.get(employee_id=emp_id, date=date)
+        except Attendance.DoesNotExist:
+            return Response(
+                {"detail": "Attendance record not found"},
+                status=404
+            )
+
+        # ❌ Recheck allowed only AFTER check-in and BEFORE check-out
+        if not attendance.check_in_time:
+            return Response(
+                {"detail": "Employee has not checked in yet"},
+                status=400
+            )
+
+        if attendance.check_out_time:
+            return Response(
+                {"detail": "Employee already checked out"},
+                status=400
+            )
+
+        recheck = AttendanceRecheck.objects.create(
+            attendance=attendance,
+            lat=lat,
+            lng=lng,
+            location=location_name,
+            # requested_by=request.user
+        )
+
+        return Response(
+            {
+                "status": "Recheck location captured successfully",
+                "checked_at": recheck.checked_at,
+                "location": recheck.location
+            },
+            status=200
+        )
 class ImportAttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class= ImportAttendanceSerializer

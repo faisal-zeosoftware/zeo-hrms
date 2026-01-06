@@ -4,7 +4,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     LvApprovalViewset,LvEmailTemplateviewset,LvApprovalNotifyviewset,LvCommonWorkflowViewset,LvRejectionViewset,Lv_Approval_ReportViewset,
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
-                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset
+                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet
                     )
 
 from rest_framework.routers import DefaultRouter
@@ -31,6 +31,7 @@ router.register(r'leave-encashment-tranaction',LeaveEncashmentTransactionviewset
 router.register(r'emp-leave-request', LeaveRequestviewset, basename='emp_leave-request')
 router.register(r'emp-foreign', LeaveTypeViewSet, basename='emp_foreign')
 router.register(r'attendance', AttendanceViewSet, basename='attendance')
+router.register(r'attendance-Recheck', AttendanceRecheckViewSet, basename='attendance_recheck')
 router.register(r'shifts', ShiftViewSet,basename='shifts')
 router.register(r'shiftpattern', ShiftPatternViewSet, basename='shiftpattern')
 router.register(r'employee-shift', EmployeeShiftScheduleViewSet, basename='employee-shift')
@@ -57,6 +58,7 @@ router.register(r'monthly-attendance', MonthlyAttendanceSummaryViewSet, basename
 router.register(r'Emp-overtime',EmployeeOvertimeViewset , basename='EmployeeOvertime')
 router.register(r'Emp-bulkuplod-attendance',BulkuploadAttendanceViewSet , basename='Emp-bulkuplod-attendance')
 router.register(r'escalation-rules', LVEscalationRuleViewSet, basename='lv_escalation-rules')
+router.register(r'overtime_policy', OvertimePolicyViewSet, basename='overtime-policy')
 
 urlpatterns = [
     # Other paths

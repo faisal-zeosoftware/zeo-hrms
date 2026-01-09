@@ -333,7 +333,7 @@ def update_department_weekend_calendar(sender, instance, action, **kwargs):
         departments = instance.department.all()
         # logger.debug(f"Updating employees for departments: {[department.id for department in departments]}")
         for department in departments:
-            updated_count = emp_master.objects.filter(emp_dept_id=department.id).update(holiday_calendar=instance.holiday_model)
+            updated_count = emp_master.objects.filter(emp_dept_id=department.id).update(holiday_calendar=instance.weekend_model)
             # logger.debug(f"Updated {updated_count} employees for department ID {department.id}")
 @receiver(m2m_changed, sender=assign_weekend.category.through)
 def update_category_weekend_calendar(sender, instance, action, **kwargs):
@@ -341,7 +341,7 @@ def update_category_weekend_calendar(sender, instance, action, **kwargs):
         categories = instance.category.all()
         # logger.debug(f"Updating employees for categories: {[category.id for category in categories]}")
         for category in categories:
-            updated_count = emp_master.objects.filter(emp_ctgry_id=category.id).update(holiday_calendar=instance.holiday_model)
+            updated_count = emp_master.objects.filter(emp_ctgry_id=category.id).update(holiday_calendar=instance.weekend_model)
             # logger.debug(f"Updated {updated_count} employees for category ID {category.id}")
 @receiver(m2m_changed, sender=assign_holiday.employee.through)
 def update_employee_weekend_calendar(sender, instance, action, **kwargs):

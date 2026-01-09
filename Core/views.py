@@ -23,6 +23,12 @@ class StateViewSet(viewsets.ModelViewSet):
     serializer_class = StateSerializer
     # authentication_classes = [SessionAuthentication,]
     permission_classes = [StatePermission,] 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.is_active = False  # Soft delete instead of actual deletion
+        instance.save()
+        return Response({"message": "State deactivated successfully"}, status=status.HTTP_204_NO_CONTENT)
+
 
     # def list(self, request):
     #     country_id = request.query_params.get('country_id')

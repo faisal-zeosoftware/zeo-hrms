@@ -303,9 +303,10 @@ class AssetRequest(models.Model):
     # request_date    = models.DateField(auto_now_add=True)
     request_date      = models.DateTimeField(auto_now=True)
     created_by        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True)
+    document_number   = models.CharField(max_length=50, unique=True, blank=True)
 
     def __str__(self):
-        return f"Request by {self.employee} for {self.asset_type}"
+        return f"{self.document_number}-{self.asset_type.name}"
 
     def get_employee_requests(employee_id):
         return AssetRequest.objects.filter(employee_id=employee_id).order_by('-created_at_date')
@@ -318,7 +319,7 @@ class AssetRequest(models.Model):
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
-                message=f"New request for approval: {self.asset_type.name}, Employee: {self.employee}",
+                message=f"Your request {self.document_number} has been rejected.",
                 template_type="asset_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -352,8 +353,8 @@ class AssetRequest(models.Model):
                 assigned_date=timezone.now().date()
             )
 
-            # Update asset status to allocatedAssigned
-            self.requested_asset.status = "Assigned"
+            # Update asset status to allocated
+            self.requested_asset.status = "allocated"
             self.requested_asset.save()
 
             return
@@ -364,7 +365,8 @@ class AssetRequest(models.Model):
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
-                status=AssetApproval.PENDING
+                status=AssetApproval.PENDING,
+                employee_id=self.employee.id,
             )
             asset_schedule_escalation(approval, next_level)
 
@@ -372,7 +374,7 @@ class AssetRequest(models.Model):
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
-                message=f"New request for approval: {self.asset_type.name}, Employee: {self.employee}",
+                message=f"Your request {self.document_number} has been approved.",
                 template_type="asset_Approved",
                 context={
                     **get_employee_context(self.employee),

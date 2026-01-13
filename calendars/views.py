@@ -667,24 +667,28 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def monthly_late_and_early_attendance(self, request):
-        from datetime import datetime, timedelta, datetime as dt
+        from datetime import datetime, timedelta, time
 
         month = request.query_params.get("month")
         year = request.query_params.get("year")
 
         if not month or not year:
-            return Response({"detail": "month and year query parameters are required. Example: ?month=6&year=2025"}, status=400)
+            return Response(
+                {"detail": "month and year are required. Example: ?month=6&year=2025"},
+                status=400
+            )
 
         try:
             month = int(month)
             year = int(year)
             start_date = datetime(year, month, 1).date()
-            if month == 12:
-                end_date = datetime(year + 1, 1, 1).date()
-            else:
-                end_date = datetime(year, month + 1, 1).date()
+            end_date = (
+                datetime(year + 1, 1, 1).date()
+                if month == 12
+                else datetime(year, month + 1, 1).date()
+            )
         except ValueError:
-            return Response({"detail": "Invalid month or year."}, status=400)
+            return Response({"detail": "Invalid month or year"}, status=400)
 
         records = Attendance.objects.filter(
             date__gte=start_date,
@@ -692,49 +696,52 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             check_in_time__isnull=False,
             check_out_time__isnull=False,
             shift__isnull=False
-        )
+        ).select_related("employee", "shift")
 
         result = []
 
         for record in records:
             shift = record.shift
-            check_in = record.check_in_time
-            check_out = record.check_out_time
-            shift_start = shift.start_time
-            shift_end = shift.end_time
-            break_duration = shift.break_duration or timedelta()
 
-            # Skip if shift start or end time is missing
-            if not shift_start or not shift_end:
+            if not shift.start_time or not shift.end_time:
                 continue
 
-            # Calculate expected working hours
-            shift_start_dt = dt.combine(record.date, shift_start)
-            shift_end_dt = dt.combine(record.date, shift_end)
-            shift_work_duration = shift_end_dt - shift_start_dt - break_duration
+            check_in_dt = datetime.combine(record.date, record.check_in_time)
+            check_out_dt = datetime.combine(record.date, record.check_out_time)
 
-            # Actual work duration
-            check_in_dt = dt.combine(record.date, check_in)
-            check_out_dt = dt.combine(record.date, check_out)
+            shift_start_dt = datetime.combine(record.date, shift.start_time)
+            shift_end_dt = datetime.combine(record.date, shift.end_time)
+
+            # 🔥 Handle overnight shifts
+            if shift_end_dt <= shift_start_dt:
+                shift_end_dt += timedelta(days=1)
+
+            if check_out_dt <= check_in_dt:
+                check_out_dt += timedelta(days=1)
+
+            break_duration = shift.break_duration or timedelta()
+
+            expected_work_duration = shift_end_dt - shift_start_dt - break_duration
             actual_work_duration = check_out_dt - check_in_dt
 
-            late_check_in = check_in > shift_start
-            early_check_out = check_out < shift_end
+            late_check_in = check_in_dt > shift_start_dt
+            early_check_out = check_out_dt < shift_end_dt
+            less_working_hours = actual_work_duration < expected_work_duration
 
-            # Include if employee is late-in or early-out (or total hours < shift duration)
-            if late_check_in or early_check_out or actual_work_duration < shift_work_duration:
+            if late_check_in or early_check_out or less_working_hours:
                 result.append({
                     "employee_id": record.employee.id,
                     "employee_name": f"{record.employee.emp_first_name} {record.employee.emp_last_name}",
-                    "date": str(record.date),
-                    "check_in_time": str(check_in),
-                    "check_out_time": str(check_out),
-                    "shift_start_time": str(shift_start),
-                    "shift_end_time": str(shift_end),
-                    "expected_work_duration": str(shift_work_duration),
+                    "date": record.date,
+                    "check_in_time": record.check_in_time,
+                    "check_out_time": record.check_out_time,
+                    "shift_start_time": shift.start_time,
+                    "shift_end_time": shift.end_time,
+                    "expected_work_duration": str(expected_work_duration),
                     "actual_work_duration": str(actual_work_duration),
                     "late_check_in": late_check_in,
                     "early_check_out": early_check_out,
+                    "less_working_hours": less_working_hours
                 })
 
         return Response(result, status=200)

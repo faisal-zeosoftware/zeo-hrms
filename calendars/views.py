@@ -43,7 +43,7 @@ from datetime import datetime, timedelta
 from django.db.models import Field
 from django.db import transaction
 from django.db.models import Q
-from OrganisationManager.models import DocumentNumbering
+from OrganisationManager.models import DocumentNumbering,BranchGeoFence
 from OrganisationManager.serializer import DocumentNumberingSerializer
 from rest_framework.exceptions import NotFound
 from import_export.formats.base_formats import XLSX
@@ -57,7 +57,9 @@ from .serializer import AttendanceSummarySerializer
 from EmpManagement.models import emp_master
 import calendar
 from django.utils.dateparse import parse_date
-
+from EmpManagement.utils import send_notification_email, get_employee_context
+from django.core.mail import EmailMessage
+import math
 # Create your views here.
 
 class WeekendDetailsViewset(viewsets.ModelViewSet):
@@ -510,7 +512,97 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return datetime.strptime(date_string, "%Y-%m-%d").date()
         except (ValueError, TypeError):
             return None
+    @staticmethod
+    def calculate_distance(lat1, lon1, lat2, lon2):
+        from OrganisationManager .models import BranchGeoFence
+        if not all([lat1, lon1, lat2, lon2]):
+            return None
+        R = 6371000  # Radius of Earth in meters
+        try:
+            phi1 = math.radians(float(lat1))
+            phi2 = math.radians(float(lat2))
+            delta_phi = math.radians(float(lat2) - float(lat1))
+            delta_lambda = math.radians(float(lon2) - float(lon1))
+            a = math.sin(delta_phi / 2.0) ** 2 + \
+                math.cos(phi1) * math.cos(phi2) * \
+                math.sin(delta_lambda / 2.0) ** 2
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            return R * c
+        except (ValueError, TypeError):
+            return None
+
+    def check_geofence(self, employee, check_lat, check_lng, check_type):
+        if not (check_lat and check_lng):
+            return
+
+        branch = employee.emp_branch_id
+        if not branch:
+            return
+
+        # Fetch all active geo-fences for the branch
+        geo_fences = BranchGeoFence.objects.filter(branch=branch, is_active=True)
         
+        # If no geo-fences are defined, we might skip validation or consider it compliant
+        # For now, let's assume if no fences are defined, we don't alert.
+        if not geo_fences.exists():
+            return
+
+        is_inside_any = False
+        min_distance = float('inf')
+        nearest_fence = None
+
+        for fence in geo_fences:
+            distance = self.calculate_distance(fence.latitude, fence.longitude, check_lat, check_lng)
+            if distance is not None:
+                if distance <= fence.radius:
+                    is_inside_any = True
+                    break
+                
+                # Track nearest fence for the alert message
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_fence = fence
+
+        if not is_inside_any and nearest_fence:
+            self.send_geofence_alert(employee, min_distance, nearest_fence.radius, check_type, nearest_fence.location_name)
+
+    def send_geofence_alert(self, employee, distance, radius, check_type, location_name="Unknown"):
+        message = f"Geo-fence Alert: Employee {employee.emp_first_name} {employee.emp_last_name} checked {check_type} outside the allowed area for '{location_name}'. Distance: {distance:.2f}m (Allowed: {radius}m)."
+        
+        # Notify Employee
+        send_notification_email(
+            employee=employee,
+            message=message,
+            template_type="geofence_alert",
+            context={
+                **get_employee_context(employee),
+                "distance": f"{distance:.2f}",
+                "radius": radius,
+                "check_type": check_type,
+                "location_name": location_name,
+                "server_time": timezone.now()
+            },
+            email_template_model=LvEmailTemplate,
+            notification_model=LvApprovalNotify
+        )
+        
+        # Notify Manager
+        if employee.emp_reporting_manager:
+            send_notification_email(
+                employee=employee.emp_reporting_manager,
+                message=message,
+                template_type="geofence_alert_manager",
+                context={
+                    **get_employee_context(employee),
+                    "distance": f"{distance:.2f}",
+                    "radius": radius,
+                    "check_type": check_type,
+                    "location_name": location_name,
+                    "server_time": timezone.now()
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model=LvApprovalNotify
+            )
     @action(detail=False, methods=['post'])
     def check_in(self, request):
         emp_id = request.data.get("employee")
@@ -531,8 +623,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             date=date
         )
 
-        if attendance.check_in_time:
-            return Response({"detail": "Already checked in"}, status=400)
+        # if attendance.check_in_time:
+        #     return Response({"detail": "Already checked in"}, status=400)
 
         attendance.check_in_time = localtime(now()).time()
 
@@ -540,8 +632,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.check_in_lat = lat
         attendance.check_in_lng = lng
         attendance.check_in_location = location_name
-
+        self.check_geofence(employee, lat, lng, "in")
         attendance.save()  # ← fetch_shift() runs here
+        self.check_geofence(employee, lat, lng, "in")
 
         return Response({
             "status": "Check-in recorded successfully",
@@ -582,6 +675,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         # Existing logic: calculate hours
         attendance.calculate_total_hours()
         attendance.save()
+        self.check_geofence(attendance.employee, lat, lng, "out")
         from calendars.utils import calculate_employee_overtime
         calculate_employee_overtime(attendance)
 
@@ -808,6 +902,82 @@ class AttendanceRecheckViewSet(viewsets.ModelViewSet):
                 "location": recheck.location
             },
             status=200
+        )
+    
+    def send_recheckin_email(self, attendance):
+
+        employee = attendance.employee
+        if not employee or not employee.emp_personal_email:
+            print("D")
+            return False
+
+        config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not config:
+            return False
+
+        subject = "Attendance Check-in Confirmation"
+
+        body = f"""
+            Dear {employee.emp_first_name} {employee.emp_last_name},
+
+            This is to inform you that your attendance has been marked for recheck.
+
+            Regards,
+            HR Team
+            """
+
+        EmailMessage(
+            subject,
+            body,
+            config.email_host_user,
+            [employee.emp_personal_email],
+        ).send(fail_silently=False)
+
+        return True
+    @action(detail=False, methods=['post'], url_path='email')
+    def send_email(self, request):
+        emp_code = request.data.get("emp_code")
+
+        if not emp_code:
+            return Response(
+                {"error": "emp_code is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        attendance = (
+            Attendance.objects
+            .select_related("employee")
+            .filter(
+                employee__emp_code__iexact=emp_code,
+                check_in_time__isnull=False
+            )
+            .order_by("-date")
+            .first()
+        )
+
+        if not attendance:
+            return Response(
+                {"error": "Employee has not checked in"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            email_sent = self.send_recheckin_email(attendance)
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to send email: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        if not email_sent:
+            return Response(
+                {"error": "Employee email not available"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {"message": "Attendance Recheck email sent successfully"},
+            status=status.HTTP_200_OK
         )
 class ImportAttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()

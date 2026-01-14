@@ -667,3 +667,16 @@ class Document(models.Model):
 
     def __str__(self):
         return self.name
+
+class BranchGeoFence(models.Model):
+    branch = models.ForeignKey(brnch_mstr, on_delete=models.CASCADE, related_name='geo_fences')
+    location_name = models.CharField(max_length=100, help_text="e.g. Main Gate, Warehouse Entry")
+    latitude = models.DecimalField(max_digits=9, decimal_places=6)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    radius = models.IntegerField(default=50, help_text="Geofence radius in meters")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+
+    def __str__(self):
+        return f"{self.location_name} - {self.branch.branch_name}"

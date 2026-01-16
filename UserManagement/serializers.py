@@ -23,7 +23,12 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
     def get_allocated_tenants(self, obj):
         tenants = obj.tenants.all()
-        return CompanySerializer(tenants, many=True).data
+        serializer = UserAllocatedCompanySerializer(
+            tenants,
+            many=True,
+            context={"user": obj}
+        )
+        return serializer.data
     def get_user_groups(self, obj):
         """Retrieve assigned groups for the user via UserTenantPermissions."""
         try:
@@ -210,3 +215,29 @@ class ValidateCredentialsSerializer(serializers.Serializer):
 
         # SUCCESS → credentials are valid
         return {"user_id": user.id}
+class UserAllocatedCompanySerializer(CompanySerializer):
+    """
+    Full company serializer
+    BUT branches are filtered by UserBranchAccess
+    """
+    branches = serializers.SerializerMethodField()
+
+    class Meta(CompanySerializer.Meta):
+        fields = "__all__"
+
+    def get_branches(self, obj):
+        from OrganisationManager .models import UserBranchAccess
+        user = self.context.get("user")
+        if not user:
+            return []
+
+        try:
+            with schema_context(obj.schema_name):
+                return list(
+                    UserBranchAccess.objects
+                    .filter(user=user)
+                    .select_related("branch")
+                    .values_list("branch__branch_name", flat=True)
+                )
+        except Exception:
+            return []

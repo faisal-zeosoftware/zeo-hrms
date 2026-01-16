@@ -64,6 +64,7 @@ from .utils import calculate_settlement
 import csv
 import io
 from django.db import models
+from Core .mixins import BranchAccessMixin
 
 
 
@@ -83,7 +84,7 @@ class CustomAuthentication(BaseAuthentication):
         return None
 
 #EMPLOYEE CRUD
-class EmpViewSet(viewsets.ModelViewSet):
+class EmpViewSet(BranchAccessMixin,viewsets.ModelViewSet):
     queryset = emp_master.objects.all()
     serializer_class = EmpSerializer
     permission_classes = [EmployeePermission]
@@ -2092,7 +2093,7 @@ class Bulkupload_DocumentViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": str(e)}, status=400)
 
-class EmplistViewSet(viewsets.ReadOnlyModelViewSet):  # Read-only API (GET only)
+class EmplistViewSet(BranchAccessMixin,viewsets.ReadOnlyModelViewSet):  # Read-only API (GET only)
     queryset = emp_master.objects.filter(is_active=True)
     serializer_class = EmplistSerializer
     permission_classes = [EmployeePermission]

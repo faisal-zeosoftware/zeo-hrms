@@ -3,7 +3,7 @@ from . views import (FiscalYearViewSet,PeriodViewSet,BranchViewSet,DepartmentVie
                      DesignationViewSet,CatogoryViewSet,CompanyFiscalData,permissionviewset,Groupviewset,permviewset,FiscalYearDatesView,DeptBulkUploadViewSet,DesignationBulkUploadViewSet,
                    save_notification_settings,CompanyPolicyViewSet,list_data_in_schema,CategoryBulkUploadViewSet,AnnouncementViewSet,
                    AnnouncementCommentViewSet,AssetTypeViewSet,AssetMasterViewSet,Asset_CustomFieldValueViewSet,AssetReportViewset,AssetTransactionReportViewset,AssetAllocationViewSet,AssetRequestViewSet,AssetCustomFieldViewSet,
-                   GratuityTableViewset,FolderViewSet,DocumentViewSet,AssetEmailTemplateViewset,AssetApprovalLevelViewset,AssetApprovalViewset,EscalationRuleViewSet,BranchGeoFenceViewSet
+                   GratuityTableViewset,FolderViewSet,DocumentViewSet,AssetEmailTemplateViewset,AssetApprovalLevelViewset,AssetApprovalViewset,EscalationRuleViewSet,BranchGeoFenceViewSet,UserBranchAccessViewSet
                    )
 from rest_framework.routers import DefaultRouter
 
@@ -43,6 +43,8 @@ router.register(r'asset-transaction-report', AssetTransactionReportViewset, base
 router.register(r'gratuity', GratuityTableViewset, basename='gratuity')
 router.register(r'folders', FolderViewSet,'folders')
 router.register(r'documents', DocumentViewSet,'folder-documents')
+router.register(r'user-branch-access', UserBranchAccessViewSet,'user-branch-access')
+
 router.register(r'branch-geofence', BranchGeoFenceViewSet,'branch-geofence')
 
 

@@ -13,13 +13,13 @@ from reportlab.pdfgen import canvas
 from .models import (brnch_mstr,dept_master,DocumentNumbering,
                      desgntn_master,ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,Announcement,
                      AnnouncementComment,AnnouncementView,Asset, AssetAllocation,AssetRequest,AssetCustomField,AssetType,
-                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable,AssetApprovalLevel,AssetApproval,AssetEmailTemplate,BranchGeoFence)
+                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable,AssetApprovalLevel,AssetApproval,AssetEmailTemplate,UserBranchAccess,BranchGeoFence)
 
 from . serializer import (BranchSerializer,PermissionSerializer,GroupSerializer,permserializer,DocumentNumberingSerializer,
                           CtgrySerializer,DeptSerializer,DesgSerializer,FiscalYearSerializer,PeriodSerializer,DeptUploadSerializer,CtgryUploadSerializer,
                           DesgUploadSerializer,CompanyPolicySerializer,AnnouncementSerializer,AnnouncementCommentSerializer,AssetSerializer,AssetAllocationSerializer,AssetRequestSerializer,AssetCustomFieldSerializer,
                           AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer,FolderSerializer, DocumentSerializer,AssetApprovalLevelSerializer,AssetApprovalSerializer,
-                          AssetEmailTemplateSerializer,EscalationRuleSerializer,BranchGeoFenceSerializer)
+                          AssetEmailTemplateSerializer,EscalationRuleSerializer,UserBranchAccessSerializer,BranchGeoFenceSerializer)
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from .resource import (DepartmentResource,DesignationResource,DesgtnReportResource,DeptReportResource,CategoryResource)
 from EmpManagement.models import emp_master
@@ -1725,6 +1725,10 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
         instance.escalate_after_minutes = 0
         instance.save()
         return Response({"message": "Escalation rule reset successfully"}, status=200)
+
+class UserBranchAccessViewSet(viewsets.ModelViewSet):
+    queryset = UserBranchAccess.objects.all()
+    serializer_class = UserBranchAccessSerializer
 
 class BranchGeoFenceViewSet(viewsets.ModelViewSet):
     queryset = BranchGeoFence.objects.all()

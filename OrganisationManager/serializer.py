@@ -1,7 +1,7 @@
 from .models import (brnch_mstr,dept_master,desgntn_master,DocumentNumbering,
                      ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,
                      Announcement,AnnouncementView,AnnouncementComment,Asset,AssetAllocation,AssetType, AssetRequest,AssetCustomField,AssetReport,
-                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable,Folder, Document,AssetEmailTemplate,AssetApprovalLevel,AssetApproval,BranchGeoFence)
+                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable,Folder, Document,AssetEmailTemplate,AssetApprovalLevel,AssetApproval,UserBranchAccess,BranchGeoFence)
 from rest_framework import serializers
 from tenant_users.tenants.models import UserTenantPermissions
 from django.contrib.auth.models import Permission,Group
@@ -403,7 +403,10 @@ class EscalationRuleSerializer(serializers.ModelSerializer):
             'level', 'role', 'approver', 'asset_type', 'branch',
             'asset_type_name', 'approver_name', 'escalate_to_name'
         ]
-
+class UserBranchAccessSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserBranchAccess
+        fields = '__all__'
 class BranchGeoFenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = BranchGeoFence

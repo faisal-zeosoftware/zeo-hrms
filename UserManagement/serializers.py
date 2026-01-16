@@ -216,28 +216,34 @@ class ValidateCredentialsSerializer(serializers.Serializer):
         # SUCCESS → credentials are valid
         return {"user_id": user.id}
 class UserAllocatedCompanySerializer(CompanySerializer):
-    """
-    Full company serializer
-    BUT branches are filtered by UserBranchAccess
-    """
     branches = serializers.SerializerMethodField()
 
     class Meta(CompanySerializer.Meta):
         fields = "__all__"
 
     def get_branches(self, obj):
-        from OrganisationManager .models import UserBranchAccess
         user = self.context.get("user")
         if not user:
             return []
 
         try:
             with schema_context(obj.schema_name):
-                return list(
+                qs = (
                     UserBranchAccess.objects
                     .filter(user=user)
                     .select_related("branch")
-                    .values_list("branch__branch_name", flat=True)
+                    .values(
+                        "branch__id",
+                        "branch__branch_name"
+                    )
                 )
+
+                return [
+                    {
+                        "id": row["branch__id"],
+                        "name": row["branch__branch_name"]
+                    }
+                    for row in qs
+                ]
         except Exception:
             return []

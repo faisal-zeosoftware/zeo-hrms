@@ -222,6 +222,7 @@ class UserAllocatedCompanySerializer(CompanySerializer):
         fields = "__all__"
 
     def get_branches(self, obj):
+        from OrganisationManager .models import UserBranchAccess
         user = self.context.get("user")
         if not user:
             return []

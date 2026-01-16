@@ -127,6 +127,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return super().validate(attrs)
     
 class CompanySerializer(serializers.ModelSerializer):
+    branches = serializers.SerializerMethodField()
     tax_details = serializers.SerializerMethodField()
     currency_details = serializers.SerializerMethodField()
     state_label = serializers.SerializerMethodField()  # Avoid duplicate logic
@@ -134,6 +135,21 @@ class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = company
         fields = '__all__'
+    def get_branches(self, obj):
+        from OrganisationManager .models import brnch_mstr
+        """
+        Return ONLY branch names for this company (tenant)
+        """
+        try:
+            with schema_context(obj.schema_name):
+                return list(
+                    brnch_mstr.objects
+                    .all()
+                    
+                    .values_list("branch_name", flat=True)
+                )
+        except Exception:
+            return []
     def get_states(self, obj):
         if obj.country:
             states = state_mstr.objects.filter(country=obj.country, is_active=True)

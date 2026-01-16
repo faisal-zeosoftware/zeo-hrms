@@ -141,17 +141,21 @@ class CompanySerializer(serializers.ModelSerializer):
         model = company
         fields = '__all__'
     def get_branches(self, obj):
-        from OrganisationManager .models import brnch_mstr
+        from OrganisationManager.models import brnch_mstr
+        from django_tenants.utils import schema_context
+
         """
-        Return ONLY branch names for this company (tenant)
+        Return branch id and name for this company (tenant)
         """
         try:
             with schema_context(obj.schema_name):
                 return list(
                     brnch_mstr.objects
-                    .all()
-                    
-                    .values_list("branch_name", flat=True)
+                    .filter(br_is_active=True)
+                    .values(
+                        "id",
+                        "branch_name"
+                    )
                 )
         except Exception:
             return []

@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from django.contrib.auth.models import User,Group,Permission
-from .serializers import CustomUserSerializer,CustomTokenObtainPairSerializer,CompanySerializer,DomainSerializer,UserListSerializer,Non_EssUserListSerializer,ValidateCredentialsSerializer
+from .serializers import CustomUserSerializer,CustomTokenObtainPairSerializer,CompanySerializer,DomainSerializer,UserListSerializer,Non_EssUserListSerializer,ValidateCredentialsSerializer,UserAllocatedCompanySerializer
 from . models import CustomUser,company,Domain
 from . permissions import (IsOwnerOrReadOnly,
                            IsSuperUser,IsEssUserOrReadOnly)
@@ -46,7 +46,17 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
     def tenants(self, request, pk=None):
         user_profile = self.get_object()
         tenants = user_profile.tenants.all()
-        serializer = CompanySerializer(tenants, many=True)
+
+        # 🔥 SUPERUSER → ALL branches
+        if user_profile.is_superuser:
+            serializer = CompanySerializer(tenants, many=True)
+        else:
+            serializer = UserAllocatedCompanySerializer(
+                tenants,
+                many=True,
+                context={"user": user_profile}
+            )
+
         return Response(serializer.data)
     
     @action(detail=True, methods=['post'])

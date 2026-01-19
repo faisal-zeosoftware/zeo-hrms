@@ -1857,6 +1857,17 @@ class Attendance(models.Model):
 
     class Meta:
         unique_together = ('employee', 'date')
+        permissions = (
+                ("add_attendance_list", "Can add attendance list"),
+                ("view_attendance_list", "Can attendance list"),
+                ("export_attendance_list", "Can export attendance list"),
+                ("delete_attendance_list", "Can delete attendance list"),
+                
+                ("add_early_going", "Can add early going"),
+                ("view_early_going", "Can early going"),
+                ("export_early_going", "Can early going"),
+                ("delete_early_going", "Can delete early going"),
+        )
     def __str__(self):
         return f"attendance {self.employee} on {self.date}"
     def calculate_total_hours(self):

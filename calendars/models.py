@@ -1862,11 +1862,13 @@ class Attendance(models.Model):
                 ("view_attendance_list", "Can attendance list"),
                 ("export_attendance_list", "Can export attendance list"),
                 ("delete_attendance_list", "Can delete attendance list"),
+                ("change_attendance_list", "Can change attendance list"),
                 
                 ("add_early_going", "Can add early going"),
                 ("view_early_going", "Can early going"),
                 ("export_early_going", "Can early going"),
                 ("delete_early_going", "Can delete early going"),
+                ("change_early_going", "Can change early going"),
         )
     def __str__(self):
         return f"attendance {self.employee} on {self.date}"

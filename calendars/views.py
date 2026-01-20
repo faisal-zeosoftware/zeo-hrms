@@ -60,6 +60,10 @@ from django.utils.dateparse import parse_date
 from EmpManagement.utils import send_notification_email, get_employee_context
 from django.core.mail import EmailMessage
 import math
+import io
+import csv
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 # Create your views here.
 
 class WeekendDetailsViewset(viewsets.ModelViewSet):
@@ -986,43 +990,116 @@ class ImportAttendanceViewSet(viewsets.ModelViewSet):
     resource_class = AttendanceResource
     parser_classes = (MultiPartParser, FormParser)
 
-    @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    @action(detail=False, methods=['post'])
     def bulk_upload(self, request):
-        if request.method == 'POST' and request.FILES.get('file'):
-            excel_file = request.FILES['file']
-            if excel_file.name.endswith('.xlsx'):
-                try:
-                    dataset = Dataset()
-                    dataset.load(excel_file.read(), format='xlsx')
-                    resource = AttendanceResource()
-                    all_errors = []
-                    valid_rows = []
-                    
-                    # Validate rows before import
-                    for row_idx, row in enumerate(dataset.dict, start=2):
-                        row_errors = []
-                        try:
-                            resource.before_import_row(row, row_idx=row_idx)
-                        except ValidationError as e:
-                            row_errors.extend([f"Row {row_idx}: {error}" for error in e.messages])
-                        if row_errors:
-                            all_errors.extend(row_errors)
-                        else:
-                            valid_rows.append(row)
+        if 'file' not in request.FILES:
+            return Response({"error": "Please provide a file."}, status=400)
 
-                    if all_errors:
-                        return Response({"errors": all_errors}, status=400)
+        upload_file = request.FILES['file']
+        filename = upload_file.name.lower()
 
-                    # Import valid data and process shifts & total hours
-                    result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+        try:
+            dataset = Dataset()
+            resource = MonthlyAttendanceResource()
 
-                    return Response({"message": f"{result.total_rows} attendances are added successfully"})
-                except Exception as e:
-                    return Response({"error": str(e)}, status=400)
+            # ---------- EXCEL ----------
+            if filename.endswith('.xlsx'):
+                dataset.load(upload_file.read(), format='xlsx')
+
+            # ---------- CSV ----------
+            elif filename.endswith('.csv'):
+                file_data = upload_file.read().decode('utf-8')
+                dataset.load(file_data, format='csv')
+
             else:
-                return Response({"error": "Invalid file format. Only Excel files (.xlsx) are supported."}, status=400)
-        else:
-            return Response({"error": "Please provide an Excel file."}, status=400)
+                return Response(
+                    {"error": "Invalid file format. Only .xlsx and .csv are supported."},
+                    status=400
+                )
+
+            # ---------- IMPORT ----------
+            resource.import_data(dataset, dry_run=False, raise_errors=True)
+
+            return Response({"message": "Monthly attendance imported successfully."})
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+        
+
+    @action(detail=False, methods=['get'])
+    def download_default_attendance_excel_file(self, request):
+        resource = MonthlyAttendanceResource()
+        headers = ["Identifier Code", "Year", "Month"]
+        for day in range(1, 31):
+            headers.append(f"{day}_In")
+            headers.append(f"{day}_Out")
+
+        wb = Workbook()
+
+        black_font = Font(color="000000", bold=True)
+        blue_fill = PatternFill(start_color="1E90FF", end_color="1E90FF", fill_type="solid")
+        border_style = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        def style_header_row(ws, max_cols):
+            for col in range(1, max_cols + 1):
+                cell = ws.cell(row=1, column=col)
+                if not cell.value:
+                    cell.value = ""
+                cell.fill = blue_fill
+                cell.font = black_font
+                cell.border = border_style
+                ws.column_dimensions[cell.column_letter].width = 25
+            ws.freeze_panes = "A2"
+
+        # ======================================================
+        # Sheet 1: Attendance
+        # ======================================================
+        ws1 = wb.active
+        ws1.title = "Attendance"
+
+        for col_num, header in enumerate(headers, 1):
+            ws1.cell(row=1, column=col_num, value=header)
+
+        style_header_row(ws1, max_cols=len(headers))
+
+        # ======================================================
+        # Save response
+        # ======================================================
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = (
+            'attachment; filename="Attendance_BulkUpload_Template.xlsx"'
+        )
+        return response
+    
+    @action(detail=False, methods=['get'])
+    def download_default_attendance_csv_file(self, request):
+        resource = MonthlyAttendanceResource()
+        headers = ["Identifier Code", "Year", "Month"]
+        for day in range(1, 31):
+            headers.append(f"{day}_In")
+            headers.append(f"{day}_Out")
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(headers)
+
+        response = HttpResponse(output.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = (
+            'attachment; filename="Attendance_BulkUpload_Template.csv"'
+        )
+        return response
 
 class Leave_ReportViewset(viewsets.ModelViewSet):
     queryset = LeaveReport.objects.all()

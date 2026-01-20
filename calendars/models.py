@@ -1925,7 +1925,45 @@ class Attendance(models.Model):
             self.shift = self.fetch_shift()
 
         super().save(*args, **kwargs)
-        
+        if not (self.employee.emp_ot_applicable and self.total_hours and self.shift):
+            return
+
+        shift_duration = self.get_shift_duration()
+        extra_duration = self.total_hours - shift_duration
+
+        if extra_duration <= timedelta(0):
+            return
+
+        ot_hours = Decimal(extra_duration.total_seconds()) / Decimal(3600)
+        ot_type = self.get_ot_type()
+
+        from calendars.models import EmployeeOvertime
+
+        EmployeeOvertime.objects.update_or_create(
+            employee=self.employee,
+            date=self.date,
+            ot_type=ot_type,
+            defaults={
+                'hours': ot_hours.quantize(Decimal('0.01')),
+                'approved': False,
+                'created_by': self.created_by
+            }
+        )
+    def is_weekend(self):
+        from .utils import get_employee_weekend_days
+        return self.date.strftime("%A") in get_employee_weekend_days(self.employee)
+
+    def is_holiday(self):
+        from .utils import get_employee_holidays
+        holidays = get_employee_holidays(self.employee, self.date, self.date)
+        return self.date in holidays
+
+    def get_ot_type(self):
+        if self.is_holiday():
+            return 'HOLIDAY'
+        if self.is_weekend():
+            return 'WEEKEND'
+        return 'NORMAL'
 @receiver(post_save, sender=Attendance)
 def handle_rejoining(sender, instance, **kwargs):
     from .models import employee_leave_request, EmployeeRejoining

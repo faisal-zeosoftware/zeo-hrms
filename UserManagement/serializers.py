@@ -20,7 +20,6 @@ class CustomUserSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True, 'required': False, 'allow_null': True, 'default': None}
         }
-
     def get_allocated_tenants(self, obj):
         tenants = obj.tenants.all()
         serializer = UserAllocatedCompanySerializer(
@@ -150,8 +149,8 @@ class CompanySerializer(serializers.ModelSerializer):
         try:
             with schema_context(obj.schema_name):
                 return list(
-                    brnch_mstr.objects
-                    .filter(br_is_active=True)
+                    brnch_mstr.objects.all()
+                    # .filter(br_is_active=True)
                     .values(
                         "id",
                         "branch_name"

@@ -437,72 +437,78 @@ class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def get_shifts_for_year(self, request):
-        """
-        Get shifts for all employees in a given schedule for every day in a specified year.
-        Supports optional month-wise pagination via `month` parameter.
-        """
         schedule_id = request.query_params.get('schedule_id')
         year = request.query_params.get('year')
-        month = request.query_params.get('month')  # Optional: Get shifts only for a specific month
+        month = request.query_params.get('month')
 
-        if not (schedule_id and year):
-            return Response({"error": "Missing required parameters"}, status=status.HTTP_400_BAD_REQUEST)
+        if not schedule_id or not year:
+            return Response(
+                {"error": "schedule_id and year are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        schedule = get_object_or_404(EmployeeShiftSchedule, id=schedule_id)
 
         try:
-            schedule = get_object_or_404(EmployeeShiftSchedule, id=schedule_id)
             year = int(year)
+            month = int(month) if month else None
+        except ValueError:
+            return Response(
+                {"error": "Invalid year or month"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-            # Determine date range (full year or specific month)
-            if month:
-                month = int(month)
-                start_date = datetime(year, month, 1).date()
-                end_date = (datetime(year, month + 1, 1) - timedelta(days=1)).date() if month < 12 else datetime(year, 12, 31).date()
-            else:
-                start_date = datetime(year, 1, 1).date()
-                end_date = datetime(year, 12, 31).date()
+        # Date range
+        if month:
+            start_date = datetime(year, month, 1).date()
+            end_date = (
+                datetime(year, month + 1, 1) - timedelta(days=1)
+                if month < 12 else datetime(year, 12, 31).date()
+            )
+        else:
+            start_date = datetime(year, 1, 1).date()
+            end_date = datetime(year, 12, 31).date()
 
-            # **Efficiently fetch all assigned employees**
-            assigned_employees = set(schedule.employee.all())  # Direct employees
-            assigned_departments = set(schedule.departments.all())  # Departments assigned to schedule
-            
-            # Fetch employees in assigned departments
-            department_employees = emp_master.objects.filter(emp_dept_id__in=assigned_departments)
+        # ✅ CORRECT EMPLOYEE RESOLUTION
+        employees = schedule.get_assigned_employees()
 
-            # Merge both sets to get all employees under this schedule
-            all_valid_employees = list(assigned_employees.union(set(department_employees)))
+        if not employees.exists():
+            return Response(
+                {"error": "No employees matched this shift schedule criteria"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-            if not all_valid_employees:
-                return Response({"error": "No employees assigned to this schedule"}, status=status.HTTP_404_NOT_FOUND)
+        all_dates = [
+            start_date + timedelta(days=i)
+            for i in range((end_date - start_date).days + 1)
+        ]
 
-            # **Precompute shifts in bulk**
-            shifts_calendar = {}
+        shifts_calendar = {}
 
-            all_dates = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
-            
-            for employee in all_valid_employees:
-                shifts_calendar[employee.emp_code] = {
-                    date.strftime("%d-%m-%Y"): None for date in all_dates
-                }
+        # Pre-calc shifts once
+        shift_map = {
+            date: schedule.get_shift_for_date(date)
+            for date in all_dates
+        }
 
-            # **Bulk fetch shifts for all dates**
-            shift_data = {date: schedule.get_shift_for_date(date) for date in all_dates}
+        for employee in employees:
+            shifts_calendar[employee.emp_code] = {}
 
-            # Assign shifts to employees in bulk
-            for employee in all_valid_employees:
-                for date, shift in shift_data.items():
-                    date_str = date.strftime("%d-%m-%Y")
-                    shifts_calendar[employee.emp_code][date_str] = str(shift) if shift else "No shift"
+            for date, shift in shift_map.items():
+                shifts_calendar[employee.emp_code][
+                    date.strftime("%d-%m-%Y")
+                ] = str(shift) if shift else "No shift"
 
-            return Response({
+        return Response(
+            {
+                "schedule": schedule.schedule_name,
                 "year": year,
                 "month": month if month else "Full Year",
+                "total_employees": employees.count(),
                 "shifts": shifts_calendar
-            }, status=status.HTTP_200_OK)
-
-        except ValueError:
-            return Response({"error": "Invalid year or month format"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            },
+            status=status.HTTP_200_OK
+        )
         
 class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()

@@ -1785,6 +1785,42 @@ class EmployeeShiftSchedule(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    def get_assigned_employees(self):
+        from EmpManagement.models import emp_master
+
+        qs = emp_master.objects.none()
+
+        # 1️⃣ Direct employees
+        if self.employee.exists():
+            qs |= emp_master.objects.filter(
+                id__in=self.employee.values_list('id', flat=True)
+            )
+
+        # 2️⃣ Category-based
+        if self.categories.exists():
+            qs |= emp_master.objects.filter(
+                emp_ctgry_id__in=self.categories.all()
+            )
+
+        # 3️⃣ Department-based
+        if self.departments.exists():
+            qs |= emp_master.objects.filter(
+                emp_dept_id__in=self.departments.all()
+            )
+
+        # 4️⃣ Branch-based
+        if self.branches.exists():
+            qs |= emp_master.objects.filter(
+                emp_branch_id__in=self.branches.all()
+            )
+
+        # 5️⃣ Designation-based
+        if self.designations.exists():
+            qs |= emp_master.objects.filter(
+                emp_desgntn_id__in=self.designations.all()
+            )
+
+        return qs.distinct()
     def get_shift_for_date(self, date):
         """Determine the shift for a given date based on the schedule type."""
         if self.shift_type == "fixed" and self.single_shift_pattern:

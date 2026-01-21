@@ -15,9 +15,9 @@ class BranchAccessMixin:
         if not user.is_authenticated:
             return qs.none()
 
-        # Superusers see everything
-        if user.is_superuser:
-            return qs
+        # # Superusers see everything
+        # if user.is_superuser:
+        #     return qs
 
         if hasattr(user, 'accessible_branches'):
              # This legacy check is removed but kept for structure compatibility if needed temporarily

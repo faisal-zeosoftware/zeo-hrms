@@ -404,7 +404,6 @@ class EscalationRuleSerializer(serializers.ModelSerializer):
             'asset_type_name', 'approver_name', 'escalate_to_name'
         ]
 class UserBranchAccessSerializer(serializers.ModelSerializer):
-    branch = serializers.PrimaryKeyRelatedField(queryset=brnch_mstr.objects.all(), many=True, write_only=True)
     class Meta:
         model = UserBranchAccess
         fields = '__all__'

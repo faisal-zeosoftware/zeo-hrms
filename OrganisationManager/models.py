@@ -669,15 +669,11 @@ class Document(models.Model):
         return self.name
 class UserBranchAccess(models.Model):
     user = models.ForeignKey("UserManagement.CustomUser", on_delete=models.CASCADE, related_name='branch_accesses')
-    branch = models.ForeignKey("brnch_mstr", on_delete=models.CASCADE, related_name='user_accesses')
-    
-    class Meta:
-        unique_together = ('user', 'branch')
-        verbose_name = "User Branch Access"
-        verbose_name_plural = "User Branch Accesses"
+    # branch = models.ForeignKey("brnch_mstr", on_delete=models.CASCADE, related_name='user_accesses')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
 
     def __str__(self):
-        return f"{self.user} -> {self.branch}"
+        return f"{self.user}"
 class BranchGeoFence(models.Model):
     branch = models.ForeignKey(brnch_mstr, on_delete=models.CASCADE, related_name='geo_fences')
     location_name = models.CharField(max_length=100, help_text="e.g. Main Gate, Warehouse Entry")

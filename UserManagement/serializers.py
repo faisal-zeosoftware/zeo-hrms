@@ -225,29 +225,42 @@ class UserAllocatedCompanySerializer(CompanySerializer):
         fields = "__all__"
 
     def get_branches(self, obj):
-        from OrganisationManager .models import UserBranchAccess
+        from OrganisationManager.models import UserBranchAccess, brnch_mstr
+        from django_tenants.utils import schema_context
+
         user = self.context.get("user")
         if not user:
             return []
 
         try:
             with schema_context(obj.schema_name):
+
+                # 🔥 SUPERUSER → ALL BRANCHES
+                if user.is_superuser:
+                    return list(
+                        brnch_mstr.objects.all().values(
+                            "id",
+                            "branch_name"
+                        )
+                    )
+
+                # 👤 NORMAL USER → ASSIGNED BRANCHES
                 qs = (
                     UserBranchAccess.objects
                     .filter(user=user)
-                    .select_related("branch")
-                    .values(
-                        "branch__id",
-                        "branch__branch_name"
-                    )
+                    .prefetch_related("branch")
                 )
 
-                return [
-                    {
-                        "id": row["branch__id"],
-                        "name": row["branch__branch_name"]
-                    }
-                    for row in qs
-                ]
-        except Exception:
+                branches = []
+                for access in qs:
+                    for b in access.branch.all():
+                        branches.append({
+                            "id": b.id,
+                            "name": b.branch_name
+                        })
+
+                return branches
+
+        except Exception as e:
+            print(e)
             return []

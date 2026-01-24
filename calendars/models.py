@@ -1785,6 +1785,7 @@ class EmployeeShiftSchedule(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    
     def get_assigned_employees(self):
         from EmpManagement.models import emp_master
 
@@ -1900,6 +1901,7 @@ class Attendance(models.Model):
                 ("delete_attendance_list", "Can delete attendance list"),
                 ("change_attendance_list", "Can change attendance list"),
                 
+                
                 ("add_early_going", "Can add early going"),
                 ("view_early_going", "Can early going"),
                 ("export_early_going", "Can early going"),
@@ -1985,6 +1987,8 @@ class Attendance(models.Model):
                 'created_by': self.created_by
             }
         )
+    # # calendars/models.py (inside Attendance)
+
     def is_weekend(self):
         from .utils import get_employee_weekend_days
         return self.date.strftime("%A") in get_employee_weekend_days(self.employee)
@@ -2068,7 +2072,7 @@ class EmployeeOvertime(models.Model):
 
     ot_type = models.CharField(
         max_length=10,
-        choices=OT_TYPE_CHOICES,null=True, blank=True
+        choices=OT_TYPE_CHOICES,null=True, blank=True,
     )
 
     hours = models.DecimalField(max_digits=6, decimal_places=2)
@@ -2104,7 +2108,7 @@ class OvertimePolicy(models.Model):
         ('HOLIDAY', 'Holiday OT'),
     )
     name = models.CharField(max_length=100)
-    ot_type = models.CharField(max_length=10,choices=OT_TYPE_CHOICES,null=True, blank=True)
+    ot_type = models.CharField(max_length=10,choices=OT_TYPE_CHOICES,null=True, blank=True,)
     rate_multiplier = models.DecimalField( max_digits=4, decimal_places=2,help_text="Example: 1.5, 2.0")
     # Applicability (ALL OPTIONAL)
     branch = models.ManyToManyField( 'OrganisationManager.brnch_mstr', null=True, blank=True)
@@ -2124,6 +2128,7 @@ class OvertimePolicy(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.ot_type})"
+
 
 class LeaveReport(models.Model):
     file_name   = models.CharField(max_length=100,unique=True)

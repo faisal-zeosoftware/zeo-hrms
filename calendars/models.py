@@ -1922,18 +1922,31 @@ class Attendance(models.Model):
             end += timedelta(days=1)
 
         self.total_hours = end - start
-
     def fetch_shift(self):
         from calendars.models import EmployeeShiftSchedule
 
-        schedule = EmployeeShiftSchedule.objects.filter(
-            employee=self.employee,
+        schedules = EmployeeShiftSchedule.objects.filter(
             start_date__lte=self.date
         ).filter(
             Q(end_date__gte=self.date) | Q(end_date__isnull=True)
-        ).order_by("-start_date").first()
+        ).order_by("-start_date")
 
-        return schedule.get_shift_for_date(self.date) if schedule else None
+        for schedule in schedules:
+            if schedule.get_assigned_employees().filter(id=self.employee.id).exists():
+                return schedule.get_shift_for_date(self.date)
+
+        return None
+    # def fetch_shift(self):
+    #     from calendars.models import EmployeeShiftSchedule
+
+    #     schedule = EmployeeShiftSchedule.objects.filter(
+    #         employee=self.employee,
+    #         start_date__lte=self.date
+    #     ).filter(
+    #         Q(end_date__gte=self.date) | Q(end_date__isnull=True)
+    #     ).order_by("-start_date").first()
+
+    #     return schedule.get_shift_for_date(self.date) if schedule else None
 
     def get_shift_duration(self):
         if not self.shift:

@@ -279,6 +279,18 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         if instance.loan_type:
             rep['loan_type'] =instance.loan_type.loan_type
         return rep
+    def validate(self, data):
+        request_type = data.get('loan_type')
+        employee = data.get('employee')
+        has_levels = LoanApprovalLevels.objects.filter(
+                loan_type=request_type
+            ).exists()
+
+        if not has_levels:
+            raise serializers.ValidationError({
+                "request_type": "Approval levels are not configured for this loan type."
+            })
+        return data
 class LoanRepaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanRepayment

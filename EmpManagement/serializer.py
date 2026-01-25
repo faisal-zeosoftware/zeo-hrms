@@ -591,7 +591,23 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
         if instance.request_type:  
             rep['request_type'] = instance.request_type.name
         return rep
+    def validate(self, data):
+        request_type = data.get('request_type')
+        employee = data.get('employee')
 
+        if request_type.use_common_workflow:
+            has_levels = CommonWorkflow.objects.exists()
+        else:
+            has_levels = ApprovalLevel.objects.filter(
+                request_type=request_type,
+                branch__in=[employee.emp_branch_id]
+            ).exists()
+
+        if not has_levels:
+            raise serializers.ValidationError({
+                "request_type": "Approval levels are not configured for this request type  or branch."
+            })
+        return data
 class ApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = ApprovalLevel

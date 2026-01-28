@@ -16,26 +16,26 @@ class BranchAccessMixin:
         if not tenant:
             return qs.none()
 
-        # 🟢 SUPERUSER = ALL BRANCHES
+        # 🟢 SUPERUSER → ALL BRANCHES
         if user.is_superuser:
             with schema_context(tenant.schema_name):
-                all_branch_ids = list(
+                user_branch_ids = list(
                     brnch_mstr.objects.values_list("id", flat=True)
                 )
-            user_branch_ids = all_branch_ids
 
         else:
-            # 🔐 NORMAL USER → ONLY ASSIGNED BRANCHES
+            # 🔐 NORMAL USER → ASSIGNED BRANCHES
             with schema_context(tenant.schema_name):
                 user_branch_ids = (
                     UserBranchAccess.objects
                     .filter(user=user)
-                    .values_list('branch__id', flat=True)
+                    .values_list("branch__id", flat=True)
                     .distinct()
                 )
 
             if not user_branch_ids.exists():
-                if getattr(user, 'is_ess', False):
+                # ESS fallback
+                if getattr(user, "is_ess", False):
                     emp = user.employees.first()
                     if emp and emp.emp_branch_id:
                         user_branch_ids = [emp.emp_branch_id.id]
@@ -44,23 +44,48 @@ class BranchAccessMixin:
                 else:
                     return qs.none()
 
-        # 🎯 branch_id query param
-        requested_branch_id = self.request.query_params.get('branch_id')
+        # ======================================================
+        # 🎯 MULTI BRANCH QUERY PARAM SUPPORT
+        # Accepts:
+        # branch_id=1
+        # branch_id=1,3,4
+        # branch_id=[1,3,4]
+        # ======================================================
+
+        requested_branch_id = self.request.query_params.get("branch_id")
+
         if requested_branch_id:
             try:
-                requested_branch_id = int(requested_branch_id)
-                if requested_branch_id in set(user_branch_ids):
-                    user_branch_ids = [requested_branch_id]
-                else:
+                requested_branch_id = requested_branch_id.strip("[]")
+
+                requested_ids = [
+                    int(x) for x in requested_branch_id.split(",")
+                    if x.strip()
+                ]
+
+                allowed_ids = set(user_branch_ids)
+
+                valid_ids = [
+                    bid for bid in requested_ids if bid in allowed_ids
+                ]
+
+                if not valid_ids:
                     return qs.none()
-            except ValueError:
+
+                user_branch_ids = valid_ids
+
+            except Exception:
                 return qs.none()
+
+        # ======================================================
+        # 🔍 APPLY FILTERING ON AVAILABLE BRANCH FIELDS
+        # ======================================================
 
         fields = {f.name for f in qs.model._meta.get_fields()}
         q_objects = Q()
         filtered = False
 
-        for field in ['branch', 'emp_branch_id', 'work_location']:
+        for field in ["branch", "emp_branch_id", "work_location"]:
             if field in fields:
                 q_objects |= Q(**{f"{field}__id__in": user_branch_ids})
                 filtered = True
@@ -68,7 +93,8 @@ class BranchAccessMixin:
         if filtered:
             return qs.filter(q_objects).distinct()
 
-        if 'employee' in fields:
+        # Fallback if model has employee FK
+        if "employee" in fields:
             return qs.filter(
                 employee__emp_branch_id__id__in=user_branch_ids
             ).distinct()

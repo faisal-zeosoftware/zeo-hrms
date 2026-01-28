@@ -1976,17 +1976,26 @@ class Attendance(models.Model):
             self.shift = self.fetch_shift()
 
         super().save(*args, **kwargs)
-        if not (self.employee.emp_ot_applicable and self.total_hours and self.shift):
+
+        # OT applicable?
+        if not (self.employee.emp_ot_applicable and self.total_hours):
             return
 
-        shift_duration = self.get_shift_duration()
-        extra_duration = self.total_hours - shift_duration
+        ot_type = self.get_ot_type()
+
+        # Weekend or Holiday → full hours
+        if ot_type in ["WEEKEND", "HOLIDAY"]:
+            extra_duration = self.total_hours
+        else:
+            if not self.shift:
+                return
+            shift_duration = self.get_shift_duration()
+            extra_duration = self.total_hours - shift_duration
 
         if extra_duration <= timedelta(0):
             return
 
         ot_hours = Decimal(extra_duration.total_seconds()) / Decimal(3600)
-        ot_type = self.get_ot_type()
 
         from calendars.models import EmployeeOvertime
 
@@ -1995,9 +2004,9 @@ class Attendance(models.Model):
             date=self.date,
             ot_type=ot_type,
             defaults={
-                'hours': ot_hours.quantize(Decimal('0.01')),
-                'approved': False,
-                'created_by': self.created_by
+                "hours": ot_hours.quantize(Decimal("0.01")),
+                "approved": False,
+                "created_by": self.created_by
             }
         )
     # # calendars/models.py (inside Attendance)

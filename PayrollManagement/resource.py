@@ -13,7 +13,7 @@ class EmployeeSalaryStructureResource(resources.ModelResource):
     class Meta:
         model = EmployeeSalaryStructure
         fields = ('employee', 'component', 'amount','is_active')
-        import_id_fields = ()
+        import_id_fields = ('employee','component')
 
     def before_import_row(self, row, **kwargs):
         errors = []  

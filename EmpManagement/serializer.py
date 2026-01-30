@@ -615,16 +615,23 @@ class ApprovalLevelSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         level = attrs.get('level')
         request_type = attrs.get('request_type')
-        branches = attrs.get('branch')  # This will be a list of branches
+        branches = attrs.get('branch', [])
+
+        qs = ApprovalLevel.objects.all()
+
+        # ✅ EXCLUDE CURRENT INSTANCE DURING UPDATE
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
 
         for branch in branches:
-            if ApprovalLevel.objects.filter(
+            if qs.filter(
                 level=level,
                 request_type=request_type,
                 branch=branch
             ).exists():
                 raise serializers.ValidationError(
-                    f"An approval level with level={level} already exists for branch '{branch}' and request type '{request_type}'."
+                    f"An approval level with level={level} already exists "
+                    f"for branch '{branch}' and request type '{request_type}'."
                 )
 
         return attrs

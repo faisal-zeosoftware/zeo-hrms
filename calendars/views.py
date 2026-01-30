@@ -46,7 +46,7 @@ from django.db.models import Q
 from OrganisationManager.models import DocumentNumbering,BranchGeoFence
 from OrganisationManager.serializer import DocumentNumberingSerializer
 from rest_framework.exceptions import NotFound
-from import_export.formats.base_formats import XLSX
+from import_export.formats.base_formats import XLSX,CSV
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -2345,15 +2345,25 @@ class EmpOpeningsBlkupldViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def bulk_upload(self, request):
         if 'file' not in request.FILES:
-            return Response({"error": "Please provide an Excel file."}, status=400)
+            return Response({"error": "Please provide a file."}, status=400)
 
-        excel_file = request.FILES['file']
-        if not excel_file.name.endswith('.xlsx'):
-            return Response({"error": "Invalid file format. Only .xlsx supported."}, status=400)
+        upload_file = request.FILES['file']
+        file_name = upload_file.name.lower()
 
         try:
-            xlsx_format = XLSX()
-            dataset = xlsx_format.create_dataset(excel_file.read())
+            if file_name.endswith('.xlsx'):
+                dataset = XLSX().create_dataset(upload_file.read())
+
+            elif file_name.endswith('.csv'):
+                dataset = CSV().create_dataset(
+                    upload_file.read().decode('utf-8')
+                )
+
+            else:
+                return Response(
+                    {"error": "Invalid file format. Only .xlsx and .csv are supported."},
+                    status=400
+                )
 
             resource = EmployeeOpenBalanceResource()
             all_errors = []
@@ -2364,7 +2374,9 @@ class EmpOpeningsBlkupldViewSet(viewsets.ModelViewSet):
                         resource.before_import_row(row, row_idx=row_idx)
                         resource.import_row(row, None)
                     except ValidationError as e:
-                        all_errors.extend([f"Row {row_idx}: {error}" for error in e.messages])
+                        all_errors.extend(
+                            [f"Row {row_idx}: {msg}" for msg in e.messages]
+                        )
 
             if all_errors:
                 return Response({"errors": all_errors}, status=400)
@@ -2373,6 +2385,72 @@ class EmpOpeningsBlkupldViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             return Response({"error": str(e)}, status=400)
+    @action(detail=False, methods=['get'])
+    def download_default_excel_file(self, request):
+        resource =EmployeeOpenBalanceResource()
+        headers = [field.column_name for field in resource.fields.values()]
+        wb = Workbook()
+
+        # ======== Common Styles ========
+        black_font = Font(color="000000", bold=True)
+        blue_fill = PatternFill(start_color="1E90FF", end_color="1E90FF", fill_type="solid")
+        yellow_fill = PatternFill(start_color="FFF8DC", end_color="FFF8DC", fill_type="solid")  # light cream/yellow
+        border_style = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # Helper function to style header row
+        def style_header_row(ws, max_cols=10):
+            """Style header row with blue fill and black bold text across full width."""
+            for col in range(1, max_cols + 1):
+                cell = ws.cell(row=1, column=col)
+                if not cell.value:
+                    cell.value = ""
+                cell.fill = blue_fill
+                cell.font = black_font
+                cell.border = border_style
+                ws.column_dimensions[cell.column_letter].width = 25
+            ws.freeze_panes = "A2"  # freeze header
+        # ======================================================
+        # Sheet 1: SalaryComponent
+        # ======================================================
+        ws1 = wb.active
+        ws1.title = "Leave Balance Openings"
+        for col_num, header in enumerate(headers, 1):
+            ws1.cell(row=1, column=col_num, value=header)
+
+        style_header_row(ws1, max_cols=len(headers))
+         # ======================================================
+        # Save response
+        # ======================================================
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = (
+            'attachment; filename="Leavebalance_BulkUpload_Template.xlsx"'
+        )
+        return response
+    
+    @action(detail=False, methods=['get'])
+    def download_default_csv_file(self, request):
+        resource = EmployeeOpenBalanceResource()
+        headers = [field.column_name for field in resource.fields.values()]
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(headers)  # only headers, no data
+
+        response = HttpResponse(output.getvalue(), content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="Leavebalance_Template.csv"'
+        return response
 
 class ApplyOpeningsAPIView(APIView):
     def post(self, request, *args, **kwargs):

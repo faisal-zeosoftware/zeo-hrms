@@ -1807,7 +1807,7 @@ class EmployeeResignation(models.Model):
             self.status = 'Rejected'
             self.save()
             send_notification_email(
-                user=self.created_by,
+                # user=self.created_by,
                 employee=self.employee,
                 message=f"Your resignation request {self.termination_type} has been rejected.",
                 template_type="resignation_rejected",
@@ -1838,7 +1838,7 @@ class EmployeeResignation(models.Model):
         if next_level:
             last_approval = self.resign_approvals.order_by('-level').first()
             ResignationApproval.objects.create(
-                general_request=self,
+                resignation_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
@@ -1850,7 +1850,7 @@ class EmployeeResignation(models.Model):
             self.status = 'Approved'
             self.save()
             send_notification_email(
-                user=self.created_by,
+                # user=self.created_by,
                 employee=self.employee,
                 message=f"Your resignation request {self.termination_type} has been approved.",
                 template_type="resignation_approved",
@@ -1892,7 +1892,7 @@ class ResignationApproval(models.Model):
         (APPROVED, 'Approved'),
         (REJECTED, 'Rejected'),
     ]
-    resignation_request = models.ForeignKey(EmployeeResignation, related_name='resign_approvals', on_delete=models.CASCADE)   
+    resignation_request = models.ForeignKey(EmployeeResignation, related_name='resign_approvals', on_delete=models.CASCADE)
     approver        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE,null=True)
     role            = models.CharField(max_length=50, null=True, blank=True)
     level           = models.IntegerField(default=1)
@@ -1907,14 +1907,14 @@ class ResignationApproval(models.Model):
         if note:
             self.note = note
         self.save()
-        self.general_request.move_to_next_level()
+        self.resignation_request.move_to_next_level()
     def reject(self,note=None):
         self.status = self.REJECTED
         if note:
             self.note = note
         self.save()
-        self.general_request.status = 'Rejected'
-        self.general_request.save()
+        self.resignation_request.status = 'Rejected'
+        self.resignation_request.save()
         send_notification_email(
                 user=self.created_by,
                 employee=self.resignation_request.employee,
@@ -1942,7 +1942,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         first_level = ResignationApprovalLevel.objects.order_by('level').first()
         if first_level:
             ResignationApproval.objects.create(
-                general_request=instance,
+                resignation_request=instance,
                 approver=first_level.approver,
                 role=first_level.role,
                 level=first_level.level,
@@ -1950,7 +1950,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
                 
             )
             send_notification_email(
-                user=instance.created_by,
+                # user=instance.created_by,
                 employee=instance.employee,
                 message=f"Your resignation request {instance.termination_type} has been approved.",
                 template_type="resignation_created",

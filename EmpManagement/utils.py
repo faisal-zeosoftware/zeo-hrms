@@ -148,65 +148,87 @@ def calculate_settlement(eos):
     try:
         resignation = eos.resignation
         employee = resignation.employee
+
         start_date = employee.emp_joined_date
         end_date = resignation.last_working_date
 
-        # Recalculate years_of_service for consistency
+        # -------------------------------
+        # SERVICE CALCULATION
+        # -------------------------------
         total_days = (end_date - start_date).days
-        eos.years_of_service = total_days / 365.0
         eos.total_service_days = total_days
+        eos.years_of_service = total_days / 365
         eos.net_number_of_days_worked = total_days - eos.leave_days_without_pay
         eos.date_of_joining = start_date
         eos.date_of_resignation_termination = resignation.resigned_on
         eos.last_working_date = end_date
         eos.notice_period_days = resignation.notice_period or 0
 
-        # Get basic salary (component with is_gratuity=True)
+        # -------------------------------
+        # GET BASIC SALARY
+        # -------------------------------
         salary_component = EmployeeSalaryStructure.objects.filter(
             employee=employee,
             component__is_gratuity=True,
             is_active=True
         ).order_by('-date_updated').first()
 
-        if not salary_component or not salary_component.amount:
-            logger.warning(f"No active gratuity salary component for employee {employee.emp_code}")
-            eos.gratuity_amount = Decimal('0.00')
-            eos.last_month_salary = Decimal('0.00')
-            eos.gratuity_days = 0
-            eos.notice_pay = Decimal('0.00')
-            eos.save()
-            return
-        eos.final_month_salary = get_final_salary(employee, end_date)
-        basic_salary = salary_component.amount
-        daily_wage = basic_salary / 30
-        eos.last_month_salary = basic_salary
+        if salary_component and salary_component.amount:
+            basic_salary = Decimal(salary_component.amount)
+        else:
+            # fallback to payslip basic
+            payslip = employee.payslips.filter(status='Approved').order_by('-created_at').first()
+            if payslip:
+                basic_comp = payslip.components.filter(
+                    component__name__iexact='basic'
+                ).first()
+                basic_salary = Decimal(basic_comp.amount) if basic_comp else Decimal('0.00')
+            else:
+                basic_salary = Decimal('0.00')
 
-        # Get gratuity rule, converting years_of_service to Decimal for comparison
-        years_of_service_decimal = Decimal(str(eos.years_of_service))
+        eos.last_month_salary = basic_salary
+        daily_wage = basic_salary / Decimal('30')
+
+        # -------------------------------
+        # GRATUITY RULE
+        # -------------------------------
+        years = Decimal(eos.years_of_service).quantize(Decimal('0.01'))
+
         gratuity_rule = GratuityTable.objects.filter(
-            Q(minimum_value__lte=years_of_service_decimal) &
-            (Q(maximum_value__gte=years_of_service_decimal) | Q(maximum_value__isnull=True)) &
-            Q(is_active=True)
+            minimum_value__lte=years,
+            is_active=True
+        ).filter(
+            Q(maximum_value__gte=years) | Q(maximum_value__isnull=True)
         ).first()
 
-        if not gratuity_rule or eos.years_of_service < 1:
-            logger.warning(f"No gratuity rule or insufficient service years ({eos.years_of_service}) for employee {employee.emp_code}")
+        if gratuity_rule:
+            if resignation.termination_type in ['termination', 'retirement', 'death_or_disablement']:
+                per_year_days = gratuity_rule.termination_days
+            else:
+                per_year_days = gratuity_rule.resignation_days
+
+            eos.gratuity_days = float(per_year_days) * float(years)
+            eos.gratuity_amount = Decimal(eos.gratuity_days) * daily_wage
+
+            # Max cap → 24 months basic
+            max_gratuity = basic_salary * Decimal('24')
+            if eos.gratuity_amount > max_gratuity:
+                eos.gratuity_amount = max_gratuity
+        else:
             eos.gratuity_days = 0
             eos.gratuity_amount = Decimal('0.00')
+
+        # -------------------------------
+        # NOTICE PAY
+        # -------------------------------
+        if eos.notice_period_days:
+            eos.notice_pay = daily_wage * Decimal(eos.notice_period_days)
         else:
-            if resignation.termination_type in ['termination', 'retirement', 'death_or_disablement']:
-                eos.gratuity_days = gratuity_rule.termination_days * eos.years_of_service
+            eos.notice_pay = Decimal('0.00')
 
-            else:  # resignation
-                eos.gratuity_days = gratuity_rule.resignation_days * eos.years_of_service
-
-            eos.gratuity_amount = Decimal(eos.gratuity_days) * daily_wage
-            max_gratuity = basic_salary * 24
-            eos.gratuity_amount = min(eos.gratuity_amount, max_gratuity)
-
-        # Additional settlement components
-        eos.notice_pay = Decimal('0.00') if eos.notice_period_days == 0 else daily_wage * eos.notice_period_days
-        # eos.leave_salary = Decimal('0.00')  # Placeholder for future use
+        # -------------------------------
+        # AIR TICKET
+        # -------------------------------
         ticket = AirTicketAllocation.objects.filter(
             employee=employee,
             status='APPROVED',
@@ -214,13 +236,15 @@ def calculate_settlement(eos):
         ).order_by('-allocated_date').first()
 
         eos.air_ticket = ticket.amount if ticket else Decimal('0.00')
-        
 
         eos.save()
-        
-        eos.save()
+        eos.refresh_from_db()
+
     except Exception as e:
-        logger.error(f"Error in calculate_settlement for employee {eos.resignation.employee.emp_code}: {str(e)}")
+        logger.error(
+            f"Error in calculate_settlement for employee "
+            f"{eos.resignation.employee.emp_code}: {str(e)}"
+        )
         raise
 
 def schedule_escalation(approval, level_rule):

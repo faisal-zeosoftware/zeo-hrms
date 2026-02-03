@@ -346,7 +346,7 @@ class SIFSerializer(serializers.Serializer):
         return value
     def generate_sif_data(self):
         payroll_run = PayrollRun.objects.get(id=self.validated_data['payroll_run_id'])
-        employees = payroll_run.get_employees().filter(emp_status=True)
+        employees = payroll_run.get_employees().filter(is_active=True)
 
         # ✅ Apply branch filter if provided
         branch_ids = self.validated_data.get("branch_ids", [])

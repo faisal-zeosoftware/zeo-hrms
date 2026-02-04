@@ -3,7 +3,8 @@ from . views import (FiscalYearViewSet,PeriodViewSet,BranchViewSet,DepartmentVie
                      DesignationViewSet,CatogoryViewSet,CompanyFiscalData,permissionviewset,Groupviewset,permviewset,FiscalYearDatesView,DeptBulkUploadViewSet,DesignationBulkUploadViewSet,
                    save_notification_settings,CompanyPolicyViewSet,list_data_in_schema,CategoryBulkUploadViewSet,AnnouncementViewSet,
                    AnnouncementCommentViewSet,AssetTypeViewSet,AssetMasterViewSet,Asset_CustomFieldValueViewSet,AssetReportViewset,AssetTransactionReportViewset,AssetAllocationViewSet,AssetRequestViewSet,AssetCustomFieldViewSet,
-                   GratuityTableViewset,FolderViewSet,DocumentViewSet,AssetEmailTemplateViewset,AssetApprovalLevelViewset,AssetApprovalViewset,EscalationRuleViewSet,BranchGeoFenceViewSet,UserBranchAccessViewSet
+                   GratuityTableViewset,FolderViewSet,DocumentViewSet,AssetEmailTemplateViewset,AssetApprovalLevelViewset,AssetApprovalViewset,EscalationRuleViewSet,BranchGeoFenceViewSet,UserBranchAccessViewSet,
+                   UserAccessibleBranchListAPIView
                    )
 from rest_framework.routers import DefaultRouter
 
@@ -60,5 +61,7 @@ urlpatterns = [
     path('save-notification-settings/', save_notification_settings, name='save-notification-settings'),
     path('policies/<int:policy_id>/download/', CompanyPolicyViewSet.as_view({'get': 'download_policy'}), name='download_policies'),
     path('api/schema-data/', list_data_in_schema, name='list_data_in_schema'),
+    path('api/user-accessible-branches/',UserAccessibleBranchListAPIView.as_view(),name='user-accessible-branches'),
+
     
     ]

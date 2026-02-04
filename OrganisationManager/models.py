@@ -470,6 +470,7 @@ class AssetApproval(models.Model):
 
 @receiver(post_save, sender=AssetRequest)
 def create_initial_approval(sender, instance, created, **kwargs):
+    first_level = None
     #if created:
         # if instance.request_type.use_common_workflow:
         #     first_level = AssetCommonWorkflow.objects.order_by('level').first()
@@ -478,32 +479,33 @@ def create_initial_approval(sender, instance, created, **kwargs):
         asset_type=instance.asset_type,
         branch__id=instance.employee.emp_branch_id.id
         ).order_by('level').first()
-        if first_level:
-            approval=AssetApproval.objects.create(
-            asset_request=instance,
-            approver=first_level.approver,
-            role=first_level.role,
-            level=first_level.level,
-            status=AssetApproval.PENDING
-        )   
-            asset_schedule_escalation(approval, first_level)
-            send_notification_email(
-                    user=first_level.approver,
-                    employee=None,
-                    message=f"New request for approval: {instance.asset_type.name}, Employee: {instance.employee}",
-                    template_type="asset_created",
-                    context={
-                        **get_employee_context(instance.employee),
-                        'asset_type':instance.asset_type.name,
-                        'requested_asset':instance.requested_asset,
-                        'request_date ': instance.request_date,
-                        'reason' :instance.reason 
+    if first_level:
+        approval = AssetApproval.objects.create(
+        asset_request=instance,
+        approver=first_level.approver,
+        role=first_level.role,
+        level=first_level.level,
+        status=AssetApproval.PENDING,
+        employee_id=instance.employee.id
+        )
+        asset_schedule_escalation(approval, first_level)
+        send_notification_email(
+                user=first_level.approver,
+                employee=None,
+                message=f"New request for approval: {instance.asset_type.name}, Employee: {instance.employee}",
+                template_type="asset_created",
+                context={
+                    **get_employee_context(instance.employee),
+                    'asset_type':instance.asset_type.name,
+                    'requested_asset':instance.requested_asset,
+                    'request_date ': instance.request_date,
+                    'reason' :instance.reason 
 
 
-                    },
-                    email_template_model=AssetEmailTemplate,
-                    notification_model=RequestNotification
-                )     
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=RequestNotification
+            )     
 
 
 class AssetAllocation(models.Model):

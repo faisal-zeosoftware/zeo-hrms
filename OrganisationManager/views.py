@@ -1729,7 +1729,27 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
 class UserBranchAccessViewSet(viewsets.ModelViewSet):
     queryset = UserBranchAccess.objects.all()
     serializer_class = UserBranchAccessSerializer
+class UserAccessibleBranchListAPIView(APIView):
+    # permission_classes = [IsAuthenticated]
 
+    def get(self, request):
+        user = request.user
+
+        #  SUPERUSER → All branches
+        if user.is_superuser:
+            branches = brnch_mstr.objects.all()
+
+        #  NORMAL USER → Only assigned branches
+        else:
+            access = UserBranchAccess.objects.filter(user=user).first()
+
+            if access:
+                branches = access.branch.all()
+            else:
+                branches = brnch_mstr.objects.none()
+
+        serializer = BranchSerializer(branches, many=True)
+        return Response(serializer.data)
 class BranchGeoFenceViewSet(viewsets.ModelViewSet):
     queryset = BranchGeoFence.objects.all()
     serializer_class = BranchGeoFenceSerializer

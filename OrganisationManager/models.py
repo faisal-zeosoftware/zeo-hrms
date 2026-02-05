@@ -121,7 +121,8 @@ class DocumentNumbering(models.Model):
         ('advance_salary_request', 'Advance Salary Request'),
         ('air_ticket_request', 'Air Ticket Request'),
         ('loan_request', 'Loan Request'),
-        ('asset_request','Asset Request')
+        ('asset_request','Asset Request'),
+        ('document_request','Document Request')
 
 
     ]
@@ -304,6 +305,8 @@ class AssetRequest(models.Model):
     request_date      = models.DateTimeField(auto_now=True)
     created_by        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True)
     document_number   = models.CharField(max_length=50, unique=True, blank=True)
+    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL)
+
 
     def __str__(self):
         return f"{self.document_number}-{self.asset_type.name}"

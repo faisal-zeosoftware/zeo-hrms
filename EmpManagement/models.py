@@ -1560,6 +1560,7 @@ class DocumentTemplate(models.Model):
         return self.title
 class DocumentRequest(models.Model):
     document_number  = models.CharField(max_length=50, unique=True, null =True, blank=True)
+    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete = models.CASCADE)
     reason           =  models. CharField(max_length=200)
     request_type     =  models.ForeignKey(DocRequestType,on_delete=models.SET_NULL,null=True)
     employee         =  models.ForeignKey('emp_master',on_delete = models.CASCADE)

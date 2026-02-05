@@ -315,7 +315,7 @@ class  LoanApplication(models.Model):
 
     employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE,related_name="loan")
     document_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
-    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL)
+    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL, null=True)
     loan_type = models.ForeignKey(LoanType, on_delete=models.CASCADE)
     amount_requested = models.DecimalField(max_digits=10, decimal_places=2)
     repayment_period = models.PositiveIntegerField()  # In months
@@ -702,7 +702,7 @@ class AdvanceSalaryRequest(models.Model):
 
     employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE, related_name='advance_salary_requests')
     document_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
-    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL)
+    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL, null=True)
     requested_amount = models.DecimalField(max_digits=10, decimal_places=2)
     reason = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')

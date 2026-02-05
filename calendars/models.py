@@ -1087,7 +1087,7 @@ class employee_leave_request(models.Model):
     ]
     
     employee          = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
-    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL)
+    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL, null=True)
     leave_type        = models.ForeignKey(leave_type, on_delete=models.CASCADE)    
     start_date        = models.DateField()
     end_date          = models.DateField()

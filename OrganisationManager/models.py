@@ -305,7 +305,7 @@ class AssetRequest(models.Model):
     request_date      = models.DateTimeField(auto_now=True)
     created_by        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True)
     document_number   = models.CharField(max_length=50, unique=True, blank=True)
-    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL)
+    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL, null=True)
 
 
     def __str__(self):

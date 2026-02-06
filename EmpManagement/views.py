@@ -84,7 +84,7 @@ class CustomAuthentication(BaseAuthentication):
         return None
 
 #EMPLOYEE CRUD
-class EmpViewSet(BranchAccessMixin,viewsets.ModelViewSet):
+class EmpViewSet(viewsets.ModelViewSet):
     queryset = emp_master.objects.all()
     serializer_class = EmpSerializer
     permission_classes = [EmployeePermission]

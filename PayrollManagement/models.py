@@ -271,6 +271,8 @@ class LoanEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
 class LoanNotification(models.Model):
@@ -295,6 +297,7 @@ class LoanType(models.Model):
     updated_at          = models.DateTimeField(auto_now=True)
     use_common_workflow = models.BooleanField(default=False)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
 
 
     def __str__(self):
@@ -674,6 +677,8 @@ class AdvanceSalaryEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
 class AdvanceSalaryNotification(models.Model):
@@ -976,6 +981,7 @@ class AirTicketPolicy(models.Model):
     eligible_departments = models.ManyToManyField('OrganisationManager.dept_master', blank=True)
     eligible_designations = models.ManyToManyField('OrganisationManager.desgntn_master', blank=True)
     eligible_categories = models.ManyToManyField('OrganisationManager.ctgry_master', blank=True)
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
     travel_class = models.CharField(max_length=20, choices=TRAVEL_CLASS_CHOICES, default='ECONOMY')
     is_active = models.BooleanField(default=True)
     def clean(self):
@@ -1037,6 +1043,8 @@ class AirticketEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
 

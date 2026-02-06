@@ -259,6 +259,7 @@ class AssetType(models.Model):
     name        = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True, null=True)
     min_approvals_required = models.PositiveIntegerField(default=1, help_text="Minimum number of approvals required to complete the request")
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
 
     def __str__(self):
         return self.name

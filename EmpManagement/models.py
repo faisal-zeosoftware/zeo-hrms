@@ -1165,6 +1165,7 @@ class RequestType(models.Model):
     use_common_workflow = models.BooleanField(default=False)
     salary_component = models.ForeignKey('PayrollManagement.SalaryComponent', on_delete=models.SET_NULL,null=True, blank=True,help_text="Link to salary component for payroll integration")
     min_approvals_required = models.PositiveIntegerField(null=True, blank=True, help_text="Minimum number of approvals required to approve the request")
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
 
     
     def __str__(self):
@@ -1548,6 +1549,7 @@ class DocRequestType(models.Model):
     description = models.CharField(max_length=200)
     is_active   = models.BooleanField(default=True)  # Add is_active field
     min_approvals_required        = models.PositiveIntegerField(null=True, blank=True, help_text="Minimum number of approvals required to approve the request")
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
 
     def __str__(self):
         return self.type_name

@@ -1119,6 +1119,7 @@ class EmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
 
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
@@ -1530,6 +1531,8 @@ class DocRequestEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
 class DocRequestNotification(models.Model):
@@ -1762,6 +1765,8 @@ class ResignationEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+   
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
     

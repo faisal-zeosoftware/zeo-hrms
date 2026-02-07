@@ -96,17 +96,7 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     serializer_class = DeptSerializer
     # authentication_classes = [SessionAuthentication,]
     permission_classes = [DepartmentPermission]
-    def get_queryset(self):
-        queryset = super().get_queryset()
-
-        # Retrieve the branch_id from the query parameters
-        branch_id = self.request.query_params.get('branch_id')
-
-        # Filter departments based on the provided branch_id
-        if branch_id:
-            queryset = queryset.filter(branch_id=branch_id)
-
-        return queryset  
+     
 
     @action(detail=False, methods=['get'])
     def department_report(self, request):

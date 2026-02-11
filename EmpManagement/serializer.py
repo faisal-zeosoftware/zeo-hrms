@@ -9,7 +9,7 @@ import datetime
 from OrganisationManager .models import AssetAllocation
 from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer
 from calendars .models import holiday
-from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer
+from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer,AirTicketRequestSerializer
 from decimal import Decimal
 from calendar import month_name
 from django.utils import timezone
@@ -341,12 +341,25 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
         model = GeneralRequest
         fields = ['id', 'approvals']
         # fields = ['id', 'doc_number', 'reason', 'status', 'created_at_date', 'approvals']
-
+class DocRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DocumentRequest
+        fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(DocRequestSerializer, self).to_representation(instance)
+        if instance.request_type:  
+            rep['request_type'] = instance.request_type.type_name
+        if instance.employee:  
+            rep['employee'] = instance.employee.emp_first_name
+        
+        return rep
 #EMPLOYEE SERIALIZER
 class EmpSerializer(serializers.ModelSerializer):
     is_active = serializers.BooleanField(read_only=True)
     announcements = serializers.SerializerMethodField()
     projects = serializers.SerializerMethodField() 
+    airticket_request      =  AirTicketRequestSerializer(many=True,read_only=True,source='airticket_requests')
+    document_requests      = DocRequestSerializer(many=True, read_only=True)
     payslip  = PayslipSerializer(many=True, read_only=True, source='payslips')
     emp_bank = EmpBankDetailsSerializer(many=True,read_only=True, source='bank_details')
     advance_salary_requests   =  AdvanceSalaryRequestSerializer(many=True, read_only=True)
@@ -689,18 +702,7 @@ class DocRequestTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestType
         fields = '__all__'
-class DocRequestSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = DocumentRequest
-        fields = '__all__'
-    def to_representation(self, instance):
-        rep = super(DocRequestSerializer, self).to_representation(instance)
-        if instance.request_type:  
-            rep['request_type'] = instance.request_type.type_name
-        if instance.employee:  
-            rep['employee'] = instance.employee.emp_first_name
-        
-        return rep
+
 class DocApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentApproval

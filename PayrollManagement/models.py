@@ -1062,7 +1062,7 @@ class AirTicketRequest(models.Model):
     ]
     document_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
     branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL, null=True)
-    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
+    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE,related_name='airticket_requests')
     allocation = models.ForeignKey(AirTicketAllocation, on_delete=models.CASCADE)
     request_type = models.CharField(max_length=20, choices=REQUEST_TYPE, default='TICKET')
     request_date = models.DateField()

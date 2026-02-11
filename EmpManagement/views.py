@@ -59,7 +59,7 @@ from rest_framework.exceptions import NotFound
 from calendars .serializer import EmployeeLeaveBalanceSerializer,LeaveTypeSerializer
 from calendars .models import leave_type, employee_leave_request
 from django.db.models import Q
-from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer,AdvanceSalaryRequestSerializer
+from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer,AdvanceSalaryRequestSerializer,AirTicketRequestSerializer
 from .utils import calculate_settlement
 import csv
 import io
@@ -355,7 +355,18 @@ class EmpViewSet(viewsets.ModelViewSet):
         filtered_employees = self.queryset.filter(users__isnull=True, is_ess=False)
         serializer = EmployeeFilterSerializer(filtered_employees, many=True)
         return Response(serializer.data)
-
+    @action(detail=True, methods=['GET'])
+    def emp_airticket(self, request, pk=None):
+        employee = self.get_object()
+        airtickets = employee.airticket_requests.filter(status='APPROVED'  ) # ✅ MUST match model choices
+        serializer = AirTicketRequestSerializer(airtickets, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    @action(detail=True, methods=['GET'])
+    def emp_document_requests(self, request, pk=None):
+        employee = self.get_object()
+        document_requests = employee.document_requests.all()
+        serializer = DocRequestSerializer(document_requests, many=True)
+        return Response(serializer.data)
     @action(detail=False, methods=['get'])
     def export_employee_data(self, request):
         excluded_fields = {'id', 'is_ess', 'created_at', 'created_by', 'updated_at', 'updated_by', 'emp_profile_pic'}

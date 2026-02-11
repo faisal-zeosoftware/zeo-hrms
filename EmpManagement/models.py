@@ -1568,7 +1568,7 @@ class DocumentRequest(models.Model):
     branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL, null=True)
     reason           =  models. CharField(max_length=200)
     request_type     =  models.ForeignKey(DocRequestType,on_delete=models.SET_NULL,null=True)
-    employee         =  models.ForeignKey('emp_master',on_delete = models.CASCADE)
+    employee         =  models.ForeignKey('emp_master',on_delete = models.CASCADE,related_name='document_requests')
     total            =  models.IntegerField(null=True)
     status           =  models.CharField(max_length=20, default='Pending')
     remarks          =  models.CharField(max_length=50, null=True, blank=True)

@@ -380,6 +380,7 @@ class EmpSerializer(serializers.ModelSerializer):
     emp_weekend_calendar = WeekendCalendarSerailizer(required=False, read_only=True)
     holiday_calendar = HolidayCalandarSerializer(required=False, read_only=True)
     holidays = serializers.SerializerMethodField()
+    branch                 = serializers.SerializerMethodField()
     
     
     # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -489,6 +490,13 @@ class EmpSerializer(serializers.ModelSerializer):
             models.Q(managers=obj) | models.Q(members=obj)
         ).distinct()
         return ProjectSerializer(projects, many=True).data
+    def get_branch(self, obj):
+        if obj.emp_branch_id:
+            return {
+                "id": obj.emp_branch_id.id,
+                "name": obj.emp_branch_id.branch_name
+            }
+        return None 
 class EmplistSerializer(serializers.ModelSerializer):
     class Meta:
         model = emp_master

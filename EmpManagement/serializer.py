@@ -339,7 +339,7 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GeneralRequest
-        fields = ['id', 'approvals']
+        fields = ['id', 'approvals','document_number', 'reason', 'status', 'created_at_date',]
         # fields = ['id', 'doc_number', 'reason', 'status', 'created_at_date', 'approvals']
 class DocRequestSerializer(serializers.ModelSerializer):
     class Meta:

@@ -88,15 +88,24 @@ class EmpViewSet(viewsets.ModelViewSet):
     queryset = emp_master.objects.all()
     serializer_class = EmpSerializer
     permission_classes = [EmployeePermission]
-
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated:
-            if hasattr(user, 'is_ess') and user.is_ess:  # If user is an ESS, they can only access their own employee information
-                return emp_master.objects.filter(users=user)
-            else:
-                return emp_master.objects.all()  # Other users can access all employee information
-        return emp_master.objects.none()
+        queryset = super().get_queryset()
+
+        # ESS user → show only own employee profile
+        if user.is_authenticated and getattr(user, 'is_ess', False):
+            return queryset.filter(users=user)
+
+        # HR / Admin → show all employees
+        return queryset
+    # def get_queryset(self):
+    #     user = self.request.user
+    #     if user.is_authenticated:
+    #         if hasattr(user, 'is_ess') and user.is_ess:  # If user is an ESS, they can only access their own employee information
+    #             return emp_master.objects.filter(users=user)
+    #         else:
+    #             return emp_master.objects.all()  # Other users can access all employee information
+    #     return emp_master.objects.none()
     @action(detail=True, methods=['POST', 'GET'])
     def emp_family(self, request, pk=None):
         employee = self.get_object()

@@ -85,7 +85,7 @@ class BranchAccessMixin:
         q_objects = Q()
         filtered = False
 
-        for field in ["branch", "emp_branch_id", "work_location"]:
+        for field in ["branch", "emp_branch_id", "work_location","branch_id"]:
             if field in fields:
                 q_objects |= Q(**{f"{field}__id__in": user_branch_ids})
                 filtered = True

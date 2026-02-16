@@ -329,7 +329,7 @@ class LvRqstApprovalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = employee_leave_request
-        fields = ['id', 'approvals','start_date','end_date','leave_type','reason']
+        fields = ['id', 'approvals','start_date','end_date','leave_type','reason','document_number']
     def get_leave_type(self, obj):
         # Safely return the leave type name if it exists
         return getattr(obj.leave_type, 'name', None)

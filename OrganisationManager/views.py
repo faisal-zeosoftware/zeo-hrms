@@ -58,6 +58,8 @@ import pandas as pd
 from django.http import HttpResponse
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from Core .mixins import BranchAccessMixin
+
 
 
 def get_model_permissions(model):
@@ -577,23 +579,23 @@ class permviewset(viewsets.ModelViewSet):
     queryset = Permission.objects.all().order_by('id')
     serializer_class=permserializer
 
-class DocNumberingviewset(viewsets.ModelViewSet):
+class DocNumberingviewset(BranchAccessMixin,viewsets.ModelViewSet):
     queryset = DocumentNumbering.objects.all()
     serializer_class = DocumentNumberingSerializer
     permission_classes = [DocumentNumberingPermission]
-    def get_queryset(self):
-        queryset = super().get_queryset()
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
 
-        branch_id = self.request.query_params.get('branch_id')
-        doc_type = self.request.query_params.get('type')
+    #     branch_id = self.request.query_params.get('branch_id')
+    #     doc_type = self.request.query_params.get('type')
 
-        if branch_id:
-            queryset = queryset.filter(branch_id=branch_id)
+    #     if branch_id:
+    #         queryset = queryset.filter(branch_id=branch_id)
 
-        if doc_type:
-            queryset = queryset.filter(type=doc_type)
+    #     if doc_type:
+    #         queryset = queryset.filter(type=doc_type)
 
-        return queryset
+    #     return queryset
 
 
 from django.shortcuts import get_object_or_404

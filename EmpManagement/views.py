@@ -348,6 +348,13 @@ class EmpViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
         return Response(serializer.data)
         return Response(serializer.data)
+    @action(detail=True, methods=['GET'])
+    def emp_resignation(self, request, pk=None):
+        employee = self.get_object()
+        resignation= employee.resignation_requests.filter(status='APPROVED'  ) # ✅ MUST match model choices
+        serializer = EmployeeResignationSerializer(resignation, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     @action(detail=False, methods=['GET'])
     def my_profile(self, request):
         user = request.user

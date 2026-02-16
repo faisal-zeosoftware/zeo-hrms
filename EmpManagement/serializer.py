@@ -329,7 +329,7 @@ class LvRqstApprovalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = employee_leave_request
-        fields = ['id', 'approvals','start_date','end_date','leave_type']
+        fields = ['id', 'approvals','start_date','end_date','leave_type','reason']
     def get_leave_type(self, obj):
         # Safely return the leave type name if it exists
         return getattr(obj.leave_type, 'name', None)
@@ -339,7 +339,7 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GeneralRequest
-        fields = ['id', 'approvals','document_number', 'reason', 'status', 'created_at_date',]
+        fields = ['id', 'approvals','document_number', 'reason', 'status', 'created_at_date','request_type','remarks']
         # fields = ['id', 'doc_number', 'reason', 'status', 'created_at_date', 'approvals']
 class DocRequestSerializer(serializers.ModelSerializer):
     class Meta:
@@ -353,6 +353,12 @@ class DocRequestSerializer(serializers.ModelSerializer):
             rep['employee'] = instance.employee.emp_first_name
         
         return rep
+
+class EmployeeResignationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeResignation
+        fields = '__all__'
+    
 #EMPLOYEE SERIALIZER
 class EmpSerializer(serializers.ModelSerializer):
     is_active = serializers.BooleanField(read_only=True)
@@ -381,6 +387,8 @@ class EmpSerializer(serializers.ModelSerializer):
     holiday_calendar = HolidayCalandarSerializer(required=False, read_only=True)
     holidays = serializers.SerializerMethodField()
     branch                 = serializers.SerializerMethodField()
+    resignation_requests   =  EmployeeResignationSerializer(many=True, read_only=True, source='resignations')
+    
     
     
     # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -775,11 +783,7 @@ class ResignationTemplateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"template_type": f"{template_type} template already exists."
         })
         return attrs
-class EmployeeResignationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmployeeResignation
-        fields = '__all__'
-    
+
     def to_representation(self, instance):
             rep = super( EmployeeResignationSerializer, self).to_representation(instance)
             if instance.employee:  

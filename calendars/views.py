@@ -64,6 +64,7 @@ import io
 import csv
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from Core .mixins import BranchAccessMixin
 # Create your views here.
 
 class WeekendDetailsViewset(viewsets.ModelViewSet):
@@ -143,7 +144,7 @@ class HolidayAssignViewset(viewsets.ModelViewSet):
 #leave
 # Create your views here.
 
-class LeaveTypeviewset(viewsets.ModelViewSet):
+class LeaveTypeviewset(BranchAccessMixin,viewsets.ModelViewSet):
     queryset = leave_type.objects.all()
     serializer_class = LeaveTypeSerializer
     permission_classes = [LeaveTypePermission] 

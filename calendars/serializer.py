@@ -300,11 +300,33 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         return data
 
 class EmployeeLeaveBalanceSerializer(serializers.ModelSerializer):
+    leave_type_name = serializers.CharField(source='leave_type.name', read_only=True)
+    negative = serializers.BooleanField(source='leave_type.negative', read_only=True)
+    allow_half_day = serializers.BooleanField(source='leave_type.allow_half_day', read_only=True)
+    include_dashboard = serializers.BooleanField(source='leave_type.include_dashboard', read_only=True)
+    include_holiday = serializers.BooleanField(source='leave_type.include_holiday', read_only=True)
     # leave_type = serializers.PrimaryKeyRelatedField(queryset=leave_type.objects.none())
 
     class Meta:
         model = emp_leave_balance
-        fields = '__all__'
+        # fields = '__all__'
+        fields = [
+            'id',
+            'employee',
+            'leave_type',
+            'leave_type_name',
+            'balance',
+            'openings',
+            'updated_at',
+            'created_at',
+            'created_by',
+            # leave_type boolean fields
+            'include_dashboard',
+            'negative',
+            'allow_half_day',
+            'include_holiday',
+
+        ]
     def to_representation(self, instance):
         rep = super(EmployeeLeaveBalanceSerializer, self).to_representation(instance)
         if instance.leave_type:  

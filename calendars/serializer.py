@@ -4,7 +4,7 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                     ShiftOverride,EmployeeMachineMapping,LeaveReport,
                      LeaveApprovalLevels,LeaveApproval,LvApprovalNotify,LvEmailTemplate,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
-                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy
+                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -713,4 +713,8 @@ class AttendanceRecheckSerializer(serializers.ModelSerializer):
 class OvertimePolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = OvertimePolicy
+        fields = '__all__'
+class OvertimeRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OvertimeRule
         fields = '__all__'

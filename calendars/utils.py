@@ -260,58 +260,38 @@ def rule_matches_employee(rule_obj, employee):
 
     # if no failing condition, it matches
     return True
+
 from datetime import timedelta
 from decimal import Decimal
 from django.db.models import Q
 from calendars.models import EmployeeOvertime, OvertimePolicy
-
 def calculate_employee_overtime(attendance):
-    """
-    Central OT engine – Zoho style
-    """
 
     employee = attendance.employee
 
-    # ❌ OT not applicable
-    if not employee.emp_ot_applicable:
-        return
-
-    if not attendance.total_hours:
+    if not employee.emp_ot_applicable or not attendance.total_hours:
         return
 
     worked = attendance.total_hours
-    shift_duration = attendance.get_shift_duration()
 
-    # -------------------------------
-    # 1️⃣ Identify OT TYPE & DURATION
-    # -------------------------------
-
+    # -------------------------
+    # Determine OT TYPE
+    # -------------------------
     if attendance.is_holiday():
         ot_type = 'HOLIDAY'
-        ot_duration = worked
+        base_duration = timedelta(0)
 
     elif attendance.is_weekend():
         ot_type = 'WEEKEND'
-        ot_duration = worked
+        base_duration = timedelta(0)
 
     else:
         ot_type = 'NORMAL'
-        ot_duration = worked - shift_duration
+        base_duration = attendance.get_shift_duration()
 
-    if ot_duration <= timedelta(0):
-        EmployeeOvertime.objects.filter(
-            employee=employee,
-            date=attendance.date,
-            ot_type=ot_type
-        ).delete()
-        return
-
-    ot_hours = Decimal(ot_duration.total_seconds()) / Decimal(3600)
-
-    # -------------------------------
-    # 2️⃣ APPLY POLICY
-    # -------------------------------
-
+    # -------------------------
+    # Fetch Policy
+    # -------------------------
     policy = (
         OvertimePolicy.objects
         .filter(ot_type=ot_type, is_active=True)
@@ -321,23 +301,125 @@ def calculate_employee_overtime(attendance):
             Q(designation__isnull=True) | Q(designation=employee.emp_desgntn_id),
             Q(category__isnull=True) | Q(category=employee.emp_ctgry_id),
         )
+        .distinct()
         .first()
     )
 
     if not policy:
-        return  # ❌ No policy = no OT
+        return
 
-    # -------------------------------
-    # 3️⃣ SAVE OT
-    # -------------------------------
+    rules = policy.rules.filter(
+        rule_type='DAILY',
+        is_active=True
+    )
 
-    EmployeeOvertime.objects.update_or_create(
+    # Clear previous OT
+    EmployeeOvertime.objects.filter(
         employee=employee,
         date=attendance.date,
-        ot_type=ot_type,
-        defaults={
-            'hours': ot_hours.quantize(Decimal('0.01')),
-            'approved': False,
+        ot_type=ot_type
+    ).delete()
+
+    remaining = worked - base_duration
+    if remaining <= timedelta(0):
+        return
+
+    # -------------------------
+    # Apply Slabs
+    # -------------------------
+    for rule in rules:
+        if remaining <= timedelta(0):
+            break
+
+        slab_duration = min(remaining, rule.threshold_hours)
+
+        hours = (
+            Decimal(slab_duration.total_seconds()) / Decimal(3600)
+        ).quantize(Decimal("0.01"))
+
+        EmployeeOvertime.objects.create(
+            employee=employee,
+            date=attendance.date,
+            ot_type=ot_type,
+            slab='EXT' if rule.is_extended else 'OT',
+            hours=hours,
+            approved=False
+        )
+
+        remaining -= slab_duration
+# def calculate_employee_overtime(attendance):
+#     """
+#     Central OT engine – Zoho style
+#     """
+
+#     employee = attendance.employee
+
+#     # ❌ OT not applicable
+#     if not employee.emp_ot_applicable:
+#         return
+
+#     if not attendance.total_hours:
+#         return
+
+#     worked = attendance.total_hours
+#     shift_duration = attendance.get_shift_duration()
+
+#     # -------------------------------
+#     # 1️⃣ Identify OT TYPE & DURATION
+#     # -------------------------------
+
+#     if attendance.is_holiday():
+#         ot_type = 'HOLIDAY'
+#         ot_duration = worked
+
+#     elif attendance.is_weekend():
+#         ot_type = 'WEEKEND'
+#         ot_duration = worked
+
+#     else:
+#         ot_type = 'NORMAL'
+#         ot_duration = worked - shift_duration
+
+#     if ot_duration <= timedelta(0):
+#         EmployeeOvertime.objects.filter(
+#             employee=employee,
+#             date=attendance.date,
+#             ot_type=ot_type
+#         ).delete()
+#         return
+
+#     ot_hours = Decimal(ot_duration.total_seconds()) / Decimal(3600)
+
+#     # -------------------------------
+#     # 2️⃣ APPLY POLICY
+#     # -------------------------------
+
+#     policy = (
+#         OvertimePolicy.objects
+#         .filter(ot_type=ot_type, is_active=True)
+#         .filter(
+#             Q(branch__isnull=True) | Q(branch=employee.emp_branch_id),
+#             Q(department__isnull=True) | Q(department=employee.emp_dept_id),
+#             Q(designation__isnull=True) | Q(designation=employee.emp_desgntn_id),
+#             Q(category__isnull=True) | Q(category=employee.emp_ctgry_id),
+#         )
+#         .first()
+#     )
+
+#     if not policy:
+#         return  # ❌ No policy = no OT
+
+#     # -------------------------------
+#     # 3️⃣ SAVE OT
+#     # -------------------------------
+
+#     EmployeeOvertime.objects.update_or_create(
+#         employee=employee,
+#         date=attendance.date,
+#         ot_type=ot_type,
+#         defaults={
+#             'hours': ot_hours.quantize(Decimal('0.01')),
+#             'approved': False,
             
-        }
-    )
+#         }
+#     )

@@ -1977,6 +1977,8 @@ class Attendance(models.Model):
             self.shift = self.fetch_shift()
 
         super().save(*args, **kwargs)
+        from calendars.utils import calculate_employee_overtime
+        calculate_employee_overtime(self)
 
         # OT applicable?
         if not (self.employee.emp_ot_applicable and self.total_hours):
@@ -2086,7 +2088,10 @@ class EmployeeOvertime(models.Model):
         ('WEEKEND', 'Weekend OT'),
         ('HOLIDAY', 'Holiday OT'),
     )
-
+    SLAB_CHOICES = (
+        ('OT', 'Overtime'),
+        ('EXT', 'Extended Overtime'),
+    )
     employee = models.ForeignKey(
         'EmpManagement.emp_master',
         on_delete=models.CASCADE
@@ -2097,7 +2102,11 @@ class EmployeeOvertime(models.Model):
         max_length=10,
         choices=OT_TYPE_CHOICES,null=True, blank=True,
     )
-
+    slab = models.CharField(
+        max_length=5,
+        choices=SLAB_CHOICES,
+        default='OT'
+    )
     hours = models.DecimalField(max_digits=6, decimal_places=2)
 
     approved = models.BooleanField(default=False)
@@ -2151,6 +2160,57 @@ class OvertimePolicy(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.ot_type})"
+class OvertimeRule(models.Model):
+
+    RULE_TYPE_CHOICES = (
+        ('DAILY', 'Daily'),
+        ('WEEKLY', 'Weekly'),
+        ('MONTHLY', 'Monthly'),
+    )
+
+    BASE_CHOICES = (
+        ('FIXED', 'Fixed Hours'),
+        ('SHIFT', 'Shift Hours'),
+    )
+
+    policy = models.ForeignKey(
+        OvertimePolicy,
+        on_delete=models.CASCADE,
+        related_name='rules'
+    )
+
+    rule_type = models.CharField(
+        max_length=10,
+        choices=RULE_TYPE_CHOICES,
+        default='DAILY'
+    )
+
+    base_type = models.CharField(
+        max_length=10,
+        choices=BASE_CHOICES,
+        default='SHIFT'
+    )
+
+    threshold_hours = models.DurationField(
+        help_text="Hours after which OT applies"
+    )
+
+    is_extended = models.BooleanField(
+        default=False,
+        help_text="Extended overtime slab"
+    )
+
+    order = models.PositiveIntegerField(
+        help_text="Execution order (1,2,3...)"
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['order']
+
+    def __str__(self):
+        return f"{self.policy.name} | {self.threshold_hours} | {'EXT' if self.is_extended else 'OT'}"
 
 
 class LeaveReport(models.Model):

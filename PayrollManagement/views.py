@@ -1,12 +1,12 @@
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow)
+                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
                          ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
-                         AdvSalaryEscalationRuleSerializer
+                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -960,3 +960,6 @@ class LoanEscalationRuleViewSet(viewsets.ModelViewSet):
         instance.save()
         return Response({"message": "Escalation rule reset successfully"}, status=200)
 
+class PayStructureViewSet(viewsets.ModelViewSet):
+    queryset = PayStructure.objects.all()
+    serializer_class = PayStructureSerializer

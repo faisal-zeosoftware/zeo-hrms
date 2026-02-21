@@ -52,7 +52,89 @@ class EmployeeSalaryStructure(models.Model):
     def __str__(self):
         return f"{self.employee} - {self.component.name} ({self.amount})"
 
+class PayStructure(models.Model):
 
+    WORKING_DAY_CHOICES = [
+        ('SUN', 'Sunday'),
+        ('MON', 'Monday'),
+        ('TUE', 'Tuesday'),
+        ('WED', 'Wednesday'),
+        ('THU', 'Thursday'),
+        ('FRI', 'Friday'),
+        ('SAT', 'Saturday'),
+    ]
+
+    SALARY_CALCULATION_CHOICES = [
+        ('CALENDAR', 'Actual days in month'),
+        ('FIXED', 'Organisation working days'),
+    ]
+
+    PAYDAY_TYPE_CHOICES = [
+        ('FIXED_DAY', 'Fixed day'),
+        ('LAST_WORKING_DAY', 'Last working day'),
+    ]
+
+    ATTENDANCE_CYCLE_CHOICES = [
+        ('MONTH', 'Calendar Month'),
+        ('CUSTOM', 'Custom Cycle'),
+    ]
+
+    branch = models.OneToOneField(
+        'OrganisationManager.brnch_mstr',
+        on_delete=models.CASCADE,
+        related_name='pay_structure'
+    )
+
+    # 1️⃣ Working week
+    working_days = models.JSONField(
+        default=list,
+        help_text="Example: ['MON','TUE','WED','THU','FRI']"
+    )
+
+    # 2️⃣ Salary calculation
+    salary_calculation_type = models.CharField(
+        max_length=20,
+        choices=SALARY_CALCULATION_CHOICES,
+        default='CALENDAR'
+    )
+    fixed_working_days = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True
+    )
+
+    # 3️⃣ Attendance cycle
+    attendance_cycle_type = models.CharField(
+        max_length=10,
+        choices=ATTENDANCE_CYCLE_CHOICES,
+        default='MONTH'
+    )
+    cycle_start_day = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Example: 26"
+    )
+    cycle_end_day = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Example: 25"
+    )
+
+    # 4️⃣ Payday rule
+    payday_type = models.CharField(
+        max_length=20,
+        choices=PAYDAY_TYPE_CHOICES,
+        default='FIXED_DAY'
+    )
+    payday = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True
+    )
+
+    payroll_start_month = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"PayStructure - {self.branch}"
 class PayrollRun(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -79,6 +161,9 @@ class PayrollRun(models.Model):
     name = models.CharField(max_length=100, blank=True, help_text="Optional payroll run name")
     month = models.IntegerField(choices=MONTH_CHOICES, help_text="Month of the payroll period")
     year = models.IntegerField(help_text="Year of the payroll period")
+    # 🔐 FROZEN ATTENDANCE DATES
+    attendance_start_date = models.DateField(blank=True,null=True,)
+    attendance_end_date = models.DateField(blank=True,null=True,)
     payment_date = models.DateField(null=True, blank=True, help_text="When employees will be paid")
     branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.SET_NULL, null=True, blank=True)
     department = models.ForeignKey('OrganisationManager.dept_master', on_delete=models.SET_NULL, null=True, blank=True)

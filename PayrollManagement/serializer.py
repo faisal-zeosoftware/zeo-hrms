@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow)
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure)
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
@@ -655,3 +655,8 @@ class LoanEscalationRuleSerializer(serializers.ModelSerializer):
             'level', 'role', 'approver', 'loan_type', 
             'loan_type_name', 'approver_name', 'escalate_to_name'
         ]
+
+class PayStructureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PayStructure
+        fields = '__all__'

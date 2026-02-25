@@ -23,7 +23,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
@@ -899,3 +899,8 @@ class EscalationRuleSerializer(serializers.ModelSerializer):
             'level', 'role', 'approver', 'request_type', 'branch',
             'request_type_name', 'approver_name', 'escalate_to_name'
         ]
+
+class ResignationRequestNotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResignationRequestNotification
+        fields = '__all__'

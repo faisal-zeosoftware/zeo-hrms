@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure)
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave)
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
@@ -660,3 +660,12 @@ class PayStructureSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayStructure
         fields = '__all__'
+
+class PayslipLeaveSerializer(serializers.ModelSerializer):
+    leave_type_name = serializers.CharField(
+        source="leave_type.name", read_only=True
+    )
+
+    class Meta:
+        model = PayslipLeave
+        fields = ["leave_type", "leave_type_name", "days"]

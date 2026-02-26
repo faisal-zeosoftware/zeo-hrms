@@ -331,7 +331,23 @@ class PayslipComponent(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     def __str__(self):
         return f"{self.payslip.employee} - {self.component.name} ({self.amount})"
+class PayslipLeave(models.Model):
+    payslip = models.ForeignKey(
+        "PayrollManagement.Payslip",
+        on_delete=models.CASCADE,
+        related_name="leave_details"
+    )
+    leave_type = models.ForeignKey(
+        "calendars.leave_type",
+        on_delete=models.CASCADE
+    )
+    days = models.DecimalField(max_digits=5, decimal_places=2)
 
+    class Meta:
+        unique_together = ("payslip", "leave_type")
+
+    def __str__(self):
+        return f"{self.leave_type} - {self.days} days"
 class LoanCommonWorkflow(models.Model):
     level    = models.IntegerField()
     role     = models.CharField(max_length=50, null=True, blank=True)

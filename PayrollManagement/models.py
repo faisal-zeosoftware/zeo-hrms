@@ -159,6 +159,7 @@ class PayrollRun(models.Model):
     ]
     
     name = models.CharField(max_length=100, blank=True, help_text="Optional payroll run name")
+    arabic_name = models.CharField(max_length=100, blank=True, help_text="arabic payroll run name")
     month = models.IntegerField(choices=MONTH_CHOICES, help_text="Month of the payroll period")
     year = models.IntegerField(help_text="Year of the payroll period")
     # 🔐 FROZEN ATTENDANCE DATES

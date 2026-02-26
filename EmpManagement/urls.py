@@ -9,7 +9,7 @@ from .views import (EmpFamViewSet, EmpJobHistoryvSet, EmpViewSet,NotificationVie
                     EmailConfigurationViewSet,UpdateESSUserView,ESSUserListView,NotificationSettingsViewSet,DocExpEmailTemplateViewset,CommonWorkflowViewSet,Doc_CustomFieldValueViewSet,EmployeeBankDetailViewset,
                     EmpBankBulkuploadViewSet,EmplistViewSet,Fam_CustomFieldValueViewSet,JobHistory_CustomFieldValueViewSet,Qf_CustomFieldValueViewSet,DocumentRequestViewset,
                     DocumentApprovalViewset,DocumentApprovalLevelViewset,DocRequestEmailTemplateViewset,DocRequestNotificationViewset,EmployeeResignationViewset,ResignationApprovalLevelViewset,ResignationApprovalViewset,EndOfServiceViewset,
-                    DocRequestTypeViewset,EmployeeByUserViewSet,EscalationRuleViewSet,ResignationEmailTemplateViewset
+                    DocRequestTypeViewset,EmployeeByUserViewSet,EscalationRuleViewSet,ResignationEmailTemplateViewset,ResignationRequestNotificationViewSet
                     )
 
 # Define the main router for top-level routes
@@ -69,6 +69,8 @@ router.register(r'resign-approval', ResignationApprovalViewset, basename='resign
 router.register(r'end-of-service',EndOfServiceViewset, basename='end-of-service')
 router.register(r'emp-by-user', EmployeeByUserViewSet, basename='emp-by-user')
 router.register(r'escalation-rules', EscalationRuleViewSet, basename='escalation-rules')
+router.register(r'resigntion-notification', ResignationRequestNotificationViewSet, basename='resigntion-notification')
+
 
 
 

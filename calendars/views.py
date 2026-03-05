@@ -519,6 +519,7 @@ class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
 class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
+    parser_classes = [viewsets.ModelViewSet.parser_classes[0], MultiPartParser, FormParser] # JSON, MultiPart, Form
     # permission_classes = [AttendancePermission]
     
     @staticmethod
@@ -619,13 +620,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 email_template_model=LvEmailTemplate,
                 notification_model=LvApprovalNotify
             )
+
     @action(detail=False, methods=['post'])
     def enroll_face(self, request):
         emp_id = request.data.get("employee")
-        face_photo = request.data.get("face_photo")
+        # Support both file upload (request.FILES) and base64 (request.data)
+        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
         
         if not emp_id or not face_photo:
-            return Response({"detail": "Employee ID and face photo are required"}, status=400)
+            return Response({"detail": "Employee ID and face photo are required. You can upload a file or send a base64 string."}, status=400)
             
         try:
             employee = emp_master.objects.get(id=emp_id)
@@ -659,11 +662,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Employee not found"}, status=404)
 
         # Face Verification logic
-        face_photo = request.data.get("face_photo")
+        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
         is_face_verified = False
         if employee.face_encoding:
             if not face_photo:
-                return Response({"detail": "Face verification required but no photo provided"}, status=400)
+                return Response({"detail": "Face verification required but no photo/file provided"}, status=400)
             
             current_encoding = face_utils.get_face_encoding(face_photo)
             if current_encoding:
@@ -727,11 +730,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Face Verification logic
-        face_photo = request.data.get("face_photo")
+        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
         is_face_verified = False
         if employee.face_encoding:
             if not face_photo:
-                return Response({"detail": "Face verification required but no photo provided"}, status=400)
+                return Response({"detail": "Face verification required but no photo/file provided"}, status=400)
             
             current_encoding = face_utils.get_face_encoding(face_photo)
             if current_encoding:
@@ -779,6 +782,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK
         )
+
     @action(detail=False, methods=['get'])
     def employee_attendance(self, request):
         """

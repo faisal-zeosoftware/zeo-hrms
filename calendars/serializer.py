@@ -4,7 +4,7 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                     ShiftOverride,EmployeeMachineMapping,LeaveReport,
                      LeaveApprovalLevels,LeaveApproval,LvApprovalNotify,LvEmailTemplate,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
-                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule
+                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -335,8 +335,12 @@ class EmployeeLeaveBalanceSerializer(serializers.ModelSerializer):
             rep['employee'] = instance.employee.emp_code
            
         return rep
-
+class AttendanceLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AttendanceLog
+        fields = ['id', 'attendance', 'log_type', 'timestamp', 'lat', 'lng', 'location', 'is_face_verified', 'verification_photo']
 class AttendanceSerializer(serializers.ModelSerializer):
+    logs = AttendanceLogSerializer(many=True, read_only=True)
     class Meta:
         model = Attendance
         fields ='__all__'

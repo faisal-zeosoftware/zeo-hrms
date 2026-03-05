@@ -2,14 +2,16 @@ from django.shortcuts import render
 from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,assign_holiday,WeekendDetail,leave_type,leave_entitlement,applicablity_critirea,emp_leave_balance,leave_accrual_transaction,leave_reset_transaction,employee_leave_request,Attendance,Shift,
                      EmployeeMachineMapping,LeaveReport,LeaveApprovalLevels,LeaveApproval,LvEmailTemplate,LvApprovalNotify,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                      AttendanceReport,lvBalanceReport,EmployeeYearlyCalendar,CompensatoryLeaveRequest,CompensatoryLeaveTransaction,CompensatoryLeaveBalance,ShiftPattern,EmployeeShiftSchedule,ShiftOverride,LeaveResetPolicy,LeaveCarryForwardTransaction,
-                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule
+                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog
                     )
 from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,HolidayAssignSerializer,HolidayCalandarSerializer,HolidaySerializer,WeekendDetailSerializer,LeaveTypeSerializer,LeaveEntitlementSerializer,ApplicableSerializer,EmployeeLeaveBalanceSerializer,AccrualSerializer,ResetSerializer,LeaveRequestSerializer,
                          AttendanceSerializer,ShiftSerializer,ImportAttendanceSerializer,EmployeeMappingSerializer,LeaveReportSerializer,LvApprovalLevelSerializer,EmployeeYearlyCalendarSerializer,
                          LvApprovalSerializer,LvEmailTemplateSerializer,LvApprovalNotifySerializer,LvCommonWorkflowSerializer,LvRejectionReasonSerializer,LvApprovalReportSerializer,AttendanceReportSerializer,lvBalanceReportSerializer,
                          CompensatoryLeaveRequestSerializer,CompensatoryLeaveTransactionSerializer,CompensatoryLeaveBalanceSerializer,ShiftOverrideSerializer,ShiftPatternSerializer,EmployeeShiftScheduleSerializer,LeaveResetPolicySerializer,LeaveCarryForwardTransactionSerializer,
-                         LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer,OvertimeRuleSerializer
+                         LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer,OvertimeRuleSerializer,
+                         AttendanceLogSerializer
                          )
+from . import face_utils
 from rest_framework import viewsets,filters,status
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -618,6 +620,30 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 notification_model=LvApprovalNotify
             )
     @action(detail=False, methods=['post'])
+    def enroll_face(self, request):
+        emp_id = request.data.get("employee")
+        face_photo = request.data.get("face_photo")
+        
+        if not emp_id or not face_photo:
+            return Response({"detail": "Employee ID and face photo are required"}, status=400)
+            
+        try:
+            employee = emp_master.objects.get(id=emp_id)
+        except emp_master.DoesNotExist:
+            return Response({"detail": "Employee not found"}, status=404)
+        
+        encoding = face_utils.get_face_encoding(face_photo)
+        
+        if encoding:
+            employee.face_encoding = encoding
+            employee.save()
+            return Response({"detail": "Face enrolled successfully"})
+        else:
+            if face_utils.DeepFace is None:
+                return Response({"detail": "DeepFace library is not installed on the server. Please run: pip install deepface"}, status=500)
+            return Response({"detail": "Face enrollment failed. Please ensure your face is clearly visible and not too far from the camera."}, status=400)
+
+    @action(detail=False, methods=['post'])
     def check_in(self, request):
         emp_id = request.data.get("employee")
         date_str = request.data.get("date")
@@ -632,6 +658,22 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         except emp_master.DoesNotExist:
             return Response({"detail": "Employee not found"}, status=404)
 
+        # Face Verification logic
+        face_photo = request.data.get("face_photo")
+        is_face_verified = False
+        if employee.face_encoding:
+            if not face_photo:
+                return Response({"detail": "Face verification required but no photo provided"}, status=400)
+            
+            current_encoding = face_utils.get_face_encoding(face_photo)
+            if current_encoding:
+                is_face_verified = face_utils.verify_face(employee.face_encoding, current_encoding)
+            
+            if not is_face_verified:
+                if face_utils.DeepFace is None:
+                    return Response({"detail": "Biometric system is offline. Please contact IT."}, status=500)
+                return Response({"detail": "Face verification failed. Please try again with a clearer photo."}, status=400)
+
         attendance, created = Attendance.objects.get_or_create(
             employee=employee,
             date=date
@@ -640,18 +682,31 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         # if attendance.check_in_time:
         #     return Response({"detail": "Already checked in"}, status=400)
 
-        attendance.check_in_time = localtime(now()).time()
+        current_time = localtime(now()).time()
+        
+        # Only set if it's the first check-in of the day
+        if not attendance.check_in_time:
+            attendance.check_in_time = current_time
+            attendance.check_in_lat = lat
+            attendance.check_in_lng = lng
+            attendance.check_in_location = location_name
 
-        # 📌 DO NOT SET SHIFT HERE
-        attendance.check_in_lat = lat
-        attendance.check_in_lng = lng
-        attendance.check_in_location = location_name
+        # Always record the log entry
+        AttendanceLog.objects.create(
+            attendance=attendance,
+            log_type='check_in',
+            lat=lat,
+            lng=lng,
+            location=location_name,
+            is_face_verified=is_face_verified
+        )
+
         self.check_geofence(employee, lat, lng, "in")
         attendance.save()  # ← fetch_shift() runs here
-        self.check_geofence(employee, lat, lng, "in")
-
+        
         return Response({
             "status": "Check-in recorded successfully",
+            "face_verified": is_face_verified,
             "shift": attendance.shift.name if attendance.shift else None,
             "location": location_name
         })
@@ -661,46 +716,69 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
-        # NEW: Location data from frontend
         lat = request.data.get("check_out_lat")
         lng = request.data.get("check_out_lng")
         location_name = request.data.get("check_out_location")
 
-        # if not lat or not lng:
-        #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
             attendance = Attendance.objects.get(employee_id=emp_id, date=date)
+            employee = attendance.employee
         except Attendance.DoesNotExist:
             return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if attendance.check_out_time:
-            return Response({"detail": "Already checked out"}, status=status.HTTP_400_BAD_REQUEST)
+        # Face Verification logic
+        face_photo = request.data.get("face_photo")
+        is_face_verified = False
+        if employee.face_encoding:
+            if not face_photo:
+                return Response({"detail": "Face verification required but no photo provided"}, status=400)
+            
+            current_encoding = face_utils.get_face_encoding(face_photo)
+            if current_encoding:
+                is_face_verified = face_utils.verify_face(employee.face_encoding, current_encoding)
+            
+            if not is_face_verified:
+                if face_utils.DeepFace is None:
+                    return Response({"detail": "Biometric system is offline. Please contact IT."}, status=500)
+                return Response({"detail": "Face verification failed. Please try again with a clearer photo."}, status=400)
 
-        # Existing logic: set check-out time
+        # if attendance.check_out_time:
+        #     return Response({"detail": "Already checked out"}, status= status.HTTP_400_BAD_REQUEST)
+
         tenant_time = localtime(now()).time()
+        
+        # Always update check-out time to the latest one
         attendance.check_out_time = tenant_time
-
-        # NEW: store location
         attendance.check_out_lat = lat
         attendance.check_out_lng = lng
         attendance.check_out_location = location_name
 
-        # Existing logic: calculate hours
+        # Always record the log entry
+        AttendanceLog.objects.create(
+            attendance=attendance,
+            log_type='check_out',
+            lat=lat,
+            lng=lng,
+            location=location_name,
+            is_face_verified=is_face_verified
+        )
+
         attendance.calculate_total_hours()
         attendance.save()
         self.check_geofence(attendance.employee, lat, lng, "out")
+        
         from calendars.utils import calculate_employee_overtime
         calculate_employee_overtime(attendance)
 
         return Response(
             {
                 "status": "Check-out recorded successfully",
+                "face_verified": is_face_verified,
+                "working_hours": str(attendance.total_working_hours) if attendance.total_working_hours else None,
                 "location": location_name,
             },
             status=status.HTTP_200_OK
         )
-
     @action(detail=False, methods=['get'])
     def employee_attendance(self, request):
         """
@@ -717,7 +795,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         from_date = request.query_params.get("from_date")
         to_date = request.query_params.get("to_date")
 
-        qs = Attendance.objects.all().select_related("employee", "shift")
+        qs = Attendance.objects.all().select_related("employee", "shift").prefetch_related("logs")
 
         # ------------------------------------------------------------
         # 1️⃣ IF EMPLOYEE SELECTED → SHOW ONLY THAT EMPLOYEE
@@ -765,12 +843,168 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 "check_out_location": att.check_out_location,
                 "total_hours": total_hours,
                 "overtime": overtime_str,
+                "is_face_verified": any(log.is_face_verified for log in att.logs.all()),
+                "logs": AttendanceLogSerializer(att.logs.all(), many=True).data,
             })
 
         return Response({
             "filtered_employee": emp_id,
             "attendance": result
         })
+    # @action(detail=False, methods=['post'])
+    # def check_in(self, request):
+    #     emp_id = request.data.get("employee")
+    #     date_str = request.data.get("date")
+    #     date = self.parse_date(date_str) if date_str else timezone.now().date()
+
+    #     lat = request.data.get("check_in_lat")
+    #     lng = request.data.get("check_in_lng")
+    #     location_name = request.data.get("check_in_location")
+
+    #     try:
+    #         employee = emp_master.objects.get(id=emp_id)
+    #     except emp_master.DoesNotExist:
+    #         return Response({"detail": "Employee not found"}, status=404)
+
+    #     attendance, created = Attendance.objects.get_or_create(
+    #         employee=employee,
+    #         date=date
+    #     )
+
+    #     # if attendance.check_in_time:
+    #     #     return Response({"detail": "Already checked in"}, status=400)
+
+    #     attendance.check_in_time = localtime(now()).time()
+
+    #     # 📌 DO NOT SET SHIFT HERE
+    #     attendance.check_in_lat = lat
+    #     attendance.check_in_lng = lng
+    #     attendance.check_in_location = location_name
+    #     self.check_geofence(employee, lat, lng, "in")
+    #     attendance.save()  # ← fetch_shift() runs here
+    #     self.check_geofence(employee, lat, lng, "in")
+
+    #     return Response({
+    #         "status": "Check-in recorded successfully",
+    #         "shift": attendance.shift.name if attendance.shift else None,
+    #         "location": location_name
+    #     })
+    # @action(detail=False, methods=['post'])
+    # def check_out(self, request):
+    #     emp_id = request.data.get("employee")
+    #     date_str = request.data.get("date")
+    #     date = self.parse_date(date_str) if date_str else timezone.now().date()
+
+    #     # NEW: Location data from frontend
+    #     lat = request.data.get("check_out_lat")
+    #     lng = request.data.get("check_out_lng")
+    #     location_name = request.data.get("check_out_location")
+
+    #     # if not lat or not lng:
+    #     #     return Response({"detail": "Latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     try:
+    #         attendance = Attendance.objects.get(employee_id=emp_id, date=date)
+    #     except Attendance.DoesNotExist:
+    #         return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     if attendance.check_out_time:
+    #         return Response({"detail": "Already checked out"}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     # Existing logic: set check-out time
+    #     tenant_time = localtime(now()).time()
+    #     attendance.check_out_time = tenant_time
+
+    #     # NEW: store location
+    #     attendance.check_out_lat = lat
+    #     attendance.check_out_lng = lng
+    #     attendance.check_out_location = location_name
+
+    #     # Existing logic: calculate hours
+    #     attendance.calculate_total_hours()
+    #     attendance.save()
+    #     self.check_geofence(attendance.employee, lat, lng, "out")
+    #     from calendars.utils import calculate_employee_overtime
+    #     calculate_employee_overtime(attendance)
+
+    #     return Response(
+    #         {
+    #             "status": "Check-out recorded successfully",
+    #             "location": location_name,
+    #         },
+    #         status=status.HTTP_200_OK
+    #     )
+
+    # @action(detail=False, methods=['get'])
+    # def employee_attendance(self, request):
+    #     """
+    #     Multi-mode attendance report:
+    #     - No filters → all employees, all dates
+    #     - employee_id → all dates of that employee
+    #     - date filters → filtered attendance (all employees or single employee)
+    #     - month/year → monthly summary (all employees or single employee)
+    #     """
+
+    #     emp_id = request.query_params.get("employee_id")
+    #     month = request.query_params.get("month")
+    #     year = request.query_params.get("year")
+    #     from_date = request.query_params.get("from_date")
+    #     to_date = request.query_params.get("to_date")
+
+    #     qs = Attendance.objects.all().select_related("employee", "shift")
+
+    #     # ------------------------------------------------------------
+    #     # 1️⃣ IF EMPLOYEE SELECTED → SHOW ONLY THAT EMPLOYEE
+    #     # ------------------------------------------------------------
+    #     if emp_id:
+    #         qs = qs.filter(employee=emp_id)
+
+    #     # ------------------------------------------------------------
+    #     # 2️⃣ APPLY DATE FILTERS IF GIVEN
+    #     # ------------------------------------------------------------
+    #     if month and year:
+    #         qs = qs.filter(date__month=month, date__year=year)
+
+    #     if from_date and to_date:
+    #         qs = qs.filter(date__range=[from_date, to_date])
+
+    #     if from_date and not to_date:
+    #         qs = qs.filter(date=from_date)
+
+    #     # ------------------------------------------------------------
+    #     # 3️⃣ NO FILTER AT ALL → LIST ALL EMPLOYEES WITH ALL DATES
+    #     # ------------------------------------------------------------
+    #     qs = qs.order_by("employee__emp_first_name", "-date")
+
+    #     result = {}
+
+    #     for att in qs:
+    #         emp_key = f"{att.employee.id} - {att.employee.emp_first_name}"
+
+    #         if emp_key not in result:
+    #             result[emp_key] = []
+
+    #         # Convert durations to readable string
+    #         total_hours = str(att.total_hours) if att.total_hours else "00:00:00"
+    #         overtime = getattr(att, "overtime_hours", None)
+    #         overtime_str = str(overtime) if overtime else "00:00:00"
+
+    #         result[emp_key].append({
+    #             "date": att.date,
+    #             "day": att.date.strftime("%A"),
+    #             "shift": att.shift.name if att.shift else None,
+    #             "check_in": att.check_in_time,
+    #             "check_out": att.check_out_time,
+    #             "check_in_location": att.check_in_location,
+    #             "check_out_location": att.check_out_location,
+    #             "total_hours": total_hours,
+    #             "overtime": overtime_str,
+    #         })
+
+    #     return Response({
+    #         "filtered_employee": emp_id,
+    #         "attendance": result
+    #     })
 
 
     @action(detail=False, methods=['get'])

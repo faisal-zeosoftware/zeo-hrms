@@ -2067,7 +2067,18 @@ def handle_rejoining(sender, instance, **kwargs):
             'unpaid_leave_days': unpaid_days,
         }
     )
-
+class AttendanceLog(models.Model):
+    attendance = models.ForeignKey(Attendance, on_delete=models.CASCADE, related_name='logs')
+    log_type = models.CharField(max_length=10, choices=(('check_in', 'Check In'), ('check_out', 'Check Out')))
+    timestamp = models.DateTimeField(auto_now_add=True)
+    lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location = models.CharField(max_length=255, null=True, blank=True)
+    is_face_verified = models.BooleanField(default=False)
+    verification_photo = models.ImageField(upload_to='attendance_verification/', null=True, blank=True)
+    def __str__(self):
+        return f"{self.attendance.employee} - {self.log_type} at {self.timestamp}"
+    
 class AttendanceRecheck(models.Model):
     attendance = models.ForeignKey(Attendance,on_delete=models.CASCADE,related_name='rechecks')
     checked_at = models.DateTimeField(auto_now_add=True)

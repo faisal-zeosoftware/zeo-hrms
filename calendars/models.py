@@ -2076,6 +2076,11 @@ class AttendanceLog(models.Model):
     location = models.CharField(max_length=255, null=True, blank=True)
     is_face_verified = models.BooleanField(default=False)
     verification_photo = models.ImageField(upload_to='attendance_verification/', null=True, blank=True)
+    auth_method = models.CharField(
+        max_length=20, 
+        choices=(('face', 'Face Recognition'), ('barcode', 'Barcode Scan'), ('manual', 'Manual Entry')),
+        default='manual'
+    )
     def __str__(self):
         return f"{self.attendance.employee} - {self.log_type} at {self.timestamp}"
     

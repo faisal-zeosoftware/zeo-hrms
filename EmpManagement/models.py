@@ -80,7 +80,8 @@ class emp_master(models.Model):
     work_location            = models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL,related_name='work_location',null=True,blank =True)
     visa_location            = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.SET_NULL,related_name='visa_location',null=True,blank =True)
     face_encoding            = models.JSONField(null=True, blank=True)
-    
+    barcode_number           = models.CharField(max_length=100, unique=True, null=True, blank=True, help_text="Unique barcode or card ID for attendance scanning")
+
     def save(self, *args, **kwargs):
         created = not self.pk
         authenticated_user = kwargs.pop('authenticated_user', None)

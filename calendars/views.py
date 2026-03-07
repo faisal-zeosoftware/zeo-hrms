@@ -649,6 +649,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def check_in(self, request):
         emp_id = request.data.get("employee")
+        barcode = request.data.get("barcode")
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
@@ -656,15 +657,29 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lng = request.data.get("check_in_lng")
         location_name = request.data.get("check_in_location")
 
-        try:
-            employee = emp_master.objects.get(id=emp_id)
-        except emp_master.DoesNotExist:
-            return Response({"detail": "Employee not found"}, status=404)
+        employee = None
+        auth_method = 'manual'
 
-        # Face Verification logic
+        # 1. Identify Employee
+        if barcode:
+            try:
+                employee = emp_master.objects.get(barcode_number=barcode)
+                auth_method = 'barcode'
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Invalid barcode"}, status=404)
+        elif emp_id:
+            try:
+                employee = emp_master.objects.get(id=emp_id)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Employee not found"}, status=404)
+        else:
+            return Response({"detail": "Employee ID or barcode is required"}, status=400)
+
+        # 2. Face Verification logic (Only if identified by ID and has encoding, or if specifically requested)
         face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
         is_face_verified = False
-        if employee.face_encoding:
+        
+        if auth_method != 'barcode' and employee.face_encoding:
             if not face_photo:
                 return Response({"detail": "Face verification required but no photo/file provided"}, status=400)
             
@@ -676,7 +691,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if face_utils.DeepFace is None:
                     return Response({"detail": "Biometric system is offline. Please contact IT."}, status=500)
                 return Response({"detail": "Face verification failed. Please try again with a clearer photo."}, status=400)
-
+            
+            auth_method = 'face'
+        elif auth_method == 'barcode':
+            is_face_verified = True # Consider barcode scan as "verified"
+        
         attendance, created = Attendance.objects.get_or_create(
             employee=employee,
             date=date
@@ -701,7 +720,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             lat=lat,
             lng=lng,
             location=location_name,
-            is_face_verified=is_face_verified
+            is_face_verified=is_face_verified,
+            auth_method=auth_method
         )
 
         self.check_geofence(employee, lat, lng, "in")
@@ -716,6 +736,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def check_out(self, request):
         emp_id = request.data.get("employee")
+        barcode = request.data.get("barcode")
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
@@ -723,16 +744,33 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lng = request.data.get("check_out_lng")
         location_name = request.data.get("check_out_location")
 
-        try:
-            attendance = Attendance.objects.get(employee_id=emp_id, date=date)
-            employee = attendance.employee
-        except Attendance.DoesNotExist:
-            return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
+        employee = None
+        auth_method = 'manual'
 
-        # Face Verification logic
+        # 1. Identify Employee & Attendance
+        if barcode:
+            try:
+                employee = emp_master.objects.get(barcode_number=barcode)
+                auth_method = 'barcode'
+                attendance = Attendance.objects.get(employee=employee, date=date)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Invalid barcode"}, status=404)
+            except Attendance.DoesNotExist:
+                return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
+        elif emp_id:
+            try:
+                attendance = Attendance.objects.get(employee_id=emp_id, date=date)
+                employee = attendance.employee
+            except Attendance.DoesNotExist:
+                return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"detail": "Employee ID or barcode is required"}, status=400)
+
+        # 2. Face Verification logic
         face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
         is_face_verified = False
-        if employee.face_encoding:
+        
+        if auth_method != 'barcode' and employee.face_encoding:
             if not face_photo:
                 return Response({"detail": "Face verification required but no photo/file provided"}, status=400)
             
@@ -744,6 +782,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if face_utils.DeepFace is None:
                     return Response({"detail": "Biometric system is offline. Please contact IT."}, status=500)
                 return Response({"detail": "Face verification failed. Please try again with a clearer photo."}, status=400)
+            
+            auth_method = 'face'
+        elif auth_method == 'barcode':
+            is_face_verified = True
+        
 
         # if attendance.check_out_time:
         #     return Response({"detail": "Already checked out"}, status= status.HTTP_400_BAD_REQUEST)
@@ -763,7 +806,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             lat=lat,
             lng=lng,
             location=location_name,
-            is_face_verified=is_face_verified
+            is_face_verified=is_face_verified,
+            auth_method=auth_method
         )
 
         attendance.calculate_total_hours()
@@ -777,7 +821,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             {
                 "status": "Check-out recorded successfully",
                 "face_verified": is_face_verified,
-                "working_hours": str(attendance.total_working_hours) if attendance.total_working_hours else None,
+                "working_hours": str(attendance.total_hours) if attendance.total_hours else None,
                 "location": location_name,
             },
             status=status.HTTP_200_OK

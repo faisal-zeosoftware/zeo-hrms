@@ -338,7 +338,7 @@ class EmployeeLeaveBalanceSerializer(serializers.ModelSerializer):
 class AttendanceLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceLog
-        fields = ['id', 'attendance', 'log_type', 'timestamp', 'lat', 'lng', 'location', 'is_face_verified', 'verification_photo']
+        fields = ['id', 'attendance', 'log_type', 'timestamp', 'lat', 'lng', 'location', 'is_face_verified', 'verification_photo','auth_method']
 class AttendanceSerializer(serializers.ModelSerializer):
     logs = AttendanceLogSerializer(many=True, read_only=True)
     class Meta:

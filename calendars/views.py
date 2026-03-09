@@ -647,9 +647,62 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Face enrollment failed. Please ensure your face is clearly visible and not too far from the camera."}, status=400)
 
     @action(detail=False, methods=['post'])
-    def check_in(self, request):
+    def register_barcode(self, request):
         emp_id = request.data.get("employee")
         barcode = request.data.get("barcode")
+        
+        if not emp_id or not barcode:
+            return Response({"detail": "Employee ID and barcode string are required."}, status=400)
+            
+        try:
+            employee = emp_master.objects.get(id=emp_id)
+        except emp_master.DoesNotExist:
+            return Response({"detail": "Employee not found"}, status=404)
+            
+        # Check if barcode is already assigned to someone else
+        if emp_master.objects.filter(barcode_number=barcode).exclude(id=emp_id).exists():
+            return Response({"detail": "This barcode is already assigned to another employee."}, status=400)
+            
+        employee.barcode_number = barcode
+        employee.save()
+        
+        return Response({"detail": f"Barcode registered successfully for {employee.emp_code}"})
+
+    def identify_employee(self, barcode=None, face_photo=None):
+        """
+        Identifies an employee by barcode or face recognition.
+        Returns (employee, auth_method, is_face_verified, error_detail)
+        """
+        if barcode:
+            try:
+                employee = emp_master.objects.get(barcode_number=barcode)
+                return employee, 'barcode', True, None
+            except emp_master.DoesNotExist:
+                return None, 'barcode', False, "Invalid barcode"
+
+        if face_photo:
+            current_encoding = face_utils.get_face_encoding(face_photo)
+            if not current_encoding:
+                if face_utils.DeepFace is None:
+                    return None, 'face', False, "Biometric system is offline. Please contact IT."
+                return None, 'face', False, "No face detected in the photo. Please try again."
+            
+            # Search through all employees with encodings
+            # Optimization: only fetch ID and face_encoding
+            potential_employees = emp_master.objects.exclude(face_encoding__isnull=True).only('id', 'face_encoding')
+            for emp in potential_employees:
+                if emp.face_encoding and face_utils.verify_face(emp.face_encoding, current_encoding):
+                    # Fetch full object for use
+                    return emp_master.objects.get(id=emp.id), 'face', True, None
+            
+            return None, 'face', False, "Face not recognized. Please ensure you are registered."
+
+        return None, 'manual', False, "Face image or barcode is required for identification."
+
+    @action(detail=False, methods=['post'])
+    def check_in(self, request):
+        barcode = request.data.get("barcode")
+        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
@@ -657,45 +710,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lng = request.data.get("check_in_lng")
         location_name = request.data.get("check_in_location")
 
-        employee = None
-        auth_method = 'manual'
-
-        # 1. Identify Employee
-        if barcode:
-            try:
-                employee = emp_master.objects.get(barcode_number=barcode)
-                auth_method = 'barcode'
-            except emp_master.DoesNotExist:
-                return Response({"detail": "Invalid barcode"}, status=404)
-        elif emp_id:
-            try:
-                employee = emp_master.objects.get(id=emp_id)
-            except emp_master.DoesNotExist:
-                return Response({"detail": "Employee not found"}, status=404)
-        else:
-            return Response({"detail": "Employee ID or barcode is required"}, status=400)
-
-        # 2. Face Verification logic (Only if identified by ID and has encoding, or if specifically requested)
-        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
-        is_face_verified = False
+        # Identify Employee
+        employee, auth_method, is_face_verified, error = self.identify_employee(barcode, face_photo)
         
-        if auth_method != 'barcode' and employee.face_encoding:
-            if not face_photo:
-                return Response({"detail": "Face verification required but no photo/file provided"}, status=400)
-            
-            current_encoding = face_utils.get_face_encoding(face_photo)
-            if current_encoding:
-                is_face_verified = face_utils.verify_face(employee.face_encoding, current_encoding)
-            
-            if not is_face_verified:
-                if face_utils.DeepFace is None:
-                    return Response({"detail": "Biometric system is offline. Please contact IT."}, status=500)
-                return Response({"detail": "Face verification failed. Please try again with a clearer photo."}, status=400)
-            
-            auth_method = 'face'
-        elif auth_method == 'barcode':
-            is_face_verified = True # Consider barcode scan as "verified"
-        
+        if not employee:
+            return Response({"detail": error}, status=400)
+
         attendance, created = Attendance.objects.get_or_create(
             employee=employee,
             date=date
@@ -735,8 +755,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         })
     @action(detail=False, methods=['post'])
     def check_out(self, request):
-        emp_id = request.data.get("employee")
         barcode = request.data.get("barcode")
+        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
         date_str = request.data.get("date")
         date = self.parse_date(date_str) if date_str else timezone.now().date()
 
@@ -744,48 +764,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lng = request.data.get("check_out_lng")
         location_name = request.data.get("check_out_location")
 
-        employee = None
-        auth_method = 'manual'
-
-        # 1. Identify Employee & Attendance
-        if barcode:
-            try:
-                employee = emp_master.objects.get(barcode_number=barcode)
-                auth_method = 'barcode'
-                attendance = Attendance.objects.get(employee=employee, date=date)
-            except emp_master.DoesNotExist:
-                return Response({"detail": "Invalid barcode"}, status=404)
-            except Attendance.DoesNotExist:
-                return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
-        elif emp_id:
-            try:
-                attendance = Attendance.objects.get(employee_id=emp_id, date=date)
-                employee = attendance.employee
-            except Attendance.DoesNotExist:
-                return Response({"detail": "No check-in record found"}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            return Response({"detail": "Employee ID or barcode is required"}, status=400)
-
-        # 2. Face Verification logic
-        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
-        is_face_verified = False
+        # Identify Employee
+        employee, auth_method, is_face_verified, error = self.identify_employee(barcode, face_photo)
         
-        if auth_method != 'barcode' and employee.face_encoding:
-            if not face_photo:
-                return Response({"detail": "Face verification required but no photo/file provided"}, status=400)
-            
-            current_encoding = face_utils.get_face_encoding(face_photo)
-            if current_encoding:
-                is_face_verified = face_utils.verify_face(employee.face_encoding, current_encoding)
-            
-            if not is_face_verified:
-                if face_utils.DeepFace is None:
-                    return Response({"detail": "Biometric system is offline. Please contact IT."}, status=500)
-                return Response({"detail": "Face verification failed. Please try again with a clearer photo."}, status=400)
-            
-            auth_method = 'face'
-        elif auth_method == 'barcode':
-            is_face_verified = True
+        if not employee:
+            return Response({"detail": error}, status=400)
+
+        try:
+            attendance = Attendance.objects.get(employee=employee, date=date)
+        except Attendance.DoesNotExist:
+            return Response({"detail": "No check-in record found for today"}, status=status.HTTP_400_BAD_REQUEST)
         
 
         # if attendance.check_out_time:

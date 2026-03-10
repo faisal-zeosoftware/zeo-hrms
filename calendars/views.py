@@ -522,6 +522,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
     parser_classes = [viewsets.ModelViewSet.parser_classes[0], MultiPartParser, FormParser] # JSON, MultiPart, Form
     # permission_classes = [AttendancePermission]
+    from .utils import validate_employee_geofence
     
     @staticmethod
     def parse_date(date_string):
@@ -692,7 +693,91 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return None, "face", False, "Face not recognized"
 
         return None, "manual", False, "Face image or barcode is required"
+    # def identify_employee(self, barcode=None, face_photo=None):
+    #     """
+    #     Identifies an employee by barcode or face recognition.
+    #     Returns (employee, auth_method, is_face_verified, error_detail)
+    #     """
+    #     if barcode:
+    #         try:
+    #             employee = emp_master.objects.get(barcode_number=barcode)
+    #             return employee, 'barcode', True, None
+    #         except emp_master.DoesNotExist:
+    #             return None, 'barcode', False, "Invalid barcode"
 
+    #     if face_photo:
+    #         current_encoding = face_utils.get_face_encoding(face_photo)
+    #         if not current_encoding:
+    #             if face_utils.DeepFace is None:
+    #                 return None, 'face', False, "Biometric system is offline. Please contact IT."
+    #             return None, 'face', False, "No face detected in the photo. Please try again."
+            
+    #         # Search through all employees with encodings
+    #         # Optimization: only fetch ID and face_encoding
+    #         potential_employees = emp_master.objects.exclude(face_encoding__isnull=True).only('id', 'face_encoding')
+    #         for emp in potential_employees:
+    #             if emp.face_encoding and face_utils.verify_face(emp.face_encoding, current_encoding):
+    #                 # Fetch full object for use
+    #                 return emp_master.objects.get(id=emp.id), 'face', True, None
+            
+    #         return None, 'face', False, "Face not recognized. Please ensure you are registered."
+
+    #     return None, 'manual', False, "Face image or barcode is required for identification."
+
+    # @action(detail=False, methods=['post'])
+    # def check_in(self, request):
+    #     barcode = request.data.get("barcode")
+    #     face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
+    #     date_str = request.data.get("date")
+    #     date = self.parse_date(date_str) if date_str else timezone.now().date()
+
+    #     lat = request.data.get("check_in_lat")
+    #     lng = request.data.get("check_in_lng")
+    #     location_name = request.data.get("check_in_location")
+
+    #     # Identify Employee
+    #     employee, auth_method, is_face_verified, error = self.identify_employee(barcode, face_photo)
+        
+    #     if not employee:
+    #         return Response({"detail": error}, status=400)
+
+    #     attendance, created = Attendance.objects.get_or_create(
+    #         employee=employee,
+    #         date=date
+    #     )
+
+    #     # if attendance.check_in_time:
+    #     #     return Response({"detail": "Already checked in"}, status=400)
+
+    #     current_time = localtime(now()).time()
+        
+    #     # Only set if it's the first check-in of the day
+    #     if not attendance.check_in_time:
+    #         attendance.check_in_time = current_time
+    #         attendance.check_in_lat = lat
+    #         attendance.check_in_lng = lng
+    #         attendance.check_in_location = location_name
+
+    #     # Always record the log entry
+    #     AttendanceLog.objects.create(
+    #         attendance=attendance,
+    #         log_type='check_in',
+    #         lat=lat,
+    #         lng=lng,
+    #         location=location_name,
+    #         is_face_verified=is_face_verified,
+    #         auth_method=auth_method
+    #     )
+
+    #     self.check_geofence(employee, lat, lng, "in")
+    #     attendance.save()  # ← fetch_shift() runs here
+        
+    #     return Response({
+    #         "status": "Check-in recorded successfully",
+    #         "face_verified": is_face_verified,
+    #         "shift": attendance.shift.name if attendance.shift else None,
+    #         "location": location_name
+    #     })
     @action(detail=False, methods=['post'])
     def check_in(self, request):
 
@@ -756,11 +841,72 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 "shift": attendance.shift.name if attendance.shift else None,
             }
         )
+    # @action(detail=False, methods=['post'])
+    # def check_out(self, request):
+    #     barcode = request.data.get("barcode")
+    #     face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
+    #     date_str = request.data.get("date")
+    #     date = self.parse_date(date_str) if date_str else timezone.now().date()
+
+    #     lat = request.data.get("check_out_lat")
+    #     lng = request.data.get("check_out_lng")
+    #     location_name = request.data.get("check_out_location")
+
+    #     # Identify Employee
+    #     employee, auth_method, is_face_verified, error = self.identify_employee(barcode, face_photo)
+        
+    #     if not employee:
+    #         return Response({"detail": error}, status=400)
+
+    #     try:
+    #         attendance = Attendance.objects.get(employee=employee, date=date)
+    #     except Attendance.DoesNotExist:
+    #         return Response({"detail": "No check-in record found for today"}, status=status.HTTP_400_BAD_REQUEST)
+        
+
+    #     # if attendance.check_out_time:
+    #     #     return Response({"detail": "Already checked out"}, status= status.HTTP_400_BAD_REQUEST)
+
+    #     tenant_time = localtime(now()).time()
+        
+    #     # Always update check-out time to the latest one
+    #     attendance.check_out_time = tenant_time
+    #     attendance.check_out_lat = lat
+    #     attendance.check_out_lng = lng
+    #     attendance.check_out_location = location_name
+
+    #     # Always record the log entry
+    #     AttendanceLog.objects.create(
+    #         attendance=attendance,
+    #         log_type='check_out',
+    #         lat=lat,
+    #         lng=lng,
+    #         location=location_name,
+    #         is_face_verified=is_face_verified,
+    #         auth_method=auth_method
+    #     )
+
+    #     attendance.calculate_total_hours()
+    #     attendance.save()
+    #     self.check_geofence(attendance.employee, lat, lng, "out")
+        
+    #     from calendars.utils import calculate_employee_overtime
+    #     calculate_employee_overtime(attendance)
+
+    #     return Response(
+    #         {
+    #             "status": "Check-out recorded successfully",
+    #             "face_verified": is_face_verified,
+    #             "working_hours": str(attendance.total_hours) if attendance.total_hours else None,
+    #             "location": location_name,
+    #         },
+    #         status=status.HTTP_200_OK
+    #     )
     @action(detail=False, methods=['post'])
     def check_out(self, request):
 
         barcode = request.data.get("barcode")
-        face_photo = request.FILES.get("face_photo") or request.data.get("face_photo")
+        face_photo = request.FILES.get("face_photo")
 
         lat = request.data.get("check_out_lat")
         lng = request.data.get("check_out_lng")

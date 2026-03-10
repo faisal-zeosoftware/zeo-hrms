@@ -347,79 +347,86 @@ def calculate_employee_overtime(attendance):
         )
 
         remaining -= slab_duration
-# def calculate_employee_overtime(attendance):
-#     """
-#     Central OT engine – Zoho style
-#     """
 
-#     employee = attendance.employee
 
-#     # ❌ OT not applicable
-#     if not employee.emp_ot_applicable:
-#         return
+import math
 
-#     if not attendance.total_hours:
-#         return
+def calculate_distance(lat1, lon1, lat2, lon2):
 
-#     worked = attendance.total_hours
-#     shift_duration = attendance.get_shift_duration()
+    R = 6371000
 
-#     # -------------------------------
-#     # 1️⃣ Identify OT TYPE & DURATION
-#     # -------------------------------
+    lat1 = float(lat1)
+    lon1 = float(lon1)
+    lat2 = float(lat2)
+    lon2 = float(lon2)
 
-#     if attendance.is_holiday():
-#         ot_type = 'HOLIDAY'
-#         ot_duration = worked
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
 
-#     elif attendance.is_weekend():
-#         ot_type = 'WEEKEND'
-#         ot_duration = worked
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
 
-#     else:
-#         ot_type = 'NORMAL'
-#         ot_duration = worked - shift_duration
+    a = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
 
-#     if ot_duration <= timedelta(0):
-#         EmployeeOvertime.objects.filter(
-#             employee=employee,
-#             date=attendance.date,
-#             ot_type=ot_type
-#         ).delete()
-#         return
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-#     ot_hours = Decimal(ot_duration.total_seconds()) / Decimal(3600)
+    return R * c
+def bounding_box(lat, lng, radius):
 
-#     # -------------------------------
-#     # 2️⃣ APPLY POLICY
-#     # -------------------------------
+    lat = float(lat)
+    lng = float(lng)
 
-#     policy = (
-#         OvertimePolicy.objects
-#         .filter(ot_type=ot_type, is_active=True)
-#         .filter(
-#             Q(branch__isnull=True) | Q(branch=employee.emp_branch_id),
-#             Q(department__isnull=True) | Q(department=employee.emp_dept_id),
-#             Q(designation__isnull=True) | Q(designation=employee.emp_desgntn_id),
-#             Q(category__isnull=True) | Q(category=employee.emp_ctgry_id),
-#         )
-#         .first()
-#     )
+    lat_change = radius / 111111
+    lng_change = radius / (111111 * math.cos(math.radians(lat)))
 
-#     if not policy:
-#         return  # ❌ No policy = no OT
+    return {
+        "min_lat": lat - lat_change,
+        "max_lat": lat + lat_change,
+        "min_lng": lng - lng_change,
+        "max_lng": lng + lng_change,
+    }
+from django.db.models import Q
+from OrganisationManager.models import BranchGeoFence
 
-#     # -------------------------------
-#     # 3️⃣ SAVE OT
-#     # -------------------------------
 
-#     EmployeeOvertime.objects.update_or_create(
-#         employee=employee,
-#         date=attendance.date,
-#         ot_type=ot_type,
-#         defaults={
-#             'hours': ot_hours.quantize(Decimal('0.01')),
-#             'approved': False,
-            
-#         }
-#     )
+def validate_employee_geofence(employee, lat, lng):
+
+    if not lat or not lng:
+        return False
+
+    lat = float(lat)
+    lng = float(lng)
+
+    locations = BranchGeoFence.objects.filter(
+        is_active=True
+    ).filter(
+        Q(employee=employee) | Q(branch=employee.emp_branch_id)
+    ).distinct()
+
+    if not locations.exists():
+        return True
+
+    for loc in locations:
+
+        box = bounding_box(loc.latitude, loc.longitude, loc.radius)
+
+        if not (
+            box["min_lat"] <= lat <= box["max_lat"]
+            and box["min_lng"] <= lng <= box["max_lng"]
+        ):
+            continue
+
+        distance = calculate_distance(
+            loc.latitude,
+            loc.longitude,
+            lat,
+            lng
+        )
+
+        if distance <= loc.radius:
+            return True
+
+    return False

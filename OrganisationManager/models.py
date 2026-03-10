@@ -681,10 +681,24 @@ class UserBranchAccess(models.Model):
     def __str__(self):
         return f"{self.user}"
 class BranchGeoFence(models.Model):
-    branch = models.ForeignKey(brnch_mstr, on_delete=models.CASCADE, related_name='geo_fences')
-    location_name = models.CharField(max_length=100, help_text="e.g. Main Gate, Warehouse Entry")
-    latitude = models.DecimalField(max_digits=9, decimal_places=6)
-    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    branch = models.ManyToManyField(brnch_mstr, blank=True, related_name='geo_fences')
+    location_type = models.CharField(
+        max_length=20,
+        choices=[
+            ("office", "Office"),
+            ("home", "Home"),
+            ("remote", "Remote Site"),
+            ("client", "Client Site"),
+        ],null=True
+    )
+    location_name = models.CharField(max_length=200, help_text="e.g. Main Gate, Warehouse Entry")
+    employee = models.ManyToManyField(
+        emp_master,
+        blank=True,
+        related_name="allowed_geolocations"
+    )    
+    latitude = models.FloatField()
+    longitude = models.FloatField()
     radius = models.IntegerField(default=50, help_text="Geofence radius in meters")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

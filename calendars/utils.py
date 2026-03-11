@@ -430,3 +430,57 @@ def validate_employee_geofence(employee, lat, lng):
             return True
 
     return False
+
+from django.utils import timezone
+from rest_framework.response import Response
+from .models import Attendance
+
+
+def toggle_attendance(employee):
+
+    today = timezone.now().date()
+
+    last_attendance = Attendance.objects.filter(
+        employee=employee,
+        date=today
+    ).order_by("-id").first()
+
+
+    # First attendance of the day
+    if not last_attendance:
+
+        attendance = Attendance.objects.create(
+            employee=employee,
+            date=today,
+            check_in=timezone.now()
+        )
+
+        return {
+            "action": "CHECK-IN",
+            "attendance_id": attendance.id
+        }
+
+
+    # Last record has check-in but no checkout
+    if last_attendance.check_in and not last_attendance.check_out:
+
+        last_attendance.check_out = timezone.now()
+        last_attendance.save()
+
+        return {
+            "action": "CHECK-OUT",
+            "attendance_id": last_attendance.id
+        }
+
+
+    # Previous record completed → new checkin
+    attendance = Attendance.objects.create(
+        employee=employee,
+        date=today,
+        check_in=timezone.now()
+    )
+
+    return {
+        "action": "CHECK-IN",
+        "attendance_id": attendance.id
+    }

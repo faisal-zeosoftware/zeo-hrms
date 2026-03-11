@@ -693,6 +693,30 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return None, "face", False, "Face not recognized"
 
         return None, "manual", False, "Face image or barcode is required"
+    @action(detail=False, methods=["post"])
+    def face_attendance(self, request):
+        from .utils import toggle_attendance
+
+        face_photo = request.FILES.get("face_photo")
+
+        if not face_photo:
+            return Response({"detail": "Face image required"}, status=400)
+
+
+        employee, method, success, error = self.identify_employee(
+            face_photo=face_photo
+        )
+
+        if not success:
+            return Response({"detail": error}, status=400)
+
+
+        result = toggle_attendance(employee)
+
+        return Response({
+            "employee": employee.emp_first_name,
+            "action": result["action"]
+        })
     # def identify_employee(self, barcode=None, face_photo=None):
     #     """
     #     Identifies an employee by barcode or face recognition.

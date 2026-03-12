@@ -1890,7 +1890,9 @@ class Attendance(models.Model):
     check_in_location = models.CharField(max_length=255, null=True, blank=True)
     check_out_location = models.CharField(max_length=255, null=True, blank=True)    
     total_hours     = models.DurationField(null=True, blank=True)
-    created_at      = models.DateTimeField(auto_now_add=True)
+    check_in_image = models.ImageField(upload_to="attendance/checkin/", null=True, blank=True)
+    check_out_image = models.ImageField(upload_to="attendance/checkout/", null=True, blank=True)
+    reated_at      = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
     class Meta:

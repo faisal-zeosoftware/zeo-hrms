@@ -69,6 +69,7 @@ def verify_face(stored_encoding, current_encoding, threshold=0.4):
         print(f"Verification error: {e}")
         return False
 
+
 def find_matching_employee(current_encoding, threshold=0.35):
 
     employees = emp_master.objects.exclude(face_encoding__isnull=True)

@@ -1873,7 +1873,39 @@ class ShiftOverride(models.Model):
 
     def __str__(self):
         return f"Shift Override for {self.employee} on {self.date}"
-    
+
+class AttendancePolicy(models.Model):
+
+    name = models.CharField(max_length=100)
+    branch = models.ForeignKey(
+        "OrganisationManager.brnch_mstr",
+        on_delete=models.CASCADE,
+        related_name="attendance_policies"
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    # Round Off
+    round_off = models.BooleanField(default=False)
+
+    # Check-in rules
+    early_check_in = models.BooleanField(default=False)
+    early_check_in_minutes = models.IntegerField(default=15)
+
+    late_check_in = models.BooleanField(default=False)
+    late_check_in_minutes = models.IntegerField(default=15)
+
+    # Check-out rules
+    early_check_out = models.BooleanField(default=False)
+    early_check_out_minutes = models.IntegerField(default=15)
+
+    late_check_out = models.BooleanField(default=False)
+    late_check_out_minutes = models.IntegerField(default=15)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.branch.name}"    
 class Attendance(models.Model):
     employee        = models.ForeignKey("EmpManagement.emp_master", on_delete=models.CASCADE)
     shift           = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True)
@@ -1892,7 +1924,7 @@ class Attendance(models.Model):
     total_hours     = models.DurationField(null=True, blank=True)
     check_in_image = models.ImageField(upload_to="attendance/checkin/", null=True, blank=True)
     check_out_image = models.ImageField(upload_to="attendance/checkout/", null=True, blank=True)
-    reated_at      = models.DateTimeField(auto_now_add=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
     class Meta:

@@ -4,7 +4,8 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     LvApprovalViewset,LvEmailTemplateviewset,LvApprovalNotifyviewset,LvCommonWorkflowViewset,LvRejectionViewset,Lv_Approval_ReportViewset,
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
-                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet
+                    LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
+                    AttendancePolicyViewset
                     
                     )
 
@@ -61,6 +62,8 @@ router.register(r'Emp-bulkuplod-attendance',BulkuploadAttendanceViewSet , basena
 router.register(r'escalation-rules', LVEscalationRuleViewSet, basename='lv_escalation-rules')
 router.register(r'overtime_policy', OvertimePolicyViewSet, basename='overtime-policy')
 router.register(r'overtime_rule', OvertimeRuleViewSet, basename='overtime-rule')
+router.register(r'attendance-policy', AttendancePolicyViewset, basename='attendance-policy')
+
 
 urlpatterns = [
     # Other paths

@@ -1,7 +1,7 @@
 
 from datetime import datetime, timedelta
 from django.utils import timezone
-from .models import leave_entitlement, assign_weekend,assign_holiday
+from .models import leave_entitlement, assign_weekend,assign_holiday,AttendancePolicy
 
 def get_employee_weekend_calendar(employee):
     """
@@ -406,12 +406,11 @@ def validate_employee_geofence(employee, lat, lng):
     locations = BranchGeoFence.objects.filter(
         is_active=True
     ).filter(
-        Q(employee__id=employee.id) |
-        Q(branch__id=employee.emp_branch_id.id)
+        Q(employee__in=[employee]) | Q(branch=employee.emp_branch_id)
     ).distinct()
 
     if not locations.exists():
-        return True
+        return True  # No restriction → allow
 
     for loc in locations:
 
@@ -434,3 +433,40 @@ def validate_employee_geofence(employee, lat, lng):
             return True
 
     return False
+
+#attendance policy
+def get_active_policy(employee):
+    return AttendancePolicy.objects.filter(
+        branch=employee.emp_branch_id,
+        is_active=True
+    ).first()
+
+
+def apply_check_in_policy(employee, check_in_time):
+    policy = get_active_policy(employee)
+
+    if not policy:
+        return check_in_time
+
+    dt = datetime.combine(datetime.today(), check_in_time)
+
+    if policy.round_off:
+        minutes = (dt.minute // 5) * 5
+        dt = dt.replace(minute=minutes, second=0)
+
+    return dt.time()
+
+
+def apply_check_out_policy(employee, check_out_time):
+    policy = get_active_policy(employee)
+
+    if not policy:
+        return check_out_time
+
+    dt = datetime.combine(datetime.today(), check_out_time)
+
+    if policy.round_off:
+        minutes = (dt.minute // 5) * 5
+        dt = dt.replace(minute=minutes, second=0)
+
+    return dt.time()

@@ -10,6 +10,18 @@ import base64
 from io import BytesIO
 from PIL import Image
 
+from django.core.files.base import ContentFile
+def convert_base64_to_file(data, name):
+    if isinstance(data, str) and data.startswith("data:image"):
+        format, imgstr = data.split(";base64,")
+        ext = format.split("/")[-1]
+
+        return ContentFile(
+            base64.b64decode(imgstr),
+            name=f"{name}.{ext}"
+        )
+
+    return data
 def get_face_encoding(image_data, model_name='VGG-Face'):
     """
     Extracts face representation (embedding) from an image.
@@ -68,35 +80,3 @@ def verify_face(stored_encoding, current_encoding, threshold=0.4):
     except Exception as e:
         print(f"Verification error: {e}")
         return False
-
-
-def find_matching_employee(current_encoding, threshold=0.35):
-
-    employees = emp_master.objects.exclude(face_encoding__isnull=True)
-
-    if not employees.exists():
-        return None
-
-    current_vector = np.array(current_encoding)
-
-    best_match = None
-    best_distance = 1.0
-
-    for emp in employees:
-
-        stored_vector = np.array(emp.face_encoding)
-
-        cos_sim = np.dot(current_vector, stored_vector) / (
-            np.linalg.norm(current_vector) * np.linalg.norm(stored_vector)
-        )
-
-        cosine_distance = 1 - cos_sim
-
-        if cosine_distance < best_distance:
-            best_distance = cosine_distance
-            best_match = emp
-
-    if best_distance <= threshold:
-        return best_match
-
-    return None

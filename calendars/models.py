@@ -607,6 +607,7 @@ class LeaveResetPolicy(models.Model):
     encashment_value               = models.PositiveIntegerField(default=50)
     encashment_unit_or_percentage  = models.CharField(max_length=50,choices=UNIT_CHOICES,null=True,blank=True)
     encashment_max_limit           = models.PositiveIntegerField(null=True,blank=True)
+    opening_balance                = models.DecimalField(max_digits=10, decimal_places=2, default=0, null=True, blank=True)
     departments                    = models.ManyToManyField('OrganisationManager.dept_master', blank=True, related_name="lv_reset")
     branches                       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True,related_name="lv_reset")
     designations                   = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True,related_name="lv_reset")
@@ -699,6 +700,7 @@ class leave_reset_transaction(models.Model):
     initial_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # Balance before reset
     carry_forward_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     encashment_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    opening_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     final_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # Balance after reset
     year = models.PositiveIntegerField(default=datetime.now().year)
     created_at = models.DateTimeField(auto_now_add=True)

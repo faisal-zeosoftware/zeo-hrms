@@ -142,7 +142,6 @@ def month_name_to_number(month_name):
         'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
     }
     return month_map.get(month_name)    
-
 @shared_task
 def reset_leave_balances():
     tenants = get_all_tenant_schemas()
@@ -184,10 +183,10 @@ def reset_leave_balances():
                     for emp in employees:
                         leave_balance = emp_leave_balance.objects.filter(employee=emp, leave_type=leave_type).first()
                         if not leave_balance:
-                            logger.warning(f"No leave balance found for employee {emp.emp_code} and leave type {leave_type}")
-                            continue
+                            logger.info(f"No leave balance found for employee {emp.emp_code} and leave type {leave_type}. Creating a new one for opening balance.")
+                            leave_balance = emp_leave_balance(employee=emp, leave_type=leave_type, balance=0, openings=0)
 
-                        initial_balance = leave_balance.balance
+                        initial_balance = leave_balance.balance or 0
                         carry_forward_amount = 0
                         encashment_amount = 0
 
@@ -241,8 +240,11 @@ def reset_leave_balances():
                                 created_by=None
                             )
 
+                        opening_balance_amount = float(reset.opening_balance or 0)
+                        final_balance = float(carry_forward_amount) + opening_balance_amount
+
                         # **Apply Leave Reset (Update Balance)**
-                        leave_balance.balance = carry_forward_amount  # Set final balance from carry-forward
+                        leave_balance.balance = final_balance
                         leave_balance.save()
 
                         # **Store Reset Transaction**
@@ -253,20 +255,147 @@ def reset_leave_balances():
                             initial_balance=initial_balance,
                             carry_forward_amount=carry_forward_amount,
                             encashment_amount=encashment_amount,
-                            final_balance=carry_forward_amount,  # Updated balance
+                            opening_balance=opening_balance_amount,
+                            final_balance=final_balance,
                             created_by=None
                         )
 
                         logger.info(
                             f"Reset leave balance for employee {emp.emp_code}. "
                             f"Carry Forward: {carry_forward_amount}, Encashment: {encashment_amount}, "
-                            f"New Balance: {carry_forward_amount}"
+                            f"Opening Balance: {opening_balance_amount}, "
+                            f"New Balance: {final_balance}"
                         )
 
         except Exception as e:
             logger.error(f"Error processing tenant {tenant_schema_name}: {e}")
 
     logger.info("Reset leave balances task completed.")
+
+# @shared_task
+# def reset_leave_balances():
+#     tenants = get_all_tenant_schemas()
+#     today = timezone.now().date()
+#     logger.info(f"Reset leave balances task started on {today}")
+
+#     for tenant_schema_name in tenants:
+#         try:
+#             with schema_context(tenant_schema_name):
+#                 logger.info(f"Processing leave reset for tenant: {tenant_schema_name}")
+
+#                 resets = LeaveResetPolicy.objects.filter(reset=True)
+#                 if not resets.exists():
+#                     logger.info(f"No reset policies found for tenant: {tenant_schema_name}")
+#                     continue
+
+#                 for reset in resets:
+#                     reset_month = month_name_to_number(reset.month)
+#                     reset_day = 1 if reset.day == '1st' else calendar.monthrange(today.year, today.month)[1]
+
+#                     # Check reset condition based on frequency
+#                     if reset.frequency == 'years':
+#                         if today.month != reset_month or today.day != reset_day:
+#                             logger.info(f"Skipping yearly reset for {reset.leave_type}, not the reset date.")
+#                             continue
+#                     elif reset.frequency == 'months':
+#                         if today.day != reset_day:
+#                             logger.info(f"Skipping monthly reset for {reset.leave_type}, not the reset date.")
+#                             continue
+
+#                     leave_type = reset.leave_type
+#                     logger.info(f"Resetting leave balances for {leave_type} on {today}")
+
+#                     employees = emp_master.objects.all()
+#                     if not employees.exists():
+#                         logger.warning(f"No employees found in tenant {tenant_schema_name}")
+#                         continue
+
+#                     for emp in employees:
+#                         leave_balance = emp_leave_balance.objects.filter(employee=emp, leave_type=leave_type).first()
+#                         if not leave_balance:
+#                             logger.warning(f"No leave balance found for employee {emp.emp_code} and leave type {leave_type}")
+#                             continue
+
+#                         initial_balance = leave_balance.balance
+#                         carry_forward_amount = 0
+#                         encashment_amount = 0
+
+#                         # **Carry Forward Calculation**
+#                         if reset.allow_cf and initial_balance > 0:
+#                             if reset.cf_unit_or_percentage == 'percentage':
+#                                 calculated_cf_amount = (initial_balance * reset.cf_value / 100)
+#                                 carry_forward_amount = min(calculated_cf_amount, reset.cf_max_limit if reset.cf_max_limit else calculated_cf_amount)
+#                             else:
+#                                 carry_forward_amount = min(initial_balance, reset.cf_value)
+
+#                             carry_forward_amount = max(carry_forward_amount, 0)  # Ensure no negative values
+
+#                         # Deduct Carry Forward from Leave Balance
+#                         remaining_balance = initial_balance - carry_forward_amount
+
+#                         # **Encashment Calculation**
+#                         if remaining_balance > 0 and reset.allow_encashment:
+#                             if reset.encashment_unit_or_percentage == 'percentage':
+#                                 encashment_amount = min((remaining_balance * reset.encashment_value / 100), reset.encashment_max_limit or remaining_balance)
+#                             else:
+#                                 encashment_amount = min(remaining_balance, reset.encashment_value)
+
+#                             encashment_amount = max(encashment_amount, 0)  # Ensure no negative values
+#                         else:
+#                             encashment_amount = 0
+
+#                         # **Store Carry Forward Transaction**
+#                         if reset.allow_cf and carry_forward_amount > 0:
+#                             LeaveCarryForwardTransaction.objects.create(
+#                                 employee=emp,
+#                                 leave_type=leave_type,
+#                                 reset_date=today,
+#                                 carried_forward_units=carry_forward_amount if reset.cf_unit_or_percentage == 'unit' else 0,
+#                                 carried_forward_percentage=reset.cf_value if reset.cf_unit_or_percentage == 'percentage' else 0,
+#                                 max_limit=reset.cf_max_limit,
+#                                 final_carry_forward=carry_forward_amount,
+#                                 created_by=None
+#                             )
+
+#                         # **Store Encashment Transaction**
+#                         if reset.allow_encashment and encashment_amount > 0:
+#                             LeaveEncashmentTransaction.objects.create(
+#                                 employee=emp,
+#                                 leave_type=leave_type,
+#                                 reset_date=today,
+#                                 encashment_units=encashment_amount if reset.encashment_unit_or_percentage == 'unit' else 0,
+#                                 encashment_percentage=reset.encashment_value if reset.encashment_unit_or_percentage == 'percentage' else 0,
+#                                 max_limit=reset.encashment_max_limit,
+#                                 encashment_amount=encashment_amount,
+#                                 created_by=None
+#                             )
+
+#                         # **Apply Leave Reset (Update Balance)**
+#                         leave_balance.balance = carry_forward_amount  # Set final balance from carry-forward
+#                         leave_balance.save()
+
+#                         # **Store Reset Transaction**
+#                         leave_reset_transaction.objects.create(
+#                             employee=emp,
+#                             leave_type=leave_type,
+#                             reset_date=today,
+#                             initial_balance=initial_balance,
+#                             carry_forward_amount=carry_forward_amount,
+#                             encashment_amount=encashment_amount,
+#                             final_balance=carry_forward_amount,  # Updated balance
+#                             created_by=None
+#                         )
+
+#                         logger.info(
+#                             f"Reset leave balance for employee {emp.emp_code}. "
+#                             f"Carry Forward: {carry_forward_amount}, Encashment: {encashment_amount}, "
+#                             f"New Balance: {carry_forward_amount}"
+#                         )
+
+#         except Exception as e:
+#             logger.error(f"Error processing tenant {tenant_schema_name}: {e}")
+
+#     logger.info("Reset leave balances task completed.")
 
 @shared_task
 def deduct_expired_carry_forward_leaves():

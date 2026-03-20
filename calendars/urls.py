@@ -5,7 +5,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
-                    AttendancePolicyViewset
+                    AttendancePolicyViewset,LeavePayRuleViewset
                     
                     )
 
@@ -63,6 +63,8 @@ router.register(r'escalation-rules', LVEscalationRuleViewSet, basename='lv_escal
 router.register(r'overtime_policy', OvertimePolicyViewSet, basename='overtime-policy')
 router.register(r'overtime_rule', OvertimeRuleViewSet, basename='overtime-rule')
 router.register(r'attendance-policy', AttendancePolicyViewset, basename='attendance-policy')
+router.register(r'leave-pay-rule', LeavePayRuleViewset, basename='leave-pay-rule')
+
 
 
 urlpatterns = [

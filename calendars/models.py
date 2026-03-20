@@ -478,9 +478,9 @@ class leave_entitlement(models.Model):
     accrual_frequency              = models.CharField(max_length=20, choices=TIME_UNIT_CHOICES)
     accrual_month                  = models.CharField(max_length=3, choices=MONTH_CHOICES, default='Jan',null=True,blank=True)
     accrual_day                    = models.CharField(max_length=10, choices=DAY_CHOICES, default='1st')
-    # round_of                       = models.CharField(choices=ROUND_OF_TYPE,max_length=20)
-    
+    # round_of                       = models.CharField(choices=ROUND_OF_TYPE,max_length=20)   
     prorate_accrual                = models.BooleanField(default=False, help_text="Enable prorate accrual for this leave type.")
+    enable_leave_pay_rule          = models.BooleanField(default=False, help_text="Enable pay rules based on leave duration")       
     departments                    = models.ManyToManyField('OrganisationManager.dept_master', blank=True, related_name="lv_entitlement")
     branches                       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True,related_name="lv_entitlement")
     designations                   = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True,related_name="lv_entitlement")
@@ -564,6 +564,19 @@ class leave_entitlement(models.Model):
     def save(self, *args, **kwargs):
         # self.clean()  # Validate before saving
         super().save(*args, **kwargs)
+class LeavePayRule(models.Model):
+    entitlement = models.ForeignKey(leave_entitlement, on_delete=models.CASCADE, related_name="pay_rules")
+    sequence = models.PositiveIntegerField(default=1, help_text="Order in which rule applies (e.g. 1 for First, 2 for Next)")
+    days = models.PositiveIntegerField(help_text="Number of days for this slab")
+    pay_percentage = models.PositiveIntegerField(help_text="Pay percentage (e.g., 100, 50, 0)")
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+
+    class Meta:
+        ordering = ['sequence']
+
+    def __str__(self):
+        return f"{self.entitlement.leave_type.name} - Seq: {self.sequence} - {self.days} Days at {self.pay_percentage}%"
 
 class LeaveResetPolicy(models.Model):
     TIME_UNIT_CHOICES = [

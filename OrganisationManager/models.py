@@ -398,6 +398,17 @@ class AssetApprovalLevel(models.Model):
     approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
     asset_type = models.ForeignKey('AssetType', related_name='approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow
     branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    APPROVAL_TYPE_CHOICES = [
+        ('no_approval', 'No Approval'),
+        ('reporting_manager', 'Reporting Manager'),
+        ('multi_approval', 'Multi Approval'),
+    ]
+
+    approval_type = models.CharField(
+        max_length=30,
+        choices=APPROVAL_TYPE_CHOICES,
+        default='no_approval'
+    )
       # 🆕 Escalation fields
     escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='asset_escalated_levels')
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
@@ -474,42 +485,131 @@ class AssetApproval(models.Model):
 
 @receiver(post_save, sender=AssetRequest)
 def create_initial_approval(sender, instance, created, **kwargs):
-    first_level = None
-    #if created:
-        # if instance.request_type.use_common_workflow:
-        #     first_level = AssetCommonWorkflow.objects.order_by('level').first()
-    if created:
+
+        if not created:
+            return
+
         first_level = AssetApprovalLevel.objects.filter(
-        asset_type=instance.asset_type,
-        branch__id=instance.employee.emp_branch_id.id
+            asset_type=instance.asset_type,
+            branch=instance.employee.emp_branch_id
         ).order_by('level').first()
-    if first_level:
-        approval = AssetApproval.objects.create(
-        asset_request=instance,
-        approver=first_level.approver,
-        role=first_level.role,
-        level=first_level.level,
-        status=AssetApproval.PENDING,
-        employee_id=instance.employee.id
-        )
-        asset_schedule_escalation(approval, first_level)
-        send_notification_email(
+
+        if not first_level:
+            return
+
+        # ---------------- NO APPROVAL ---------------- #
+        if first_level.approval_type == 'no_approval':
+
+            AssetApproval.objects.create(
+                asset_request=instance,
+                approver=None,  # ✅ FIX: No approver in auto approval
+                role="Auto Approval",
+                level=1,
+                status=AssetApproval.APPROVED,
+            )
+
+            instance.status = 'approved'
+            instance.save(update_fields=["status"])
+
+            # Allocate asset immediately
+            if instance.requested_asset:
+                AssetAllocation.objects.create(
+                    asset=instance.requested_asset,
+                    employee=instance.employee,
+                    assigned_date=timezone.now().date()
+                )
+
+                instance.requested_asset.status = "allocated"
+                instance.requested_asset.save(update_fields=["status"])
+
+            send_notification_email(
+                user=instance.created_by,
+                employee=instance.employee,
+                message=f"Your request {instance.document_number} has been automatically approved.",
+                template_type="asset_approved",
+                context={
+                    **get_employee_context(instance.employee),
+                    'asset_type': instance.asset_type.name,
+                    'requested_asset': instance.requested_asset,
+                    'request_date': instance.request_date,
+                    'reason': instance.reason
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=RequestNotification
+            )
+
+            return
+
+        # ---------------- REPORTING MANAGER ---------------- #
+        elif first_level.approval_type == 'reporting_manager':
+
+                manager_user = instance.employee.emp_reporting_manager
+
+                if not manager_user:
+                    raise Exception("Employee has no reporting manager.")
+
+                approval = AssetApproval.objects.create(
+                    asset_request=instance,
+                    approver=manager_user,  # ✅ correct approver
+                    role="Reporting Manager",
+                    level=first_level.level,
+                    status=AssetApproval.PENDING,
+                )
+
+                asset_schedule_escalation(approval, first_level)
+
+                send_notification_email(
+                    user=manager_user,
+                    employee=None,
+                    message=f"New asset request from {instance.employee}",
+                    template_type="asset_created",
+                    context={
+                        **get_employee_context(instance.employee),
+                        'asset_type': instance.asset_type.name,
+                        'requested_asset': instance.requested_asset,
+                        'request_date': instance.request_date,
+                        'reason': instance.reason
+                    },
+                    email_template_model=AssetEmailTemplate,
+                    notification_model=RequestNotification
+                )
+
+                return
+
+        # ---------------- MULTI APPROVAL ---------------- #
+        elif first_level.approval_type == 'multi_approval':
+
+            if not first_level.approver:
+                raise Exception("Approver not configured for this level.")
+
+            approval = AssetApproval.objects.create(
+                asset_request=instance,
+                approver=first_level.approver,
+                role=first_level.role,
+                level=first_level.level,
+                status=AssetApproval.PENDING,
+                # employee_id=instance.employee.id
+            )
+
+            asset_schedule_escalation(approval, first_level)
+
+            send_notification_email(
                 user=first_level.approver,
                 employee=None,
                 message=f"New request for approval: {instance.asset_type.name}, Employee: {instance.employee}",
                 template_type="asset_created",
                 context={
                     **get_employee_context(instance.employee),
-                    'asset_type':instance.asset_type.name,
-                    'requested_asset':instance.requested_asset,
-                    'request_date ': instance.request_date,
-                    'reason' :instance.reason 
-
-
+                    'asset_type': instance.asset_type.name,
+                    'requested_asset': instance.requested_asset,
+                    'request_date': instance.request_date,
+                    'reason': instance.reason
                 },
                 email_template_model=AssetEmailTemplate,
                 notification_model=RequestNotification
-            )     
+            )
+
+            return
 
 
 class AssetAllocation(models.Model):

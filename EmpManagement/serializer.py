@@ -353,6 +353,26 @@ class DocRequestSerializer(serializers.ModelSerializer):
             rep['employee'] = instance.employee.emp_first_name
         
         return rep
+    def validate(self, data):
+
+        employee = data.get('employee')
+        request_type = data.get('request_type')
+
+        if employee and request_type:
+
+            first_level = DocumentApprovalLevel.objects.filter(
+                request_type=request_type,
+                branch=employee.emp_branch_id
+            ).order_by('level').first()
+
+            if first_level and first_level.approval_type == 'reporting_manager':
+
+                if not employee.emp_reporting_manager:
+                    raise serializers.ValidationError(
+                        "Employee does not have a reporting manager configured."
+                    )
+
+        return data
 
 class EmployeeResignationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -621,22 +641,31 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
             rep['request_type'] = instance.request_type.name
         return rep
     def validate(self, data):
-        request_type = data.get('request_type')
-        employee = data.get('employee')
+        request_type = data.get("request_type")
+        employee = data.get("employee")
 
         if request_type.use_common_workflow:
-            has_levels = CommonWorkflow.objects.exists()
+            first_level = CommonWorkflow.objects.order_by("level").first()
         else:
-            has_levels = ApprovalLevel.objects.filter(
+            first_level = ApprovalLevel.objects.filter(
                 request_type=request_type,
-                branch__in=[employee.emp_branch_id]
-            ).exists()
+                branch=employee.emp_branch_id
+            ).order_by("level").first()
 
-        if not has_levels:
-            raise serializers.ValidationError({
-                "request_type": "Approval levels are not configured for this request type  or branch."
-            })
+        # # Approval workflow not configured
+        # if not first_level:
+        #     raise serializers.ValidationError(
+        #         {"request_type": "Approval levels are not configured."}
+        #     )
+
+        # Reporting manager required
+        if first_level.approval_type == "reporting_manager" and not employee.emp_reporting_manager:
+            raise serializers.ValidationError(
+                {"reporting_manager": "Employee has no reporting manager."}
+            )
+
         return data
+    
 class ApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = ApprovalLevel
@@ -810,11 +839,25 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeResignation
         fields = '__all__'
+    def validate(self, data):
+        employee = data.get('employee')
+
+        # 🔍 Check if reporting_manager is used in workflow
+        first_level = ResignationApprovalLevel.objects.order_by('level').first()
+
+        if first_level and first_level.approval_type == 'reporting_manager':
+            if not employee.emp_reporting_manager:
+                raise serializers.ValidationError({
+                    "employee": "This employee does not have a reporting manager assigned."
+                })
+
+        return data
+
     def to_representation(self, instance):
-            rep = super( EmployeeResignationSerializer, self).to_representation(instance)
-            if instance.employee:  
-                rep['employee'] = instance.employee.emp_code
-            return rep
+        rep = super(EmployeeResignationSerializer, self).to_representation(instance)
+        if instance.employee:
+            rep['employee'] = instance.employee.emp_code
+        return rep
 
 class EndOfServiceSerializer(serializers.ModelSerializer):
     employee_code = serializers.CharField(source='resignation.employee.emp_code', read_only=True)

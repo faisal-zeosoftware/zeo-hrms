@@ -1498,6 +1498,17 @@ class LeaveApprovalLevels(models.Model):
     request_type     = models.ForeignKey('leave_type', related_name='leave_approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow
     is_compensatory  = models.BooleanField(default=False)
     branch           = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    APPROVAL_TYPE_CHOICES = [
+        ('no_approval', 'No Approval'),
+        ('reporting_manager', 'Reporting Manager'),
+        ('multi_approval', 'Multi Approval'),
+    ]
+
+    approval_type = models.CharField(
+        max_length=30,
+        choices=APPROVAL_TYPE_CHOICES,
+        default='no_approval'
+    )
     created_at       = models.DateTimeField(auto_now_add=True)
     created_by       = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='lv_escalated_levels')

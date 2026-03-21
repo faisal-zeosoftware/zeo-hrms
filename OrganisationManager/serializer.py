@@ -258,6 +258,7 @@ class AssetRequestSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         asset_type = attrs.get('asset_type')
         requested_asset = attrs.get('requested_asset')
+        employee = attrs.get('employee')  # ✅ needed for reporting manager check
 
         # 1. Asset Type must be entered
         if not asset_type:
@@ -282,6 +283,20 @@ class AssetRequestSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "requested_asset": f"This asset is not available (current status: {requested_asset.status})."
             })
+
+        # ---------------- NEW: Reporting Manager Validation ---------------- #
+
+        if employee:
+            first_level = AssetApprovalLevel.objects.filter(
+                asset_type=asset_type,
+                branch=employee.emp_branch_id
+            ).order_by('level').first()
+
+            if first_level and first_level.approval_type == "reporting_manager":
+                if not employee.emp_reporting_manager:
+                    raise serializers.ValidationError({
+                        "reporting_manager": "Employee has no reporting manager."
+                    })
 
         return attrs
     def to_representation(self, instance):

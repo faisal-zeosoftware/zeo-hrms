@@ -447,6 +447,7 @@ class leave_entitlement(models.Model):
     DAY_CHOICES = [
         ('1st', '1st Day of the Month'),
         ('last', 'Last Day of the Month'),
+        ('joining_day', 'Employee Joining Date')
     ]
     
     MONTH_CHOICES = [

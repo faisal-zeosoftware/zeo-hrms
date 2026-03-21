@@ -19,27 +19,22 @@ from EmpManagement .utils import send_notification_email,get_employee_context
 
 @shared_task
 def accrue_leaves():
-    tenants = get_all_tenant_schemas()  # Fetch all tenant schemas
+    tenants = get_all_tenant_schemas()
     today = timezone.now().date()
 
     for tenant_schema_name in tenants:
         try:
             with schema_context(tenant_schema_name):
-                logger.info(f"Accrue leaves task started on {today} for tenant {tenant_schema_name}")
 
-                entitlements = leave_entitlement.objects.filter(accrual=True).order_by("leave_type", "min_experience")
+                entitlements = leave_entitlement.objects.filter(accrual=True)
                 employees = emp_master.objects.all()
 
                 for employee in employees:
-                    leave_type_entitlements = {}  # Store best entitlements per leave type
+                    leave_type_entitlements = {}
 
                     for entitlement in entitlements:
-                        leave_type = entitlement.leave_type
-                        accrual_frequency = entitlement.accrual_frequency
-                        accrual_month = entitlement.accrual_month
-                        accrual_day = entitlement.accrual_day
 
-                        # Determine base date (Joining Date or Confirmation Date)
+                        # 🔹 Base Date
                         base_date = (
                             employee.emp_joined_date
                             if entitlement.effective_after_from == "date_of_joining"
@@ -49,71 +44,92 @@ def accrue_leaves():
                         if not base_date:
                             continue
 
-                        # Calculate experience in months
+                        # 🔹 Experience Calculation
                         experience = relativedelta(today, base_date)
-                        experience_in_months = experience.years * 12 + experience.months
+                        experience_months = experience.years * 12 + experience.months
 
-                        # Convert entitlement's min_experience to months
-                        min_experience_months = (
+                        min_exp_months = (
                             entitlement.min_experience * 12
                             if entitlement.effective_after_unit == "years"
                             else entitlement.min_experience
                         )
-                        # 1️⃣ Filter by designation
+
+                        # 🔹 Filters
                         if entitlement.designations.exists() and employee.emp_desgntn_id not in entitlement.designations.all():
                             continue
-
-                        # 2️⃣ Filter by department
                         if entitlement.departments.exists() and employee.emp_dept_id not in entitlement.departments.all():
                             continue
-
-                        # 3️⃣ Filter by category
                         if entitlement.categories.exists() and employee.emp_ctgry_id not in entitlement.categories.all():
                             continue
-
-                        # 4️⃣ Filter by branch
                         if entitlement.branches.exists() and employee.emp_branch_id not in entitlement.branches.all():
                             continue
-                        # Select the most specific entitlement for each leave type
-                        if (
-                            experience_in_months >= min_experience_months and
-                            (leave_type not in leave_type_entitlements or min_experience_months > leave_type_entitlements[leave_type]['experience'])
-                        ):
-                            leave_type_entitlements[leave_type] = {
-                                "entitlement": entitlement,
-                                "experience": min_experience_months
-                            }
 
-                    # Process accrual for each leave type
-                    for leave_type, data in leave_type_entitlements.items():
-                        best_entitlement = data["entitlement"]
-                        accrual_amount = best_entitlement.accrual_rate
-                        accrue_today = False  # Default to False
+                        if experience_months >= min_exp_months:
+                            leave_type_entitlements[entitlement.leave_type] = entitlement
 
-                        # **Daily Accrual**
-                        if best_entitlement.accrual_frequency == 'days':
+                    # 🔥 Process accrual
+                    for leave_type, ent in leave_type_entitlements.items():
+
+                        accrue_today = False
+                        accrual_amount = ent.accrual_rate
+
+                        # =====================
+                        # 📅 MONTHLY ACCRUAL
+                        # =====================
+                        if ent.accrual_frequency == 'months':
+
+                            last_day = (today.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+                            if ent.accrual_day == '1st' and today.day == 1:
+                                accrue_today = True
+
+                            elif ent.accrual_day == 'last' and today == last_day:
+                                accrue_today = True
+
+                            elif ent.accrual_day == 'joining_day':
+                                if employee.emp_joined_date:
+                                    joining_day = employee.emp_joined_date.day
+                                    valid_day = min(joining_day, last_day.day)
+
+                                    if today.day == valid_day:
+                                        accrue_today = True
+
+                                        # 🔥 PRORATION LOGIC
+                                        if ent.prorate_accrual:
+                                            if (employee.emp_joined_date.year == today.year and
+                                                employee.emp_joined_date.month == today.month):
+
+                                                total_days = last_day.day
+                                                worked_days = total_days - employee.emp_joined_date.day + 1
+
+                                                accrual_amount = (
+                                                    ent.accrual_rate * worked_days / total_days
+                                                )
+
+                        # =====================
+                        # 📅 DAILY ACCRUAL
+                        # =====================
+                        elif ent.accrual_frequency == 'days':
                             accrue_today = True
 
-                        # **Monthly Accrual**
-                        elif best_entitlement.accrual_frequency == 'months':
-                            if best_entitlement.accrual_day == '1st' and today.day == 1:
-                                accrue_today = True
-                            elif best_entitlement.accrual_day == 'last':
-                                last_day_of_month = (today.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-                                if today == last_day_of_month:
-                                    accrue_today = True
-
-                        # **Yearly Accrual**
-                        elif best_entitlement.accrual_frequency == 'years':
-                            if best_entitlement.accrual_month and today.month == month_name_to_number(best_entitlement.accrual_month) and today.day == 1:
+                        # =====================
+                        # 📅 YEARLY ACCRUAL
+                        # =====================
+                        elif ent.accrual_frequency == 'years':
+                            if ent.accrual_month and today.month == month_name_to_number(ent.accrual_month) and today.day == 1:
                                 accrue_today = True
 
+                        # =====================
+                        # 💾 SAVE
+                        # =====================
                         if accrue_today and accrual_amount > 0:
-                            leave_balance, created = emp_leave_balance.objects.get_or_create(
+
+                            leave_balance, _ = emp_leave_balance.objects.get_or_create(
                                 employee=employee,
-                                leave_type=leave_type,  # Ensure accrual is per leave type
+                                leave_type=leave_type,
                                 defaults={"balance": 0}
                             )
+
                             leave_balance.balance += accrual_amount
                             leave_balance.save()
 
@@ -125,14 +141,10 @@ def accrue_leaves():
                                 created_at=timezone.now(),
                             )
 
-                            logger.info(f"Accrued {accrual_amount} days for Employee {employee.id} - Leave Type {leave_type.id}")
-
-                logger.info(f"Leave accrual task completed for tenant {tenant_schema_name}")
-
         except Exception as e:
-            logger.error(f"Error processing tenant {tenant_schema_name}: {str(e)}")
+            logger.error(f"Error in tenant {tenant_schema_name}: {str(e)}")
 
-    return "Leave accrual task completed for all tenants"
+    return "Leave accrual completed"
 
 
 def month_name_to_number(month_name):

@@ -478,7 +478,7 @@ class leave_entitlement(models.Model):
     accrual_rate                   = models.FloatField(default=0, help_text="Accrual rate per period (e.g., days/months/yearly)")
     accrual_frequency              = models.CharField(max_length=20, choices=TIME_UNIT_CHOICES)
     accrual_month                  = models.CharField(max_length=3, choices=MONTH_CHOICES, default='Jan',null=True,blank=True)
-    accrual_day                    = models.CharField(max_length=10, choices=DAY_CHOICES, default='1st')
+    accrual_day                    = models.CharField(max_length=20, choices=DAY_CHOICES, default='1st')
     # round_of                       = models.CharField(choices=ROUND_OF_TYPE,max_length=20)   
     prorate_accrual                = models.BooleanField(default=False, help_text="Enable prorate accrual for this leave type.")
     enable_leave_pay_rule          = models.BooleanField(default=False, help_text="Enable pay rules based on leave duration")       

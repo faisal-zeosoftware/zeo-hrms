@@ -280,16 +280,47 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             rep['loan_type'] =instance.loan_type.loan_type
         return rep
     def validate(self, data):
-        request_type = data.get('loan_type')
+        loan_type = data.get('loan_type')
         employee = data.get('employee')
-        has_levels = LoanApprovalLevels.objects.filter(
-                loan_type=request_type
-            ).exists()
 
-        if not has_levels:
+        # ✅ Basic checks
+        if not loan_type:
             raise serializers.ValidationError({
-                "request_type": "Approval levels are not configured for this loan type."
+                "loan_type": "Loan type is required."
             })
+
+        if not employee:
+            raise serializers.ValidationError({
+                "employee": "Employee is required."
+            })
+
+        #  Check if approval levels exist
+        levels_qs = LoanApprovalLevels.objects.filter(loan_type=loan_type)
+
+        if not levels_qs.exists():
+            raise serializers.ValidationError({
+                "loan_type": "Approval levels are not configured for this loan type."
+            })
+
+        #  Get first level
+        first_level = levels_qs.order_by('level').first()
+
+        # ✅ Reporting Manager Validation
+        if first_level.approval_type == 'reporting_manager':
+            manager = getattr(employee, 'emp_reporting_manager', None)
+
+            if not manager:
+                raise serializers.ValidationError({
+                    "employee": "This employee does not have a reporting manager assigned."
+                })
+
+        # ✅ Multi Approval Validation (recommended)
+        if first_level.approval_type == 'multi_approval':
+            if not first_level.approver:
+                raise serializers.ValidationError({
+                    "loan_type": f"Approver is not configured for level {first_level.level}."
+                })
+
         return data
 class LoanRepaymentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -451,6 +482,24 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
                 "symbol": currency.symbol
             }
         return None
+    
+    def validate(self, data):
+        employee = data.get('employee')
+
+        #Get first workflow level
+        first_level = AdvanceCommonWorkflow.objects.order_by('level').first()
+
+        #  Check reporting manager condition
+        if first_level and first_level.approval_type == 'reporting_manager':
+            manager = getattr(employee, 'emp_reporting_manager', None)
+
+            if not manager:
+                raise serializers.ValidationError({
+                    "employee": "This employee does not have a reporting manager assigned."
+                })
+
+        return data
+    
 class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceSalaryApproval
@@ -540,6 +589,22 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         if instance.allocation:  
             rep['allocation'] = instance.allocation.policy.name
         return rep
+    def validate(self, data):
+        employee = data.get('employee')
+
+        # 🔍 Get first workflow level
+        first_level = AirticketWorkflow.objects.order_by('level').first()
+
+        # ✅ Check reporting manager condition
+        if first_level and first_level.approval_type == 'reporting_manager':
+            manager = getattr(employee, 'emp_reporting_manager', None)
+
+            if not manager:
+                raise serializers.ValidationError({
+                    "employee": "This employee does not have a reporting manager assigned."
+                })
+
+        return data
 class AirtcketApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketApproval

@@ -408,6 +408,7 @@ class leave_type(models.Model):
     include_holiday               = models.BooleanField(default=False)
     use_common_workflow           = models.BooleanField(default=False)
     include_dashboard             = models.BooleanField(default=False)
+    enable_leave_pay_rule         = models.BooleanField(default=False, help_text="Enable pay rules based on leave duration")    
     branch                        = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='leave_types')
     created_at                    = models.DateTimeField(default=timezone.now)
     created_by                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
@@ -566,7 +567,7 @@ class leave_entitlement(models.Model):
         # self.clean()  # Validate before saving
         super().save(*args, **kwargs)
 class LeavePayRule(models.Model):
-    entitlement = models.ForeignKey(leave_entitlement, on_delete=models.CASCADE, related_name="pay_rules")
+    leave_type = models.ForeignKey(leave_type, on_delete=models.CASCADE, related_name="pay_rules", null=True)
     sequence = models.PositiveIntegerField(default=1, help_text="Order in which rule applies (e.g. 1 for First, 2 for Next)")
     days = models.PositiveIntegerField(help_text="Number of days for this slab")
     pay_percentage = models.PositiveIntegerField(help_text="Pay percentage (e.g., 100, 50, 0)")

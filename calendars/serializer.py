@@ -168,11 +168,17 @@ class HolidayAssignSerializer(serializers.ModelSerializer):
     
         return rep
 #leave
+class LeavePayRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeavePayRule
+        fields = '__all__'
+
 class LeaveTypeSerializer(serializers.ModelSerializer):
+    pay_rules = LeavePayRuleSerializer(many=True, read_only=True)
+
     class Meta:
         model = leave_type
         fields = '__all__'
-
 class ApplicableSerializer(serializers.ModelSerializer):
     class Meta:
         model = applicablity_critirea
@@ -238,13 +244,7 @@ class LeaveEncashmentTransactionSerializer(serializers.ModelSerializer):
             rep['leave_type'] = instance.leave_type.name
         return rep
 
-class LeavePayRuleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LeavePayRule
-        fields = '__all__'
-
 class LeaveEntitlementSerializer(serializers.ModelSerializer):
-    pay_rules = LeavePayRuleSerializer(many=True, read_only=True)
     class Meta:
         model = leave_entitlement
         fields = '__all__'

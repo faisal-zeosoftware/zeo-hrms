@@ -344,23 +344,76 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
             logger.exception(f"Error getting formula variables for {employee}: {e}")
             variables = {}
 
-        # Unpaid leave calculation
-        approved_unpaid_leaves = employee_leave_request.objects.filter(
+        # Unpaid leave calculation (INCLUDING Leave Pay Rules)
+        LeavePayRule = apps.get_model("calendars", "LeavePayRule")
+
+        approved_leaves = employee_leave_request.objects.filter(
             employee=employee,
             status="approved",
-            leave_type__type="unpaid",
             start_date__lte=end_date,
             end_date__gte=start_date,
-        )
+        ).order_by('start_date')
 
-        leave_days = Decimal("0.00")
-        for leave in approved_unpaid_leaves:
-            if getattr(leave, "dis_half_day", False):
-                leave_days += Decimal("0.5")
+        unpaid_leave_days = Decimal("0.00")
+
+        for leave in approved_leaves:
+            leave_duration = Decimal("0.5") if getattr(leave, "dis_half_day", False) else Decimal(str(getattr(leave, "number_of_days", 0) or 0))
+            if leave_duration <= 0:
+                continue
+
+            if getattr(leave.leave_type, 'enable_leave_pay_rule', False):
+                # Calculate leaves taken in the same year BEFORE this specific leave
+                previous_leaves = employee_leave_request.objects.filter(
+                    employee=employee,
+                    status="approved",
+                    leave_type=leave.leave_type,
+                    start_date__year=leave.start_date.year,
+                    start_date__lt=leave.start_date
+                )
+                
+                prev_taken = Decimal("0.00")
+                for pl in previous_leaves:
+                    prev_taken += Decimal("0.5") if getattr(pl, "dis_half_day", False) else Decimal(str(getattr(pl, "number_of_days", 0) or 0))
+
+                rules = LeavePayRule.objects.filter(leave_type=leave.leave_type).order_by('sequence')
+                
+                if not rules.exists():
+                    if getattr(leave.leave_type, 'type', '') == 'unpaid':
+                        unpaid_leave_days += leave_duration
+                    continue
+
+                remaining_leave = leave_duration
+                current_pos = prev_taken
+                this_leave_unpaid = Decimal("0.00")
+                slab_start = Decimal("0.00")
+                
+                for rule in rules:
+                    slab_end = slab_start + Decimal(str(rule.days))
+                    if current_pos < slab_end:
+                        available_in_slab = slab_end - current_pos
+                        days_in_slab = min(remaining_leave, available_in_slab)
+                        
+                        unpaid_fraction = Decimal("1.00") - (Decimal(str(rule.pay_percentage)) / Decimal("100.00"))
+                        this_leave_unpaid += days_in_slab * unpaid_fraction
+                        
+                        remaining_leave -= days_in_slab
+                        current_pos += days_in_slab
+                    
+                    slab_start = slab_end
+                    if remaining_leave <= 0:
+                        break
+                
+                # Any remaining leave exceeding all slabs is fully unpaid (0% pay)
+                if remaining_leave > 0:
+                    this_leave_unpaid += remaining_leave * Decimal("1.00")
+                    
+                unpaid_leave_days += this_leave_unpaid
+                
             else:
-                leave_days += Decimal(str(getattr(leave, "number_of_days", 0) or 0))
+                # Normal behavior
+                if getattr(leave.leave_type, 'type', '') == 'unpaid':
+                    unpaid_leave_days += leave_duration
 
-        unpaid_leave_days = leave_days
         days_worked = Decimal(total_days) - unpaid_leave_days
         if days_worked < 0:
             days_worked = Decimal("0.00")

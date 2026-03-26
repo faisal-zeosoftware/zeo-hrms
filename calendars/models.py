@@ -29,6 +29,7 @@ from django.db.models import Q
 from decimal import Decimal
 from PayrollManagement .models import PayrollRun
 from django.db.models import JSONField
+from EmpManagement.utils import send_notification_email, get_employee_context
 
 
 # Create your models here.
@@ -2159,6 +2160,280 @@ class AttendanceRecheck(models.Model):
         ordering = ['-checked_at']
     def __str__(self):
         return f"{self.attendance} " 
+    
+
+class LatinEarlyoutEmailTemplate(models.Model):
+    template_type = models.CharField(max_length=50, choices=[
+        ('request_created', 'Request Created'),
+        ('request_approved', 'Request Approved'),
+        ('request_rejected', 'Request Rejected')
+    ])
+    subject             = models.CharField(max_length=255)
+    body                = models.TextField()
+    created_at          = models.DateTimeField(auto_now_add=True)
+    created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+   
+    def __str__(self):
+        return f"{self.template_type} - {self.subject}"
+    
+class LateinEarlyRequestNotification(models.Model):
+    recipient_user     = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='late_early_notifications')
+    recipient_employee = models.ForeignKey(emp_master,null=True,blank=True,on_delete=models.CASCADE,related_name='late_early_notifications')
+    message            = models.CharField(max_length=255)
+    created_at         = models.DateTimeField(auto_now_add=True)
+    is_read            = models.BooleanField(default=False)
+    
+    def __str__(self):
+        if self.recipient_user:
+            return f"Notification for {self.recipient_user.emp_code}: {self.message}"
+        else:
+            return f"Notification for employee: {self.message}"
+    
+class LateinEarlyoutRequest(models.Model):
+    REQUEST_TYPE_CHOICES = (
+        ('LATE_IN', 'Late Check In'),
+        ('EARLY_OUT', 'Early Check Out'),
+    )
+
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('APPROVED', 'Approved'),
+        ('REJECTED', 'Rejected'),
+    )
+
+    date         = models.DateField(null=True, blank=True)
+    employee     = models.ForeignKey("EmpManagement.emp_master",on_delete=models.CASCADE)
+    request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
+    reason       = models.TextField(null=True, blank=True)
+    status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    created_at   = models.DateTimeField(auto_now_add=True)
+    created_by   = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True)
+
+    def __str__(self):
+        return f"{self.employee} - {self.request_type} - {self.status}"
+
+    def move_to_next_level(self):
+        if self.lateinearlyout_approvals.filter(status='REJECTED').exists():
+            self.status = 'REJECTED'
+            self.save()
+
+            send_notification_email(
+                employee=self.employee,
+                message=f"Your {self.request_type} request has been rejected.",
+                template_type="request_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.request_type,
+                    'reason': self.reason,
+                    'status': self.status,
+                },
+                email_template_model=LatinEarlyoutEmailTemplate,
+                notification_model=LateinEarlyRequestNotification
+            )
+            return
+        
+        current_level = self.lateinearlyout_approvals.filter(status='APPROVED').count()
+        next_level =LateinEarlyoutApprovalLevel.objects.filter(
+            level=current_level + 1
+        ).first()
+
+        if next_level:
+           LateinEarlyoutApproval.objects.create(
+                request=self,
+                approver=next_level.approver,
+                role=next_level.role,
+                level=next_level.level,
+                status='PENDING'
+            )
+        else:
+            self.status = 'APPROVED'
+            self.save()
+
+            send_notification_email(
+                employee=self.employee,
+                message=f"Your {self.request_type} request has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.request_type,
+                    'reason': self.reason,
+                    'status': self.status,
+                },
+                email_template_model=LatinEarlyoutEmailTemplate,
+                notification_model=LateinEarlyRequestNotification
+            )
+    
+class LateinEarlyoutApprovalLevel(models.Model):
+    APPROVAL_TYPE_CHOICES = [
+        ('no_approval', 'No Approval'),
+        ('reporting_manager', 'Reporting Manager'),
+        ('multi_approval', 'Multi Approval'),
+    ]
+
+    level         = models.PositiveIntegerField(unique=True)
+    approver      = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True)
+    role          = models.CharField(max_length=100)
+    approval_type = models.CharField(max_length=30,choices=APPROVAL_TYPE_CHOICES,default='no_approval')
+
+    class Meta:
+        ordering = ['level']
+
+    def __str__(self):
+        approver_name = self.approver.emp_code if self.approver and hasattr(self.approver, 'emp_code') else "No Approver"
+        return f"Level {self.level} - {self.role} ({approver_name})"
+    
+class LateinEarlyoutApproval(models.Model):
+    PENDING = 'PENDING'
+    APPROVED = 'APPROVED'
+    REJECTED = 'REJECTED'
+
+    STATUS_CHOICES = [
+        (PENDING, 'Pending'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Rejected'),
+    ]
+
+    lateinearlyout_request = models.ForeignKey(LateinEarlyoutRequest,related_name='lateinearlyout_approvals',on_delete=models.CASCADE)
+    approver               = models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True)
+    role                   = models.CharField(max_length=50, null=True, blank=True)
+    level                  = models.IntegerField(default=1)
+    status                 = models.CharField(max_length=20,choices=STATUS_CHOICES,default=PENDING)
+    note                   = models.TextField(null=True, blank=True)
+    created_at             = models.DateTimeField(auto_now_add=True)
+    created_by             = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,related_name='late_early_created_by')
+    updated_at             = models.DateTimeField(auto_now=True)
+
+    def approve(self, note=None):
+        self.status = self.APPROVED
+        if note:
+            self.note = note
+        self.save()
+
+        # ✅ Move to next level
+        self.lateinearlyout_request.move_to_next_level()
+
+    def reject(self, note=None):
+        self.status = self.REJECTED
+        if note:
+            self.note = note
+        self.save()
+
+        request = self.lateinearlyout_request
+        request.status = 'REJECTED'
+        request.save()
+
+        send_notification_email(
+            employee=request.employee,
+            message=f"Your {request.request_type} request has been rejected.",
+            template_type="request_rejected",
+            context={
+                **get_employee_context(request.employee),
+                'request_type': request.request_type,
+                'reason': request.reason,
+                'status': request.status,
+            },
+            email_template_model=LatinEarlyoutEmailTemplate,
+            notification_model=LateinEarlyRequestNotification
+        )
+
+@receiver(post_save, sender=LateinEarlyoutRequest)
+def create_initial_approval(sender, instance, created, **kwargs):
+
+    if not created:
+        return
+
+    first_level = LateinEarlyoutApprovalLevel.objects.order_by('level').first()
+
+    if not first_level:
+        # ✅ No workflow → auto approve
+        instance.status = "APPROVED"
+        instance.save(update_fields=["status"])
+        return
+
+    # ---------------- NO APPROVAL ----------------
+    if first_level.approval_type == 'no_approval':
+
+        approver = instance.created_by
+
+        LateinEarlyoutApproval.objects.create(
+            lateinearlyout_request=instance,
+            approver=approver,
+            role="Auto Approval",
+            level=1,
+            status=LateinEarlyoutApproval.APPROVED
+        )
+
+        instance.status = "APPROVED"
+        instance.save(update_fields=["status"])
+
+        send_notification_email(
+            employee=instance.employee,
+            message=f"Your {instance.request_type} request has been automatically approved.",
+            template_type="request_approved",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.request_type,
+                'status': instance.status,
+            },
+            email_template_model=LatinEarlyoutEmailTemplate,
+            notification_model=LateinEarlyRequestNotification
+        )
+        return
+
+    # ---------------- REPORTING MANAGER ----------------
+    if first_level.approval_type == 'reporting_manager':
+
+        manager = instance.employee.emp_reporting_manager
+
+        if not manager:
+            raise Exception("Employee has no reporting manager.")
+
+        LateinEarlyoutApproval.objects.create(
+            lateinearlyout_request=instance,
+            approver=manager,
+            role="Reporting Manager",
+            level=first_level.level,
+            status=LateinEarlyoutApproval.PENDING
+        )
+
+        send_notification_email(
+            user=manager,
+            employee=None,
+            message=f"New {instance.request_type} request for approval: {instance.employee}",
+            template_type="request_created",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.request_type,
+            },
+            email_template_model=LatinEarlyoutEmailTemplate,
+            notification_model=LateinEarlyRequestNotification
+        )
+        return
+
+    # ---------------- MULTI APPROVAL ----------------
+    if first_level.approval_type == 'multi_approval':
+
+        LateinEarlyoutApproval.objects.create(
+            lateinearlyout_request=instance,
+            approver=first_level.approver,
+            role=first_level.role,
+            level=first_level.level,
+            status=LateinEarlyoutApproval.PENDING
+        )
+
+        send_notification_email(
+            user=first_level.approver,
+            employee=None,
+            message=f"New {instance.request_type} request for approval: {instance.employee}",
+            template_type="request_created",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.request_type,
+            },
+            email_template_model=LatinEarlyoutEmailTemplate,
+            notification_model=LateinEarlyRequestNotification
+        )
 class EmployeeOvertime(models.Model):
 
     OT_TYPE_CHOICES = (

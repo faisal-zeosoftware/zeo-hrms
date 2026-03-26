@@ -2,14 +2,16 @@ from django.shortcuts import render
 from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,assign_holiday,WeekendDetail,leave_type,leave_entitlement,applicablity_critirea,emp_leave_balance,leave_accrual_transaction,leave_reset_transaction,employee_leave_request,Attendance,Shift,
                      EmployeeMachineMapping,LeaveReport,LeaveApprovalLevels,LeaveApproval,LvEmailTemplate,LvApprovalNotify,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                      AttendanceReport,lvBalanceReport,EmployeeYearlyCalendar,CompensatoryLeaveRequest,CompensatoryLeaveTransaction,CompensatoryLeaveBalance,ShiftPattern,EmployeeShiftSchedule,ShiftOverride,LeaveResetPolicy,LeaveCarryForwardTransaction,
-                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule
-                    )
+                     LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
+                     LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutApproval,
+                     )
 from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,HolidayAssignSerializer,HolidayCalandarSerializer,HolidaySerializer,WeekendDetailSerializer,LeaveTypeSerializer,LeaveEntitlementSerializer,ApplicableSerializer,EmployeeLeaveBalanceSerializer,AccrualSerializer,ResetSerializer,LeaveRequestSerializer,
                          AttendanceSerializer,ShiftSerializer,ImportAttendanceSerializer,EmployeeMappingSerializer,LeaveReportSerializer,LvApprovalLevelSerializer,EmployeeYearlyCalendarSerializer,
                          LvApprovalSerializer,LvEmailTemplateSerializer,LvApprovalNotifySerializer,LvCommonWorkflowSerializer,LvRejectionReasonSerializer,LvApprovalReportSerializer,AttendanceReportSerializer,lvBalanceReportSerializer,
                          CompensatoryLeaveRequestSerializer,CompensatoryLeaveTransactionSerializer,CompensatoryLeaveBalanceSerializer,ShiftOverrideSerializer,ShiftPatternSerializer,EmployeeShiftScheduleSerializer,LeaveResetPolicySerializer,LeaveCarryForwardTransactionSerializer,
                          LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer,OvertimeRuleSerializer,
-                         AttendanceLogSerializer,AttendancePolicySerializer,LeavePayRuleSerializer
+                         AttendanceLogSerializer,AttendancePolicySerializer,LeavePayRuleSerializer,
+                         LatinEarlyoutEmailTemplateSerializer,LateinEarlyRequestNotificationSerializer,LateinEarlyoutRequestSerializer,LateinEarlyoutApprovalLevelSerializer, LateinEarlyoutApprovalSerializer,
                          )
 from . import face_utils
 from rest_framework import viewsets,filters,status
@@ -2783,6 +2785,170 @@ class MonthwiseAccrualSimulationView(APIView):
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
+    
+class LatinEarlyoutEmailTemplateViewset(viewsets.ModelViewSet):
+    queryset = LatinEarlyoutEmailTemplate.objects.all()
+    serializer_class = LatinEarlyoutEmailTemplateSerializer
+    @action(detail=False, methods=['get'], url_path='placeholders')
+    def placeholder_list(self, request):
+        placeholders = {
+            
+            'employee': [
+                '{{ emp_first_name }}',
+                '{{ emp_last_name }}',
+                '{{ emp_branch_name }}',
+                '{{ emp_department_name }}',
+                '{{ emp_designation_name }}',
+                '{{request_type}}',
+                '{{reason}}',
+                '{{ status}}',
+                '{{date}}',
+            ]
+        }
+        return Response(placeholders)
+    # Custom action to fetch the available From and To addresses
+    @action(detail=False, methods=['get'], url_path='from-to-addresses')
+    def from_to_list(self, request):
+        # Fetch active email configurations for "From" addresses
+        from_addresses = EmailConfiguration.objects.filter(is_active=True).values_list('email_host_user', flat=True)
+
+        # Fetch employee emails for "To" addresses
+        to_addresses = emp_master.objects.all().values_list('emp_personal_email', 'emp_company_email')
+
+        to_list = []
+        for emp_personal, emp_company in to_addresses:
+            if emp_personal:
+                to_list.append(emp_personal)
+            if emp_company:
+                to_list.append(emp_company)
+
+        return Response({
+            'from_addresses': from_addresses,
+            'to_addresses': to_list
+        })
+    
+class LateinEarlyRequestNotificationViewset(viewsets.ReadOnlyModelViewSet):
+    queryset =LateinEarlyRequestNotification.objects.all()
+    serializer_class = LateinEarlyRequestNotificationSerializer   
+    # def get_queryset(self):
+    #     user = self.request.user
+
+    #     # Admin / staff / superuser → see all request notifications
+    #     if user.is_superuser or user.is_staff:
+    #         return LateinEarlyRequestNotification.objects.all().order_by('-created_at')
+
+    #     # Normal user → show request notifications assigned directly to them
+    #     qs =LateinEarlyRequestNotification.objects.filter(
+    #         Q(recipient_user=user) |
+    #         Q(recipient_employee__users=user)      # employee assigned to this user
+    #     ).order_by('-created_at')
+
+    #     return qs
+    
+class LateinEarlyoutRequestViewset(viewsets.ModelViewSet):
+    queryset = LateinEarlyoutRequest.objects.all()
+    serializer_class = LateinEarlyoutRequestSerializer
+
+    # ---------------- APPROVED REQUESTS ----------------
+    @action(detail=False,methods=['get'],url_path='approved_requests' )
+    def list_approved_requests(self, request):
+
+        approved_requests = LateinEarlyoutRequest.objects.filter(status='APPROVED')
+
+        data = []
+        for req in approved_requests:
+            employee = req.employee
+
+            data.append({
+                'request_id': req.id,
+                'employee_id': employee.id,
+                'employee_code': getattr(employee, 'emp_code', None),
+                'employee_name': f"{getattr(employee, 'emp_first_name', '')} {getattr(employee, 'emp_last_name', '')}".strip(),
+                'request_type': req.request_type,
+                'reason': req.reason,
+                'status': req.status,
+                'created_at': req.created_at,
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
+
+    # ---------------- PENDING REQUESTS ----------------
+    @action(detail=False,methods=['get'],url_path='pending_requests')
+    def list_pending_requests(self, request):
+
+        pending_requests = LateinEarlyoutRequest.objects.filter(status='PENDING')
+
+        data = []
+        for req in pending_requests:
+            employee = req.employee
+
+            data.append({
+                'request_id': req.id,
+                'employee_id': employee.id,
+                'employee_code': getattr(employee, 'emp_code', None),
+                'employee_name': f"{getattr(employee, 'emp_first_name', '')} {getattr(employee, 'emp_last_name', '')}".strip(),
+                'request_type': req.request_type,
+                'reason': req.reason,
+                'status': req.status,
+                'created_at': req.created_at,
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
+
+    # ---------------- EMPLOYEE REQUESTS ----------------
+    @action(detail=False,methods=['get'],url_path='employee_requests/(?P<employee_id>[^/.]+)')
+    def employee_requests(self, request, employee_id=None):
+
+        requests = LateinEarlyoutRequest.objects.filter(employee_id=employee_id)
+
+        data = []
+        for req in requests:
+            data.append({
+                'request_id': req.id,
+                'request_type': req.request_type,
+                'reason': req.reason,
+                'status': req.status,
+                'created_at': req.created_at,
+            })
+
+        return Response(data, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['post'], url_path='approve')
+    def approve_request(self, request, pk=None):
+        req = self.get_object()
+        approval = req.lateinearlyout_approvals.filter(status='PENDING').first()
+
+        if not approval:
+            return Response({'detail': 'No pending approval found'}, status=400)
+
+        approval.approve(note=request.data.get('note'))
+        return Response({'detail': 'Approved successfully'})
+    
+class LateinEarlyoutApprovalLevelViewset(viewsets.ModelViewSet):
+    queryset = LateinEarlyoutApprovalLevel.objects.all()
+    serializer_class =LateinEarlyoutApprovalLevelSerializer
+
+class LateinEarlyoutApprovalViewset(viewsets.ModelViewSet):
+    queryset = LateinEarlyoutApproval.objects.all()
+    serializer_class = LateinEarlyoutApprovalSerializer
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        approval = self.get_object()
+        # if request.user != approval.approver:
+        #     return Response({'error': 'You are not authorized to approve this request.'}, status=status.HTTP_403_FORBIDDEN)
+
+        note = request.data.get('note')  # Get the note from the request
+        approval.approve(note=note)
+        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        approval = self.get_object()
+        note = request.data.get('note')  # Get the note from the request
+        approval.reject(note=note)
+        return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+
+
 class LeaveResetPreviewAPIView(APIView):
     """
     API to preview leave reset logic without saving.

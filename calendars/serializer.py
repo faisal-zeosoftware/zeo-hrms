@@ -262,6 +262,8 @@ class LeaveResetPolicySerializer(serializers.ModelSerializer):
         rep = super(LeaveResetPolicySerializer, self).to_representation(instance)
         if instance.leave_type:  
             rep['leave_type'] = instance.leave_type.name
+        if instance.leave_entitlement:
+            rep['leave_entitlement'] = str(instance.leave_entitlement)
         return rep
 class LeaveRequestSerializer(serializers.ModelSerializer):
     # document_numbering_details = serializers.SerializerMethodField()

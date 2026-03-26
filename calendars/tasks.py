@@ -165,34 +165,87 @@ def reset_leave_balances():
             with schema_context(tenant_schema_name):
                 logger.info(f"Processing leave reset for tenant: {tenant_schema_name}")
 
-                resets = LeaveResetPolicy.objects.filter(reset=True)
-                if not resets.exists():
-                    logger.info(f"No reset policies found for tenant: {tenant_schema_name}")
+                entitlements = leave_entitlement.objects.all().order_by("leave_type", "min_experience")
+                employees = emp_master.objects.all()
+
+                if not employees.exists():
+                    logger.warning(f"No employees found in tenant {tenant_schema_name}")
                     continue
 
-                for reset in resets:
-                    reset_month = month_name_to_number(reset.month)
-                    reset_day = 1 if reset.day == '1st' else calendar.monthrange(today.year, today.month)[1]
+                for emp in employees:
+                    leave_type_entitlements = {}  # Store best entitlements per leave type
 
-                    # Check reset condition based on frequency
-                    if reset.frequency == 'years':
-                        if today.month != reset_month or today.day != reset_day:
-                            logger.info(f"Skipping yearly reset for {reset.leave_type}, not the reset date.")
+                    for entitlement in entitlements:
+                        leave_type = entitlement.leave_type
+
+                        # Determine base date (Joining Date or Confirmation Date)
+                        base_date = (
+                            emp.emp_joined_date
+                            if entitlement.effective_after_from == "date_of_joining"
+                            else emp.emp_date_of_confirmation
+                        )
+
+                        if not base_date:
                             continue
-                    elif reset.frequency == 'months':
-                        if today.day != reset_day:
-                            logger.info(f"Skipping monthly reset for {reset.leave_type}, not the reset date.")
+
+                        # Calculate experience in months
+                        experience = relativedelta(today, base_date)
+                        experience_in_months = experience.years * 12 + experience.months
+
+                        # Convert entitlement's min_experience to months
+                        min_experience_months = (
+                            entitlement.min_experience * 12
+                            if entitlement.effective_after_unit == "years"
+                            else entitlement.min_experience
+                        )
+                        # 1️⃣ Filter by designation
+                        if entitlement.designations.exists() and emp.emp_desgntn_id not in entitlement.designations.all():
                             continue
 
-                    leave_type = reset.leave_type
-                    logger.info(f"Resetting leave balances for {leave_type} on {today}")
+                        # 2️⃣ Filter by department
+                        if entitlement.departments.exists() and emp.emp_dept_id not in entitlement.departments.all():
+                            continue
 
-                    employees = emp_master.objects.all()
-                    if not employees.exists():
-                        logger.warning(f"No employees found in tenant {tenant_schema_name}")
-                        continue
+                        # 3️⃣ Filter by category
+                        if entitlement.categories.exists() and emp.emp_ctgry_id not in entitlement.categories.all():
+                            continue
 
-                    for emp in employees:
+                        # 4️⃣ Filter by branch
+                        if entitlement.branches.exists() and emp.emp_branch_id not in entitlement.branches.all():
+                            continue
+
+                        # Select the most specific entitlement for each leave type
+                        if (
+                            experience_in_months >= min_experience_months and
+                            (leave_type not in leave_type_entitlements or min_experience_months > leave_type_entitlements[leave_type]['experience'])
+                        ):
+                            leave_type_entitlements[leave_type] = {
+                                "entitlement": entitlement,
+                                "experience": min_experience_months
+                            }
+
+                    # Process reset for each leave type's best entitlement
+                    for leave_type, data in leave_type_entitlements.items():
+                        best_entitlement = data["entitlement"]
+                        
+                        try:
+                            reset = LeaveResetPolicy.objects.get(leave_entitlement=best_entitlement, reset=True)
+                        except LeaveResetPolicy.DoesNotExist:
+                            continue
+
+                        reset_month = month_name_to_number(reset.month)
+                        reset_day = 1 if reset.day == '1st' else calendar.monthrange(today.year, today.month)[1]
+
+                        # Check reset condition based on frequency
+                        if reset.frequency == 'years':
+                            if today.month != reset_month or today.day != reset_day:
+                                continue
+                        elif reset.frequency == 'months':
+                            if today.day != reset_day:
+                                continue
+
+                        logger.info(f"Resetting leave balances for {leave_type} on {today} for employee {emp.emp_code}")
+
                         leave_balance = emp_leave_balance.objects.filter(employee=emp, leave_type=leave_type).first()
                         if not leave_balance:
                             logger.info(f"No leave balance found for employee {emp.emp_code} and leave type {leave_type}. Creating a new one for opening balance.")

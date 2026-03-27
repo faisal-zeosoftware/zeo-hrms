@@ -272,6 +272,8 @@ class PayslipCommonWorkflow(models.Model):
     level = models.PositiveIntegerField()
     approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
     role = models.CharField(max_length=100)
+    branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+
 
     class Meta:
         ordering = ['level']

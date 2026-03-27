@@ -4,7 +4,8 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                     ShiftOverride,EmployeeMachineMapping,LeaveReport,
                      LeaveApprovalLevels,LeaveApproval,LvApprovalNotify,LvEmailTemplate,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
-                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule
+                    LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
+                    LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -390,6 +391,78 @@ class ImportAttendanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Attendance
         fields ='__all__'
+
+
+class LatinEarlyoutEmailTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LatinEarlyoutEmailTemplate
+        fields = '__all__'
+
+    def validate(self, attrs):
+        template_type = attrs.get("template_type")
+
+        # ✅ Handle partial updates safely
+        if not template_type:
+            return attrs
+
+        queryset = LatinEarlyoutEmailTemplate.objects.filter(
+            template_type=template_type
+        )
+
+        # ✅ Exclude current instance during update
+        if self.instance:
+            queryset = queryset.exclude(id=self.instance.id)
+
+        # ✅ Duplicate check
+        if queryset.exists():
+            raise serializers.ValidationError({
+                "template_type": f"{template_type} template already exists."
+            })
+
+        return attrs
+    
+class LateinEarlyRequestNotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LateinEarlyRequestNotification
+        fields = '__all__'
+
+class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LateinEarlyoutRequest
+        fields = '__all__'
+    def validate(self, data):
+        employee = data.get('employee')
+
+        # 🔍 Check if reporting_manager is used in workflow
+        first_level = LateinEarlyoutApprovalLevel.objects.order_by('level').first()
+
+        if first_level and first_level.approval_type == 'reporting_manager':
+            if not employee.emp_reporting_manager:
+                raise serializers.ValidationError({
+                    "employee": "This employee does not have a reporting manager assigned."
+                })
+
+        return data
+
+    # def to_representation(self, instance):
+    #     rep = super(LateinEarlyoutRequestSerializer, self).to_representation(instance)
+    #     if instance.employee:
+    #         rep['employee'] = instance.employee.emp_code
+    #     return rep
+    
+class LateinEarlyoutApprovalLevelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LateinEarlyoutApprovalLevel
+        fields = '__all__'
+    # def to_representation(self, instance):
+    #     rep = super(LateinEarlyoutApprovalLevelSerializer, self).to_representation(instance)
+    #     if instance.approver:  
+    #         rep['approver'] = instance.approver.username
+    #         return rep
+class LateinEarlyoutApprovalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LateinEarlyoutApproval
+        fields = '__all__'
 
 class ShiftSerializer(serializers.ModelSerializer):
     class Meta:

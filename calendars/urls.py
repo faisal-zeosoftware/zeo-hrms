@@ -5,7 +5,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
-                    AttendancePolicyViewset,LeavePayRuleViewset
+                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,
                     
                     )
 
@@ -64,6 +64,11 @@ router.register(r'overtime_policy', OvertimePolicyViewSet, basename='overtime-po
 router.register(r'overtime_rule', OvertimeRuleViewSet, basename='overtime-rule')
 router.register(r'attendance-policy', AttendancePolicyViewset, basename='attendance-policy')
 router.register(r'leave-pay-rule', LeavePayRuleViewset, basename='leave-pay-rule')
+router.register(r'lateineralyout-email-template', LatinEarlyoutEmailTemplateViewset, basename='lateineralyout-email-template')
+router.register(r'lateinearlyrequest-notification',LateinEarlyRequestNotificationViewset, basename='lateinearlyrequest-notification')
+router.register(r'lateinearly-request', LateinEarlyoutRequestViewset, basename='lateinearly-request')
+router.register(r'lateineralyout-approval-level', LateinEarlyoutApprovalLevelViewset, basename='lateineralyout-approval-level')
+router.register(r'lateineralyout-approval', LateinEarlyoutApprovalViewset, basename='lateineralyout-approval')
 
 
 
@@ -75,6 +80,7 @@ urlpatterns = [
     path('api/employee-attendance-summary/', EmployeeAttendanceSummaryAPIView.as_view(), name='employee-attendance-summary'),
     path("api/test-monthwise-accrual/", MonthwiseAccrualSimulationView.as_view(), name="test-monthwise-accrual"),
     path('api/leave/reset-preview/', LeaveResetPreviewAPIView.as_view(), name='leave-reset-preview'),
+
    
 
    

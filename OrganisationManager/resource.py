@@ -90,7 +90,7 @@ class DesignationResource(resources.ModelResource):
     desgntn_code = fields.Field(attribute='desgntn_code', column_name='Designation Code')
     desgntn_description = fields.Field(attribute='desgntn_description', column_name='Description')
     desgntn_is_active = fields.Field(attribute='desgntn_is_active', column_name='Active',widget=CustomBooleanWidget())
-
+    branch_id = fields.Field(attribute='branch_id', column_name='Branch',widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
 
     class Meta:
         model = desgntn_master
@@ -100,6 +100,7 @@ class DesignationResource(resources.ModelResource):
                   'desgntn_code',
                   'desgntn_description',
                   'desgntn_is_active',
+                  'branch_id'
                   
         )  
         import_id_fields = ['desgntn_code'] 
@@ -114,7 +115,7 @@ class DesignationResource(resources.ModelResource):
             if isinstance(value, str):
                 row[key] = " ".join(value.split())
             elif value is None:
-                row[key] = ""          
+                row[key] = ""            
 class DesgtnReportResource(resources.ModelResource):
     desgntn_job_title = fields.Field(attribute='desgntn_job_title', column_name='Job Tittle')
     desgntn_code = fields.Field(attribute='desgntn_code', column_name='Designation Code')
@@ -138,6 +139,7 @@ class CategoryResource(resources.ModelResource):
     ctgry_code = fields.Field(attribute='ctgry_code', column_name='Category Code')
     ctgry_description = fields.Field(attribute='ctgry_description', column_name='Description')
     ctgry_is_active = fields.Field(attribute='ctgry_is_active', column_name='Active',widget=CustomBooleanWidget()) 
+    branch_id = fields.Field(attribute='branch_id', column_name='Branch',widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
     class Meta:
         model = ctgry_master
        
@@ -146,6 +148,7 @@ class CategoryResource(resources.ModelResource):
                   'ctgry_code',
                   'ctgry_description',
                   'ctgry_is_active',
+                  'branch_id'
                   
         )       
         import_id_fields = ['ctgry_code']    

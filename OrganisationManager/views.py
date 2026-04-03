@@ -389,7 +389,7 @@ class DesignationBulkUploadViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def download_demo_excel(self, request):
         # Only column headers
-        columns = ["Job Tittle", "Designation Code", "Description", "Active"]
+        columns = ["Job Tittle", "Designation Code", "Description", "Active","Branch"]
 
         # Empty DataFrame (only headers, no rows)
         df = pd.DataFrame(columns=columns)
@@ -410,7 +410,7 @@ class DesignationBulkUploadViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def download_demo_csv(self, request):
         # Only column headers
-        columns = ["Job Tittle", "Designation Code", "Description", "Active"]
+        columns = ["Job Tittle", "Designation Code", "Description", "Active","Branch"]
 
         df = pd.DataFrame(columns=columns)
 
@@ -465,7 +465,7 @@ class CategoryBulkUploadViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def download_demo_excel(self, request):
         # Only column headers
-        columns = ["Category", "Category Code", "Description", "Active"]
+        columns = ["Category", "Category Code", "Description", "Active","Branch"]
 
         # Empty DataFrame (only headers, no rows)
         df = pd.DataFrame(columns=columns)
@@ -486,7 +486,7 @@ class CategoryBulkUploadViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def download_demo_csv(self, request):
         # Only column headers
-        columns = ["Category", "Category Code", "Description", "Active"]
+        columns = ["Category", "Category Code", "Description", "Active","Branch"]
 
         df = pd.DataFrame(columns=columns)
 

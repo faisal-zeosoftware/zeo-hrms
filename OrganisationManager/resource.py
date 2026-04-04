@@ -5,6 +5,7 @@ from import_export.fields import Field
 from .models import brnch_mstr,dept_master,desgntn_master,ctgry_master
 from import_export.widgets import ForeignKeyWidget
 from import_export.widgets import BooleanWidget
+from import_export.widgets import ManyToManyWidget
 
 class CustomBooleanWidget(BooleanWidget):
     def clean(self, value, row=None, *args, **kwargs):
@@ -42,7 +43,7 @@ class DepartmentResource(resources.ModelResource):
     dept_code = fields.Field(attribute='dept_code', column_name='Department Code')
     dept_description = fields.Field(attribute='dept_description', column_name='Description')
     dept_is_active = fields.Field(attribute='dept_is_active', column_name='Active',widget=CustomBooleanWidget())
-    branch_id = fields.Field(attribute='branch_id', column_name='Branch',widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
+    branch_id = fields.Field(attribute='branch_id', column_name='Branch',widget=ManyToManyWidget(brnch_mstr, field='branch_name', separator=','))
     class Meta:
         model = dept_master
        
@@ -90,7 +91,8 @@ class DesignationResource(resources.ModelResource):
     desgntn_code = fields.Field(attribute='desgntn_code', column_name='Designation Code')
     desgntn_description = fields.Field(attribute='desgntn_description', column_name='Description')
     desgntn_is_active = fields.Field(attribute='desgntn_is_active', column_name='Active',widget=CustomBooleanWidget())
-    branch_id = fields.Field(attribute='branch_id', column_name='Branch',widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
+    branch_id = fields.Field(attribute='branch_id', column_name='Branch',widget=ManyToManyWidget(brnch_mstr, field='branch_name', separator=','))
+
 
     class Meta:
         model = desgntn_master

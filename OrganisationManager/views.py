@@ -103,20 +103,44 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def department_report(self, request):
         queryset = dept_master.objects.all()
+        branch_ids = request.query_params.get('branch_id')
+        if branch_ids:
+            try:
+                branch_list = [
+                    int(b.strip())
+                    for b in branch_ids.split(',')
+                    if b.strip()
+                ]
+                for bid in branch_list:
+                    queryset=queryset.filter(branch_id=bid)
+
+                queryset = queryset.distinct()
+
+            except ValueError:
+                return Response(
+                    {"error": "Invalid branch_id format"},
+                    status=400
+                )
         resource = DeptReportResource()
         dataset = resource.export(queryset)
-
-        # Get the fields from the resource
         fields = [field.column_name for field in resource.get_fields()]
 
-        # Prepare JSON response
-        data = [
-            {field: row[field] if field != 'dept_is_active' else (True if row[field] else False)
-            for field in fields}
-            for row in dataset.dict
-        ]
-        
-        return JsonResponse(data, safe=False)
+        data = []
+        for row in dataset.dict:
+            row_data = {}
+
+            for field in fields:
+                value = row.get(field)
+
+                # Boolean conversion
+                if field == "dept_is_active":
+                    value = bool(value)
+
+                row_data[field] = value
+
+            data.append(row_data)
+
+        return Response(data)
         
     
     @action(detail=False, methods=['get'])

@@ -34,8 +34,9 @@ class DeptSerializer(serializers.ModelSerializer):
         model = dept_master
         fields= '__all__'
     def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        rep['branch_id'] = list(instance.branch_id.values_list('id', flat=True))
+        rep = super(DeptSerializer, self).to_representation(instance)
+        if instance.branch.exists():
+            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
         return rep
     
 class DeptUploadSerializer(serializers.ModelSerializer):

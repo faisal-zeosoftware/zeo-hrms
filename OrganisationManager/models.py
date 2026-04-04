@@ -46,7 +46,7 @@ class dept_master(models.Model):
     dept_updated_at  = models.DateTimeField(auto_now=True)
     dept_updated_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     dept_is_active   = models.BooleanField(default=True)
-    branch_id = models.ForeignKey("brnch_mstr", on_delete=models.SET_NULL, null=True)
+    branch = models.ManyToManyField("brnch_mstr", blank=True, related_name='dept_branches')
     class Meta:
         permissions = (
                 # ("add_dept_report", "Can add department report"),
@@ -73,6 +73,8 @@ class desgntn_master(models.Model):
     desgntn_updated_at  = models.DateTimeField(auto_now=True)
     desgntn_updated_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     desgntn_is_active   = models.BooleanField(default=True)
+    branch = models.ManyToManyField("brnch_mstr", blank=True, related_name='desgntn_branches')
+    
     class Meta:
         permissions = (
                 # ("add_designtn_report", "Can add designation report"),
@@ -93,6 +95,8 @@ class ctgry_master(models.Model):
     ctgry_updated_at  = models.DateTimeField(auto_now=True)
     ctgry_updated_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     ctgry_is_active   = models.BooleanField(default=True)
+    branch = models.ManyToManyField("brnch_mstr", blank=True, related_name='ctgry_branches')
+    
     def __str__(self):
         return self.ctgry_title
 

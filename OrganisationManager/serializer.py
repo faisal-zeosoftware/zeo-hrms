@@ -35,8 +35,8 @@ class DeptSerializer(serializers.ModelSerializer):
         fields= '__all__'
     def to_representation(self, instance):
         rep = super(DeptSerializer, self).to_representation(instance)
-        if instance.branch_id:
-            rep['branch_id'] =instance.branch_id.branch_name
+        if instance.branch.exists():
+            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
         return rep
 class DeptUploadSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True)
@@ -51,6 +51,11 @@ class DesgSerializer(serializers.ModelSerializer):
     class Meta:
         model = desgntn_master
         fields= '__all__'
+    def to_representation(self, instance):
+        rep = super(DesgSerializer, self).to_representation(instance)
+        if instance.branch.exists():
+            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+        return rep
 class DesgUploadSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True)
     class Meta:
@@ -67,6 +72,11 @@ class CtgrySerializer(serializers.ModelSerializer):
     class Meta:
         model = ctgry_master
         fields= '__all__'
+    def to_representation(self, instance):
+        rep = super(CtgrySerializer, self).to_representation(instance)
+        if instance.branch.exists():
+            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+        return rep
 #CATEGARY Bulupload SERIALIZER
 class CtgryUploadSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True)

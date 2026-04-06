@@ -12,6 +12,13 @@ class StateSerializer(serializers.ModelSerializer):
             rep['country'] = instance.country.country_name
        
         return rep
+    
+class StateBulkUploadSerializer(serializers.ModelSerializer):  
+    file = serializers.FileField(write_only=True) 
+    class Meta:
+        model = state_mstr
+        fields = '__all__'
+        
 #CURRENCY SERIALIZER
 class CurrencySerializer(serializers.ModelSerializer):
     class Meta:

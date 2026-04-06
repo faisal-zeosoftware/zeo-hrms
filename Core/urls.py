@@ -1,13 +1,14 @@
 from django.urls import path, include
 from .  views import (CountryViewSet,StateViewSet,CurrencyViewSet,LanguageViewSet,
                       DocumentViewSet,CountryBulkuploadViewSet,NationalityBlkupldViewSet,LanguageSkillViewSet,MarketingSkillViewSet,ProgrammingLanguageSkillViewSet,LanguageBlkupldViewSet,MarketingBlkupldViewSet,
-                    ProLangBlkupldViewSet,TaxSystemViewSet,NationalityViewSet,ReligionMasterViewSet,ReligionMasterBlkupldViewSet)
+                    ProLangBlkupldViewSet,TaxSystemViewSet,NationalityViewSet,ReligionMasterViewSet,ReligionMasterBlkupldViewSet,StateBulkuploadViewSet)
 
 from rest_framework.routers import DefaultRouter
 router = DefaultRouter()
 
 router.register(r'Country', CountryViewSet)
 router.register(r'State', StateViewSet)
+router.register(r'State-Bulkupload',StateBulkuploadViewSet,basename="state_bulkupload")
 router.register(r'Bulk-Upload', CountryBulkuploadViewSet,basename='bulk_upload')
 router.register(r'tax-system', TaxSystemViewSet,basename='tax_system')
 router.register(r'Nationality', NationalityViewSet,basename="nationality")

@@ -3,7 +3,7 @@ from .models import (state_mstr,crncy_mstr,cntry_mstr,document_type,LanguageMast
 from .serializer import (CountrySerializer,StateSerializer,LanguageMasterSerializer,
                          CurrencySerializer,Document_typeSerializer,CntryBulkUploadSerializer,NationalityBlkUpldSerializer,LanguageBlkupldSerializer,
                          MarketingBlkupldSerializer,LanguageSkillSerializer,MarketingSkillSerializer,ProgrammingLanguageSkillSerializer,
-                         ProLangBlkupldSerializer,MarketingBlkupldSerializer,LanguageBlkupldSerializer,TaxSystemSerializer,ReligionMasterBlkupldSerializer,NationalitySerializer,ReligionMasterSerializer)
+                         ProLangBlkupldSerializer,MarketingBlkupldSerializer,LanguageBlkupldSerializer,TaxSystemSerializer,ReligionMasterBlkupldSerializer,NationalitySerializer,ReligionMasterSerializer,StateBulkUploadSerializer)
 from . permissions import LanguageMasterPermission
 from rest_framework.decorators import action
 from rest_framework import viewsets
@@ -28,7 +28,7 @@ class StateViewSet(viewsets.ModelViewSet):
         instance.is_active = False  # Soft delete instead of actual deletion
         instance.save()
         return Response({"message": "State deactivated successfully"}, status=status.HTTP_204_NO_CONTENT)
-
+    
 
     # def list(self, request):
     #     country_id = request.query_params.get('country_id')
@@ -38,6 +38,77 @@ class StateViewSet(viewsets.ModelViewSet):
     #         return Response(serializer.data)
     #     else:
     #         return Response({"error": "Country ID is required"})
+
+
+class StateBulkuploadViewSet(viewsets.ModelViewSet):
+    queryset = state_mstr.objects.all()
+    serializer_class = StateBulkUploadSerializer
+    # permission_classes = [IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser)
+
+    @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def bulk_upload(self, request):
+        if request.method == 'POST' and request.FILES.get('file'):
+            csv_file = request.FILES['file']
+            decoded_file = csv_file.read().decode('latin-1').splitlines()
+            reader = csv.DictReader(decoded_file)
+
+            expected_headers = ['state_name', 'country']
+            file_headers = [h.strip().lower() for h in reader.fieldnames]
+
+            if set(file_headers) != set(expected_headers):
+                return Response(
+                    {
+                        "error": f"Invalid CSV headers. Expected {expected_headers}, but got {reader.fieldnames}"
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            success_count = 0
+            error_count = 0
+            errors = []
+
+            for row_number, row in enumerate(reader, start=2):
+                row = {k.strip().lower(): v for k, v in row.items()}
+
+                state_name = row.get('state_name', '').strip()[:50]
+                country_name = row.get('country', '').strip()[:50]
+
+                if not state_name or not country_name:
+                    errors.append(f"Missing required fields in row {row_number}")
+                    error_count += 1
+                    continue
+
+                try:
+                    # FIX: get country object
+                    try:
+                        country_obj = cntry_mstr.objects.get(country_name=country_name)
+                    except cntry_mstr.DoesNotExist:
+                        errors.append(f"Country '{country_name}' not found in row {row_number}")
+                        error_count += 1
+                        continue
+                    state_mstr.objects.create(
+                        state_name=state_name,
+                        country=country_obj
+                    )
+
+                    success_count += 1
+
+                except Exception as e:
+                    errors.append(f"Error in row {row_number}: {str(e)}")
+                    error_count += 1
+
+            if error_count > 0:
+                return Response({'error': errors}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response(
+                    {'message': f'Bulk upload successful. {success_count} rows added.'},
+                    status=status.HTTP_201_CREATED
+                )
+
+        return Response({'error': 'No file found'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    
 #COUNTRY CRUD
 class CountryViewSet(viewsets.ModelViewSet):
     queryset = cntry_mstr.objects.all()

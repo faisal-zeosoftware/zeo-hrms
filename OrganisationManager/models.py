@@ -73,7 +73,7 @@ class desgntn_master(models.Model):
     desgntn_updated_at  = models.DateTimeField(auto_now=True)
     desgntn_updated_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     desgntn_is_active   = models.BooleanField(default=True)
-    branch = models.ManyToManyField("brnch_mstr", blank=True, related_name='desgntn_branches')
+    branch              = models.ManyToManyField("brnch_mstr", blank=True, related_name='desgntn_branches')
     
     class Meta:
         permissions = (

@@ -103,7 +103,7 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def department_report(self, request):
         queryset = dept_master.objects.all()
-        branch_ids = request.query_params.get('branch_id')
+        branch_ids = request.query_params.get('branch')
         if branch_ids:
             try:
                 branch_list = [
@@ -112,13 +112,13 @@ class DepartmentViewSet(viewsets.ModelViewSet):
                     if b.strip()
                 ]
                 for bid in branch_list:
-                    queryset=queryset.filter(branch_id=bid)
+                    queryset=queryset.filter(branch=bid)
 
                 queryset = queryset.distinct()
 
             except ValueError:
                 return Response(
-                    {"error": "Invalid branch_id format"},
+                    {"error": "Invalid branch format"},
                     status=400
                 )
         resource = DeptReportResource()
@@ -205,10 +205,10 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 @api_view(['POST'])
 def save_notification_settings(request):
     selected_departments = request.data.get('departments', [])
-    branch_id = request.data.get('branch_id')
+    branch = request.data.get('branch')
 
     try:
-        branch = brnch_mstr.objects.get(id=branch_id)
+        branch = brnch_mstr.objects.get(id=branch)
     except brnch_mstr.DoesNotExist:
         return Response({"error": "Branch not found"}, status=404)
 

@@ -2669,7 +2669,7 @@ class ESSUserListView(APIView):
         serializer = EmpSerializer(ess_users, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-class NotificationSettingsViewSet(viewsets.ModelViewSet):
+class NotificationSettingsViewSet(BranchAccessMixin,viewsets.ModelViewSet):
     queryset = NotificationSettings.objects.all()
     serializer_class = NotificationSettingsSerializer
 

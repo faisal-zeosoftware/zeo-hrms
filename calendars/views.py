@@ -69,7 +69,7 @@ import csv
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from Core .mixins import BranchAccessMixin
-from .utils import validate_employee_geofence,apply_check_in_policy
+from .utils import validate_employee_geofence,apply_check_in_policy,apply_check_out_policy
 # Create your views here.
 
 class WeekendDetailsViewset(viewsets.ModelViewSet):
@@ -734,7 +734,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Outside geofence"}, status=400)
 
         tenant_time = localtime(now()).time()
-        tenant_time = face_utils.apply_check_out_policy(employee, tenant_time)
+        tenant_time = apply_check_out_policy(employee, tenant_time)
 
         attendance.check_out_time = tenant_time
         attendance.check_out_lat = lat

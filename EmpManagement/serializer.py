@@ -23,7 +23,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
@@ -647,19 +647,20 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
         if request_type.use_common_workflow:
             first_level = CommonWorkflow.objects.order_by("level").first()
         else:
-            first_level = ApprovalLevel.objects.filter(
+            workflow = ApprovalWorkflow.objects.filter(
                 request_type=request_type,
                 branch=employee.emp_branch_id
-            ).order_by("level").first()
+            ).first()
+            first_level = workflow.levels.order_by("level").first() if workflow else None
 
-        # # Approval workflow not configured
-        # if not first_level:
-        #     raise serializers.ValidationError(
-        #         {"request_type": "Approval levels are not configured."}
-        #     )
+        if not first_level:
+             return data
+
+        # Get approval_type from the right source
+        approval_type = first_level.approval_type if request_type.use_common_workflow else workflow.approval_type
 
         # Reporting manager required
-        if first_level.approval_type == "reporting_manager" and not employee.emp_reporting_manager:
+        if approval_type == "reporting_manager" and not employee.emp_reporting_manager:
             raise serializers.ValidationError(
                 {"reporting_manager": "Employee has no reporting manager."}
             )
@@ -669,39 +670,51 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
 class ApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = ApprovalLevel
+        fields = ['id', 'level', 'role', 'approver', 'escalate_to', 'escalate_after_days', 'escalate_after_hours', 'escalate_after_minutes']
+
+class ApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = ApprovalLevelSerializer(many=True)
+    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = ApprovalWorkflow
         fields = '__all__'
-    def validate(self, attrs):
-        level = attrs.get('level')
-        request_type = attrs.get('request_type')
-        branches = attrs.get('branch', [])
 
-        qs = ApprovalLevel.objects.all()
-
-        # ✅ EXCLUDE CURRENT INSTANCE DURING UPDATE
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-
-        for branch in branches:
-            if qs.filter(
-                level=level,
-                request_type=request_type,
-                branch=branch
-            ).exists():
-                raise serializers.ValidationError(
-                    f"An approval level with level={level} already exists "
-                    f"for branch '{branch}' and request type '{request_type}'."
-                )
-
-        return attrs
     def to_representation(self, instance):
-        rep = super(ApprovalLevelSerializer, self).to_representation(instance)
-        if instance.request_type:  
-            rep['request_type'] = instance.request_type.name
-        if instance.approver:  
-            rep['approver'] = instance.approver.username
-        if instance.branch.exists():  
-            rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
+        rep = super().to_representation(instance)
+        if instance.request_type:
+            rep['request_type_name'] = instance.request_type.name
+        if instance.branch.exists():
+            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
         return rep
+
+    def create(self, validated_data):
+        levels_data = validated_data.pop('levels', [])
+        branches = validated_data.pop('branch', [])
+        workflow = ApprovalWorkflow.objects.create(**validated_data)
+        workflow.branch.set(branches)
+        
+        for level_data in levels_data:
+            ApprovalLevel.objects.create(workflow=workflow, **level_data)
+        return workflow
+
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('levels', None)
+        branches = validated_data.pop('branch', None)
+        
+        instance.request_type = validated_data.get('request_type', instance.request_type)
+        instance.approval_type = validated_data.get('approval_type', instance.approval_type)
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.levels.all().delete()
+            for level_data in levels_data:
+                ApprovalLevel.objects.create(workflow=instance, **level_data)
+        
+        return instance
     
 
 class SelectedEmpNotifySerializer(serializers.ModelSerializer):

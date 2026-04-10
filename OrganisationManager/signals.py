@@ -1,26 +1,88 @@
-# OrganisationManager/signals.py
 from django_tenants.signals import post_schema_sync
 from django.dispatch import receiver
 from django_tenants.utils import schema_context
-from OrganisationManager.models import brnch_mstr
-from calendars.models import leave_type
-from PayrollManagement .models import SalaryComponent
+from django.apps import apps
+from datetime import date
 
 @receiver(post_schema_sync)
 def create_tenant_defaults(sender, tenant, **kwargs):
     with schema_context(tenant.schema_name):
+        # Resolve models
+        brnch_mstr = apps.get_model('OrganisationManager', 'brnch_mstr')
+        leave_type = apps.get_model('calendars', 'leave_type')
+        weekend_calendar = apps.get_model('calendars', 'weekend_calendar')
+        assign_weekend = apps.get_model('calendars', 'assign_weekend')
+        holiday_calendar = apps.get_model('calendars', 'holiday_calendar')
+        holiday = apps.get_model('calendars', 'holiday')
+        assign_holiday = apps.get_model('calendars', 'assign_holiday')
+        SalaryComponent = apps.get_model('PayrollManagement', 'SalaryComponent')
+
         # Branch
-        brnch_mstr.objects.create(
+        branch = brnch_mstr.objects.create(
             branch_name=tenant.name,
-            branch_logo=tenant.logo,
-            branch_code="BR001",
+            # branch_logo=tenant.logo,
+            branch_code=f"BR-{tenant.schema_name[:10].upper()}",
             probation_period_days=30,
             br_country=tenant.country,
             br_city="Sample City",
             br_pincode="123456",
-            br_branch_nmbr_1="BR-0001",
-            br_branch_mail="branch@example.com",
+            br_branch_nmbr_1=f"BN-{tenant.schema_name[:10].upper()}",
+            br_branch_mail=getattr(tenant, 'company_email', 'branch@example.com'),
         )
+
+        # Current year
+        current_year = date.today().year
+
+        # 1. Create Default Weekend Calendar (Saturdays and Sundays as off)
+        weekend = weekend_calendar.objects.create(
+            description=f"Default Weekend Calendar {current_year}",
+            calendar_code=f"WEND-{current_year}-{tenant.schema_name[:5]}",
+            year=current_year,
+            monday='fullday',
+            tuesday='fullday',
+            wednesday='fullday',
+            thursday='fullday',
+            friday='fullday',
+            saturday='leave',
+            sunday='leave'
+        )
+
+        # Assign Weekend Calendar to Default Branch
+        assignment_w = assign_weekend.objects.create(
+            related_to='branch',
+            weekend_model=weekend
+        )
+        assignment_w.branch.add(branch)
+
+        # 2. Create Default Holiday Calendar
+        h_calendar = holiday_calendar.objects.create(
+            calendar_title=f"Default Holiday Calendar {current_year}",
+            year=current_year
+        )
+
+        # Create Predefined Default Holidays for the Current Year
+        default_holidays = [
+            ("New Year's Day", date(current_year, 1, 1), date(current_year, 1, 1)),
+            ("Labor Day", date(current_year, 5, 1), date(current_year, 5, 1)),
+            ("Christmas Day", date(current_year, 12, 25), date(current_year, 12, 25)),
+        ]
+
+        for desc, start, end in default_holidays:
+            holiday.objects.get_or_create(
+                description=desc,
+                defaults={
+                    'calendar': h_calendar,
+                    'start_date': start,
+                    'end_date': end
+                }
+            )
+
+        # Assign Holiday Calendar to Default Branch
+        assignment_h = assign_holiday.objects.create(
+            related_to='branch',
+            holiday_model=h_calendar
+        )
+        assignment_h.branch.add(branch)
 
         # Default leave types
         default_leaves = [
@@ -32,7 +94,8 @@ def create_tenant_defaults(sender, tenant, **kwargs):
         ]
         for name, code, leave_type_value in default_leaves:
             leave_type.objects.get_or_create(
-                code=code,
+                code=f"{code}-{tenant.schema_name[:3].upper()}",
+                branch=branch,
                 defaults={
                     "name": name,
                     "type": leave_type_value,
@@ -47,7 +110,7 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                 },
             )
 
-        # Default salary components
+        # Default salary components - PASSING branch EXPLICITLY
         default_salary_components = [
             ("Basic", "addition", "BAS", True, "", False, True, False, False),
             ("HRA", "addition", "HRA", True, "", False, True, False, False),
@@ -67,6 +130,7 @@ def create_tenant_defaults(sender, tenant, **kwargs):
         ) in default_salary_components:
             SalaryComponent.objects.get_or_create(
                 code=code,
+                branch=branch, # Link to branch for uniqueness
                 defaults={
                     "name": name,
                     "component_type": component_type,

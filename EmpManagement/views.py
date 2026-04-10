@@ -9,7 +9,8 @@ from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQ
                      EmpQualification_CustomField,EmpDocuments_CustomField,LanguageSkill,MarketingSkill,ProgrammingLanguageSkill,Emp_CustomField,Report,Doc_Report,GeneralRequest,RequestType,GeneralRequestReport,EmployeeLangSkill,EmployeeProgramSkill,
                      EmployeeMarketingSkill,Approval,ApprovalLevel,RequestNotification,Emp_CustomFieldValue,
                      EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,JobHistory_CustomFieldValue,
-                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification
+                     DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,
+                     ApprovalWorkflow
                      )
 from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,NotificationSerializer,RequestTypeSerializer,
                          EmpJobHistorySerializer,EmpLeaveRequestSerializer,DocumentSerializer,GeneralRequestSerializer,

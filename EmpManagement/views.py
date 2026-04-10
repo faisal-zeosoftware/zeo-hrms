@@ -3077,7 +3077,7 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
     API for managing escalation settings on each approval level.
     """
     serializer_class = EscalationRuleSerializer
-    queryset = ApprovalLevel.objects.all().order_by('request_type', 'level')
+    queryset = ApprovalLevel.objects.all().order_by('workflow__request_type', 'level')
 
     def get_queryset(self):
         queryset = super().get_queryset()

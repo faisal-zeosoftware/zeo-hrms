@@ -20,7 +20,8 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          ReqNotifySerializer,Emp_CustomFieldValueSerializer,EmailTemplateSerializer,EmployeeFilterSerializer,EmailConfigurationSerializer,SelectedEmpNotifySerializer,
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
-                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer,ResignationTemplateSerializer,ResignationRequestNotificationSerializer)
+                         DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer,ResignationTemplateSerializer,ResignationRequestNotificationSerializer,
+                         ApprovalWorkflowSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2305,8 +2306,8 @@ class GeneralRequestViewset(viewsets.ModelViewSet):
         return Response(history_data, status=status.HTTP_200_OK)
 
 class ApprovalLevelViewset(viewsets.ModelViewSet):
-    queryset = ApprovalLevel.objects.all()
-    serializer_class = ApprovalLevelSerializer
+    queryset = ApprovalWorkflow.objects.all()
+    serializer_class = ApprovalWorkflowSerializer
     permission_classes = [ApprovalLevelPermission]
 
 class CommonWorkflowViewSet(viewsets.ModelViewSet):

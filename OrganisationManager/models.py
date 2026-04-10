@@ -34,7 +34,40 @@ class brnch_mstr(models.Model):
     br_updated_by             = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     def __str__(self):
         return self.branch_name
-    
+    def delete(self, *args, **kwargs):
+        from django.apps import apps
+        from django.core.exceptions import ValidationError
+
+        # List of models that represent "transactions" or active associations with a branch.
+        # Format: (app_label, model_name, field_name_on_that_model)
+        transaction_checks = [
+            ('EmpManagement', 'emp_master', 'emp_branch_id'),
+            ('EmpManagement', 'GeneralRequest', 'branch'),
+            ('calendars', 'employee_leave_request', 'branch'),
+            ('OrganisationManager', 'AssetRequest', 'branch'),
+            ('PayrollManagement', 'PayrollRun', 'branch'),
+            ('PayrollManagement', 'LoanApplication', 'branch'),
+            ('PayrollManagement', 'AdvanceSalaryRequest', 'branch'),
+            ('PayrollManagement', 'AirTicketRequest', 'branch'),
+            ('calendars', 'Attendance', 'employee__emp_branch_id'),
+            ('OrganisationManager', 'FiscalYear', 'branch_id'),
+            ('OrganisationManager', 'DocumentNumbering', 'branch_id'),
+        ]
+
+        for app_label, model_name, field_name in transaction_checks:
+            try:
+                Model = apps.get_model(app_label, model_name)
+                if Model.objects.filter(**{field_name: self}).exists():
+                    readable_name = model_name.replace('_', ' ').capitalize()
+                    raise ValidationError(
+                        f"This branch cannot be deleted because it is associated with existing transactions in '{readable_name}'. "
+                        "Please deactivate the branch instead of deleting it to preserve data integrity."
+                    )
+            except (LookupError, ValueError):
+                # Skip if the app or model is not available in the current environment
+                continue
+
+        super().delete(*args, **kwargs)
 
 #departments model
 class dept_master(models.Model):

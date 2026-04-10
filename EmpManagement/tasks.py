@@ -227,7 +227,8 @@ def escalate_approval_task(approval_id, schema_name):
 
             # Find escalation rule
             level_rule = ApprovalLevel.objects.filter(
-                request_type=approval.general_request.request_type,
+                workflow__request_type=approval.general_request.request_type,
+                workflow__branch=approval.general_request.employee.emp_branch_id,
                 level=approval.level
             ).first()
 

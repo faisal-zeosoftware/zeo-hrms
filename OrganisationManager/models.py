@@ -155,20 +155,26 @@ class DocumentNumbering(models.Model):
         return f"{self.branch_id.branch_name} - {self.type}"
 
     def clean(self):
-        if DocumentNumbering.objects.filter(branch_id=self.branch_id, type=self.type).exclude(id=self.id).exists():
+        if DocumentNumbering.objects.filter(
+            branch_id=self.branch_id,
+            type=self.type
+        ).exclude(id=self.id).exists():
             raise ValidationError("A document numbering already exists for this branch and type.")
+        if self.start_date and self.end_date:
+            if self.start_date >= self.end_date:
+                raise ValidationError({'end_date': "End date must be greater than start date."})
 
-           # Validate start and end dates
-        if self.start_date >= self.end_date:
-            raise ValidationError({'end_date': "End date must be greater than start date."})
-        if self.total_length < len(self.prefix) + len(self.suffix) + 2:  # Ensure total length can accommodate the format
-            raise ValidationError({'total_length': "Total length is too short for the given prefix and suffix."})
+        prefix = self.prefix or ''
+        suffix = self.suffix or ''
 
+        if self.total_length < len(prefix) + len(suffix) + 1:
+            raise ValidationError({
+                'total_length': "Total length is too short for the given prefix and suffix."
+            })
+            
     def get_next_number(self):
         """Generate the next document number with a fixed total length, without using the year field."""
         current_date = timezone.now().date()
-
-        # Ensure the document number is generated within the valid date range
         if self.start_date and self.end_date:
             if not (self.start_date <= current_date <= self.end_date):
                 raise ValidationError("Document number cannot be generated outside the valid date range.")
@@ -176,20 +182,32 @@ class DocumentNumbering(models.Model):
         with transaction.atomic():
             doc_numbering = DocumentNumbering.objects.select_for_update().get(id=self.id)
 
-            # Increment the current number
+            prefix = doc_numbering.prefix or ''
+            suffix = doc_numbering.suffix or ''
+
+            # FIX: base = prefix + suffix (NO dash here)
+            base_text = f"{prefix}{suffix}"
+
+            # only one dash before number (as per your required format)
+            available_space = doc_numbering.total_length - len(base_text) - 1
+
+            if available_space < 1:
+                raise ValidationError("Invalid total length configuration.")
+
             next_number = doc_numbering.current_number + 1
+
+            max_limit = int("9" * available_space)
+            if next_number > max_limit:
+                raise ValidationError("Document number limit reached.")
+
+            number_part = str(next_number).zfill(available_space)
+            final_number = f"{prefix}{suffix}-{number_part}"
+
+            # save after validation
             doc_numbering.current_number = next_number
             doc_numbering.save()
 
-            # Construct document number and determine available space for the number
-            suffix_part = f"-{doc_numbering.suffix}" if doc_numbering.suffix else ""
-            base_format = f"{doc_numbering.prefix}" + suffix_part  # Removed year field
-            available_space = doc_numbering.total_length - len(base_format) - 1  # Subtract fixed parts and the dash
-
-            # Ensure the number fits in the available space
-            number_str = str(next_number).zfill(available_space)
-
-            return f"{doc_numbering.prefix}-{number_str}{suffix_part}"
+            return final_number
     
 
 class CompanyPolicy(models.Model):

@@ -151,22 +151,32 @@ from .models import brnch_mstr, DocumentNumbering
 # from PayrollManagement .models import SalaryComponent
 from datetime import timedelta
 from django.utils import timezone
+from django.db import transaction
 
 @receiver(post_save, sender=brnch_mstr)
 def create_defaults_for_branch(sender, instance, created, **kwargs):
-    if created:
-        # Loop through all document types and create default entries
+    if not created:
+        return
+
+    with transaction.atomic():
         for doc_type, _ in DocumentNumbering.DOCUMENT_TYPES:
+
+            raw_prefix = f"{instance.branch_code[:2]}-{doc_type[:3].upper()}"
+
+        
+            max_prefix_length = 8 
+            prefix = raw_prefix[:max_prefix_length]
+
             DocumentNumbering.objects.get_or_create(
                 branch_id=instance,
                 type=doc_type,
                 defaults={
-                    'prefix' : f"{instance.branch_code}-{doc_type.upper().replace('_', '')}",
+                    'prefix': prefix,
                     'suffix': '',
                     'current_number': 0,
                     'total_length': 12,
-                    'created_by': instance.br_created_by,
-                    'start_date':timezone.now().date(),
-                    'end_date':timezone.now().date() + timedelta(days=365),
+                    'created_by': getattr(instance, 'br_created_by', None),
+                    'start_date': timezone.now().date(),
+                    'end_date': timezone.now().date() + timedelta(days=365),
                 }
             )

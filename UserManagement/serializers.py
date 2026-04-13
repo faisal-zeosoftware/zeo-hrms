@@ -188,6 +188,17 @@ class CompanySerializer(serializers.ModelSerializer):
         return None
     def get_state_label(self, obj):
         return obj.country.get_state_label() if obj.country else None  # Use method from model
+    
+    def to_representation(self, instance):
+        """Override to return names instead of IDs for country, state, and currency"""
+        rep = super().to_representation(instance)
+        if instance.country:
+            rep['country'] = instance.country.country_name
+        if instance.state:
+            rep['state'] = instance.state.state_name
+        if instance.currency:
+            rep['currency'] = instance.currency.currency_name
+        return rep
 class Non_EssUserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser

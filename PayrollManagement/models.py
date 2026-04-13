@@ -174,6 +174,7 @@ class PayrollRun(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     class Meta:
+        unique_together = ('month', 'year', 'branch', 'department', 'category')
         permissions = (
                 ("add_wps", "Can add wps"),
                 ("view_wps", "Can view wps"),
@@ -207,8 +208,6 @@ class PayrollRun(models.Model):
     def __str__(self):
         return f"Payroll - {self.get_month_display()} {self.year} ({self.status})"
 
-    class Meta:
-        unique_together = ('month', 'year', 'branch', 'department', 'category')
 
 class Payslip(models.Model):
     STATUS_CHOICES = [

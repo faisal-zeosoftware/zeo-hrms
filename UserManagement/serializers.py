@@ -136,9 +136,9 @@ class CompanySerializer(serializers.ModelSerializer):
     currency_details = serializers.SerializerMethodField()
     state_label = serializers.SerializerMethodField()  # Avoid duplicate logic
     states = serializers.SerializerMethodField()
-    country = serializers.CharField(source='country.country_name', read_only=True)
-    state = serializers.CharField(source='state.state_name', read_only=True)
-    currency = serializers.CharField(source='currency.currency_name', read_only=True)
+    # country = serializers.CharField(source='country.country_name', read_only=True)
+    # state = serializers.CharField(source='state.state_name', read_only=True)
+    # currency = serializers.CharField(source='currency.currency_name', read_only=True)
 
     class Meta:
         model = company

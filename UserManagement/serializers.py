@@ -170,11 +170,18 @@ class CompanySerializer(serializers.ModelSerializer):
             return {"tax_name": tax.tax_name, "tax_percentage": tax.tax_percentage}
         return None  # If no tax is found  
     def get_currency_details(self, obj):
-        """Fetch currency details dynamically from the TaxSystem model"""
-        currency = crncy_mstr.objects.filter(country=obj.country).first()
+        currency = obj.currency
+        if not currency and obj.country:
+            currency = obj.country.currency.first()
+
         if currency:
-            return {"currency_name": currency.currency_name, "currency_code": currency.currency_code,"symbol": currency.symbol}
-        return None  # If no currency is found
+            return {
+                "currency_name": currency.currency_name,
+                "currency_code": currency.currency_code,
+                "symbol": currency.symbol
+            }
+
+        return None
     def get_state_label(self, obj):
         return obj.country.get_state_label() if obj.country else None  # Use method from model
 class Non_EssUserListSerializer(serializers.ModelSerializer):

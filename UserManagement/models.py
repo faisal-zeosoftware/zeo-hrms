@@ -17,6 +17,15 @@ from django.core.validators import RegexValidator
 from django_tenants.utils import schema_context
 
 class company(TenantMixin):
+    INDUSTRY_CHOICES = [
+        ('IT', 'Information Technology'),
+        ('HC', 'Healthcare'),
+        ('FIN', 'Finance'),
+        ('EDU', 'Education'),
+        ('MFG', 'Manufacturing'),
+        ('RET', 'Retail'),
+        ('OTH', 'Other'),
+    ]
     name = models.CharField(max_length=100)
     schema_name = models.SlugField(unique=True, blank=True, null=True)  # Ensure unique schemas
     paid_until = models.DateField(auto_now_add=True)
@@ -37,11 +46,16 @@ class company(TenantMixin):
         blank=True,
         null=True
     )
+    currency = models.ForeignKey('Core.crncy_mstr', on_delete=models.SET_NULL, null=True, blank=True)
+    state = models.ForeignKey('Core.state_mstr', on_delete=models.SET_NULL, null=True, blank=True)
+    industry_type = models.CharField(max_length=10,choices=INDUSTRY_CHOICES,blank=True,null=True)
+    address_line1 = models.CharField(max_length=255, blank=True, null=True)
+    address_line2 = models.CharField(max_length=255, blank=True, null=True)
+    financial_year_start_month = models.IntegerField(default=1)  
+    financial_year_start_day = models.IntegerField(default=1)
+
     # Automatically create schema when saving
     auto_create_schema = True
-    @property
-    def currency(self):
-        return getattr(self.country, 'currency', None)
     def save(self, *args, **kwargs):
         # Generate schema_name from name if not explicitly provided
         if not self.schema_name:

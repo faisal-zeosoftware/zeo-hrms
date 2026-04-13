@@ -26,8 +26,8 @@ class CurrencySerializer(serializers.ModelSerializer):
         fields = '__all__'
 #COUNTRY SERIALIZER
 class CountrySerializer(serializers.ModelSerializer):
-    currency = CurrencySerializer(read_only=True)
-    states_set = StateSerializer(many=True, read_only=True)  # 
+    currency = CurrencySerializer(many=True, read_only=True)
+    states_set = StateSerializer(source='state_mstr_set', many=True, read_only=True)  # 
     state_label = serializers.SerializerMethodField()  # Dynamic label field
     class Meta:
         model = cntry_mstr
@@ -52,6 +52,7 @@ class NationalityBlkUpldSerializer(serializers.ModelSerializer):
     class Meta:
         model = Nationality
         fields = '__all__'
+    
 class Document_typeSerializer(serializers.ModelSerializer):
     class Meta:
         model = document_type

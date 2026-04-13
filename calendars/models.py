@@ -1971,6 +1971,18 @@ class Attendance(models.Model):
                 ("export_early_going", "Can early going"),
                 ("delete_early_going", "Can delete early going"),
                 ("change_early_going", "Can change early going"),
+
+                ("add_attendance_manual", "Can  add attendance manual"),
+                ("view_attendance_manual", "Can  list attendance manual"),
+                ("export_attendance_manual", "Can export attendance manual"),
+                ("delete_attendance_manual", "Can delete attendance manual"),
+                ("change_attendance_manual", "Can change attendance manual"),
+
+                ("add_attendance_faceregister", "Can  add attendance face register"),
+                ("view_attendance_faceregister", "Can  list attendance face register"),
+                ("export_attendance_faceregister", "Can export attendance face register"),
+                ("delete_attendance_faceregister", "Can delete attendance face register"),
+                ("change_attendance_faceregister", "Can change attendance face register"),
         )
     def __str__(self):
         return f"attendance {self.employee} on {self.date}"

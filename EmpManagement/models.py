@@ -1357,6 +1357,13 @@ class ApprovalLevel(models.Model):
 
     class Meta:
         ordering = ['level']
+        permissions = (
+                    ("add_genrl_escalation", "Can add general Escalation"),
+                    ("view_genrl_escalation", "Can view general Escalation"),
+                    ("change_genrl_escalation", "Can change general Escalation"),
+                    ("export_genrl_escalation", "Can export general Escalation"),
+                    ("delete_genrl_escalation", "Can delete general Escalation"),
+            )
         
     def get_escalation_timedelta(self):
         """Returns the total time delta for escalation."""

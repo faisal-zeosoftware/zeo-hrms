@@ -89,7 +89,7 @@ class CustomAuthentication(BaseAuthentication):
 class EmpViewSet(viewsets.ModelViewSet):
     queryset = emp_master.objects.all()
     serializer_class = EmpSerializer
-    permission_classes = [EmployeePermission]
+    # permission_classes = [EmployeePermission]
     def get_queryset(self):
         user = self.request.user
         queryset = super().get_queryset()

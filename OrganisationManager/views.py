@@ -71,7 +71,7 @@ def get_model_permissions(model):
 class BranchViewSet(viewsets.ModelViewSet):
     queryset = brnch_mstr.objects.all()
     serializer_class = BranchSerializer
-    permission_classes = [BranchPermission]
+    # permission_classes = [BranchPermission]
     
     def get_serializer_context(self):
         context = super().get_serializer_context()

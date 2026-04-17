@@ -22,7 +22,7 @@ class StateViewSet(viewsets.ModelViewSet):
     queryset = state_mstr.objects.all()
     serializer_class = StateSerializer
     # authentication_classes = [SessionAuthentication,]
-    permission_classes = [StatePermission,] 
+    # permission_classes = [StatePermission,] 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         instance.is_active = False  # Soft delete instead of actual deletion
@@ -114,7 +114,7 @@ class CountryViewSet(viewsets.ModelViewSet):
     queryset = cntry_mstr.objects.all()
     serializer_class = CountrySerializer
     # authentication_classes = [SessionAuthentication,]
-    permission_classes = [CountryPermission,]
+    # permission_classes = [CountryPermission,]
     # Custom action to get states for a specific country
     # @action(detail=True, methods=['get'])
     # def states(self, request, pk=None):

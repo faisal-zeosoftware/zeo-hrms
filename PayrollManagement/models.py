@@ -239,7 +239,7 @@ class Payslip(models.Model):
     def save(self, *args, **kwargs):
         if not self.currency and self.employee and self.employee.emp_country_id:
             if hasattr(self.employee.emp_country_id, 'currency'):
-                self.currency = self.employee.emp_country_id.currency
+                self.currency = self.employee.emp_country_id.currency.first()
         super().save(*args, **kwargs)
     def move_to_next_level(self):
         """

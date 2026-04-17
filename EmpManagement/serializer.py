@@ -671,6 +671,23 @@ class ApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = ApprovalLevel
         fields = ['id', 'level', 'role', 'approver', 'escalate_to', 'escalate_after_days', 'escalate_after_hours', 'escalate_after_minutes']
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if instance.approver:
+            emp = instance.approver.employees.first()
+            if emp:
+                rep['approver'] = f"{emp.emp_first_name or ''} {emp.emp_last_name or ''}".strip() or instance.approver.username
+            else:
+                rep['approver'] = instance.approver.username
+        
+        if instance.escalate_to:
+            emp_esc = instance.escalate_to.employees.first()
+            if emp_esc:
+                rep['escalate_to'] = f"{emp_esc.emp_first_name or ''} {emp_esc.emp_last_name or ''}".strip() or instance.escalate_to.username
+            else:
+                rep['escalate_to'] = instance.escalate_to.username
+        return rep
+
 
 class ApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = ApprovalLevelSerializer(many=True)
@@ -683,9 +700,9 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         if instance.request_type:
-            rep['request_type_name'] = instance.request_type.name
+            rep['request_type'] = instance.request_type.name
         if instance.branch.exists():
-            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+            rep['branch'] = [b.branch_name for b in instance.branch.all()]
         return rep
 
     def create(self, validated_data):

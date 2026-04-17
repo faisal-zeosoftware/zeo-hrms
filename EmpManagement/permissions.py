@@ -2,40 +2,38 @@ from rest_framework import permissions
 from tenant_users.tenants.models import UserTenantPermissions
 class IsSuperUserOrHasGeneralRequestPermission(permissions.BasePermission):
     def has_permission(self, request, view):
-        # Allow superusers full access
+        if not request.user.is_authenticated:
+            return False
         if request.user.is_superuser:
             return True
-        if request.user.is_ess:
-            return True
-        # Non-superusers: Check specific permissions
+
         try:
             user_permissions = UserTenantPermissions.objects.get(profile=request.user)
         except UserTenantPermissions.DoesNotExist:
             return False
 
-        # Define required permissions
-        required_permissions = [
-            'view_generalrequest',
-            'delete_generalrequest',
-            'add_generalrequest',
-            'change_generalrequest'
-        ]
+        if user_permissions.is_superuser:
+            return True
 
-        # Check if the user has the necessary permissions
-        for permission in required_permissions:
-            if permission in [p.codename for p in user_permissions.groups.permissions.all()]:
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_generalrequest',
+            'retrieve': 'view_generalrequest',
+            'create': 'add_generalrequest',
+            'update': 'change_generalrequest',
+            'partial_update': 'change_generalrequest',
+            'destroy': 'delete_generalrequest',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
                 return True
-
-        return False
-
-    def has_object_permission(self, request, view, obj):
-        # Allow superusers full access
-        if request.user.is_superuser:
-            return True
-
-        # Check if user is associated with the request (is_ess = True)
-        if request.user.is_ess and request.user.username == obj.employee.emp_code:
-            return True
 
         return False
     

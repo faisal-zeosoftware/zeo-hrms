@@ -86,6 +86,7 @@ class dept_master(models.Model):
                 ("view_dept_report", "Can view department report"),
                 ("export_dept_report", "Can export department report"),
                 ("delete_dept_report", "Can delete department report"),
+                ("import_dept_master", "Can import department master"),
         )
     # Method to fetch all department users
     def get_department_users(self):
@@ -114,6 +115,7 @@ class desgntn_master(models.Model):
                 ("view_designtn_report", "Can view designation report"),
                 ("export_designtn_report", "Can export designation report"),
                 ("delete_designtn_report", "Can delete designation report"),
+                ("import_designtn_master", "Can import department master"),
         )
     def __str__(self):
         return self.desgntn_job_title
@@ -129,6 +131,10 @@ class ctgry_master(models.Model):
     ctgry_updated_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_updated_by')
     ctgry_is_active   = models.BooleanField(default=True)
     branch = models.ManyToManyField("brnch_mstr", blank=True, related_name='ctgry_branches')
+    class Meta:
+        permissions = (
+                ("import_ctgry_master", "Can import category master"),
+        )
     
     def __str__(self):
         return self.ctgry_title

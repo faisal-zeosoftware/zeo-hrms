@@ -48,6 +48,10 @@ class EmployeeSalaryStructure(models.Model):
 
     class Meta:
         unique_together = ('employee', 'component')  # Ensure no duplicate components for an employee
+        permissions = (
+            ('import_salarycomponent', 'Can import Salary component'),
+            # Add more custom permissions here
+        )
 
     def __str__(self):
         return f"{self.employee} - {self.component.name} ({self.amount})"

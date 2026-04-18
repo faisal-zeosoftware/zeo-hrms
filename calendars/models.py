@@ -641,6 +641,10 @@ class emp_leave_balance(models.Model):
     created_by     = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     class Meta:
         unique_together = ('employee', 'leave_type')
+        permissions = (
+            ('import_emp_leave_balance', 'Can import lv balance '),
+            # Add more custom permissions here
+        )
     def is_weekend(self, date):
         """ Check if the given date is a weekend based on the employee's weekend calendar """
         if self.employee.emp_weekend_calendar:
@@ -1983,6 +1987,7 @@ class Attendance(models.Model):
                 ("export_attendance_faceregister", "Can export attendance face register"),
                 ("delete_attendance_faceregister", "Can delete attendance face register"),
                 ("change_attendance_faceregister", "Can change attendance face register"),
+                ("import_attendance","Can import attendance")
         )
     def __str__(self):
         return f"attendance {self.employee} on {self.date}"

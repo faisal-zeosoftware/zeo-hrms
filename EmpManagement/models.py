@@ -81,7 +81,12 @@ class emp_master(models.Model):
     visa_location            = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.SET_NULL,related_name='visa_location',null=True,blank =True)
     face_encoding            = models.JSONField(null=True, blank=True)
     barcode_number           = models.CharField(max_length=100, unique=True, null=True, blank=True, help_text="Unique barcode or card ID for attendance scanning")
-
+    class Meta:
+        permissions = (
+            ('import_emp_master', 'Can import employee master'),
+            
+            # Add more custom permissions here
+        )
     def save(self, *args, **kwargs):
         created = not self.pk
         authenticated_user = kwargs.pop('authenticated_user', None)
@@ -215,6 +220,8 @@ class Report(models.Model):
     class Meta:
         permissions = (
             ('emp_export_report', 'Can export employee report'),
+            ('import_emp_master', 'Can import employee master'),
+            
             # Add more custom permissions here
         )
     

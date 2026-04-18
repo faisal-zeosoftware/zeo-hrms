@@ -304,6 +304,45 @@ class LoanTypeviewset(viewsets.ModelViewSet):
 class LoanApplicationviewset(viewsets.ModelViewSet):
     queryset = LoanApplication.objects.all()
     serializer_class = LoanApplicationSerializer
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            employee = serializer.validated_data.get('employee')
+            document_number = serializer.validated_data.get('document_number')
+
+            if not employee:
+                raise ValidationError("Employee is required.")
+            branch_id = employee.emp_branch_id or employee.work_location
+
+            if not branch_id:
+                raise ValidationError("Employee branch is missing in employee master.")
+
+            try:
+                doc_config = DocumentNumbering.objects.get(
+                    branch_id=branch_id,
+                    type='loan_request'
+                )
+            except DocumentNumbering.DoesNotExist:
+                raise NotFound(
+                    f"No document numbering configuration found for branch {branch_id} and loan request."
+                )
+
+            current_date = timezone.now().date()
+            if document_number:
+                if doc_config.start_date and doc_config.end_date:
+                    if not (doc_config.start_date <= current_date <= doc_config.end_date):
+                        raise ValidationError(
+                            "Document number cannot be assigned outside the valid date range."
+                        )
+                if LoanApplication.objects.filter(document_number=document_number).exists():
+                    raise ValidationError("Document number already exists.")
+
+            else:
+                document_number = doc_config.get_next_number()
+
+            serializer.save(document_number=document_number)
+
+
     @action(detail=False, methods=['get'], url_path='paused-loans')
     def paused_loans(self, request):
         paused_loans = self.queryset.filter(status='Paused')

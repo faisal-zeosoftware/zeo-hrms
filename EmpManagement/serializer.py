@@ -871,8 +871,15 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
         fields = '__all__'
     def validate(self, data):
         employee = data.get('employee')
+        if not employee:
+            raise serializers.ValidationError({
+                "employee": "Employee is required."
+            })
+        if not ResignationApprovalLevel.objects.exists():
+            raise serializers.ValidationError({
+                "approval_level": "Resignation approval workflow is not configured. Please configure approval levels first."
+            })
 
-        # 🔍 Check if reporting_manager is used in workflow
         first_level = ResignationApprovalLevel.objects.order_by('level').first()
 
         if first_level and first_level.approval_type == 'reporting_manager':
@@ -880,6 +887,13 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "employee": "This employee does not have a reporting manager assigned."
                 })
+        if EmployeeResignation.objects.filter(
+            employee=employee,
+            status__in=['Pending', 'Approved']
+        ).exists():
+            raise serializers.ValidationError(
+                "You already have an active resignation request."
+            )
 
         return data
 

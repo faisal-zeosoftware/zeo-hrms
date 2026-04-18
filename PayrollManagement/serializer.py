@@ -485,11 +485,13 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         employee = data.get('employee')
-
-        #Get first workflow level
+        if not AdvanceCommonWorkflow.objects.exists():
+            raise serializers.ValidationError({
+                "approval_level": "Approval workflow is not configured. Please configure it first."
+            })
         first_level = AdvanceCommonWorkflow.objects.order_by('level').first()
 
-        #  Check reporting manager condition
+        # Check reporting manager condition
         if first_level and first_level.approval_type == 'reporting_manager':
             manager = getattr(employee, 'emp_reporting_manager', None)
 

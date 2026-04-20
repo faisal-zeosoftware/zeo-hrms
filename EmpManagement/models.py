@@ -220,7 +220,6 @@ class Report(models.Model):
     class Meta:
         permissions = (
             ('emp_export_report', 'Can export employee report'),
-            ('import_emp_master', 'Can import employee master'),
             
             # Add more custom permissions here
         )

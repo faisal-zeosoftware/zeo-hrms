@@ -1,12 +1,12 @@
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave)
+                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
                          ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
-                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer
+                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -744,8 +744,8 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
 
             serializer.save(document_number=document_number)
 class AirticketWorkflowViewSet(viewsets.ModelViewSet):
-    queryset = AirticketWorkflow.objects.all()
-    serializer_class = AirticketWorkflowSerializer
+    queryset = AirticketApprovalWorkflow.objects.all()
+    serializer_class = AirticketApprovalWorkflowSerializer
 
 class AirticketApprovalViewSet(viewsets.ModelViewSet):
     queryset = AirticketApproval.objects.all()

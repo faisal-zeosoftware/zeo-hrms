@@ -1365,14 +1365,13 @@ class AirTicketRequest(models.Model):
         return f"{self.employee} - {self.get_request_type_display()} ({self.get_status_display()})"
     def move_to_next_level(self):
         from .utils import airticket_schedule_escalation
+        from django.utils import timezone
 
-        """
-        Moves to the next approval level only if all current levels are approved.
-        Stops if any level was rejected.
-        """
-        if self.approvals.filter(status='Rejected').exists():
-            self.status = 'Rejected'
+        # ---------------- REJECT CHECK ----------------
+        if self.approvals.filter(status='REJECTED').exists():
+            self.status = 'REJECTED'
             self.save()
+
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
@@ -1383,65 +1382,28 @@ class AirTicketRequest(models.Model):
                     'document_number': self.document_number,
                     'request_type': self.request_type,
                     'notes': self.notes,
-                    
-                    
                 },
                 email_template_model=AirticketEmailTemplate,
                 notification_model=RequestNotification
             )
-            return  # Important: Stop here if rejected
+            return
 
-        current_approved_levels = self.approvals.filter(status='Approved').count()
-        next_level = AirticketWorkflow.objects.filter(level=current_approved_levels + 1).first()
+        # ---------------- GET LAST APPROVAL ----------------
+        last_approval = self.approvals.order_by('-level', '-id').first()
 
-        if next_level:
-            last_approval = self.approvals.order_by('-level', '-id').first()
+        current_level = last_approval.level if last_approval else 0
 
-            next_level = AirticketWorkflow.objects.filter(
-                level__gt=last_approval.level
-            ).order_by('level').first()
+        # ---------------- NEXT LEVEL (FIXED SCOPE MISSING IN YOUR CODE) ----------------
+        next_level = AirticketWorkflow.objects.filter(
+            level__gt=current_level
+        ).order_by('level').first()
 
-            if not next_level:
-                self.status = "Approved"
-                self.save()
-                return
-
-            # ✅ Keep normal user comments, skip escalation-related notes only
-            note_to_carry = None
-            if last_approval and last_approval.note:
-                if not (
-                    last_approval.note.startswith("Escalated to") or
-                    last_approval.note.startswith("Escalated from")
-                ):
-                    note_to_carry = last_approval.note
-            new_approval=AirticketApproval.objects.create(
-                request=self,
-                approver=next_level.approver,
-                role=next_level.role,
-                level=next_level.level,
-                status='Pending',
-                employee=self.employee,
-                note=note_to_carry
-            )
-            airticket_schedule_escalation(new_approval, next_level)
-            send_notification_email(
-                user=next_level.approver,
-                employee=None,
-                message=f"New Salary Advance request for approval: {self.document_number}, Employee: {self.employee}",
-                template_type="request_created",
-                context={
-                    **get_employee_context(self.employee),
-                    'document_number': self.document_number,
-                    
-                    
-                },
-                email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification
-            )
-        else:
-            self.status = 'Approved'
+        # ---------------- FINAL APPROVAL ----------------
+        if not next_level:
+            self.status = 'APPROVED'
             self.approval_date = timezone.now()
             self.save()
+
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
@@ -1450,17 +1412,50 @@ class AirTicketRequest(models.Model):
                 context={
                     **get_employee_context(self.employee),
                     'document_number': self.document_number,
-                    
+                    'request_type': self.request_type,
                 },
                 email_template_model=AirticketEmailTemplate,
                 notification_model=RequestNotification
             )
-    
+            return
 
-class AirticketWorkflow(models.Model):
-    level = models.PositiveIntegerField()
-    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
-    role = models.CharField(max_length=100)
+        note_to_carry = None
+        if last_approval and last_approval.note:
+            if not (
+                last_approval.note.startswith("Escalated to") or
+                last_approval.note.startswith("Escalated from")
+            ):
+                note_to_carry = last_approval.note
+
+        # ---------------- CREATE NEXT APPROVAL ----------------
+        new_approval = AirticketApproval.objects.create(
+            request=self,
+            approver=next_level.approver,
+            role=next_level.role,
+            level=next_level.level,
+            status='PENDING',
+            employee=self.employee,
+            note=note_to_carry
+        )
+
+        # ---------------- ESCALATION ----------------
+        airticket_schedule_escalation(new_approval, next_level)
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=next_level.approver,
+            employee=None,
+            message=f"New Air Ticket request: {self.document_number}",
+            template_type="request_created",
+            context={
+                **get_employee_context(self.employee),
+                'document_number': self.document_number,
+                'request_type': self.request_type,
+            },
+            email_template_model=AirticketEmailTemplate,
+            notification_model=RequestNotification
+        )
+class AirticketApprovalWorkflow(models.Model):
     APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
         ('reporting_manager', 'Reporting Manager'),
@@ -1471,7 +1466,16 @@ class AirticketWorkflow(models.Model):
         max_length=30,
         choices=APPROVAL_TYPE_CHOICES,
         default='no_approval'
-    ) 
+    )
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+
+    
+
+class AirticketWorkflow(models.Model):
+    workflow = models.ForeignKey(AirticketApprovalWorkflow,related_name='airticket_levels',on_delete=models.CASCADE)
+    level = models.PositiveIntegerField()
+    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    role = models.CharField(max_length=100)
     escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='airticket_escalated_levels')
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
@@ -1484,6 +1488,7 @@ class AirticketWorkflow(models.Model):
         return timedelta(minutes=total_minutes)
     class Meta:
         ordering = ['level']
+        unique_together = ('workflow', 'level')
         permissions = (
                     ("add_airticket_escalation", "Can add Escalation"),
                     ("view_airticket_escalation", "Can view Escalation"),
@@ -1560,17 +1565,24 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
     if not created:
         return
 
-    # Get the first workflow level
-    first_level = AirticketWorkflow.objects.order_by('level').first()
+    # ---------------- GET WORKFLOW (IMPORTANT FIX) ----------------
+    workflow = AirticketApprovalWorkflow.objects.filter(
+        branch=instance.branch
+    ).first()
+
+    if not workflow:
+        return
+
+    first_level = workflow.airticket_levels.order_by('level').first()
     if not first_level:
         return
 
-    # Use approval_type field on AirticketWorkflow (add this field: no_approval/reporting_manager/multi_approval)
-    approval_type = getattr(first_level, 'approval_type', 'multi_approval')
+    approval_type = workflow.approval_type
 
     # ---------------- NO APPROVAL ----------------
     if approval_type == 'no_approval':
-        approver = instance.created_by or instance.employee.users  # fallback
+        approver = instance.created_by or getattr(instance.employee, "users", None)
+
         if not approver:
             raise Exception("Employee has no system user.")
 
@@ -1585,28 +1597,14 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
 
         instance.status = "APPROVED"
         instance.save(update_fields=['status'])
-
-        send_notification_email(
-            user=approver,
-            employee=instance.employee,
-            message=f"Your Air Ticket request {instance.document_number} has been automatically approved.",
-            template_type="request_approved",
-            context={
-                **get_employee_context(instance.employee),
-                'document_number': instance.document_number,
-                'request_type': instance.request_type,
-                'status': instance.status,
-            },
-            email_template_model=AirticketEmailTemplate,
-            notification_model=RequestNotification
-        )
         return
 
     # ---------------- REPORTING MANAGER ----------------
     if approval_type == 'reporting_manager':
         manager = instance.employee.emp_reporting_manager
+
         if not manager:
-            raise Exception("Employee has no reporting manager. Please set reporting manager.")
+            raise Exception("Employee has no reporting manager.")
 
         AirticketApproval.objects.create(
             request=instance,
@@ -1617,19 +1615,6 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             employee=instance.employee
         )
 
-        send_notification_email(
-            user=manager,
-            employee=None,
-            message=f"New Air Ticket request for approval: {instance.employee} ({instance.document_number})",
-            template_type="request_created",
-            context={
-                **get_employee_context(instance.employee),
-                'document_number': instance.document_number,
-                'request_type': instance.request_type,
-            },
-            email_template_model=AirticketEmailTemplate,
-            notification_model=RequestNotification
-        )
         return
 
     # ---------------- MULTI APPROVAL ----------------
@@ -1648,7 +1633,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         send_notification_email(
             user=first_level.approver,
             employee=None,
-            message=f"New Air Ticket request for approval: {instance.employee} ({instance.document_number})",
+            message=f"New Air Ticket request: {instance.employee} ({instance.document_number})",
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),

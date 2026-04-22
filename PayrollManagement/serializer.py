@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave)
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow)
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
@@ -612,6 +612,7 @@ class AirtcketApprovalSerializer(serializers.ModelSerializer):
         model = AirticketApproval
         fields = '__all__'
 class AirticketWorkflowSerializer(serializers.ModelSerializer):
+    workflow = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = AirticketWorkflow
         fields = '__all__'
@@ -619,6 +620,52 @@ class AirticketEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketEmailTemplate
         fields = '__all__'
+class AirticketApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = AirticketWorkflowSerializer(many=True, source='airticket_levels')
+
+    class Meta:
+        model = AirticketApprovalWorkflow
+        fields = '__all__'
+
+    def create(self, validated_data):
+        levels_data = validated_data.pop('airticket_levels', [])   # ✅ FIX
+        branches = validated_data.pop('branch', [])
+
+        workflow = AirticketApprovalWorkflow.objects.create(**validated_data)
+        workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            AirticketWorkflow.objects.create(
+                workflow=workflow,   # 🔥 auto link
+                **level_data
+            )
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('airticket_levels', None)  # ✅ FIX
+        branches = validated_data.pop('branch', None)
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.airticket_levels.all().delete()
+
+            for level_data in levels_data:
+                AirticketWorkflow.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
+
 class AirticketEscalationRuleSerializer(serializers.ModelSerializer):
     approver_name = serializers.CharField(source='approver.username', read_only=True)
     escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)

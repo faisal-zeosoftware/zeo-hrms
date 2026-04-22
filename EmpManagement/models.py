@@ -1667,20 +1667,19 @@ class DocumentRequest(models.Model):
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification
             )
-            return  # Important: Stop here if rejected
-        # -------- 2️⃣ MINIMUM APPROVALS CHECK -------- #
+            return
+
         min_required = self.request_type.min_approvals_required
         approved_count = self.doc_approvals.filter(status=DocumentApproval.APPROVED).count()
 
         if min_required and approved_count >= min_required:
-            self.status = 'approved'
+            self.status = 'Approved'
             self.save()
 
-            # Notify request creator
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your leave request has been approved.",
+                message=f"Your request has been approved.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1691,17 +1690,24 @@ class DocumentRequest(models.Model):
                 notification_model=DocRequestNotification
             )
             return
-        current_approved_levels = self.doc_approvals.filter(status=DocumentApproval.APPROVED).count()
 
-        # Look up the next level
-        next_level = DocumentApprovalLevel.objects.filter(
+
+        current_approved_levels = approved_count
+        workflow = DocumentApprovalWorkflow.objects.filter(
             request_type=self.request_type,
-            branch__id=self.employee.emp_branch_id.id,
+            branch__id=self.employee.emp_branch_id.id
+        ).first()
+
+        if not workflow:
+            return
+
+        next_level = workflow.levels.filter(
             level=current_approved_levels + 1
         ).first()
 
         if next_level:
             last_approval = self.doc_approvals.order_by('-level').first()
+
             DocumentApproval.objects.create(
                 general_request=self,
                 approver=next_level.approver,
@@ -1743,11 +1749,7 @@ class DocumentRequest(models.Model):
                 notification_model=DocRequestNotification
             )
 
-
-class DocumentApprovalLevel(models.Model):
-    level = models.IntegerField()
-    role = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
-    approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
+class DocumentApprovalWorkflow(models.Model):
     request_type = models.ForeignKey(DocRequestType, related_name='approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow 
     branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
     APPROVAL_TYPE_CHOICES = [
@@ -1761,6 +1763,12 @@ class DocumentApprovalLevel(models.Model):
         choices=APPROVAL_TYPE_CHOICES,
         default='no_approval'
     )
+
+class DocumentApprovalLevel(models.Model):
+    workflow = models.ForeignKey(DocumentApprovalWorkflow, related_name='document_levels', on_delete=models.CASCADE, null=True)
+    level    = models.IntegerField()
+    role     = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
+    approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
 class DocumentApproval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
@@ -1809,23 +1817,29 @@ class DocumentApproval(models.Model):
         notification_model=DocRequestNotification
     )
 
-@receiver(post_save, sender=DocumentRequest)
-def create_initial_approval(sender, instance, created, **kwargs):
+    @receiver(post_save, sender=DocumentRequest)
+    def create_initial_approval(sender, instance, created, **kwargs):
 
         if not created:
             return
 
-        first_level = DocumentApprovalLevel.objects.filter(
+        workflow = DocumentApprovalWorkflow.objects.filter(
             request_type=instance.request_type,
             branch__id=instance.employee.emp_branch_id.id
-        ).order_by('level').first()
+        ).first()
+
+        if not workflow:
+            return
+
+        first_level = workflow.levels.order_by('level').first()
 
         if not first_level:
             return
 
+        approval_type = workflow.approval_type 
 
         # ---------------- NO APPROVAL ---------------- #
-        if first_level.approval_type == 'no_approval':
+        if approval_type == 'no_approval':
 
             approver = instance.created_by
 
@@ -1853,30 +1867,27 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification
             )
-
             return
 
 
         # ---------------- REPORTING MANAGER ---------------- #
-        if first_level.approval_type == 'reporting_manager':
+        if approval_type == 'reporting_manager':
 
             manager_user = instance.employee.emp_reporting_manager
 
             if not manager_user:
                 raise Exception("Employee has no reporting manager.")
 
-            approver = manager_user
-
             DocumentApproval.objects.create(
                 general_request=instance,
-                approver=approver,
+                approver=manager_user,
                 role="Reporting Manager",
                 level=first_level.level,
                 status=DocumentApproval.PENDING
             )
 
             send_notification_email(
-                user=approver,
+                user=manager_user,
                 employee=None,
                 message=f"New request for approval: {instance.request_type.type_name}, Employee: {instance.employee}",
                 template_type="request_created",
@@ -1888,11 +1899,11 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification
             )
+            return
 
-            return 
 
         # ---------------- MULTI APPROVAL ---------------- #
-        if first_level.approval_type == 'multi_approval':
+        if approval_type == 'multi_approval':
 
             DocumentApproval.objects.create(
                 general_request=instance,
@@ -1915,7 +1926,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification
             )
-
             return
         
 class ResignationEmailTemplate(models.Model):
@@ -1974,40 +1984,49 @@ class EmployeeResignation(models.Model):
     def __str__(self):
         return f"{self.employee} - {self.termination_type.title()} on {self.resigned_on}"
     def move_to_next_level(self):
-        if self.resign_approvals.filter(status=Approval.REJECTED).exists():
+        if self.resign_approvals.filter(status=ResignationApproval.REJECTED).exists():
             self.status = 'Rejected'
             self.save()
+
             send_notification_email(
-                # user=self.created_by,
                 employee=self.employee,
                 message=f"Your resignation request {self.termination_type} has been rejected.",
                 template_type="resignation_rejected",
                 context={
                     **get_employee_context(self.employee),
-                    'document_date':self.document_date,
-                   'resigned_on':self.resigned_on,
-                    'notice_period':self.notice_period,
-                    'last_working_date':self.last_working_date,
-                    'location':self.location,
-                    'termination_type':self.termination_type,
-                    'reason_for_leaving':self.reason_for_leaving,
-                    'status':self.status,
+                    'document_date': self.document_date,
+                    'resigned_on': self.resigned_on,
+                    'notice_period': self.notice_period,
+                    'last_working_date': self.last_working_date,
+                    'location': self.location,
+                    'termination_type': self.termination_type,
+                    'reason_for_leaving': self.reason_for_leaving,
+                    'status': self.status,
                 },
-                    email_template_model=ResignationEmailTemplate,
-                    notification_model=ResignationRequestNotification
-                )
-            return  # Important: Stop here if rejected
-            
-        current_approved_levels = self.resign_approvals.filter(status=Approval.APPROVED).count()
-        next_level = None
+                email_template_model=ResignationEmailTemplate,
+                notification_model=ResignationRequestNotification
+            )
+            return
 
-       
+        current_level = self.resign_approvals.filter(
+            status=ResignationApproval.APPROVED
+        ).aggregate(max_level=models.Max('level'))['max_level'] or 0
+
+        workflow = ResignationApprovalWorkflow.objects.filter(
+            branch__id=self.employee.emp_branch_id
+        ).first()
+
+        if not workflow:
+            return
+
         next_level = ResignationApprovalLevel.objects.filter(
-            level=current_approved_levels + 1
+            workflow=workflow,
+            level=current_level + 1
         ).first()
 
         if next_level:
             last_approval = self.resign_approvals.order_by('-level').first()
+
             ResignationApproval.objects.create(
                 resignation_request=self,
                 approver=next_level.approver,
@@ -2016,54 +2035,56 @@ class EmployeeResignation(models.Model):
                 status=ResignationApproval.PENDING,
                 note=last_approval.note if last_approval else None
             )
-           
+
         else:
             self.status = 'Approved'
             self.save()
+
             send_notification_email(
-                # user=self.created_by,
                 employee=self.employee,
                 message=f"Your resignation request {self.termination_type} has been approved.",
                 template_type="resignation_approved",
                 context={
                     **get_employee_context(self.employee),
-                    'document_date':self.document_date,
-                   'resigned_on':self.resigned_on,
-                    'notice_period':self.notice_period,
-                    'last_working_date':self.last_working_date,
-                    'location':self.location,
-                    'termination_type':self.termination_type,
-                    'reason_for_leaving':self.reason_for_leaving,
-                    'status':self.status,
+                    'document_date': self.document_date,
+                    'resigned_on': self.resigned_on,
+                    'notice_period': self.notice_period,
+                    'last_working_date': self.last_working_date,
+                    'location': self.location,
+                    'termination_type': self.termination_type,
+                    'reason_for_leaving': self.reason_for_leaving,
+                    'status': self.status,
                 },
-                    email_template_model=ResignationEmailTemplate,
-                    notification_model=ResignationRequestNotification
-                )
-            
+                email_template_model=ResignationEmailTemplate,
+                notification_model=ResignationRequestNotification
+            )
 
-            
-
-class ResignationApprovalLevel(models.Model):
-    level = models.PositiveIntegerField()
-    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
-    role = models.CharField(max_length=100)
-    APPROVAL_TYPE_CHOICES = [
+class ResignationApprovalWorkflow(models.Model):
+     APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
         ('reporting_manager', 'Reporting Manager'),
         ('multi_approval', 'Multi Approval'),
     ]
-
-    approval_type = models.CharField(
+     
+     branch= models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+     approval_type = models.CharField(
         max_length=30,
         choices=APPROVAL_TYPE_CHOICES,
         default='no_approval'
     )
+            
 
+class ResignationApprovalLevel(models.Model):
+    workflow = models.ForeignKey(ResignationApprovalWorkflow,related_name='resignation_levels',on_delete=models.CASCADE,null=True)
+    level = models.PositiveIntegerField()
+    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    role = models.CharField(max_length=100)
     class Meta:
         ordering = ['level']
 
     def __str__(self):
         return f"Level {self.level} - {self.role} ({self.approver})"
+    
 class ResignationApproval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
@@ -2119,22 +2140,28 @@ class ResignationApproval(models.Model):
 
 
 @receiver(post_save, sender=EmployeeResignation)
-def create_initial_advance_approval(sender, instance, created, **kwargs):
+def create_initial_approval(sender, instance, created, **kwargs):
+
     if not created:
         return
 
-    first_level = ResignationApprovalLevel.objects.order_by('level').first()
+    # ✅ FIX 1: Get workflow based on employee branch
+    workflow = ResignationApprovalWorkflow.objects.filter(
+        branch__id=instance.employee.emp_branch_id
+    ).first()
 
-    if not first_level:
+    if not workflow:
         return
 
-    # ---------------- NO APPROVAL ----------------
-    if first_level.approval_type == 'no_approval':
+    approval_type = workflow.approval_type
 
-        approver = instance.created_by or instance.employee.users
+    # ---------------- NO APPROVAL ----------------
+    if approval_type == 'no_approval':
+
+        approver = instance.created_by
 
         if not approver:
-            raise Exception("Employee has no system user.")
+            raise Exception("No user found for auto approval.")
 
         ResignationApproval.objects.create(
             resignation_request=instance,
@@ -2166,7 +2193,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
 
 
     # ---------------- REPORTING MANAGER ----------------
-    if first_level.approval_type == 'reporting_manager':
+    if approval_type == 'reporting_manager':
 
         manager = instance.employee.emp_reporting_manager
 
@@ -2177,7 +2204,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             resignation_request=instance,
             approver=manager,
             role="Reporting Manager",
-            level=first_level.level,
+            level=1,
             status=ResignationApproval.PENDING
         )
 
@@ -2199,9 +2226,15 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
 
 
     # ---------------- MULTI APPROVAL ----------------
-    if first_level.approval_type == 'multi_approval':
+    if approval_type == 'multi_approval':
 
-        approval = ResignationApproval.objects.create(
+        # ✅ FIX 2: get first level from workflow
+        first_level = workflow.resignation_levels.order_by('level').first()
+
+        if not first_level:
+            return
+
+        ResignationApproval.objects.create(
             resignation_request=instance,
             approver=first_level.approver,
             role=first_level.role,
@@ -2222,7 +2255,9 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             email_template_model=ResignationEmailTemplate,
             notification_model=ResignationRequestNotification
         )
+
         return
+     
 class EndOfService(models.Model):
     resignation = models.OneToOneField(EmployeeResignation, on_delete=models.CASCADE, related_name='eos')
     years_of_service = models.FloatField(help_text="Years of service calculated")

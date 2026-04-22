@@ -10,7 +10,7 @@ from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQ
                      EmployeeMarketingSkill,Approval,ApprovalLevel,RequestNotification,Emp_CustomFieldValue,
                      EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,JobHistory_CustomFieldValue,
                      DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,
-                     ApprovalWorkflow
+                     ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow
                      )
 from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,NotificationSerializer,RequestTypeSerializer,
                          EmpJobHistorySerializer,EmpLeaveRequestSerializer,DocumentSerializer,GeneralRequestSerializer,
@@ -21,7 +21,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
                          DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer,ResignationTemplateSerializer,ResignationRequestNotificationSerializer,
-                         ApprovalWorkflowSerializer)
+                         ApprovalWorkflowSerializer,DocumentApprovalWorkflowSerializer,ResignationApprovalWorkflowSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -2773,8 +2773,8 @@ class DocumentApprovalViewset(viewsets.ModelViewSet):
         return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
 
 class DocumentApprovalLevelViewset(viewsets.ModelViewSet):
-    queryset = DocumentApprovalLevel.objects.all()
-    serializer_class = DocApprovalLevelSerializer
+    queryset =DocumentApprovalWorkflow.objects.all()
+    serializer_class = DocumentApprovalWorkflowSerializer
 class DocRequestEmailTemplateViewset(viewsets.ModelViewSet):
     queryset = DocRequestEmailTemplate.objects.all()
     serializer_class = DocRequestEmailTemplateSerializer
@@ -2908,8 +2908,8 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
 
         return Response(data, status=status.HTTP_200_OK)
 class ResignationApprovalLevelViewset(viewsets.ModelViewSet):
-    queryset = ResignationApprovalLevel.objects.all()
-    serializer_class = ResignationApprovalLevelSerializer
+    queryset = ResignationApprovalWorkflow.objects.all()
+    serializer_class = ResignationApprovalWorkflowSerializer
 
 class ResignationApprovalViewset(viewsets.ModelViewSet):
     queryset = ResignationApproval.objects.all()

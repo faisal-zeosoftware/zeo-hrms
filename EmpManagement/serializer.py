@@ -23,7 +23,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
@@ -789,6 +789,7 @@ class DocApprovalSerializer(serializers.ModelSerializer):
         if instance.general_request:
             rep['general_request'] = instance.general_request.request_type.type_name
         return rep
+    
 class DocApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentApprovalLevel
@@ -802,6 +803,56 @@ class DocApprovalLevelSerializer(serializers.ModelSerializer):
         if instance.branch.exists():  
             rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
         return rep
+    
+class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = DocApprovalLevelSerializer(source='document_levels', many=True)
+
+    class Meta:
+        model = DocumentApprovalWorkflow
+        fields = '__all__'
+
+    def create(self, validated_data):
+        # ✅ FIX KEY
+        levels_data = validated_data.pop('document_levels', [])
+        branches = validated_data.pop('branch', [])
+
+        workflow = DocumentApprovalWorkflow.objects.create(**validated_data)
+        workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            level_data.pop('workflow', None)  # safety
+            DocumentApprovalLevel.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        # ✅ FIX KEY
+        levels_data = validated_data.pop('document_levels', None)
+        branches = validated_data.pop('branch', None)
+
+        instance.request_type = validated_data.get('request_type', instance.request_type)
+        instance.approval_type = validated_data.get('approval_type', instance.approval_type)
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            # ✅ FIX RELATION NAME
+            instance.document_levels.all().delete()
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+                DocumentApprovalLevel.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
+    
 class ResignationApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResignationApprovalLevel
@@ -827,6 +878,69 @@ class ResignationApprovalSerializer(serializers.ModelSerializer):
         if instance.approver:  
             rep['approver'] = instance.approver.username
             return rep
+        
+class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = ResignationApprovalLevelSerializer(many=True,source='resignation_levels')
+    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = ResignationApprovalWorkflow
+        fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        if instance.branch.exists():
+            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+
+        return rep
+
+    def create(self, validated_data):
+        levels_data = validated_data.pop('levels', None)
+        if levels_data is None:
+            levels_data = validated_data.pop('resignation_levels', [])
+
+        branches = validated_data.pop('branch', [])
+
+        workflow = ResignationApprovalWorkflow.objects.create(**validated_data)
+
+        # ✅ FIX: safe M2M set
+        if branches:
+            workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            level_data.pop('workflow', None)  # safety
+            ResignationApprovalLevel.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('levels', None)
+        branches = validated_data.pop('branch', None)
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.resignation_levels.all().delete()
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+                ResignationApprovalLevel.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
+    
         
         
 class ResignationTemplateSerializer(serializers.ModelSerializer):

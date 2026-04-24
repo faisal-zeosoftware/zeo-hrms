@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow)
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow)
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
@@ -53,14 +53,14 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         model = PayrollRun
         fields = '__all__'
     def to_representation(self, instance):
-        rep = super(PayrollRunSerializer, self).to_representation(instance)
-        if instance.branch:
-            rep['branch'] = instance.branch.branch_name 
-        if instance.department:
-            rep['department'] = instance.department.dept_name 
-        if instance.category:
-            rep['category'] = instance.category.ctgry_title 
+        rep = super().to_representation(instance)
+
+        rep['branch_name'] = instance.branch.branch_name if instance.branch else None
+        rep['department_name'] = instance.department.dept_name if instance.department else None
+        rep['category_name'] = instance.category.ctgry_title if instance.category else None
+
         return rep
+
     def validate(self, data):
         month = data.get('month')
         year = data.get('year')
@@ -69,31 +69,37 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         category = data.get('category')
         employees = data.get('employees', [])
 
-        # Collect all employees for this payroll run
-        employee_set = set(employees)  # selected employees
+        # ---------------- COLLECT EMPLOYEES ----------------
+        employee_ids = set(emp.id for emp in employees)
+
         qs = emp_master.objects.filter(is_active=True)
+
         if branch:
-            qs = qs.filter(emp_branch_id=branch)
+            qs = qs.filter(emp_branch_id=branch.id)
+
         if department:
-            qs = qs.filter(emp_dept_id=department)
+            qs = qs.filter(emp_dept_id=department.id)
+
         if category:
-            qs = qs.filter(emp_ctgry_id=category)
+            qs = qs.filter(emp_ctgry_id=category.id)
 
-        employee_set.update(qs)
+        employee_ids.update(qs.values_list('id', flat=True))
 
-        # Check if any of these employees already have payroll for the month
-        duplicate_emps = []
-        for emp in employee_set:
-            exists = PayrollRun.objects.filter(
-                month=month,
-                year=year,
-                employees__id=emp.id
-            )
-            # Exclude self in case of update
-            if self.instance:
-                exists = exists.exclude(pk=self.instance.pk)
-            if exists.exists():
-                duplicate_emps.append(emp.emp_code)  # using emp_code instead of id
+        # ---------------- CHECK DUPLICATES ----------------
+        existing_runs = PayrollRun.objects.filter(
+            month=month,
+            year=year,
+            employees__id__in=employee_ids
+        )
+
+        if self.instance:
+            existing_runs = existing_runs.exclude(pk=self.instance.pk)
+
+        duplicate_ids = existing_runs.values_list('employees__id', flat=True).distinct()
+
+        duplicate_emps = emp_master.objects.filter(
+            id__in=duplicate_ids
+        ).values_list('emp_code', flat=True)
 
         if duplicate_emps:
             raise serializers.ValidationError(
@@ -283,7 +289,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         loan_type = data.get('loan_type')
         employee = data.get('employee')
 
-        # ✅ Basic checks
+        # ---------------- BASIC CHECKS ----------------
         if not loan_type:
             raise serializers.ValidationError({
                 "loan_type": "Loan type is required."
@@ -294,28 +300,44 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
                 "employee": "Employee is required."
             })
 
-        #  Check if approval levels exist
-        levels_qs = LoanApprovalLevels.objects.filter(loan_type=loan_type)
+        # ---------------- SAFE BRANCH ACCESS ----------------
+        branch = getattr(employee, "emp_branch_id", None)
 
-        if not levels_qs.exists():
+        if not branch:
             raise serializers.ValidationError({
-                "loan_type": "Approval levels are not configured for this loan type."
+                "employee": "Employee branch is not assigned."
             })
 
-        #  Get first level
-        first_level = levels_qs.order_by('level').first()
+        # ---------------- GET WORKFLOW ----------------
+        workflow = LoanApprovalWorkflow.objects.filter(
+            loan_type=loan_type,
+            branch=branch   # ✅ FIXED
+        ).first()
 
-        # ✅ Reporting Manager Validation
-        if first_level.approval_type == 'reporting_manager':
-            manager = getattr(employee, 'emp_reporting_manager', None)
+        if not workflow:
+            raise serializers.ValidationError({
+                "loan_type": "Approval workflow is not configured for this loan type & branch."
+            })
 
-            if not manager:
+        approval_type = workflow.approval_type
+
+        # ---------------- GET FIRST LEVEL ----------------
+        first_level = workflow.loan_levels.order_by('level').first()
+
+        if not first_level:
+            raise serializers.ValidationError({
+                "loan_type": "Approval levels are not configured."
+            })
+
+        # ---------------- REPORTING MANAGER ----------------
+        if approval_type == 'reporting_manager':
+            if not getattr(employee, "emp_reporting_manager", None):
                 raise serializers.ValidationError({
                     "employee": "This employee does not have a reporting manager assigned."
                 })
 
-        # ✅ Multi Approval Validation (recommended)
-        if first_level.approval_type == 'multi_approval':
+        # ---------------- MULTI APPROVAL ----------------
+        if approval_type == 'multi_approval':
             if not first_level.approver:
                 raise serializers.ValidationError({
                     "loan_type": f"Approver is not configured for level {first_level.level}."
@@ -335,13 +357,65 @@ class LoanApprovalLevelsSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApprovalLevels
         fields = '__all__'
-    def to_representation(self, instance):
-        rep = super(LoanApprovalLevelsSerializer, self).to_representation(instance)
-        if instance.approver:
-            rep['approver'] =instance.approver.username
-        if instance.loan_type:
-            rep['loan_type'] =instance.loan_type.loan_type
-        return rep
+
+class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = LoanApprovalLevelsSerializer(source='loan_levels', many=True)
+
+    class Meta:
+        model = LoanApprovalWorkflow
+        fields = '__all__'
+
+    def create(self, validated_data):
+        # ✅ FIX: use source name
+        levels_data = validated_data.pop('loan_levels', [])
+        branches = validated_data.pop('branch', [])
+
+        workflow = LoanApprovalWorkflow.objects.create(**validated_data)
+
+        if branches:
+            workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            level_data.pop('workflow', None)
+
+            LoanApprovalLevels.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        # ✅ FIX: use source name
+        levels_data = validated_data.pop('loan_levels', None)
+        branches = validated_data.pop('branch', None)
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+        instance.loan_type = validated_data.get(
+            'loan_type',
+            instance.loan_type
+        )
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.loan_levels.all().delete()
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                LoanApprovalLevels.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
+    
 class LoanApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApproval
@@ -615,6 +689,65 @@ class PayslipCommonWorkflowSerializer(serializers.ModelSerializer):
         if instance.approver:  
             rep['approver'] = instance.approver.username 
         return rep
+class PayslipApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = PayslipCommonWorkflowSerializer(many=True,source='payslip_levels')
+    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = PayslipApprovalWorkflow
+        fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if instance.branch.exists():
+            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+
+        return rep
+
+    def create(self, validated_data):
+        levels_data = validated_data.pop('payslip_levels', [])
+
+        branches = validated_data.pop('branch', [])
+        workflow = PayslipApprovalWorkflow.objects.create(**validated_data)
+
+        if branches:
+            workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            level_data.pop('workflow', None)
+
+            PayslipCommonWorkflow.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('payslip_levels', None)
+        branches = validated_data.pop('branch', None)
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.payslip_levels.all().delete()
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                PayslipCommonWorkflow.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
 class AirTicketRuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirTicketRule

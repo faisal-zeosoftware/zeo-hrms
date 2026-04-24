@@ -1,12 +1,12 @@
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow)
+                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
                          ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
-                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer
+                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -389,8 +389,66 @@ class LoanRepaymentviewset(viewsets.ModelViewSet):
     serializer_class = LoanRepaymentSerializer
 
 class LoanApprovalLevelsviewset(viewsets.ModelViewSet):
-    queryset = LoanApprovalLevels.objects.all()
-    serializer_class = LoanApprovalLevelsSerializer
+    queryset =  LoanApprovalWorkflow.objects.all()
+    serializer_class =  LoanApprovalWorkflowSerializer
+
+class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = LoanApprovalLevelsSerializer(source='loan_levels', many=True)
+
+    class Meta:
+        model = LoanApprovalWorkflow
+        fields = '__all__'
+
+    def create(self, validated_data):
+        # ✅ FIX: use source name
+        levels_data = validated_data.pop('loan_levels', [])
+        branches = validated_data.pop('branch', [])
+
+        workflow = LoanApprovalWorkflow.objects.create(**validated_data)
+
+        if branches:
+            workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            level_data.pop('workflow', None)
+
+            LoanApprovalLevels.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        # ✅ FIX: use source name
+        levels_data = validated_data.pop('loan_levels', None)
+        branches = validated_data.pop('branch', None)
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+        instance.loan_type = validated_data.get(
+            'loan_type',
+            instance.loan_type
+        )
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.loan_levels.all().delete()
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                LoanApprovalLevels.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
 
 class LoanApprovalviewset(viewsets.ModelViewSet):
     queryset = LoanApproval.objects.all()
@@ -518,8 +576,8 @@ class SIFDataView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class PayslipCommonWorkflowViewSet(viewsets.ModelViewSet):
-    queryset = PayslipCommonWorkflow.objects.all()
-    serializer_class = PayslipCommonWorkflowSerializer
+    queryset = PayslipApprovalWorkflow.objects.all()
+    serializer_class = PayslipApprovalWorkflowSerializer
 
 class PayslipApprovalViewSet(viewsets.ModelViewSet):
     queryset = PayslipApproval.objects.all()

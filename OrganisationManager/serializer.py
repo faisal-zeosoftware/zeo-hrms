@@ -1,7 +1,7 @@
 from .models import (brnch_mstr,dept_master,desgntn_master,DocumentNumbering,
                      ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,
                      Announcement,AnnouncementView,AnnouncementComment,Asset,AssetAllocation,AssetType, AssetRequest,AssetCustomField,AssetReport,
-                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable,Folder, Document,AssetEmailTemplate,AssetApprovalLevel,AssetApproval,UserBranchAccess,BranchGeoFence)
+                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable,Folder, Document,AssetEmailTemplate,AssetApprovalLevel,AssetApproval,UserBranchAccess,BranchGeoFence, AssetApprovalWorkflow)
 from rest_framework import serializers
 from tenant_users.tenants.models import UserTenantPermissions
 from django.contrib.auth.models import Permission,Group
@@ -192,31 +192,66 @@ class AssetApprovalLevelSerializer(serializers.ModelSerializer):
         model = AssetApprovalLevel
         fields = '__all__'
     def validate(self, attrs):
-        level = attrs.get('level')
+        level = attrs.get('level')   # ✅ FIXED
         asset_type = attrs.get('asset_type')
-        branches = attrs.get('branch')  # This will be a list of branches
+        branches = attrs.get('branch') or []  # safe fallback
 
         for branch in branches:
             if AssetApprovalLevel.objects.filter(
                 level=level,
-                asset_type=asset_type,
-                branch=branch
+                workflow__asset_type=asset_type,
+                workflow__branch=branch
             ).exists():
                 raise serializers.ValidationError(
-                    f"An approval level with level={level} already exists for branch '{branch}' and request type '{asset_type}'."
+                    f"An approval level with level={level} already exists "
+                    f"for branch '{branch}' and asset type '{asset_type}'."
                 )
 
         return attrs
-    def to_representation(self, instance):
-        rep = super(AssetApprovalLevelSerializer, self).to_representation(instance)
-        if instance.asset_type:  
-            rep['asset_type'] = instance.asset_type.name
-        if instance.approver:  
-            rep['approver'] = instance.approver.username
-        if instance.branch.exists():  
-            rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
-        return rep
     
+class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = AssetApprovalLevelSerializer(many=True,source='asset_levels')
+    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = AssetApprovalWorkflow
+        fields = '__all__'
+
+    def create(self, validated_data):
+        levels_data = validated_data.pop('levels', [])
+        branches = validated_data.pop('branch', [])
+
+        workflow = AssetApprovalWorkflow.objects.create(**validated_data)
+        workflow.branch.set(branches)
+
+        AssetApprovalLevel.objects.bulk_create([
+            AssetApprovalLevel(workflow=workflow, **level)
+            for level in levels_data
+        ])
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('levels', None)
+        branches = validated_data.pop('branch', None)
+
+        # DRF-safe update
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.levels.all().delete()
+
+            AssetApprovalLevel.objects.bulk_create([
+                AssetApprovalLevel(workflow=instance, **level)
+                for level in levels_data
+            ])
+
+        return instance
     
 class AssetApprovalSerializer(serializers.ModelSerializer):
     class Meta:
@@ -269,47 +304,86 @@ class AssetRequestSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         asset_type = attrs.get('asset_type')
         requested_asset = attrs.get('requested_asset')
-        employee = attrs.get('employee')  # ✅ needed for reporting manager check
+        employee = attrs.get('employee')
 
-        # 1. Asset Type must be entered
+        # ---------------- BASIC CHECKS ---------------- #
         if not asset_type:
             raise serializers.ValidationError({
                 "asset_type": "Asset Type is required."
             })
 
-        # 2. Asset must be selected
         if not requested_asset:
             raise serializers.ValidationError({
                 "requested_asset": "Requested asset is required."
             })
 
-        # 3. Asset must belong to entered asset type
-        if requested_asset.asset_type != asset_type:
+        # ---------------- ASSET VALIDATION ---------------- #
+        if requested_asset.asset_type.id != asset_type.id:
             raise serializers.ValidationError({
-                "requested_asset": "Selected asset does not belong to the chosen asset type."
+                "requested_asset": "Selected asset does not belong to this asset type."
             })
 
-        # 4. Asset must be AVAILABLE
         if requested_asset.status != 'available':
             raise serializers.ValidationError({
-                "requested_asset": f"This asset is not available (current status: {requested_asset.status})."
+                "requested_asset": f"Asset not available (current status: {requested_asset.status})."
             })
 
-        # ---------------- NEW: Reporting Manager Validation ---------------- #
+        # ---------------- WORKFLOW VALIDATION ---------------- #
+        workflow = None
+        first_level = None
+        approval_type = None
 
-        if employee:
-            first_level = AssetApprovalLevel.objects.filter(
+        if employee and getattr(employee, "emp_branch_id", None):
+
+            workflow = AssetApprovalWorkflow.objects.filter(
                 asset_type=asset_type,
-                branch=employee.emp_branch_id
-            ).order_by('level').first()
+                branch__id=employee.emp_branch_id.id
+            ).first()
 
-            if first_level and first_level.approval_type == "reporting_manager":
-                if not employee.emp_reporting_manager:
+            if workflow:
+                first_level = AssetApprovalLevel.objects.filter(
+                    workflow=workflow
+                ).order_by("level").first()
+
+                if not first_level:
                     raise serializers.ValidationError({
-                        "reporting_manager": "Employee has no reporting manager."
+                        "approval": "Approval levels are not configured."
+                    })
+
+                approval_type = workflow.approval_type
+
+            else:
+                # ---------------- COMMON WORKFLOW FIXED ---------------- #
+                workflow = AssetApprovalWorkflow.objects.filter(
+                    asset_type__isnull=True,
+                    branch__id=employee.emp_branch_id.id
+                ).first()
+
+                if not workflow:
+                    raise serializers.ValidationError({
+                        "approval": "Approval workflow is not configured."
+                    })
+
+                first_level = AssetApprovalLevel.objects.filter(
+                    workflow=workflow
+                ).order_by("level").first()
+
+                if not first_level:
+                    raise serializers.ValidationError({
+                        "approval": "Common approval levels are not configured."
+                    })
+
+                approval_type = workflow.approval_type
+
+            # ---------------- REPORTING MANAGER CHECK ---------------- #
+            if approval_type == "reporting_manager":
+                if not getattr(employee, "emp_reporting_manager", None):
+                    raise serializers.ValidationError({
+                        "reporting_manager": "Employee has no reporting manager assigned."
                     })
 
         return attrs
+
     def to_representation(self, instance):
         rep = super(AssetRequestSerializer, self).to_representation(instance)
 
@@ -325,6 +399,7 @@ class AssetRequestSerializer(serializers.ModelSerializer):
 
         return rep
     
+
 class AssetReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetReport

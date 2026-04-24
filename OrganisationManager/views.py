@@ -13,13 +13,13 @@ from reportlab.pdfgen import canvas
 from .models import (brnch_mstr,dept_master,DocumentNumbering,
                      desgntn_master,ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,Announcement,
                      AnnouncementComment,AnnouncementView,Asset, AssetAllocation,AssetRequest,AssetCustomField,AssetType,
-                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable,AssetApprovalLevel,AssetApproval,AssetEmailTemplate,UserBranchAccess,BranchGeoFence)
+                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable,AssetApprovalLevel,AssetApproval,AssetEmailTemplate,UserBranchAccess,BranchGeoFence,AssetApprovalWorkflow)
 
 from . serializer import (BranchSerializer,PermissionSerializer,GroupSerializer,permserializer,DocumentNumberingSerializer,
                           CtgrySerializer,DeptSerializer,DesgSerializer,FiscalYearSerializer,PeriodSerializer,DeptUploadSerializer,CtgryUploadSerializer,
                           DesgUploadSerializer,CompanyPolicySerializer,AnnouncementSerializer,AnnouncementCommentSerializer,AssetSerializer,AssetAllocationSerializer,AssetRequestSerializer,AssetCustomFieldSerializer,
                           AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer,FolderSerializer, DocumentSerializer,AssetApprovalLevelSerializer,AssetApprovalSerializer,
-                          AssetEmailTemplateSerializer,EscalationRuleSerializer,UserBranchAccessSerializer,BranchGeoFenceSerializer)
+                          AssetEmailTemplateSerializer,EscalationRuleSerializer,UserBranchAccessSerializer,BranchGeoFenceSerializer,AssetApprovalWorkflowSerializer)
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from .resource import (DepartmentResource,DesignationResource,DesgtnReportResource,DeptReportResource,CategoryResource)
 from EmpManagement.models import emp_master
@@ -1107,8 +1107,8 @@ class AssetApprovalViewset(viewsets.ModelViewSet):
         return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
     
 class AssetApprovalLevelViewset(viewsets.ModelViewSet):
-    queryset = AssetApprovalLevel.objects.all()
-    serializer_class = AssetApprovalLevelSerializer
+    queryset =  AssetApprovalWorkflow.objects.all()
+    serializer_class =  AssetApprovalWorkflowSerializer
     #permission_classes = [ApprovalLevelPermission]
     
 class Asset_CustomFieldValueViewSet(viewsets.ModelViewSet):
@@ -1718,7 +1718,7 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
     API for managing escalation settings on each approval level.
     """
     serializer_class = EscalationRuleSerializer
-    queryset = AssetApprovalLevel.objects.all().order_by('asset_type','level')
+    queryset = AssetApprovalLevel.objects.all().order_by('workflow__asset_type','level')
 
     def get_queryset(self):
         queryset = super().get_queryset()

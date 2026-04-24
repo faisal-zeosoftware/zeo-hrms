@@ -5,7 +5,7 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                      LeaveApprovalLevels,LeaveApproval,LvApprovalNotify,LvEmailTemplate,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
                     LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
-                    LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,LVApprovalWorkflow
+                    LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -468,13 +468,30 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
     def validate(self, data):
         employee = data.get('employee')
 
-        # 🔍 Check if reporting_manager is used in workflow
-        first_level = LateinEarlyoutApprovalLevel.objects.order_by('level').first()
+        if not employee:
+            raise serializers.ValidationError({
+                "employee": "Employee is required."
+            })
 
-        if first_level and first_level.approval_type == 'reporting_manager':
-            if not employee.emp_reporting_manager:
+        workflow = LatinEarlyApprovalWorkflow.objects.filter(
+            branch=employee.emp_branch_id
+        ).first()
+
+
+        if not workflow:
+            raise serializers.ValidationError({
+                "approval": "Approval workflow not configured for this branch."
+            })
+
+        if workflow.approval_type == 'multi_approval' and not workflow.lateinearlyout_levels.exists():  # ✅ FIXED NAME
+            raise serializers.ValidationError({
+                "approval": "Approval levels are not configured."
+            })
+
+        if workflow.approval_type == 'reporting_manager':
+            if not getattr(employee, "emp_reporting_manager", None):
                 raise serializers.ValidationError({
-                    "employee": "This employee does not have a reporting manager assigned."
+                    "employee": "Employee has no reporting manager."
                 })
 
         return data
@@ -494,6 +511,77 @@ class LateinEarlyoutApprovalLevelSerializer(serializers.ModelSerializer):
     #     if instance.approver:  
     #         rep['approver'] = instance.approver.username
     #         return rep
+
+class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = LateinEarlyoutApprovalLevelSerializer(many=True,source='lateinearlyout_levels')
+    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = LatinEarlyApprovalWorkflow
+        fields = '__all__'
+
+    # ---------------- VALIDATION ----------------
+    def validate(self, data):
+        branches = data.get('branch', [])
+
+        for b in branches:
+            if LatinEarlyApprovalWorkflow.objects.filter(branch=b).exists():
+                raise serializers.ValidationError(
+                    f"Workflow already exists for branch {b}"
+                )
+
+        return data
+
+    # ---------------- CREATE ----------------
+    def create(self, validated_data):
+        levels_data = validated_data.pop('levels', None)
+        if levels_data is None:
+            levels_data = validated_data.pop('lateinearlyout_levels', [])
+
+        branches = validated_data.pop('branch', [])
+
+        workflow = LatinEarlyApprovalWorkflow.objects.create(**validated_data)
+
+        if branches:
+            workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            level_data.pop('workflow', None)
+
+            LateinEarlyoutApprovalLevel.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
+        return workflow
+
+    # ---------------- UPDATE ----------------
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('levels', None)
+        branches = validated_data.pop('branch', None)
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.lateinearlyout_levels.all().delete()
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                LateinEarlyoutApprovalLevel.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
+
 class LateinEarlyoutApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = LateinEarlyoutApproval

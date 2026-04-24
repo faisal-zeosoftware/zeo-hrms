@@ -2230,7 +2230,7 @@ class LateinEarlyoutRequest(models.Model):
         return f"{self.employee} - {self.request_type} - {self.status}"
 
     def move_to_next_level(self):
-        if self.lateinearlyout_approvals.filter(status='REJECTED').exists():
+        if self.lateinearlyout_approvals.filter(status=LateinEarlyoutApproval.REJECTED).exists():  # ✅ FIX constant
             self.status = 'REJECTED'
             self.save()
 
@@ -2248,19 +2248,31 @@ class LateinEarlyoutRequest(models.Model):
                 notification_model=LateinEarlyRequestNotification
             )
             return
-        
-        current_level = self.lateinearlyout_approvals.filter(status='APPROVED').count()
-        next_level =LateinEarlyoutApprovalLevel.objects.filter(
+
+        current_level = self.lateinearlyout_approvals.filter(
+            status=LateinEarlyoutApproval.APPROVED
+        ).aggregate(max_level=models.Max('level'))['max_level'] or 0
+
+        # ✅ FIX: correct workflow lookup (branch-based)
+        workflow = LatinEarlyApprovalWorkflow.objects.filter(
+            branch=self.employee.emp_branch_id
+        ).distinct().first()
+
+        if not workflow:
+            return
+
+        # ✅ FIX: correct relation name
+        next_level = workflow.lateinearlyout_levels.filter(
             level=current_level + 1
         ).first()
 
         if next_level:
-           LateinEarlyoutApproval.objects.create(
-                request=self,
+            LateinEarlyoutApproval.objects.create(
+                lateinearlyout_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
-                status='PENDING'
+                status=LateinEarlyoutApproval.PENDING   
             )
         else:
             self.status = 'APPROVED'
@@ -2280,24 +2292,37 @@ class LateinEarlyoutRequest(models.Model):
                 notification_model=LateinEarlyRequestNotification
             )
     
-class LateinEarlyoutApprovalLevel(models.Model):
+class LatinEarlyApprovalWorkflow(models.Model):
     APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
         ('reporting_manager', 'Reporting Manager'),
         ('multi_approval', 'Multi Approval'),
     ]
 
-    level         = models.PositiveIntegerField(unique=True)
-    approver      = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True)
-    role          = models.CharField(max_length=100)
-    approval_type = models.CharField(max_length=30,choices=APPROVAL_TYPE_CHOICES,default='no_approval')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+    approval_type = models.CharField(max_length=30, choices=APPROVAL_TYPE_CHOICES, default='no_approval')
+
+    def __str__(self):
+        return f"Workflow ({self.approval_type})"
+    
+class LateinEarlyoutApprovalLevel(models.Model):
+
+    workflow = models.ForeignKey('LatinEarlyApprovalWorkflow',related_name='lateinearlyout_levels',on_delete=models.CASCADE,null=True)
+    level = models.PositiveIntegerField()
+    approver = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True)
+    role = models.CharField(max_length=100)
 
     class Meta:
         ordering = ['level']
+        unique_together = ('workflow', 'level') 
 
     def __str__(self):
-        approver_name = self.approver.emp_code if self.approver and hasattr(self.approver, 'emp_code') else "No Approver"
-        return f"Level {self.level} - {self.role} ({approver_name})"
+        approver_name = (
+            self.approver.emp_code
+            if self.approver and hasattr(self.approver, 'emp_code')
+            else "No Approver"
+        )
+        return f"{self.workflow} - Level {self.level} - {self.role} ({approver_name})"
     
 class LateinEarlyoutApproval(models.Model):
     PENDING = 'PENDING'
@@ -2359,16 +2384,18 @@ def create_initial_approval(sender, instance, created, **kwargs):
     if not created:
         return
 
-    first_level = LateinEarlyoutApprovalLevel.objects.order_by('level').first()
+    
+    workflow = LatinEarlyApprovalWorkflow.objects.filter(
+         branch=instance.employee.emp_branch_id
+    ).distinct().first()
 
-    if not first_level:
-        # ✅ No workflow → auto approve
-        instance.status = "APPROVED"
-        instance.save(update_fields=["status"])
-        return
+    if not workflow:
+        raise Exception("Approval workflow not configured for this branch.")
+
+    approval_type = workflow.approval_type
 
     # ---------------- NO APPROVAL ----------------
-    if first_level.approval_type == 'no_approval':
+    if approval_type == 'no_approval':
 
         approver = instance.created_by
 
@@ -2398,7 +2425,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         return
 
     # ---------------- REPORTING MANAGER ----------------
-    if first_level.approval_type == 'reporting_manager':
+    if approval_type == 'reporting_manager':
 
         manager = instance.employee.emp_reporting_manager
 
@@ -2409,7 +2436,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             lateinearlyout_request=instance,
             approver=manager,
             role="Reporting Manager",
-            level=first_level.level,
+            level=1,
             status=LateinEarlyoutApproval.PENDING
         )
 
@@ -2428,7 +2455,12 @@ def create_initial_approval(sender, instance, created, **kwargs):
         return
 
     # ---------------- MULTI APPROVAL ----------------
-    if first_level.approval_type == 'multi_approval':
+    if approval_type == 'multi_approval':
+
+        first_level = workflow.lateinearlyout_levels.order_by('level').first()  # ✅ FIX
+
+        if not first_level:
+            raise Exception("Approval levels not configured.")
 
         LateinEarlyoutApproval.objects.create(
             lateinearlyout_request=instance,
@@ -2450,6 +2482,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             email_template_model=LatinEarlyoutEmailTemplate,
             notification_model=LateinEarlyRequestNotification
         )
+        return 
 class EmployeeOvertime(models.Model):
 
     OT_TYPE_CHOICES = (

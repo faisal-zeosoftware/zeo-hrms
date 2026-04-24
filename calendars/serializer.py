@@ -5,7 +5,7 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                      LeaveApprovalLevels,LeaveApproval,LvApprovalNotify,LvEmailTemplate,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
                     LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
-                    LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,
+                    LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,LVApprovalWorkflow
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -280,35 +280,70 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         
         return rep
     def validate(self, data):
-        leave_type = data['leave_type']
-        is_half_day = data.get('is_half_day', False)
+        leave_type = data.get('leave_type')
+        employee = data.get('employee')
+
+        if not leave_type or not employee:
+            raise serializers.ValidationError("Employee and Leave Type are required.")
+
+        is_half_day = data.get('dis_half_day', False)
         half_day_period = data.get('half_day_period')
 
-        # Validate leave duration based on the unit
-        if leave_type.unit == 'hours' and (data['leave_duration'] > 8 or data['leave_duration'] <= 0):
-            raise serializers.ValidationError("For hourly leave types, duration must be between 0 and 8 hours.")
-        
-        if leave_type.unit == 'days':
-            if is_half_day:
-                if data['start_date'] != data['end_date']:
-                    raise serializers.ValidationError("For half-day leave, start date and end date must be the same.")
-                if not half_day_period:
-                    raise serializers.ValidationError("Please specify whether the half-day is in the first or second half.")
-            # elif data['leave_duration'] != 1:
-            #     raise serializers.ValidationError("For daily leave types, duration must be a full day (1 day).")
-        request_type = data.get('leave_type')
-        employee = data.get('employee')
-        has_levels = LeaveApprovalLevels.objects.filter(
-                request_type=request_type,
-                branch__in=[employee.emp_branch_id]
-            ).exists()
+        # ---------------- LEAVE TYPE VALIDATION ----------------
+        if leave_type.unit == 'hours':
+            duration = data.get('leave_duration', 0)
+            if duration > 8 or duration <= 0:
+                raise serializers.ValidationError(
+                    "For hourly leave types, duration must be between 0 and 8 hours."
+                )
 
-        if not has_levels:
+        if leave_type.unit == 'days' and is_half_day:
+            if data.get('start_date') != data.get('end_date'):
+                raise serializers.ValidationError(
+                    "For half-day leave, start date and end date must be the same."
+                )
+            if not half_day_period:
+                raise serializers.ValidationError(
+                    "Please specify half-day period."
+                )
+
+        # ---------------- APPROVAL VALIDATION ----------------
+        workflow = LVApprovalWorkflow.objects.filter(
+            request_type=leave_type,
+            branch__in=[employee.emp_branch_id]   # ✅ FIXED
+        ).first()
+
+        if not workflow:
             raise serializers.ValidationError({
-                "request_type": "Approval levels are not configured for this leave type  or branch."
+                "leave_type": "Approval workflow not configured for this branch."
             })
-        return data
 
+        # ---------------- NO APPROVAL ----------------
+        if workflow.approval_type == 'no_approval':
+            return data
+
+        # ---------------- REPORTING MANAGER ----------------
+        if workflow.approval_type == 'reporting_manager':
+            if not employee.emp_reporting_manager:
+                raise serializers.ValidationError({
+                    "employee": "No reporting manager assigned."
+                })
+
+        # ---------------- MULTI APPROVAL ----------------
+        if workflow.approval_type == 'multi_approval':
+            first_level = workflow.levels.order_by('level').first()
+
+            if not first_level:
+                raise serializers.ValidationError({
+                    "approval": "Approval levels not configured."
+                })
+
+            if not first_level.approver:
+                raise serializers.ValidationError({
+                    "approver": f"No approver for level {first_level.level}"
+                })
+
+        return data
 class EmployeeLeaveBalanceSerializer(serializers.ModelSerializer):
     leave_type_name = serializers.CharField(source='leave_type.name', read_only=True)
     negative = serializers.BooleanField(source='leave_type.negative', read_only=True)
@@ -599,38 +634,44 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = LeaveApprovalLevels
         fields = '__all__'
+
     def validate(self, attrs):
         level = attrs.get('level')
-        request_type = attrs.get('request_type')
-        branches = attrs.get('branch', [])
+        workflow = attrs.get('workflow') or getattr(self.instance, 'workflow', None)
 
         qs = LeaveApprovalLevels.objects.all()
 
-        # ✅ EXCLUDE CURRENT INSTANCE DURING UPDATE
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
-
-        for branch in branches:
-            if qs.filter(
-                level=level,
-                request_type=request_type,
-                branch=branch
-            ).exists():
+        if workflow and level is not None:
+            if qs.filter(workflow=workflow, level=level).exists():
                 raise serializers.ValidationError(
-                    f"An approval level with level={level} already exists "
-                    f"for branch '{branch}' and request type '{request_type}'."
+                    f"Level {level} already exists for this workflow."
                 )
 
         return attrs
     def to_representation(self, instance):
-        rep = super(LvApprovalLevelSerializer, self).to_representation(instance)
-        if instance.request_type:  
-            rep['request_type'] = instance.request_type.name
-        if instance.approver:  
+        rep = super().to_representation(instance)
+
+        # approver username
+        if instance.approver:
             rep['approver'] = instance.approver.username
-        rep['branch'] = list(instance.branch.values_list('branch_name', flat=True))
+
+        # escalate_to username
+        if instance.escalate_to:
+            rep['escalate_to'] = instance.escalate_to.username
+        if instance.workflow and instance.workflow.request_type:
+            rep['request_type'] = instance.workflow.request_type.name
+        if instance.workflow and instance.workflow.branch.exists():
+            rep['branch'] = [
+                b.branch_name for b in instance.workflow.branch.all()
+            ]
+
         return rep
+    
 class LvApprovalSerializer(serializers.ModelSerializer):
+    created_at = serializers.DateField(read_only=True)
+
     class Meta:
         model = LeaveApproval
         fields = '__all__'
@@ -647,7 +688,50 @@ class LvApprovalSerializer(serializers.ModelSerializer):
             except emp_master.DoesNotExist:
                 rep['employee_id'] = None 
         return rep
-   
+    
+class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels =  LvApprovalLevelSerializer(many=True)
+    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = LVApprovalWorkflow
+        fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if instance.request_type:
+            rep['request_type_name'] = instance.request_type.name
+        if instance.branch.exists():
+            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+        return rep
+
+    def create(self, validated_data):
+        levels_data = validated_data.pop('levels', [])
+        branches = validated_data.pop('branch', [])
+        workflow = LVApprovalWorkflow.objects.create(**validated_data)
+        workflow.branch.set(branches)
+        
+        for level_data in levels_data:
+           LeaveApprovalLevels.objects.create(workflow=workflow, **level_data)
+        return workflow
+
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('levels', None)
+        branches = validated_data.pop('branch', None)
+        
+        instance.request_type = validated_data.get('request_type', instance.request_type)
+        instance.approval_type = validated_data.get('approval_type', instance.approval_type)
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.levels.all().delete()
+            for level_data in levels_data:
+                 LeaveApprovalLevels.objects.create(workflow=instance, **level_data)
+        
+        return instance
 
 class LvEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:

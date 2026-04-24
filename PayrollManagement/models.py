@@ -8,6 +8,7 @@ from datetime import datetime,timedelta
 from EmpManagement .utils import send_notification_email,get_employee_context
 from EmpManagement .models import RequestNotification
 # from calendars .models import LeaveApproval
+from django.db.models import Max 
 
 # Create your models here.
 class SalaryComponent(models.Model):
@@ -922,13 +923,11 @@ class AdvanceSalaryRequest(models.Model):
     def move_to_next_level(self):
         from .utils import schedule_escalation
 
-        """
-        Moves to the next approval level only if all current levels are approved.
-        Stops if any level was rejected.
-        """
+        # ❌ If rejected → stop
         if self.approvals.filter(status='Rejected').exists():
             self.status = 'Rejected'
             self.save()
+
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
@@ -940,29 +939,44 @@ class AdvanceSalaryRequest(models.Model):
                     'requested_amount': self.requested_amount,
                     'reason': self.reason,
                     'remarks': self.remarks,
-                    
                 },
                 email_template_model=AdvanceSalaryEmailTemplate,
                 notification_model=AdvanceSalaryNotification
             )
-            return  # Important: Stop here if rejected
+            return
 
-        current_approved_levels = self.approvals.filter(status='Approved').count()
-        next_level = AdvanceCommonWorkflow.objects.filter(level=current_approved_levels + 1).first()
+        # ✅ Get current approved level
+        current_level = self.approvals.filter(
+            status='Approved'
+        ).aggregate(max_level=Max('level'))['max_level'] or 0
+
+        # ✅ Get workflow (branch based)
+        workflow = AdvanceApprovalWorkflow.objects.filter(
+            branch__id=self.employee.emp_branch_id.id
+        ).first()
+
+        if not workflow:
+            return  # or raise error if strict
+
+        # ✅ Get next level FROM THIS WORKFLOW ONLY
+        next_level = workflow.advance_levels.filter(
+            level=current_level + 1
+        ).first()
 
         if next_level:
+
+            # ✅ Determine approver based on approval type
+            if workflow.approval_type == 'reporting_manager':
+                approver = self.employee.emp_reporting_manager
+            else:
+                approver = next_level.approver
+
+            if not approver:
+                raise Exception(f"No approver configured for level {next_level.level}")
+
             last_approval = self.approvals.order_by('-level', '-id').first()
 
-            next_level = AdvanceCommonWorkflow.objects.filter(
-                level__gt=last_approval.level
-            ).order_by('level').first()
-
-            if not next_level:
-                self.status = "Approved"
-                self.save()
-                return
-
-            # ✅ Keep normal user comments, skip escalation-related notes only
+            # ✅ Carry forward note safely
             note_to_carry = None
             if last_approval and last_approval.note:
                 if not (
@@ -970,20 +984,27 @@ class AdvanceSalaryRequest(models.Model):
                     last_approval.note.startswith("Escalated from")
                 ):
                     note_to_carry = last_approval.note
-            new_approval=AdvanceSalaryApproval.objects.create(
+
+            new_approval = AdvanceSalaryApproval.objects.create(
                 request=self,
-                approver=next_level.approver,
+                approver=approver,
                 role=next_level.role,
                 level=next_level.level,
                 status='Pending',
                 employee=self.employee,
                 note=note_to_carry
             )
-            schedule_escalation(new_approval, next_level)
+
+            # ✅ Escalation
+            if hasattr(next_level, "get_escalation_timedelta"):
+                if next_level.get_escalation_timedelta().total_seconds() > 0:
+                    schedule_escalation(new_approval, next_level)
+
+            # ✅ Notify next approver
             send_notification_email(
-                user=next_level.approver,
+                user=approver,
                 employee=None,
-                message=f"New Salary Advance request for approval: {self.document_number}, Employee: {self.employee}",
+                message=f"New Salary Advance request: {self.document_number}, Employee: {self.employee}",
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -991,15 +1012,17 @@ class AdvanceSalaryRequest(models.Model):
                     'requested_amount': self.requested_amount,
                     'reason': self.reason,
                     'remarks': self.remarks,
-                    
                 },
                 email_template_model=AdvanceSalaryEmailTemplate,
                 notification_model=AdvanceSalaryNotification
             )
+
         else:
+            # ✅ Final approval
             self.status = 'Approved'
             self.approval_date = timezone.now()
             self.save()
+
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
@@ -1035,10 +1058,7 @@ class AdvanceSalaryRequest(models.Model):
         def __str__(self):
             return f"{self.employee} - {self.loan_type} - {self.status}"
 
-class AdvanceCommonWorkflow(models.Model):
-    level = models.PositiveIntegerField()
-    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
-    role = models.CharField(max_length=100)
+class AdvanceApprovalWorkflow(models.Model):
     APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
         ('reporting_manager', 'Reporting Manager'),
@@ -1050,6 +1070,15 @@ class AdvanceCommonWorkflow(models.Model):
         choices=APPROVAL_TYPE_CHOICES,
         default='no_approval'
     )
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+    
+
+
+class AdvanceCommonWorkflow(models.Model):
+    workflow = models.ForeignKey(AdvanceApprovalWorkflow, related_name='advance_levels', on_delete=models.CASCADE, null=True)
+    level = models.PositiveIntegerField()
+    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    role = models.CharField(max_length=100)
     escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='adv_salary_escalated_levels')
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
@@ -1142,16 +1171,20 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
     if not created:
         return
 
-    # Fetch first approval level
-    first_level = AdvanceCommonWorkflow.objects.order_by('level').first()
-    if not first_level:
+    # ✅ FIX: correct branch filtering
+    workflow = AdvanceApprovalWorkflow.objects.filter(
+        branch__id=instance.employee.emp_branch_id.id
+    ).first()
+
+    if not workflow:
         return
 
-    approval_type = getattr(first_level, 'approval_type', 'multi_approval')  # default multi_approval
+    approval_type = workflow.approval_type
 
     # ---------------- NO APPROVAL ----------------
     if approval_type == 'no_approval':
-        approver = instance.created_by or instance.employee.users  # fallback
+        approver = instance.created_by or getattr(instance.employee, 'users', None)
+
         if not approver:
             raise Exception("Employee has no system user.")
 
@@ -1187,14 +1220,15 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
     # ---------------- REPORTING MANAGER ----------------
     if approval_type == 'reporting_manager':
         manager = instance.employee.emp_reporting_manager
+
         if not manager:
-            raise Exception("Employee has no reporting manager. Please set reporting manager.")
+            raise Exception("Employee has no reporting manager.")
 
         AdvanceSalaryApproval.objects.create(
             request=instance,
             approver=manager,
             role="Reporting Manager",
-            level=first_level.level,
+            level=1,
             status=AdvanceSalaryApproval.PENDING,
             employee=instance.employee
         )
@@ -1217,7 +1251,14 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
 
     # ---------------- MULTI APPROVAL ----------------
     if approval_type == 'multi_approval':
-        approval = AdvanceSalaryApproval.objects.create(
+
+        # ✅ FIX: use workflow levels (NOT global)
+        first_level = workflow.advance_levels.order_by('level').first()
+
+        if not first_level:
+            return
+
+        AdvanceSalaryApproval.objects.create(
             request=instance,
             approver=first_level.approver,
             role=first_level.role,
@@ -1240,8 +1281,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             email_template_model=AdvanceSalaryEmailTemplate,
             notification_model=AdvanceSalaryNotification
         )
-        return 
-     
+        return
 class AirTicketPolicy(models.Model):
     ALLOWANCE_TYPE_CHOICES = [
         ('CASH', 'Cash'),

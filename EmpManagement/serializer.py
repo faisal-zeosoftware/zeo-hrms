@@ -360,12 +360,20 @@ class DocRequestSerializer(serializers.ModelSerializer):
 
         if employee and request_type:
 
-            first_level = DocumentApprovalLevel.objects.filter(
+            # 🔥 FIX: correct M2M branch filtering
+            workflow = DocumentApprovalWorkflow.objects.filter(
                 request_type=request_type,
-                branch=employee.emp_branch_id
-            ).order_by('level').first()
+                branch__in=[employee.emp_branch_id]
+            ).first()
 
-            if first_level and first_level.approval_type == 'reporting_manager':
+            if not workflow:
+                return data
+
+            # ✅ Step 2: Get first level
+            first_level = workflow.document_levels.order_by('level').first()
+
+            # ✅ Step 3: Check approval type (from workflow)
+            if workflow.approval_type == 'reporting_manager':
 
                 if not employee.emp_reporting_manager:
                     raise serializers.ValidationError(
@@ -373,6 +381,7 @@ class DocRequestSerializer(serializers.ModelSerializer):
                     )
 
         return data
+
 
 class EmployeeResignationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -796,13 +805,8 @@ class DocApprovalLevelSerializer(serializers.ModelSerializer):
         fields = '__all__'
     def to_representation(self, instance):
         rep = super(DocApprovalLevelSerializer, self).to_representation(instance)
-        if instance.request_type:  
-            rep['request_type'] = instance.request_type.type_name
         if instance.approver:  
             rep['approver'] = instance.approver.username
-        if instance.branch.exists():  
-            rep['branch'] = [cat.branch_name for cat in instance.branch.all()]
-        return rep
     
 class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = DocApprovalLevelSerializer(source='document_levels', many=True)
@@ -941,6 +945,7 @@ class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         return instance
     
+    
         
         
 class ResignationTemplateSerializer(serializers.ModelSerializer):
@@ -985,22 +990,37 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
         fields = '__all__'
     def validate(self, data):
         employee = data.get('employee')
+
         if not employee:
             raise serializers.ValidationError({
                 "employee": "Employee is required."
             })
-        if not ResignationApprovalLevel.objects.exists():
+
+        # ✅ Clean workflow fetch
+        workflow = ResignationApprovalWorkflow.objects.filter(
+              branch=employee.emp_branch_id
+        ).first()
+
+        if not workflow:
             raise serializers.ValidationError({
-                "approval_level": "Resignation approval workflow is not configured. Please configure approval levels first."
+                "workflow": "Resignation approval workflow is not configured for this branch."
             })
 
-        first_level = ResignationApprovalLevel.objects.order_by('level').first()
-
-        if first_level and first_level.approval_type == 'reporting_manager':
+        # ✅ Reporting manager check
+        if workflow.approval_type == 'reporting_manager':
             if not employee.emp_reporting_manager:
                 raise serializers.ValidationError({
                     "employee": "This employee does not have a reporting manager assigned."
                 })
+
+        # ✅ Multi approval check
+        if workflow.approval_type == 'multi_approval':
+            if not workflow.resignation_levels.exists():
+                raise serializers.ValidationError({
+                    "approval_level": "Approval levels are not configured for this workflow."
+                })
+
+        # ✅ Active request check
         if EmployeeResignation.objects.filter(
             employee=employee,
             status__in=['Pending', 'Approved']

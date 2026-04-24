@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow)
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow)
 
 import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master
@@ -485,19 +485,48 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         employee = data.get('employee')
-        if not AdvanceCommonWorkflow.objects.exists():
+
+        if not employee:
             raise serializers.ValidationError({
-                "approval_level": "Approval workflow is not configured. Please configure it first."
+                "employee": "Employee is required."
             })
-        first_level = AdvanceCommonWorkflow.objects.order_by('level').first()
 
-        # Check reporting manager condition
-        if first_level and first_level.approval_type == 'reporting_manager':
-            manager = getattr(employee, 'emp_reporting_manager', None)
+        workflow = AdvanceApprovalWorkflow.objects.filter(
+            branch__id=employee.emp_branch_id.id
+        ).first()
 
-            if not manager:
+        if not workflow:
+            raise serializers.ValidationError({
+                "workflow": "Approval workflow is not configured for this branch."
+            })
+
+        approval_type = workflow.approval_type
+
+        # ---------------- NO APPROVAL ----------------
+        if approval_type == 'no_approval':
+            return data
+
+        # ---------------- REPORTING MANAGER ----------------
+        if approval_type == 'reporting_manager':
+            if not employee.emp_reporting_manager:
                 raise serializers.ValidationError({
                     "employee": "This employee does not have a reporting manager assigned."
+                })
+            return data
+
+        # ---------------- MULTI APPROVAL ----------------
+        if approval_type == 'multi_approval':
+
+            first_level = workflow.advance_levels.order_by('level').first()
+
+            if not first_level:
+                raise serializers.ValidationError({
+                    "approval_level": "Approval levels are not configured."
+                })
+
+            if not first_level.approver:
+                raise serializers.ValidationError({
+                    "approver": f"No approver configured for level {first_level.level}."
                 })
 
         return data
@@ -506,21 +535,71 @@ class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceSalaryApproval
         fields = '__all__'
-    def to_representation(self, instance):
-        rep = super(AdvanceSalaryApprovalSerializer, self).to_representation(instance)
-        if instance.approver:  
-            rep['approver'] = instance.approver.username
-        if instance.request:
-            rep['request'] = instance.request.document_number
-        if instance.employee:  
-            rep['employee'] = instance.employee.emp_code
 
-    
-        return rep
 class AdvanceCommonWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceCommonWorkflow
         fields = '__all__'
+class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
+    levels = AdvanceCommonWorkflowSerializer(many=True,source='advance_levels',required=False)
+
+    class Meta:
+        model = AdvanceApprovalWorkflow
+        fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        if instance.branch.exists():
+            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+
+        return rep
+
+    def create(self, validated_data):
+        levels_data = validated_data.pop('advance_levels', [])
+        branches = validated_data.pop('branch', [])
+
+        workflow = AdvanceApprovalWorkflow.objects.create(**validated_data)
+
+        if branches:
+            workflow.branch.set(branches)
+
+        for level_data in levels_data:
+            level_data.pop('workflow', None)
+
+            AdvanceCommonWorkflow.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
+        return workflow
+
+    def update(self, instance, validated_data):
+        levels_data = validated_data.pop('advance_levels', None)
+        branches = validated_data.pop('branch', None)
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+        instance.save()
+
+        if branches is not None:
+            instance.branch.set(branches)
+
+        if levels_data is not None:
+            instance.advance_levels.all().delete()
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                AdvanceCommonWorkflow.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
+        return instance
+
 
 class PayslipApprovalSerializer(serializers.ModelSerializer):
     request = PayslipSerializer(read_only=True)

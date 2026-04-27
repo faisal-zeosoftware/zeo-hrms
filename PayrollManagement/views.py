@@ -1023,7 +1023,7 @@ class LoanEscalationRuleViewSet(viewsets.ModelViewSet):
     API for managing escalation settings on each approval level.
     """
     serializer_class = LoanEscalationRuleSerializer
-    queryset = LoanApprovalLevels.objects.all().order_by('loan_type', 'level')
+    queryset = LoanApprovalLevels.objects.all().order_by('workflow__loan_type', 'level')
 
     def get_queryset(self):
         queryset = super().get_queryset()

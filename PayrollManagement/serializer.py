@@ -17,14 +17,16 @@ class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
     emp_code = serializers.SerializerMethodField(read_only=True)
     component_name = serializers.CharField(source='component.name', read_only=True)
     component_type = serializers.CharField(source='component.get_component_type_display', read_only=True)
-
+    emp_name = serializers.SerializerMethodField()
+    department = serializers.CharField(source='employee.emp_dept_id.dept_name', read_only=True)
+    designation = serializers.CharField(source='employee.emp_desgntn_id.desgntn_job_title', read_only=True)
     class Meta:
         model = EmployeeSalaryStructure
         # Include 'employee' and 'component' for input
         fields = [
             'id', 'employee', 'emp_code',
             'component', 'component_name', 'component_type',
-            'amount', 'is_active', 'date_created', 'date_updated'
+            'amount', 'is_active', 'date_created', 'date_updated','department','designation','emp_name'
         ]
         extra_kwargs = {
             'employee': {'write_only': False},  # Allow it in input and output
@@ -33,6 +35,8 @@ class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
 
     def get_emp_code(self, obj):
         return obj.employee.emp_code
+    def get_emp_name(self, obj):
+        return f"{obj.employee.emp_first_name} {obj.employee.emp_last_name}"
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)

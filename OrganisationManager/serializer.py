@@ -218,11 +218,12 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def create(self, validated_data):
-        levels_data = validated_data.pop('levels', [])
+        levels_data = validated_data.pop('asset_levels', [])
         branches = validated_data.pop('branch', [])
 
         workflow = AssetApprovalWorkflow.objects.create(**validated_data)
-        workflow.branch.set(branches)
+        if branches:
+            workflow.branch.set(branches)
 
         AssetApprovalLevel.objects.bulk_create([
             AssetApprovalLevel(workflow=workflow, **level)
@@ -232,7 +233,7 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
         return workflow
 
     def update(self, instance, validated_data):
-        levels_data = validated_data.pop('levels', None)
+        levels_data = validated_data.pop('asset_levels', None)
         branches = validated_data.pop('branch', None)
 
         # DRF-safe update
@@ -244,7 +245,7 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
             instance.branch.set(branches)
 
         if levels_data is not None:
-            instance.levels.all().delete()
+            instance.asset_levels.all().delete()
 
             AssetApprovalLevel.objects.bulk_create([
                 AssetApprovalLevel(workflow=instance, **level)

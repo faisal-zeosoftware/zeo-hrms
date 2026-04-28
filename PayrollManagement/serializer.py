@@ -20,13 +20,15 @@ class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
     emp_name = serializers.SerializerMethodField()
     department = serializers.CharField(source='employee.emp_dept_id.dept_name', read_only=True)
     designation = serializers.CharField(source='employee.emp_desgntn_id.desgntn_job_title', read_only=True)
+    is_fixed = serializers.BooleanField(source='component.is_fixed', read_only=True)
+
     class Meta:
         model = EmployeeSalaryStructure
         # Include 'employee' and 'component' for input
         fields = [
             'id', 'employee', 'emp_code',
             'component', 'component_name', 'component_type',
-            'amount', 'is_active', 'date_created', 'date_updated','department','designation','emp_name'
+            'amount', 'is_active', 'date_created', 'is_fixed','date_updated','department','designation','emp_name'
         ]
         extra_kwargs = {
             'employee': {'write_only': False},  # Allow it in input and output

@@ -3,6 +3,7 @@ from django.dispatch import receiver
 from django.utils.timezone import now
 from .models import EmployeeResignation, EndOfService
 from django.db import transaction
+from .models import RequestType, ApprovalWorkflow, ApprovalLevel
 
 
 @receiver(post_save, sender=EmployeeResignation)
@@ -53,3 +54,20 @@ def create_eos_on_approval(sender, instance, created, **kwargs):
             except Exception as e:
                 # Optional: log error
                 print(f"Error creating EOS: {e}")
+
+@receiver(post_save, sender=RequestType)
+def create_workflow_and_default_level(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    workflow = ApprovalWorkflow.objects.create(
+        request_type=instance,
+        approval_type='no_approval'
+    )
+
+    ApprovalLevel.objects.create(
+        workflow=workflow,
+        level=1,
+        role="Auto Level",
+        approver=None
+    )

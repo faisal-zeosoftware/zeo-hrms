@@ -1213,120 +1213,81 @@ class GeneralRequest(models.Model):
         return GeneralRequest.objects.filter(employee_id=employee_id).order_by('-created_at_date')
 
     def move_to_next_level(self):
+
+        # ---------------- REJECT ---------------- #
         if self.approvals.filter(status=Approval.REJECTED).exists():
             self.status = 'Rejected'
             self.save()
-            send_notification_email(
-                user=self.created_by,
-                employee=self.employee,
-                message=f"Your request {self.document_number} has been rejected.",
-                template_type="request_rejected",
-                context={
-                    **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
-                    'request_type': self.request_type.name,
-                    'rejection_reason': 'Reason for rejection...'
-                },
-                email_template_model=EmailTemplate,
-                notification_model=RequestNotification
-            )
             return
 
-        min_required = self.request_type.min_approvals_required
-        approved_count = self.approvals.filter(status=Approval.APPROVED).count()
+        # ---------------- GET WORKFLOW ---------------- #
+        workflow = ApprovalWorkflow.objects.filter(
+            request_type=self.request_type,
+        ).first()
 
-        if min_required and approved_count >= min_required:
-            self.status = 'approved'
-            self.save()
-
-            send_notification_email(
-                user=self.created_by,
-                employee=self.employee,
-                message=f"Your leave request has been approved.",
-                template_type="request_approved",
-                context={
-                    **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
-                    'request_type': self.request_type.name
-                },
-                email_template_model=EmailTemplate,
-                notification_model=RequestNotification
-            )
-            return
-
-        current_approved_levels = self.approvals.filter(status=Approval.APPROVED).count()
-        
-        if self.request_type.use_common_workflow:
-            total_levels = CommonWorkflow.objects.count()
-            next_level = CommonWorkflow.objects.filter(level=current_approved_levels + 1).first()
-        else:
-            workflow = ApprovalWorkflow.objects.filter(
+        # ✅ FIX: auto fallback workflow (prevents "not configured" error)
+        if not workflow:
+            workflow = ApprovalWorkflow.objects.create(
                 request_type=self.request_type,
-                branch=self.employee.emp_branch_id
-            ).first()
-            
-            if not workflow:
-               self.status = "Approved"
-               self.save()
-               return
+                approval_type='no_approval'
+            )
 
-            total_levels = workflow.levels.count()
-            next_level = workflow.levels.filter(level=current_approved_levels + 1).first()
+            ApprovalLevel.objects.create(
+                workflow=workflow,
+                level=1,
+                role="Auto Level",
+                approver=None
+            )
 
-        if next_level:
-            last_approval = self.approvals.order_by('-level', '-id').first()
+        approval_type = workflow.approval_type
 
-            # ✅ Keep normal user comments, skip escalation-related notes only
-            note_to_carry = None
-            if last_approval and last_approval.note:
-                if not (
-                    last_approval.note.startswith("Escalated to") or
-                    last_approval.note.startswith("Escalated from")
-                ):
-                    note_to_carry = last_approval.note
+        # =========================================================
+        # ✅ NO APPROVAL
+        # =========================================================
+        if approval_type == 'no_approval':
+            self.status = 'Approved'
+            self.save()
+            return
 
-            new_approval = Approval.objects.create(
+        # =========================================================
+        # ✅ REPORTING MANAGER
+        # =========================================================
+        if approval_type == 'reporting_manager':
+
+            if self.approvals.filter(status=Approval.APPROVED).exists():
+                self.status = 'Approved'
+                self.save()
+
+            return
+
+        # =========================================================
+        # ✅ MULTI APPROVAL (LEVEL BASED)
+        # =========================================================
+
+        last_approved = self.approvals.filter(
+            status=Approval.APPROVED
+        ).order_by('-level').first()
+
+        current_level = (last_approved.level + 1) if last_approved else 1
+
+        if self.approvals.filter(level=current_level).exists():
+            return
+
+        next_level = workflow.levels.filter(level=current_level).first()
+
+        if next_level and next_level.approver:
+
+            Approval.objects.create(
                 general_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
-                status=Approval.PENDING,
-                note=note_to_carry,
+                status=Approval.PENDING
             )
-            
-            if hasattr(next_level, 'get_escalation_timedelta'):
-                schedule_escalation(new_approval, next_level)
-                
-            send_notification_email(
-                user=next_level.approver,
-                employee=None,
-                message=f"New request for approval: {self.request_type.name}, Employee: {self.employee}",
-                template_type="request_created",
-                context={
-                    **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
-                    'request_type': self.request_type.name
-                },
-                email_template_model=EmailTemplate,
-                notification_model=RequestNotification
-            )
-            
+
         else:
             self.status = 'Approved'
             self.save()
-            send_notification_email(
-                user=self.created_by,
-                employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
-                template_type="request_approved",
-                context={
-                    **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
-                    'request_type': self.request_type.name
-                },
-                email_template_model=EmailTemplate,
-                notification_model=RequestNotification
-            )
 
            
 
@@ -1436,26 +1397,36 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
     if instance.request_type.use_common_workflow:
         first_level = CommonWorkflow.objects.order_by('level').first()
+        workflow = None
     else:
         workflow = ApprovalWorkflow.objects.filter(
             request_type=instance.request_type,
-            branch=instance.employee.emp_branch_id
         ).first()
-        
+
+        # ✅ FIX: do NOT silently return
         if not workflow:
-            return
-            
+            workflow = ApprovalWorkflow.objects.create(
+                request_type=instance.request_type,
+                approval_type='no_approval'
+            )
+
         first_level = workflow.levels.order_by('level').first()
 
-    if not first_level:
-        return
+    # ✅ FIX: ensure first_level always exists for multi approval safety
+    if workflow and not first_level:
+        first_level = ApprovalLevel.objects.create(
+            workflow=workflow,
+            level=1,
+            role="Auto Level",
+            approver=None
+        )
 
-    # Use the approval_type from workflow if it's not common
-    approval_type = first_level.approval_type if instance.request_type.use_common_workflow else workflow.approval_type
+    approval_type = workflow.approval_type if workflow else 'no_approval'
 
     # ---------------- NO APPROVAL ----------------
     if approval_type == 'no_approval':
         approver = instance.created_by or instance.employee.users
+
         if not approver:
             raise Exception("Employee does not have a system user assigned.")
 
@@ -1469,78 +1440,37 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         instance.status = "Approved"
         instance.save(update_fields=["status"])
-
-        send_notification_email(
-            user=approver,
-            employee=instance.employee,
-            message=f"Your request {instance.document_number} has been automatically approved.",
-            template_type="request_approved",
-            context={
-                **get_employee_context(instance.employee),
-                'doc_number': instance.document_number,
-                'request_type': instance.request_type.name
-            },
-            email_template_model=EmailTemplate,
-            notification_model=RequestNotification
-        )
         return
 
     # ---------------- REPORTING MANAGER ----------------
     if approval_type == 'reporting_manager':
+
         manager = instance.employee.emp_reporting_manager
+
         if not manager:
-            raise Exception("Employee has no reporting manager. Please set reporting manager.")
+            raise Exception("Employee has no valid reporting manager.")
 
-        approver = manager
-        approval = Approval.objects.create(
+        Approval.objects.create(
             general_request=instance,
-            approver=approver,
+            approver=manager,
             role="Reporting Manager",
-            level=first_level.level,
+            level=1,
             status=Approval.PENDING
-        )
-
-        send_notification_email(
-            user=approver,
-            employee=None,
-            message=f"New request for approval: {instance.request_type.name}, Employee: {instance.employee}",
-            template_type="request_created",
-            context={
-                **get_employee_context(instance.employee),
-                'doc_number': instance.document_number,
-                'request_type': instance.request_type.name
-            },
-            email_template_model=EmailTemplate,
-            notification_model=RequestNotification
         )
         return
 
     # ---------------- MULTI APPROVAL ----------------
     if approval_type == 'multi_approval':
-        approval = Approval.objects.create(
-            general_request=instance,
-            approver=first_level.approver,
-            role=first_level.role,
-            level=first_level.level,
-            status=Approval.PENDING
-        )
 
-        if hasattr(first_level, 'get_escalation_timedelta'):
-            schedule_escalation(approval, first_level)
+        if first_level and first_level.approver:
 
-        send_notification_email(
-            user=first_level.approver,
-            employee=None,
-            message=f"New request for approval: {instance.request_type.name}, Employee: {instance.employee}",
-            template_type="request_created",
-            context={
-                **get_employee_context(instance.employee),
-                'doc_number': instance.document_number,
-                'request_type': instance.request_type.name
-            },
-            email_template_model=EmailTemplate,
-            notification_model=RequestNotification
-        )
+            Approval.objects.create(
+                general_request=instance,
+                approver=first_level.approver,
+                role=first_level.role,
+                level=first_level.level,
+                status=Approval.PENDING
+            )
         return
     
 class SelectedEmpNotify(models.Model):

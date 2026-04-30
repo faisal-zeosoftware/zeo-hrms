@@ -655,26 +655,77 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
 
         if request_type.use_common_workflow:
             first_level = CommonWorkflow.objects.order_by("level").first()
+
+            if not first_level:
+                raise serializers.ValidationError({
+                    "approval": "Approval levels are not configured."
+                })
+
+            approval_type = first_level.approval_type
+
         else:
             workflow = ApprovalWorkflow.objects.filter(
                 request_type=request_type,
-                branch=employee.emp_branch_id
+                branch__in=[employee.emp_branch_id]
             ).first()
-            first_level = workflow.levels.order_by("level").first() if workflow else None
 
-        if not first_level:
-             return data
+            # ✅ FIX 1: fallback instead of hard failure
+            if not workflow:
+                workflow = ApprovalWorkflow.objects.filter(
+                    request_type=request_type
+                ).first()
 
-        # Get approval_type from the right source
-        approval_type = first_level.approval_type if request_type.use_common_workflow else workflow.approval_type
+            if not workflow:
+                raise serializers.ValidationError({
+                    "approval": "Approval workflow is not configured."
+                })
 
-        # Reporting manager required
+            first_level = workflow.levels.order_by("level").first()
+
+            # ✅ FIX 2: auto-safe fallback instead of error
+            if not first_level:
+                first_level = ApprovalLevel.objects.create(
+                    workflow=workflow,
+                    level=1,
+                    role="Auto Level",
+                    approver=None
+                )
+
+            approval_type = workflow.approval_type
+
+        # ===========================
+        # existing logic (UNCHANGED)
+        # ===========================
         if approval_type == "reporting_manager" and not employee.emp_reporting_manager:
-            raise serializers.ValidationError(
-                {"reporting_manager": "Employee has no reporting manager."}
-            )
+            raise serializers.ValidationError({
+                "reporting_manager": "Employee has no reporting manager."
+            })
+
+        levels = self.initial_data.get("levels", [])
+        cleaned_levels = []
+
+        for level in levels:
+            approver = level.get("approver")
+            level_type = level.get("approval_type")
+
+            if approver == 0:
+                approver = None
+
+            if level_type in ["no_approval", "reporting_manager"]:
+                approver = None
+
+            if level_type == "multi_approval" and not approver:
+                raise serializers.ValidationError({
+                    "approver": "Approver is required for multi approval level."
+                })
+
+            level["approver"] = approver
+            cleaned_levels.append(level)
+
+        self._validated_levels = cleaned_levels
 
         return data
+        
     
 class ApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:

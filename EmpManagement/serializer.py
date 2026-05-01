@@ -446,6 +446,8 @@ class EmpSerializer(serializers.ModelSerializer):
             rep['emp_nationality'] =instance.emp_nationality.N_name
         if instance.emp_relegion:
             rep['emp_relegion'] =instance.emp_relegion.religion
+        if instance.emp_reporting_manager:
+            rep['emp_reporting_manager'] =instance.emp_reporting_manager.username
         return rep
     def update(self, instance, validated_data):
         if 'is_active' not in validated_data:

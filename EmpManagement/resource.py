@@ -19,6 +19,7 @@ import os
 from django.core.files.storage import default_storage
 from .models import NotificationSettings
 from .tasks import send_document_notification
+from UserManagement .models import CustomUser
 
 class CaseInsensitiveForeignKeyWidget(ForeignKeyWidget):
     def clean(self, value, row=None, *args, **kwargs):
@@ -80,7 +81,7 @@ class CustomForeignKeyWidget(ForeignKeyWidget):
         # CASE-INSENSITIVE department lookup
         queryset = self.get_queryset(value, row, *args, **kwargs)
         queryset = queryset.filter(
-            branch_id=matching_branch.id,
+            branch=matching_branch,
             dept_name__iexact=value
         )
 
@@ -193,11 +194,19 @@ class EmployeeResource(resources.ModelResource):
         import_id_fields = ['emp_code'] 
         skip_unchanged = True
         report_skipped = True
+    def before_import(self, dataset, **kwargs):
+        self._seen_emails = set()
     def before_import_row(self, row, **kwargs):
         if isinstance(row, list):
             row = dict(zip(self.get_header_names(), row))
 
+        if not hasattr(self, '_seen_emails'):
+            self._seen_emails = set()
+        
         errors = []
+
+        # Normalize row keys (strip whitespace)
+        row = {str(k).strip(): v for k, v in row.items()}
 
         # 1️⃣ Normalize strings and replace None
         for key, value in row.items():
@@ -237,7 +246,7 @@ class EmployeeResource(resources.ModelResource):
         # 3️⃣ Department (check branch dependency)
         if matching_branch and department_name:
             dept = dept_master.objects.filter(
-                branch_id=matching_branch.id,
+                branch=matching_branch,
                 dept_name__iexact=department_name
             ).first()
             if not dept:
@@ -363,11 +372,34 @@ class EmployeeResource(resources.ModelResource):
 
         # 1️⃣3️⃣ Validate Email
         email = row.get('Employee Personal Email ID')
-        if email and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-            errors.append(f"Invalid email format for Personal Email ID: '{email}'")
-        compny_email= row.get('Employee Company Email ID')
-        if compny_email and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', compny_email):
-            errors.append(f"Invalid email format For Company Email IDS: '{compny_email}'")
+        if email:
+            email = str(email).strip().lower()
+            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+                errors.append(f"Invalid email format for Personal Email ID: '{email}'")
+            else:
+                # Check for duplicates in CustomUser
+                emp_code = str(row.get('Employee Code', '')).strip()
+                if CustomUser.objects.filter(email__iexact=email).exclude(username=emp_code).exists():
+                    errors.append(f"Personal Email '{email}' already exists for another user.")
+                elif email in self._seen_emails:
+                    errors.append(f"Duplicate Personal Email '{email}' found in the upload sheet.")
+                else:
+                    self._seen_emails.add(email)
+
+        compny_email = row.get('Employee Company Email ID')
+        if compny_email:
+            compny_email = str(compny_email).strip().lower()
+            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', compny_email):
+                errors.append(f"Invalid email format For Company Email IDS: '{compny_email}'")
+            else:
+                # Check for duplicates in CustomUser
+                emp_code = str(row.get('Employee Code', '')).strip()
+                if CustomUser.objects.filter(email__iexact=compny_email).exclude(username=emp_code).exists():
+                    errors.append(f"Company Email '{compny_email}' already exists for another user.")
+                elif compny_email in self._seen_emails:
+                    errors.append(f"Duplicate Company Email '{compny_email}' found in the upload sheet.")
+                else:
+                    self._seen_emails.add(compny_email)
         
         # 1️⃣4️⃣ Validate Marital Status
         marital_status = row.get('Employee Marital Status')

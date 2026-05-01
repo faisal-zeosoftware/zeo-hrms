@@ -1230,7 +1230,7 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
                 if "EmployeeMaster" not in workbook.sheetnames:
                     return Response({"error": "Sheet1 (EmployeeMaster) missing"}, status=400)
                 sheet1 = workbook["EmployeeMaster"]
-                dataset_sheet1.headers = [cell.value for cell in sheet1[1]]
+                dataset_sheet1.headers = [str(cell.value).strip() if cell.value else "" for cell in sheet1[1]]
                 for row in sheet1.iter_rows(min_row=2):
                     dataset_sheet1.append([cell.value for cell in row])
 
@@ -1279,13 +1279,18 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
             # ---------------- Validation ----------------
             employee_resource = EmployeeResource()
             custom_field_resource = EmpCustomFieldValueResource()
+            
+            # Reset seen data tracking
+            if hasattr(employee_resource, 'before_import'):
+                employee_resource.before_import(dataset_sheet1)
 
             # EmployeeMaster validation
             for row_idx, row in enumerate(dataset_sheet1.dict, start=2):
                 try:
                     employee_resource.before_import_row(row, row_idx=row_idx)
                 except ValidationError as e:
-                    all_errors["sheet1_errors"].append({"row": row_idx, "error": str(e)})
+                    msg = e.messages if hasattr(e, 'messages') else str(e)
+                    all_errors["sheet1_errors"].append({"row": row_idx, "error": msg})
 
             # UDF validation
             for row_idx, row in enumerate(dataset_sheet2.dict, start=2):
@@ -1328,18 +1333,33 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
                     row['Field Value'] = field_value
 
                 except ValidationError as e:
-                    all_errors["sheet2_errors"].append({"row": row_idx, "error": str(e)})
+                    msg = e.messages if hasattr(e, 'messages') else str(e)
+                    all_errors["sheet2_errors"].append({"row": row_idx, "error": msg})
 
             if all_errors["sheet1_errors"] or all_errors["sheet2_errors"]:
                 return Response({"errors": all_errors}, status=400)
 
             # ---------------- Import ----------------
             with transaction.atomic():
-                employee_result = employee_resource.import_data(dataset_sheet1, dry_run=False, raise_errors=True)
+                employee_result = employee_resource.import_data(dataset_sheet1, dry_run=False, raise_errors=False)
+                if employee_result.has_errors():
+                    for row_err in employee_result.row_errors():
+                        row_idx = row_err[0] + 2 # row index from dataset + 2 for excel row
+                        for error in row_err[1]:
+                            msg = error.error.messages if hasattr(error.error, 'messages') else str(error.error)
+                            all_errors["sheet1_errors"].append({"row": row_idx, "error": msg})
+                    return Response({"errors": all_errors}, status=400)
 
             if dataset_sheet2:
                 with transaction.atomic():
-                    custom_field_result = custom_field_resource.import_data(dataset_sheet2, dry_run=False, raise_errors=True)
+                    custom_field_result = custom_field_resource.import_data(dataset_sheet2, dry_run=False, raise_errors=False)
+                    if custom_field_result.has_errors():
+                        for row_err in custom_field_result.row_errors():
+                            row_idx = row_err[0] + 2
+                            for error in row_err[1]:
+                                msg = error.error.messages if hasattr(error.error, 'messages') else str(error.error)
+                                all_errors["sheet2_errors"].append({"row": row_idx, "error": msg})
+                        return Response({"errors": all_errors}, status=400)
                 return Response({
                     "message": f"{employee_result.total_rows} Employee records created, "
                                f"{custom_field_result.total_rows} UDF records created successfully"
@@ -1347,9 +1367,11 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
 
             return Response({"message": f"{employee_result.total_rows} Employee records created successfully."})
 
+        except ValidationError as e:
+            msg = e.messages if hasattr(e, 'messages') else str(e)
+            return Response({"error": msg}, status=400)
         except Exception as e:
             return Response({"error": str(e)}, status=400)
-
     
     @action(detail=False, methods=['get'])
     def download_default_excel_file(self, request):

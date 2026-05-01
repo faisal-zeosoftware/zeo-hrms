@@ -662,8 +662,16 @@ class  LoanApplication(models.Model):
                 workflow__loan_type=self.loan_type,
                 level=next_level_number
             ).first()
-
         if not next_level:
+            self.status = 'Approved'
+            self.approved_on = timezone.now()
+            self.save()
+            return
+        if self.approvals.filter(level=next_level_number).exists():
+            return
+
+        # ✅ FIX 3: ensure approver exists (prevents crash)
+        if not next_level.approver:
             self.status = 'Approved'
             self.approved_on = timezone.now()
             self.save()
@@ -685,8 +693,10 @@ class  LoanApplication(models.Model):
             note=note_to_carry
         )
 
+        # escalation scheduling (unchanged)
         loan_schedule_escalation(new_approval, next_level)
 
+        # notification (unchanged)
         send_notification_email(
             user=next_level.approver,
             employee=None,
@@ -704,7 +714,7 @@ class  LoanApplication(models.Model):
             },
             email_template_model=LoanEmailTemplate,
             notification_model=LoanNotification
-        )
+        )            
             
 
 class LoanRepayment(models.Model):
@@ -835,12 +845,14 @@ class LoanApproval(models.Model):
 def create_initial_loan_approval(sender, instance, created, **kwargs):
     if not created:
         return
-
-    # ---------------- GET WORKFLOW ----------------
     workflow = LoanApprovalWorkflow.objects.filter(
         loan_type=instance.loan_type,
-        branch=instance.employee.emp_branch_id   # ✅ FIX: no .id needed
+        branch=instance.employee.emp_branch_id
     ).first()
+    if not workflow:
+        workflow = LoanApprovalWorkflow.objects.filter(
+            loan_type=instance.loan_type
+        ).first()
 
     if not workflow:
         return
@@ -853,7 +865,7 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
     else:
         first_level = workflow.loan_levels.order_by('level').first()
 
-    if not first_level:
+    if not first_level and approval_type == 'multi_approval':
         return
 
     # ---------------- NO APPROVAL ----------------
@@ -895,6 +907,9 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
 
     # ---------------- MULTI APPROVAL ----------------
     if approval_type == 'multi_approval':
+        if not first_level or not first_level.approver:
+            return
+
         LoanApproval.objects.create(
             loan_request=instance,
             approver=first_level.approver,
@@ -904,6 +919,7 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
             employee_id=instance.employee.id
         )
         return
+    
 class AdvanceSalaryEmailTemplate(models.Model):
     template_type = models.CharField(max_length=50, choices=[
         ('request_created', 'Request Created'),

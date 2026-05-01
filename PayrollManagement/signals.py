@@ -33,6 +33,7 @@ from dateutil.relativedelta import relativedelta
 from simpleeval import SimpleEval, NameNotDefined, FunctionNotDefined
 from calendars .utils import get_employee_holidays,get_employee_weekend_days
 from .utils import get_ot_rate
+from .models import LoanType, LoanApprovalWorkflow,LoanApprovalLevels
 
 
 def evaluate_formula(formula, variables, employee, component):
@@ -674,4 +675,20 @@ def update_dependents_on_fixed_change(sender, instance, **kwargs):
                 emp_struct.save(update_fields=["amount"])
             except Exception as e:
                 logger.error(f"Error updating dependent component {comp.name} for {instance.employee}: {e}")
+@receiver(post_save, sender=LoanType)
+def create_workflow_and_default_level(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    workflow = LoanApprovalWorkflow.objects.create(
+        loan_type=instance,
+        approval_type='no_approval'
+    )
+
+    LoanApprovalLevels.objects.create(
+        workflow=workflow,
+        level=1,
+        role="Auto Level",
+        approver=None
+    )
 

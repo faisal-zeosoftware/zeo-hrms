@@ -317,12 +317,17 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         # ---------------- GET WORKFLOW ----------------
         workflow = LoanApprovalWorkflow.objects.filter(
             loan_type=loan_type,
-            branch=branch   # ✅ FIXED
+            branch=branch
         ).first()
 
         if not workflow:
+            workflow = LoanApprovalWorkflow.objects.filter(
+                loan_type=loan_type
+            ).first()
+
+        if not workflow:
             raise serializers.ValidationError({
-                "loan_type": "Approval workflow is not configured for this loan type & branch."
+                "loan_type": "Approval workflow is not configured for this loan type."
             })
 
         approval_type = workflow.approval_type
@@ -330,7 +335,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         # ---------------- GET FIRST LEVEL ----------------
         first_level = workflow.loan_levels.order_by('level').first()
 
-        if not first_level:
+        if approval_type == 'multi_approval' and not first_level:
             raise serializers.ValidationError({
                 "loan_type": "Approval levels are not configured."
             })
@@ -963,6 +968,7 @@ class AdvSalaryEscalationRuleSerializer(serializers.ModelSerializer):
             'level', 'role', 'approver',  'approver_name', 'escalate_to_name'
         ]
 class LoanEscalationRuleSerializer(serializers.ModelSerializer):
+    loan_type = serializers.PrimaryKeyRelatedField(source='workflow.loan_type',read_only=True)
     loan_type_name = serializers.CharField(source='loan_type.name', read_only=True)
     approver_name = serializers.CharField(source='approver.username', read_only=True)
     escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)

@@ -2102,24 +2102,31 @@ def create_initial_approval(sender, instance, created, **kwargs):
     # ---------------- NO APPROVAL ----------------
     if approval_type == 'no_approval':
 
-        approver = instance.created_by
+        # ✅ Safe approver fallback
+        approver = instance.created_by or getattr(instance.employee, 'emp_reporting_manager', None)
 
-        if not approver:
-            raise Exception("No user found for auto approval.")
+        # ✅ Dynamic role (optional but better)
+        if approver:
+            role = getattr(approver, 'designation', None) or "Auto Approval"
+        else:
+            role = "System Auto Approval"
 
+        # ✅ Create approval (even if approver is None, if allowed)
         ResignationApproval.objects.create(
             resignation_request=instance,
             approver=approver,
-            role="Auto Approval",
+            role=role,
             level=1,
             status=ResignationApproval.APPROVED
         )
 
+        # ✅ Always update status (no failure)
         instance.status = "Approved"
         instance.save(update_fields=["status"])
 
+        # ✅ Send notification safely
         send_notification_email(
-            user=approver,
+            user=approver,  # can be None, your function should handle it
             employee=instance.employee,
             message=f"Your resignation request {instance.termination_type} has been automatically approved.",
             template_type="resignation_approved",
@@ -2201,8 +2208,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
             email_template_model=ResignationEmailTemplate,
             notification_model=ResignationRequestNotification
         )
-        return
-     
 class EndOfService(models.Model):
     resignation = models.OneToOneField(EmployeeResignation, on_delete=models.CASCADE, related_name='eos')
     years_of_service = models.FloatField(help_text="Years of service calculated")

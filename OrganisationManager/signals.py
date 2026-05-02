@@ -3,7 +3,7 @@ from django.dispatch import receiver
 from django_tenants.utils import schema_context
 from django.apps import apps
 from datetime import date
-
+from .models import AssetType,AssetApprovalWorkflow,AssetApprovalLevel
 @receiver(post_schema_sync)
 def create_tenant_defaults(sender, tenant, **kwargs):
     with schema_context(tenant.schema_name):
@@ -180,3 +180,26 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
                     'end_date': timezone.now().date() + timedelta(days=365),
                 }
             )
+
+@receiver(post_save, sender=AssetType)
+def create_workflow_and_default_level(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    # 1. Create Workflow
+    workflow = AssetApprovalWorkflow.objects.create(
+        asset_type=instance,
+        approval_type='no_approval'
+    )
+
+    # 2. FIX: handle ManyToMany correctly
+    if instance.branch.exists():
+        workflow.branch.set(instance.branch.all())   # ✅ FIXED
+
+    # 3. Create Default Level
+    AssetApprovalLevel.objects.create(
+        workflow=workflow,
+        level=1,
+        role="Auto Level",
+        approver=None
+    )

@@ -336,45 +336,48 @@ class AssetRequestSerializer(serializers.ModelSerializer):
 
         if employee and getattr(employee, "emp_branch_id", None):
 
+            # ✅ M2M SAFE QUERY
             workflow = AssetApprovalWorkflow.objects.filter(
                 asset_type=asset_type,
-                branch__id=employee.emp_branch_id.id
+                branch__in=[employee.emp_branch_id]
             ).first()
 
-            if workflow:
-                first_level = AssetApprovalLevel.objects.filter(
-                    workflow=workflow
-                ).order_by("level").first()
-
-                if not first_level:
-                    raise serializers.ValidationError({
-                        "approval": "Approval levels are not configured."
-                    })
-
-                approval_type = workflow.approval_type
-
-            else:
-                # ---------------- COMMON WORKFLOW FIXED ---------------- #
+            # ✅ FALLBACK
+            if not workflow:
                 workflow = AssetApprovalWorkflow.objects.filter(
-                    asset_type__isnull=True,
-                    branch__id=employee.emp_branch_id.id
+                    asset_type=asset_type
                 ).first()
 
-                if not workflow:
-                    raise serializers.ValidationError({
-                        "approval": "Approval workflow is not configured."
-                    })
+            # ---------------- COMMON WORKFLOW ---------------- #
+            if not workflow:
+                workflow = AssetApprovalWorkflow.objects.filter(
+                    asset_type__isnull=True,
+                    branch__in=[employee.emp_branch_id]
+                ).first()
 
-                first_level = AssetApprovalLevel.objects.filter(
-                    workflow=workflow
-                ).order_by("level").first()
+            if not workflow:
+                workflow = AssetApprovalWorkflow.objects.filter(
+                    asset_type__isnull=True
+                ).first()
 
-                if not first_level:
-                    raise serializers.ValidationError({
-                        "approval": "Common approval levels are not configured."
-                    })
+            # ❌ ONLY THIS SHOULD BLOCK
+            if not workflow:
+                raise serializers.ValidationError({
+                    "approval": "Approval workflow is not configured."
+                })
 
-                approval_type = workflow.approval_type
+            # ---------------- LEVEL FETCH ---------------- #
+            first_level = AssetApprovalLevel.objects.filter(
+                workflow=workflow
+            ).order_by("level").first()
+
+            # ✅ 🔥 FIX: DO NOT BLOCK FOR NO_APPROVAL / REPORTING_MANAGER
+            approval_type = workflow.approval_type
+
+            if not first_level and approval_type == "multi_approval":
+                raise serializers.ValidationError({
+                    "approval": "Approval levels are not configured."
+                })
 
             # ---------------- REPORTING MANAGER CHECK ---------------- #
             if approval_type == "reporting_manager":

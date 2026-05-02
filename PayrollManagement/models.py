@@ -1134,7 +1134,7 @@ class AdvanceCommonWorkflow(models.Model):
     workflow = models.ForeignKey(AdvanceApprovalWorkflow, related_name='advance_levels', on_delete=models.CASCADE, null=True)
     level = models.PositiveIntegerField()
     approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
-    role = models.CharField(max_length=100)
+    role = models.CharField(max_length=100,blank=True,null=True)
     escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='adv_salary_escalated_levels')
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
@@ -1464,7 +1464,7 @@ class AirTicketRequest(models.Model):
         from django.utils import timezone
 
         # ---------------- REJECT CHECK ----------------
-        if self.approvals.filter(status=AirticketApproval.REJECTED).exists():   
+        if self.approvals.filter(status=AirticketApproval.REJECTED).exists():
             self.status = 'REJECTED'
             self.save()
 
@@ -1489,22 +1489,25 @@ class AirTicketRequest(models.Model):
         current_level = last_approval.level if last_approval else 0
 
         # ---------------- GET WORKFLOW (FIX) ----------------
+        if not self.branch:   # ✅ safe guard
+            return
+
         workflow = AirticketApprovalWorkflow.objects.filter(
-            branch=self.branch
+            branch__id=self.branch.id   # ✅ FIXED (ManyToMany)
         ).first()
 
         if not workflow:
             return
 
-        # ---------------- NEXT LEVEL (FIXED SCOPE) ----------------
-        next_level = workflow.airticket_levels.filter(  
+        # ---------------- NEXT LEVEL ----------------
+        next_level = workflow.airticket_levels.filter(
             level__gt=current_level
         ).order_by('level').first()
 
         # ---------------- FINAL APPROVAL ----------------
         if not next_level:
             self.status = 'APPROVED'
-            self.approved_date = timezone.now()  
+            self.approved_date = timezone.now()
             self.save()
 
             send_notification_email(
@@ -1522,6 +1525,7 @@ class AirTicketRequest(models.Model):
             )
             return
 
+        # ---------------- NOTE CARRY ----------------
         note_to_carry = None
         if last_approval and last_approval.note:
             if not (
@@ -1530,13 +1534,17 @@ class AirTicketRequest(models.Model):
             ):
                 note_to_carry = last_approval.note
 
+        # ---------------- SAFETY (optional but important) ----------------
+        if not next_level.approver:
+            raise Exception(f"No approver set for level {next_level.level}")
+
         # ---------------- CREATE NEXT APPROVAL ----------------
         new_approval = AirticketApproval.objects.create(
             request=self,
             approver=next_level.approver,
             role=next_level.role,
             level=next_level.level,
-            status=AirticketApproval.PENDING,  
+            status=AirticketApproval.PENDING,
             employee=self.employee,
             note=note_to_carry
         )
@@ -1578,7 +1586,7 @@ class AirticketWorkflow(models.Model):
     workflow = models.ForeignKey(AirticketApprovalWorkflow,related_name='airticket_levels',on_delete=models.CASCADE)
     level = models.PositiveIntegerField()
     approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
-    role = models.CharField(max_length=100)
+    role = models.CharField(max_length=100,blank=True,null=True)
     escalate_to = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True, blank=True,related_name='airticket_escalated_levels')
     escalate_after_days = models.PositiveIntegerField(default=0, help_text="Escalate after X days if pending")
     escalate_after_hours = models.PositiveIntegerField(default=0, help_text="Escalate after X hours if pending")
@@ -1679,9 +1687,12 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
     if not created:
         return
 
-    # ---------------- GET WORKFLOW (IMPORTANT FIX) ----------------
+    # ---------------- GET WORKFLOW (FIX) ----------------
+    if not instance.branch:   # ✅ safe guard
+        return
+
     workflow = AirticketApprovalWorkflow.objects.filter(
-        branch=instance.branch
+        branch__id=instance.branch.id   # ✅ FIXED (ManyToMany)
     ).first()
 
     if not workflow:
@@ -1733,6 +1744,11 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
 
     # ---------------- MULTI APPROVAL ----------------
     if approval_type == 'multi_approval':
+
+        # ✅ optional safety (prevents silent failure)
+        if not first_level.approver:
+            raise Exception(f"No approver set for level {first_level.level}")
+
         approval = AirticketApproval.objects.create(
             request=instance,
             approver=first_level.approver,
@@ -1758,3 +1774,4 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             notification_model=RequestNotification
         )
         return
+

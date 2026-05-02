@@ -378,6 +378,7 @@ class AssetRequest(models.Model):
     
     def move_to_next_level(self):
         from django.utils import timezone
+        from django.db.models import Max
 
         # ---------------- REJECT CHECK ---------------- #
         if self.approvals.filter(status=AssetApproval.REJECTED).exists():
@@ -401,19 +402,60 @@ class AssetRequest(models.Model):
             )
             return
 
-        # ---------------- CURRENT LEVEL ---------------- #
-        current_level = self.approvals.filter(
-            status=AssetApproval.APPROVED
-        ).order_by('level').last()
+        # ---------------- MIN APPROVAL CHECK (LOAN LOGIC) ---------------- #
+        approved_count = self.approvals.filter(status=AssetApproval.APPROVED).count()
+        min_required = getattr(self.asset_type, 'min_approvals_required', None)
 
-        current_level_number = current_level.level if current_level else 0
+        if min_required and approved_count >= min_required:
+            self.status = 'Approved'
+            self.save()
 
-        # ---------------- NEXT LEVEL (FIXED) ---------------- #
+            if self.requested_asset:
+                AssetAllocation.objects.create(
+                    asset=self.requested_asset,
+                    employee=self.employee,
+                    assigned_date=timezone.now().date()
+                )
+                self.requested_asset.status = "assigned"
+                self.requested_asset.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request {self.document_number} has been approved.",
+                template_type="asset_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'asset_type': self.asset_type.name,
+                    'requested_asset': self.requested_asset.name if self.requested_asset else None,
+                    'request_date': self.request_date,
+                    'reason': self.reason,
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=RequestNotification,
+            )
+            return
+
+        # ---------------- NEXT LEVEL (LOAN STYLE) ---------------- #
+        last_level = self.approvals.aggregate(
+            max_level=Max('level')
+        )['max_level'] or 0
+
+        next_level_number = last_level + 1
+
+        # ✅ FIX: safer M2M lookup + fallback
         next_level = AssetApprovalLevel.objects.filter(
             workflow__asset_type=self.asset_type,
-            workflow__branch__id=self.employee.emp_branch_id.id,
-            level=current_level_number + 1
+            workflow__branch__in=[self.employee.emp_branch_id],
+            level=next_level_number
         ).first()
+
+        # ✅ fallback if branch mapping missing
+        if not next_level:
+            next_level = AssetApprovalLevel.objects.filter(
+                workflow__asset_type=self.asset_type,
+                level=next_level_number
+            ).first()
 
         # ---------------- FINAL APPROVAL ---------------- #
         if not next_level:
@@ -449,13 +491,27 @@ class AssetRequest(models.Model):
         # ---------------- CREATE NEXT APPROVAL ---------------- #
         if not self.approvals.filter(level=next_level.level).exists():
 
+            last_approval = self.approvals.order_by('-level', '-id').first()
+
+            note_to_carry = None
+            if last_approval and last_approval.note:
+                if not last_approval.note.startswith(("Escalated to", "Escalated from")):
+                    note_to_carry = last_approval.note
+
+            # ✅ SAFETY
+            if not next_level.approver:
+                self.status = 'Approved'
+                self.save()
+                return
+
             approval = AssetApproval.objects.create(
                 asset_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
                 status=AssetApproval.PENDING,
-                created_by=self.created_by
+                created_by=self.created_by,
+                note=note_to_carry
             )
 
             asset_schedule_escalation(approval, next_level)
@@ -582,8 +638,15 @@ def create_initial_approval(sender, instance, created, **kwargs):
     # ---------------- GET FIRST LEVEL ---------------- #
     first_level = AssetApprovalLevel.objects.filter(
         workflow__asset_type=instance.asset_type,
-        workflow__branch__id=instance.employee.emp_branch_id.id
+        workflow__branch=instance.employee.emp_branch_id   # ✅ FIXED
     ).order_by('level').first()
+
+    # ✅ FIX 1: fallback if branch-based not found
+    if not first_level:
+        first_level = AssetApprovalLevel.objects.filter(
+            workflow__asset_type=instance.asset_type,
+            workflow__branch__isnull=True   # ✅ safer fallback (common workflow)
+        ).order_by('level').first()
 
     if not first_level:
         return
@@ -593,7 +656,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
     # ---------------- NO APPROVAL ---------------- #
     if approval_type == 'no_approval':
 
-        approver = instance.created_by or instance.employee.users
+        approver = instance.created_by or getattr(instance.employee, 'users', None)
 
         if not approver:
             raise Exception("No system user linked to employee.")
@@ -641,7 +704,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
     # ---------------- REPORTING MANAGER ---------------- #
     if approval_type == 'reporting_manager':
 
-        manager = instance.employee.emp_reporting_manager
+        manager = getattr(instance.employee, 'emp_reporting_manager', None)
 
         if not manager:
             raise Exception("Employee has no reporting manager.")
@@ -677,7 +740,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
     # ---------------- MULTI APPROVAL ---------------- #
     if approval_type == 'multi_approval':
 
-        if not first_level.approver:
+        # ✅ FIX 2: safe approver check
+        if not first_level or not first_level.approver:
             raise Exception("Approver not configured for asset approval level.")
 
         approval = AssetApproval.objects.create(

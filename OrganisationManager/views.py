@@ -1718,17 +1718,20 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
     API for managing escalation settings on each approval level.
     """
     serializer_class = EscalationRuleSerializer
-    queryset = AssetApprovalLevel.objects.all().order_by('workflow__asset_type','level')
+    queryset = AssetApprovalLevel.objects.all().order_by('workflow__asset_type', 'level')
 
     def get_queryset(self):
         queryset = super().get_queryset()
         asset_type_id = self.request.query_params.get('asset_type')
         branch_id = self.request.query_params.get('branch')
 
+        # ✅ FIX 1: correct relation path
         if asset_type_id:
-            queryset = queryset.filter(asset_type_id=asset_type_id)
+            queryset = queryset.filter(workflow__asset_type_id=asset_type_id)
+
+        # ✅ FIX 2: ManyToMany safe filter
         if branch_id:
-            queryset = queryset.filter(branch_id=branch_id)
+            queryset = queryset.filter(workflow__branch__id=branch_id)
 
         return queryset.distinct()
 
@@ -1745,6 +1748,7 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
             "message": "Escalation rule updated successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'])
     def reset(self, request, pk=None):
         instance = self.get_object()
@@ -1753,7 +1757,12 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
         instance.escalate_after_hours = 0
         instance.escalate_after_minutes = 0
         instance.save()
-        return Response({"message": "Escalation rule reset successfully"}, status=200)
+
+        return Response(
+            {"message": "Escalation rule reset successfully"},
+            status=200
+        )
+
 
 class UserBranchAccessViewSet(viewsets.ModelViewSet):
     queryset = UserBranchAccess.objects.all()

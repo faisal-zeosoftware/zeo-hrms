@@ -625,6 +625,38 @@ class AdvanceCommonWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdvanceCommonWorkflow
         fields = '__all__'
+    def to_internal_value(self, data):
+        if data.get('approver') == 0:
+            data['approver'] = None
+        return super().to_internal_value(data)
+
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        # 🔹 Role fallback (same logic)
+        if not instance.role:
+            if instance.workflow.approval_type == 'reporting_manager':
+                rep['role'] = "Reporting Manager"
+            elif instance.workflow.approval_type == 'no_approval':
+                rep['role'] = "Auto Approval"
+            else:
+                rep['role'] = "Approver"
+
+        # 🔹 Reporting manager logic (same as resignation)
+        if instance.workflow.approval_type == 'reporting_manager':
+            employee = self.context.get('employee')
+
+            if employee and getattr(employee, 'emp_reporting_manager', None):
+                rep['approver'] = employee.emp_reporting_manager.username
+            else:
+                rep['approver'] = None
+
+        # 🔹 Normal approver display
+        elif instance.approver:
+            rep['approver'] = instance.approver.username
+
+        return rep
 class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = AdvanceCommonWorkflowSerializer(many=True,source='advance_levels',required=False)
 
@@ -816,12 +848,25 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         return rep
     def validate(self, data):
         employee = data.get('employee')
+        branch = data.get('branch')
 
-        # 🔍 Get first workflow level
-        first_level = AirticketWorkflow.objects.order_by('level').first()
+        # ✅ safe guard
+        if not branch:
+            return data
 
-        # ✅ Check reporting manager condition
-        if first_level and first_level.approval_type == 'reporting_manager':
+        # ✅ FIXED ManyToMany filter
+        workflow = AirticketApprovalWorkflow.objects.filter(
+            branch__id=branch.id
+        ).first()
+
+        # Optional: enforce workflow existence
+        if not workflow:
+            raise serializers.ValidationError({
+                "branch": "No workflow configured for this branch."
+            })
+
+        # ✅ Correct check
+        if workflow.approval_type == 'reporting_manager':
             manager = getattr(employee, 'emp_reporting_manager', None)
 
             if not manager:
@@ -839,6 +884,39 @@ class AirticketWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketWorkflow
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        # ✅ Role fallback (same as resignation)
+        if not instance.role:
+            if instance.workflow.approval_type == 'reporting_manager':
+                rep['role'] = "Reporting Manager"
+            elif instance.workflow.approval_type == 'no_approval':
+                rep['role'] = "Auto Approval"
+            else:
+                rep['role'] = "Approver"
+
+        # ✅ Reporting manager logic
+        if instance.workflow.approval_type == 'reporting_manager':
+            employee = self.context.get('employee')
+
+            if employee and getattr(employee, 'emp_reporting_manager', None):
+                rep['approver'] = employee.emp_reporting_manager.username
+            else:
+                rep['approver'] = None
+
+        elif instance.approver:
+            rep['approver'] = instance.approver.username
+        else:
+            rep['approver'] = None
+
+        return rep
+
+    def to_internal_value(self, data):
+        # ✅ FIX: handle "Invalid pk 0"
+        if data.get('approver') == 0:
+            data['approver'] = None
+        return super().to_internal_value(data)
 class AirticketEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketEmailTemplate

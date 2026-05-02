@@ -2020,7 +2020,7 @@ class ResignationApprovalLevel(models.Model):
     workflow = models.ForeignKey(ResignationApprovalWorkflow,related_name='resignation_levels',on_delete=models.CASCADE,null=True)
     level = models.PositiveIntegerField()
     approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
-    role = models.CharField(max_length=100)
+    role = models.CharField(max_length=100,blank=True,null=True)
     
 
     class Meta:

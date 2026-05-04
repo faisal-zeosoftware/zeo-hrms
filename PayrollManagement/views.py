@@ -257,7 +257,7 @@ class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
         # Sheet 1: SalaryComponent
         # ======================================================
         ws1 = wb.active
-        ws1.title = "Salary Componenet"
+        ws1.title = "Salary Component"
         for col_num, header in enumerate(headers, 1):
             ws1.cell(row=1, column=col_num, value=header)
 

@@ -130,6 +130,44 @@ from django.db.models import Q
 #             ).order_by('-created_at').first()
 
 #             return payslip.net_salary if payslip else Decimal('0.00')
+def calculate_progressive_gratuity(years_of_service, daily_wage, termination_type):
+    from OrganisationManager.models import GratuityTable
+
+    total_gratuity_days = Decimal('0.00')
+    remaining_years = Decimal(str(years_of_service))
+
+    rules = GratuityTable.objects.filter(
+        is_active=True
+    ).order_by('minimum_value')
+
+    for rule in rules:
+        min_year = Decimal(rule.minimum_value)
+
+        if remaining_years <= min_year:
+            continue
+
+        if rule.maximum_value:
+            max_year = Decimal(rule.maximum_value)
+            slab_years = min(remaining_years, max_year) - min_year
+        else:
+            slab_years = remaining_years - min_year
+
+        if slab_years <= 0:
+            continue
+
+        if termination_type in ['termination', 'retirement', 'death_or_disablement']:
+            per_year_days = Decimal(str(rule.termination_days))
+        else:
+            per_year_days = Decimal(str(rule.resignation_days))
+
+        total_gratuity_days += slab_years * per_year_days
+
+    gratuity_amount = total_gratuity_days * daily_wage
+
+    return (
+        total_gratuity_days.quantize(Decimal('0.01')),
+        gratuity_amount.quantize(Decimal('0.01'))
+    )
 def get_final_salary(employee, last_working_date):
     from PayrollManagement.models import Payslip
     s=payslip = Payslip.objects.filter(
@@ -192,32 +230,21 @@ def calculate_settlement(eos):
         # -------------------------------
         # GRATUITY RULE
         # -------------------------------
-        years = Decimal(eos.years_of_service).quantize(Decimal('0.01'))
+        net_days = eos.total_service_days - (eos.leave_days_without_pay or 0)
+        years = Decimal(net_days) / Decimal('365')
 
-        gratuity_rule = GratuityTable.objects.filter(
-            minimum_value__lte=years,
-            is_active=True
-        ).filter(
-            Q(maximum_value__gte=years) | Q(maximum_value__isnull=True)
-        ).first()
+        gratuity_days, gratuity_amount = calculate_progressive_gratuity(
+            years_of_service=years,
+            daily_wage=daily_wage,
+            termination_type=resignation.termination_type
+        )
 
-        if gratuity_rule:
-            if resignation.termination_type in ['termination', 'retirement', 'death_or_disablement']:
-                per_year_days = gratuity_rule.termination_days
-            else:
-                per_year_days = gratuity_rule.resignation_days
+        eos.gratuity_days = gratuity_days
+        eos.gratuity_amount = gratuity_amount
 
-            eos.gratuity_days = float(per_year_days) * float(years)
-            eos.gratuity_amount = Decimal(eos.gratuity_days) * daily_wage
-
-            # Max cap → 24 months basic
-            max_gratuity = basic_salary * Decimal('24')
-            if eos.gratuity_amount > max_gratuity:
-                eos.gratuity_amount = max_gratuity
-        else:
-            eos.gratuity_days = 0
-            eos.gratuity_amount = Decimal('0.00')
-
+        max_gratuity = basic_salary * Decimal('24')
+        if eos.gratuity_amount > max_gratuity:
+            eos.gratuity_amount = max_gratuity
         # -------------------------------
         # NOTICE PAY
         # -------------------------------

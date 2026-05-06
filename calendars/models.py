@@ -1332,136 +1332,107 @@ class employee_leave_request(models.Model):
      
     def move_to_next_level(self):
 
-        # ---------------- REJECTION ----------------
+        # ---------------- REJECT ---------------- #
         if self.approvals.filter(status=LeaveApproval.REJECTED).exists():
             self.status = 'rejected'
             self.save()
-
-            LvApprovalNotify.objects.create(
-                recipient_user=self.created_by,
-                message=f"Your request for {self.leave_type} has been rejected."
-            )
-
-            if self.employee:
-                LvApprovalNotify.objects.create(
-                    recipient_employee=self.employee,
-                    message=f"Request {self.leave_type} has been rejected."
-                )
             return
 
-        # ---------------- CURRENT LEVEL ----------------
-        current_approved_levels = self.approvals.filter(
+        # ---------------- GET WORKFLOW ---------------- #
+        workflow = LVApprovalWorkflow.objects.filter(
+            request_type=self.leave_type,
+            branch__in=[self.employee.emp_branch_id]
+        ).first()
+
+        # ---------------- NO WORKFLOW ---------------- #
+        if not workflow:
+            self.status = 'approved'
+            self.save()
+            return
+
+        approval_type = workflow.approval_type
+
+
+        # =========================================================
+        # MINIMUM APPROVAL CHECK (GENERAL REQUEST STYLE)
+        # =========================================================
+
+        approved_count = self.approvals.filter(
             status=LeaveApproval.APPROVED
         ).count()
 
-        next_level = None
+        min_required = getattr(workflow, 'min_approvals_required', None)
 
-        # ---------------- COMMON WORKFLOW ----------------
-        if getattr(self.leave_type, 'use_common_workflow', False):
-            next_level = LvCommonWorkflow.objects.filter(
-                level=current_approved_levels + 1
-            ).first()
+        if min_required and approved_count >= min_required:
+            self.status = 'approved'
+            self.save()
+            return
 
-        # ---------------- BRANCH WORKFLOW (FIXED) ----------------
-        if not next_level:
-            workflow = LVApprovalWorkflow.objects.filter(
-                request_type=self.leave_type,
-                branch__in=[self.employee.emp_branch_id]   # ✅ correct usage
-            ).first()
+        # ---------------- NO APPROVAL ---------------- #
+        if approval_type == 'no_approval':
+            self.status = 'approved'
+            self.save()
+            return
 
-            if workflow:
-                next_level = workflow.levels.filter(   # ✅ IMPORTANT FIX
-                    level=current_approved_levels + 1
-                ).first()
+        # ---------------- REPORTING MANAGER ---------------- #
+        if approval_type == 'reporting_manager':
 
-        # ---------------- PROCESS NEXT LEVEL ----------------
-        if next_level:
+            manager = self.employee.emp_reporting_manager
+            if manager and hasattr(manager, 'user'):
+                manager = manager.user
 
-            # NO APPROVAL
-            if getattr(next_level, 'approval_type', None) == 'no_approval':
+            if not manager:
                 self.status = 'approved'
                 self.save()
                 return
 
-            # REPORTING MANAGER
-            if getattr(next_level, 'approval_type', None) == 'reporting_manager':
-                approver = self.employee.emp_reporting_manager
-            else:
-                approver = getattr(next_level, 'approver', None)
+            if not self.approvals.filter(level=1).exists():
+                LeaveApproval.objects.create(
+                    leave_request=self,
+                    approver=manager,
+                    level=1,
+                    status=LeaveApproval.PENDING,
+                    employee_id=self.employee.id
+                )
 
+            if self.approvals.filter(level=1, status=LeaveApproval.APPROVED).exists():
+                self.status = 'approved'
+                self.save()
+
+            return
+
+        # ---------------- MULTI APPROVAL ---------------- #
+
+        last_approved = self.approvals.filter(
+            status=LeaveApproval.APPROVED
+        ).order_by('-level').first()
+
+        current_level = (last_approved.level + 1) if last_approved else 1
+
+        if self.approvals.filter(level=current_level).exists():
+            return
+
+        next_level = workflow.leave_levels.filter(level=current_level).first()
+
+        if next_level:
+
+            approver = next_level.approver
             if not approver:
-                raise Exception(f"No approver configured for level {next_level.level}")
-
-            last_approval = self.approvals.order_by('-level').first()
+                self.status = 'approved'
+                self.save()
+                return
 
             LeaveApproval.objects.create(
                 leave_request=self,
                 approver=approver,
                 level=next_level.level,
                 status=LeaveApproval.PENDING,
-                employee_id=self.employee.id,
-                note=last_approval.note if last_approval else None,
-                approved_days=last_approval.approved_days if last_approval else None
+                employee_id=self.employee.id
             )
 
-            # Notify
-            try:
-                notification = LvApprovalNotify.objects.create(
-                    recipient_user=approver,
-                    message=f"New request for approval: {self.leave_type}, employee: {self.employee}"
-                )
-
-                notification.send_email_notification('request_created', {
-                    'leave_type': self.leave_type,
-                    'start_date': self.start_date,
-                    'end_date': self.end_date,
-                    'reason': self.reason,
-                    'document_number': self.document_number,
-                    'employee_name': self.employee.emp_first_name,
-                    'status': self.status,
-                })
-            except Exception as e:
-                print("Email failed:", e)
-
-        # ---------------- FINAL APPROVAL ----------------
         else:
             self.status = 'approved'
             self.save()
-
-            try:
-                notification = LvApprovalNotify.objects.create(
-                    recipient_user=self.created_by,
-                    message=f"Your request {self.leave_type} has been approved."
-                )
-
-                notification.send_email_notification('request_approved', {
-                    'leave_type': self.leave_type,
-                    'start_date': self.start_date,
-                    'end_date': self.end_date,
-                    'reason': self.reason,
-                    'status': self.status,
-                    'document_number': self.document_number,
-                })
-            except Exception as e:
-                print("Email failed:", e)
-
-            if self.employee:
-                try:
-                    notification = LvApprovalNotify.objects.create(
-                        recipient_employee=self.employee,
-                        message=f"Request {self.leave_type} has been approved."
-                    )
-
-                    notification.send_email_notification('request_approved', {
-                        'leave_type': self.leave_type,
-                        'start_date': self.start_date,
-                        'end_date': self.end_date,
-                        'reason': self.reason,
-                        'status': self.status,
-                        'document_number': self.document_number,
-                    })
-                except Exception as e:
-                    print("Email failed:", e)
    
 class EmployeeRejoining(models.Model):
     employee           = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
@@ -1498,7 +1469,7 @@ class LVApprovalWorkflow(models.Model):
         return f"Workflow for {self.request_type.name}" 
 
 class LeaveApprovalLevels(models.Model):
-    workflow = models.ForeignKey(LVApprovalWorkflow,related_name='levels',on_delete=models.CASCADE,null=True)
+    workflow = models.ForeignKey(LVApprovalWorkflow,related_name='leave_levels',on_delete=models.CASCADE,null=True)
     level = models.IntegerField()
     approver = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True)
     is_compensatory = models.BooleanField(default=False)
@@ -1681,47 +1652,52 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
 
     employee = instance.employee
 
-    # ✅ STEP 1: Get workflow using branch
     workflow = LVApprovalWorkflow.objects.filter(
         request_type=instance.leave_type,
-        branch__in=[employee.emp_branch_id]   # ✅ ID only
+        branch__in=[employee.emp_branch_id]
     ).first()
 
     if not workflow:
-        # No workflow → auto approve
         instance.status = 'approved'
         instance.save(update_fields=['status'])
         return
 
-    # ✅ STEP 2: Get first level
-    first_level = workflow.levels.order_by('level').first()
-
-    if not first_level:
-        instance.status = 'approved'
-        instance.save(update_fields=['status'])
-        return
-
+    first_level = workflow.leave_levels.order_by('level').first()
     approval_type = workflow.approval_type
 
     # ---------------- NO APPROVAL ----------------
     if approval_type == 'no_approval':
+
+        approver = instance.created_by
+
+        if not approver and instance.employee and hasattr(instance.employee, 'users'):
+            approver = instance.employee.users
+
         LeaveApproval.objects.create(
             leave_request=instance,
-            approver=instance.created_by,
+            approver=approver,
             level=1,
-            status=LeaveApproval.APPROVED
+            status=LeaveApproval.APPROVED,
+            # note="Auto Approved"
         )
 
         instance.status = 'approved'
         instance.save(update_fields=['status'])
+
         return
 
     # ---------------- REPORTING MANAGER ----------------
     if approval_type == 'reporting_manager':
+
         manager = employee.emp_reporting_manager
 
+        if manager and hasattr(manager, 'user'):
+            manager = manager.user
+
         if not manager:
-            raise Exception("No reporting manager assigned.")
+            instance.status = 'approved'
+            instance.save(update_fields=['status'])
+            return
 
         LeaveApproval.objects.create(
             leave_request=instance,
@@ -1733,15 +1709,31 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
 
     # ---------------- MULTI APPROVAL ----------------
     if approval_type == 'multi_approval':
-        if not first_level.approver:
-            raise Exception("First level approver not configured.")
+
+        if not first_level:
+            instance.status = 'approved'
+            instance.save(update_fields=['status'])
+            return
+
+        approver = first_level.approver
+
+        if not approver:
+            approver = instance.created_by
+
+            if not approver and employee and hasattr(employee, 'user'):
+                approver = employee.user
+
+        if not approver:
+            instance.status = 'approved'
+            instance.save(update_fields=['status'])
+            return
 
         LeaveApproval.objects.create(
             leave_request=instance,
-            approver=first_level.approver,
+            approver=approver,
             level=first_level.level,
             status=LeaveApproval.PENDING
-        )  
+        )
 
 class EmployeeMachineMapping(models.Model):
     employee     = models.ForeignKey("EmpManagement.emp_master", on_delete=models.CASCADE)

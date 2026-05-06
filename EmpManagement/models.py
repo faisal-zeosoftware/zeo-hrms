@@ -1225,7 +1225,6 @@ class GeneralRequest(models.Model):
             request_type=self.request_type,
         ).first()
 
-        # ✅ FIX: auto fallback workflow (prevents "not configured" error)
         if not workflow:
             workflow = ApprovalWorkflow.objects.create(
                 request_type=self.request_type,
@@ -1240,6 +1239,21 @@ class GeneralRequest(models.Model):
             )
 
         approval_type = workflow.approval_type
+
+
+        # =========================================================
+        # ✅ MINIMUM APPROVAL CHECK (ADDED)
+        # =========================================================
+        approved_count = self.approvals.filter(status=Approval.APPROVED).count()
+
+        # (safe get in case field missing/null)
+        min_required = getattr(self.request_type, 'min_approvals_required', None)
+
+        if min_required and approved_count >= min_required:
+            self.status = 'Approved'
+            self.save()
+            return
+
 
         # =========================================================
         # ✅ NO APPROVAL
@@ -1403,7 +1417,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
             request_type=instance.request_type,
         ).first()
 
-        # ✅ FIX: do NOT silently return
         if not workflow:
             workflow = ApprovalWorkflow.objects.create(
                 request_type=instance.request_type,
@@ -1412,7 +1425,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         first_level = workflow.levels.order_by('level').first()
 
-    # ✅ FIX: ensure first_level always exists for multi approval safety
     if workflow and not first_level:
         first_level = ApprovalLevel.objects.create(
             workflow=workflow,
@@ -1925,6 +1937,8 @@ class EmployeeResignation(models.Model):
     def __str__(self):
         return f"{self.employee} - {self.termination_type.title()} on {self.resigned_on}"
     def move_to_next_level(self):
+
+        # ---------------- REJECT ---------------- #
         if self.resign_approvals.filter(status=ResignationApproval.REJECTED).exists():
             self.status = 'Rejected'
             self.save()
@@ -1949,25 +1963,76 @@ class EmployeeResignation(models.Model):
             )
             return
 
-        # ✅ FIX: correct level calculation
-        current_level = self.resign_approvals.filter(
-            status=ResignationApproval.APPROVED
-        ).aggregate(max_level=models.Max('level'))['max_level'] or 0
-
-        # ✅ FIX: get workflow based on branch
+        # ---------------- GET WORKFLOW ---------------- #
         workflow = ResignationApprovalWorkflow.objects.filter(
-              branch=self.employee.emp_branch_id
-        ).first()
+            branch__id=self.employee.emp_branch_id_id
+            ).first()
 
         if not workflow:
+            workflow = ResignationApprovalWorkflow.objects.create(
+                approval_type='no_approval'
+            )
+
+            ResignationApprovalLevel.objects.create(
+                workflow=workflow,
+                level=1,
+                role="Auto Level",
+                approver=None
+            )
+
+        approval_type = workflow.approval_type
+
+        # =========================================================
+        # ✅ MINIMUM APPROVAL CHECK (ADDED)
+        # =========================================================
+        approved_count = self.resign_approvals.filter(
+            status=ResignationApproval.APPROVED
+        ).count()
+
+        min_required = getattr(self, 'min_approvals_required', None)
+
+        if min_required and approved_count >= min_required:
+            self.status = 'Approved'
+            self.save()
             return
 
-        next_level = ResignationApprovalLevel.objects.filter(
-            workflow=workflow,
-            level=current_level + 1
+        # =========================================================
+        # ✅ NO APPROVAL
+        # =========================================================
+        if approval_type == 'no_approval':
+            self.status = 'Approved'
+            self.save()
+            return
+
+        # =========================================================
+        # ✅ REPORTING MANAGER
+        # =========================================================
+        if approval_type == 'reporting_manager':
+
+            if self.resign_approvals.filter(status=ResignationApproval.APPROVED).exists():
+                self.status = 'Approved'
+                self.save()
+
+            return
+
+        # =========================================================
+        # ✅ MULTI APPROVAL (MATCHED WITH GENERAL REQUEST)
+        # =========================================================
+
+        last_approved = self.resign_approvals.filter(
+            status=ResignationApproval.APPROVED
+        ).order_by('-level').first()
+        current_level = (last_approved.level + 1) if last_approved else 1
+
+        if self.resign_approvals.filter(level=current_level).exists():
+            return
+
+        next_level = workflow.resignation_levels.filter(
+            level=current_level
         ).first()
 
-        if next_level:
+        if next_level and next_level.approver:
+
             last_approval = self.resign_approvals.order_by('-level').first()
 
             ResignationApproval.objects.create(
@@ -2001,7 +2066,6 @@ class EmployeeResignation(models.Model):
                 email_template_model=ResignationEmailTemplate,
                 notification_model=ResignationRequestNotification
             )
-
 class ResignationApprovalWorkflow(models.Model):
      APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
@@ -2089,9 +2153,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
     if not created:
         return
 
-    # ✅ FIX 1: Get workflow based on employee branch
     workflow = ResignationApprovalWorkflow.objects.filter(
-        branch=instance.employee.emp_branch_id
+       branch=instance.employee.emp_branch_id 
     ).first()
 
     if not workflow:
@@ -2101,17 +2164,12 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
     # ---------------- NO APPROVAL ----------------
     if approval_type == 'no_approval':
-
-        # ✅ Safe approver fallback
         approver = instance.created_by or getattr(instance.employee, 'emp_reporting_manager', None)
-
-        # ✅ Dynamic role (optional but better)
         if approver:
             role = getattr(approver, 'designation', None) or "Auto Approval"
         else:
             role = "System Auto Approval"
 
-        # ✅ Create approval (even if approver is None, if allowed)
         ResignationApproval.objects.create(
             resignation_request=instance,
             approver=approver,
@@ -2119,12 +2177,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
             level=1,
             status=ResignationApproval.APPROVED
         )
-
-        # ✅ Always update status (no failure)
         instance.status = "Approved"
         instance.save(update_fields=["status"])
-
-        # ✅ Send notification safely
         send_notification_email(
             user=approver,  # can be None, your function should handle it
             employee=instance.employee,
@@ -2208,6 +2262,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
             email_template_model=ResignationEmailTemplate,
             notification_model=ResignationRequestNotification
         )
+        return
+    
 class EndOfService(models.Model):
     resignation = models.OneToOneField(EmployeeResignation, on_delete=models.CASCADE, related_name='eos')
     years_of_service = models.FloatField(help_text="Years of service calculated")

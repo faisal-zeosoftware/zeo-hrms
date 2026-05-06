@@ -650,6 +650,8 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
             rep['employee'] = instance.employee.emp_first_name
         if instance.request_type:  
             rep['request_type'] = instance.request_type.name
+        if instance.branch:
+            rep['branch']=instance.branch.branch_name
         return rep
     def validate(self, data):
         request_type = data.get("request_type")
@@ -671,7 +673,6 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
                 branch__in=[employee.emp_branch_id]
             ).first()
 
-            # ✅ FIX 1: fallback instead of hard failure
             if not workflow:
                 workflow = ApprovalWorkflow.objects.filter(
                     request_type=request_type
@@ -683,8 +684,6 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
                 })
 
             first_level = workflow.levels.order_by("level").first()
-
-            # ✅ FIX 2: auto-safe fallback instead of error
             if not first_level:
                 first_level = ApprovalLevel.objects.create(
                     workflow=workflow,
@@ -695,9 +694,6 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
 
             approval_type = workflow.approval_type
 
-        # ===========================
-        # existing logic (UNCHANGED)
-        # ===========================
         if approval_type == "reporting_manager" and not employee.emp_reporting_manager:
             raise serializers.ValidationError({
                 "reporting_manager": "Employee has no reporting manager."
@@ -727,6 +723,7 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
         self._validated_levels = cleaned_levels
 
         return data
+        
         
     
 class ApprovalLevelSerializer(serializers.ModelSerializer):
@@ -762,25 +759,27 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         if instance.request_type:
-            rep['request_type'] = instance.request_type.name
+            rep['request_type_name'] = instance.request_type.name
         if instance.branch.exists():
-            rep['branch'] = [b.branch_name for b in instance.branch.all()]
+            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
         return rep
 
     def create(self, validated_data):
         levels_data = validated_data.pop('levels', [])
         branches = validated_data.pop('branch', [])
+
         workflow = ApprovalWorkflow.objects.create(**validated_data)
         workflow.branch.set(branches)
-        
+
         for level_data in levels_data:
             ApprovalLevel.objects.create(workflow=workflow, **level_data)
+
         return workflow
 
     def update(self, instance, validated_data):
         levels_data = validated_data.pop('levels', None)
         branches = validated_data.pop('branch', None)
-        
+
         instance.request_type = validated_data.get('request_type', instance.request_type)
         instance.approval_type = validated_data.get('approval_type', instance.approval_type)
         instance.save()
@@ -790,9 +789,12 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         if levels_data is not None:
             instance.levels.all().delete()
-            for level_data in levels_data:
-                ApprovalLevel.objects.create(workflow=instance, **level_data)
-        
+
+            # ✅ ONLY ADD THIS CONDITION
+            if instance.approval_type == 'multi_approval':
+                for level_data in levels_data:
+                    ApprovalLevel.objects.create(workflow=instance, **level_data)
+
         return instance
     
 
@@ -915,26 +917,46 @@ class ResignationApprovalLevelSerializer(serializers.ModelSerializer):
         model = ResignationApprovalLevel
         fields = '__all__'
     def to_representation(self, instance):
-        rep = super(ResignationApprovalLevelSerializer, self).to_representation(instance)
-        if instance.approver:  
+        rep = super().to_representation(instance)
+
+        if not instance.role:
+            if instance.workflow.approval_type == 'reporting_manager':
+                rep['role'] = "Reporting Manager"
+            elif instance.workflow.approval_type == 'no_approval':
+                rep['role'] = "Auto Approval"
+            else:
+                rep['role'] = "Approver"
+
+        if instance.workflow.approval_type == 'reporting_manager':
+            employee = self.context.get('employee')
+
+            if employee and getattr(employee, 'emp_reporting_manager', None):
+                rep['approver'] = employee.emp_reporting_manager.username
+            else:
+                rep['approver'] = None
+
+        elif instance.approver:
             rep['approver'] = instance.approver.username
-            return rep
+
+        return rep
+        
 class ResignationApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResignationApproval
         fields = '__all__'
 
     def to_representation(self, instance):
-        rep = super(ResignationApprovalSerializer, self).to_representation(instance)
-        # if instance.employee:  
-        #     rep['employee'] = instance.employee.emp_first_name
-        #     return rep
-        if instance.resignation_request:  
+        rep = super().to_representation(instance)
+
+        
+        if instance.resignation_request:
             rep['resignation_request'] = instance.resignation_request.termination_type
-            return rep
-        if instance.approver:  
+
+        if instance.approver:
             rep['approver'] = instance.approver.username
-            return rep
+
+        return rep
+        
         
 class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = ResignationApprovalLevelSerializer(many=True,source='resignation_levels')
@@ -945,10 +967,22 @@ class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def to_representation(self, instance):
+
+        instance = ResignationApprovalWorkflow.objects.prefetch_related(
+            'resignation_levels'
+        ).get(id=instance.id)
+
         rep = super().to_representation(instance)
 
-        if instance.branch.exists():
-            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+        rep['levels'] = ResignationApprovalLevelSerializer(
+            instance.resignation_levels.all().order_by('level'),
+            many=True,
+            context=self.context
+        ).data
+
+        rep['branch_names'] = [
+            b.branch_name for b in instance.branch.all()
+        ] if instance.branch.exists() else []
 
         return rep
 
@@ -960,8 +994,6 @@ class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
         branches = validated_data.pop('branch', [])
 
         workflow = ResignationApprovalWorkflow.objects.create(**validated_data)
-
-        # ✅ FIX: safe M2M set
         if branches:
             workflow.branch.set(branches)
 
@@ -975,26 +1007,41 @@ class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
         return workflow
 
     def update(self, instance, validated_data):
-        levels_data = validated_data.pop('levels', None)
+        levels_data = validated_data.pop('resignation_levels', None)
         branches = validated_data.pop('branch', None)
+
+        # ---------------- UPDATE MAIN FIELDS ---------------- #
         instance.approval_type = validated_data.get(
             'approval_type',
             instance.approval_type
         )
         instance.save()
 
+        # ---------------- UPDATE BRANCH ---------------- #
         if branches is not None:
             instance.branch.set(branches)
 
+        # ---------------- UPDATE LEVELS ---------------- #
         if levels_data is not None:
             instance.resignation_levels.all().delete()
 
-            for level_data in levels_data:
-                level_data.pop('workflow', None)
-                ResignationApprovalLevel.objects.create(
-                    workflow=instance,
-                    **level_data
-                )
+            if instance.approval_type == 'multi_approval':
+
+                if not levels_data:
+                    raise serializers.ValidationError({
+                        "levels": "At least one level is required for multi approval"
+                    })
+
+                for index, level_data in enumerate(levels_data, start=1):
+
+                    level_data.pop('workflow', None)
+                    level_data.pop('id', None)
+                    level_data['level'] = index
+
+                    ResignationApprovalLevel.objects.create(
+                        workflow=instance,
+                        **level_data
+                    )
 
         return instance
     
@@ -1049,10 +1096,10 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
                 "employee": "Employee is required."
             })
 
-        # ✅ Clean workflow fetch
+        # ✅ FIX 1: correct ManyToMany filtering + stable selection
         workflow = ResignationApprovalWorkflow.objects.filter(
-              branch=employee.emp_branch_id
-        ).first()
+           branch=employee.emp_branch_id 
+        ).order_by('-id').first()
 
         if not workflow:
             raise serializers.ValidationError({
@@ -1073,11 +1120,16 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
                     "approval_level": "Approval levels are not configured for this workflow."
                 })
 
-        # ✅ Active request check
-        if EmployeeResignation.objects.filter(
+        # ✅ FIX 2: handle update case
+        qs = EmployeeResignation.objects.filter(
             employee=employee,
             status__in=['Pending', 'Approved']
-        ).exists():
+        )
+
+        if self.instance:
+            qs = qs.exclude(id=self.instance.id)
+
+        if qs.exists():
             raise serializers.ValidationError(
                 "You already have an active resignation request."
             )
@@ -1085,9 +1137,21 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
         return data
 
     def to_representation(self, instance):
-        rep = super(EmployeeResignationSerializer, self).to_representation(instance)
+        rep = super().to_representation(instance)
+
+        # ✅ employee code
         if instance.employee:
             rep['employee'] = instance.employee.emp_code
+
+        # ✅ get current (latest) approval
+        latest_approval = instance.resign_approvals.order_by('-level').first()
+
+        rep['approver'] = (
+            latest_approval.approver.id
+            if latest_approval and latest_approval.approver
+            else None
+        )
+
         return rep
 
 class EndOfServiceSerializer(serializers.ModelSerializer):
@@ -1148,10 +1212,10 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
             return f"{month} {year}"
         return None
 class EscalationRuleSerializer(serializers.ModelSerializer):
-    request_type_name = serializers.CharField(source='request_type.name', read_only=True)
-    approver_name = serializers.CharField(source='approver.username', read_only=True)
-    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
-
+    request_type = serializers.CharField(source='workflow.request_type.name',read_only=True)
+    approver_name = serializers.CharField(source='approver.username',read_only=True)
+    escalate_to_name = serializers.CharField(source='escalate_to.username',read_only=True)
+    branch = serializers.PrimaryKeyRelatedField(source='workflow.branch',many=True,read_only=True)
     class Meta:
         model = ApprovalLevel
         fields = [
@@ -1159,21 +1223,26 @@ class EscalationRuleSerializer(serializers.ModelSerializer):
             'level',
             'role',
             'request_type',
-            'request_type_name',
+            'branch',
             'approver',
             'approver_name',
-            'branch',
             'escalate_to',
             'escalate_to_name',
             'escalate_after_days',
             'escalate_after_hours',
             'escalate_after_minutes',
         ]
-        read_only_fields = [
-            'level', 'role', 'approver', 'request_type', 'branch',
-            'request_type_name', 'approver_name', 'escalate_to_name'
-        ]
 
+        read_only_fields = [
+            'level',
+            'role',
+            'approver',
+            'escalate_to',
+            'request_type',
+            'branch',
+            'approver_name',
+            'escalate_to_name'
+        ]
 class ResignationRequestNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ResignationRequestNotification

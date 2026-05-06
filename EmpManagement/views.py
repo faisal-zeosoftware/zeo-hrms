@@ -2256,28 +2256,39 @@ class GeneralRequestViewset(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         with transaction.atomic():
             employee = serializer.validated_data.get('employee')
-            document_number = serializer.validated_data.get('document_number')  # Get manually entered document number
+            document_number = serializer.validated_data.get('document_number')
 
-            branch_id = employee.emp_branch_id.id  
+            # ✅ Check employee
+            if not employee:
+                raise ValidationError("Employee is required.")
+
+            # ✅ FIX: fallback to work_location if emp_branch_id missing
+            branch_id = employee.emp_branch_id or employee.work_location
+
+            if not branch_id:
+                raise ValidationError("Employee branch is missing in employee master.")
 
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch_id,
                     type='general_request',
-                    # leave_type__isnull=True
                 )
             except DocumentNumbering.DoesNotExist:
-                raise NotFound(f"No document numbering configuration found for branch {branch_id} and general request.")
+                raise NotFound(
+                    f"No document numbering configuration found for branch {branch_id} and general request."
+                )
 
             current_date = timezone.now().date()
 
-            # Validate if the manually entered document number is within the date range
+            # ✅ Manual document number validation
             if document_number:
                 if doc_config.start_date and doc_config.end_date:
                     if not (doc_config.start_date <= current_date <= doc_config.end_date):
-                        raise ValidationError("Document number cannot be assigned outside the valid date range.")
+                        raise ValidationError(
+                            "Document number cannot be assigned outside the valid date range."
+                        )
             else:
-                # If no document number is entered, generate one automatically
+                # ✅ Auto-generate
                 document_number = doc_config.get_next_number()
 
             serializer.save(document_number=document_number)

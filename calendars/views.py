@@ -1498,21 +1498,51 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     serializer_class=LvApprovalSerializer
     lookup_field = 'pk'
     def get_queryset(self):
-        """
-        Filter approvals based on the authenticated user.
-        """
-        user = self.request.user  # Get the logged-in user
-        if user.is_superuser:
-            return LeaveApproval.objects.all()
-        return LeaveApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+        import json
+
+        queryset = LeaveApproval.objects.select_related(
+            'leave_request',
+            'leave_request__employee',
+            'approver'
+        ).filter(leave_request__isnull=False)
+
+        branch_ids = self.request.query_params.get('branch_id')
+
+        if branch_ids:
+            try:
+                branch_ids = json.loads(branch_ids)
+
+                if not isinstance(branch_ids, list):
+                    branch_ids = [branch_ids]
+
+            except Exception:
+                branch_ids = branch_ids.strip("[]").split(",")
+
+            branch_ids = [
+                int(i) for i in branch_ids if str(i).strip().isdigit()
+            ]
+
+            if branch_ids:
+                queryset = queryset.filter(
+                   leave_request__employee__emp_branch_id__in=branch_ids  # ✅ FIXED
+                )
+
+        return queryset
+                
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()
+
+        if not request.user.is_superuser and approval.approver != request.user:
+            return Response(
+                {"error": "You are not allowed to approve this request."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         note = request.data.get('note')
         approved_days = request.data.get('approved_days')
 
-        # ✅ handle empty string case
-        if approved_days is not None and approved_days != "":
+        if approved_days not in [None, ""]:
             try:
                 approved_days = float(approved_days)
             except ValueError:
@@ -1538,12 +1568,20 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         approval = self.get_object()
+        if not request.user.is_superuser and approval.approver != request.user:
+            return Response(
+                {"error": "You are not allowed to reject this request."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         note = request.data.get('note')
         rejection_reason = request.data.get('rejection_reason')
+
         if not rejection_reason:
             raise ValidationError("Rejection reason is required.")
-        # Just pass the text directly to the model method
+
         approval.reject(rejection_reason=rejection_reason, note=note)
+
         return Response(
             {
                 'status': 'rejected',
@@ -1552,7 +1590,6 @@ class LvApprovalViewset(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK
         )
-    # Custom action to get grouped leave approvals
     @action(detail=False, methods=['get'])
     def grouped_approvals(self, request):
         approvals = LeaveApproval.objects.select_related('leave_request', 'compensatory_request', 'approver').order_by('leave_request', 'level')
@@ -1580,7 +1617,6 @@ class LvApprovalViewset(viewsets.ModelViewSet):
                 'rejection_reason': approval.rejection_reason.reason_text if approval.rejection_reason else None,
             })
 
-        # Format data to a list of dictionaries
         response_data = [
             {
                 'request_id': request_id,
@@ -1590,6 +1626,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
         ]
 
         return Response(response_data, status=status.HTTP_200_OK)
+    
 class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
     queryset = LeaveApprovalReport.objects.all()
     serializer_class = LvApprovalReportSerializer
@@ -3155,17 +3192,37 @@ class LVEscalationRuleViewSet(viewsets.ModelViewSet):
     API for managing escalation settings on each approval level.
     """
     serializer_class = LVEscalationRuleSerializer
-    queryset = LeaveApprovalLevels.objects.all().order_by('workflow__request_type', 'level')
+
+    queryset = LeaveApprovalLevels.objects.all().order_by(
+        'workflow__request_type',
+        'level'
+    )
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        request_type_id = self.request.query_params.get('request_type')
-        branch_id = self.request.query_params.get('branch')
 
+        request_type_id = self.request.query_params.get('request_type')
+        branch_ids = self.request.query_params.get('branch')
+
+        # ---------------- REQUEST TYPE FILTER ---------------- #
         if request_type_id:
-            queryset = queryset.filter(request_type_id=request_type_id)
-        if branch_id:
-            queryset = queryset.filter(branch__id=branch_id)
+            queryset = queryset.filter(
+                workflow__request_type_id=request_type_id
+            )
+
+        # ---------------- BRANCH FILTER (FIXED) ---------------- #
+        if branch_ids:
+            try:
+                # supports "1,2,3" OR "[1,2]" formats
+                if isinstance(branch_ids, str):
+                    branch_ids = branch_ids.replace('[', '').replace(']', '')
+                    branch_ids = [int(x) for x in branch_ids.split(',') if x]
+
+                queryset = queryset.filter(
+                    workflow__branch__in=branch_ids
+                )
+            except Exception:
+                pass  # fail-safe, don't break API
 
         return queryset.distinct()
 
@@ -3174,20 +3231,62 @@ class LVEscalationRuleViewSet(viewsets.ModelViewSet):
         Update only escalation fields for a level.
         """
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
+
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=True
+        )
         serializer.is_valid(raise_exception=True)
+
+        # ---------------- OPTIONAL SAFETY VALIDATION ---------------- #
+        days = request.data.get('escalate_after_days')
+        hours = request.data.get('escalate_after_hours')
+        minutes = request.data.get('escalate_after_minutes')
+
+        if days is not None and int(days) < 0:
+            return Response(
+                {"error": "escalate_after_days cannot be negative"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if hours is not None and int(hours) < 0:
+            return Response(
+                {"error": "escalate_after_hours cannot be negative"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if minutes is not None and int(minutes) < 0:
+            return Response(
+                {"error": "escalate_after_minutes cannot be negative"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         serializer.save()
 
-        return Response({
-            "message": "Escalation rule updated successfully",
-            "data": serializer.data
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "message": "Escalation rule updated successfully",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
     @action(detail=True, methods=['post'])
     def reset(self, request, pk=None):
+        """
+        Reset escalation configuration for a level.
+        """
         instance = self.get_object()
+
         instance.escalate_to = None
         instance.escalate_after_days = 0
         instance.escalate_after_hours = 0
         instance.escalate_after_minutes = 0
+
         instance.save()
-        return Response({"message": "Escalation rule reset successfully"}, status=200)
+
+        return Response(
+            {"message": "Escalation rule reset successfully"},
+            status=status.HTTP_200_OK
+        )

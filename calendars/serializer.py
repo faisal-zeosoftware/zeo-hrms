@@ -300,27 +300,23 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         if leave_type.unit == 'days' and is_half_day:
             if data.get('start_date') != data.get('end_date'):
                 raise serializers.ValidationError(
-                    "For half-day leave, start date and end date must be the same."
+                    "Half-day leave must be same start and end date."
                 )
             if not half_day_period:
                 raise serializers.ValidationError(
-                    "Please specify half-day period."
+                    "Half-day period is required."
                 )
 
-        # ---------------- APPROVAL VALIDATION ----------------
+        # ---------------- WORKFLOW CHECK (SAFE + CONSISTENT) ----------------
         workflow = LVApprovalWorkflow.objects.filter(
             request_type=leave_type,
-            branch__in=[employee.emp_branch_id]   # ✅ FIXED
-        ).first()
+            branch__in=[employee.emp_branch_id]
+        ).prefetch_related('leave_levels').first()
 
         if not workflow:
             raise serializers.ValidationError({
                 "leave_type": "Approval workflow not configured for this branch."
             })
-
-        # ---------------- NO APPROVAL ----------------
-        if workflow.approval_type == 'no_approval':
-            return data
 
         # ---------------- REPORTING MANAGER ----------------
         if workflow.approval_type == 'reporting_manager':
@@ -331,7 +327,7 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 
         # ---------------- MULTI APPROVAL ----------------
         if workflow.approval_type == 'multi_approval':
-            first_level = workflow.levels.order_by('level').first()
+            first_level = workflow.leave_levels.order_by('level').first()
 
             if not first_level:
                 raise serializers.ValidationError({
@@ -340,10 +336,11 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 
             if not first_level.approver:
                 raise serializers.ValidationError({
-                    "approver": f"No approver for level {first_level.level}"
+                    "approver": f"No approver assigned for level {first_level.level}"
                 })
 
         return data
+    
 class EmployeeLeaveBalanceSerializer(serializers.ModelSerializer):
     leave_type_name = serializers.CharField(source='leave_type.name', read_only=True)
     negative = serializers.BooleanField(source='leave_type.negative', read_only=True)
@@ -731,6 +728,7 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
 
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
+
         if workflow and level is not None:
             if qs.filter(workflow=workflow, level=level).exists():
                 raise serializers.ValidationError(
@@ -738,18 +736,19 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
+
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
-        # approver username
         if instance.approver:
             rep['approver'] = instance.approver.username
 
-        # escalate_to username
         if instance.escalate_to:
             rep['escalate_to'] = instance.escalate_to.username
+
         if instance.workflow and instance.workflow.request_type:
             rep['request_type'] = instance.workflow.request_type.name
+
         if instance.workflow and instance.workflow.branch.exists():
             rep['branch'] = [
                 b.branch_name for b in instance.workflow.branch.all()
@@ -778,47 +777,87 @@ class LvApprovalSerializer(serializers.ModelSerializer):
         return rep
     
 class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
-    levels =  LvApprovalLevelSerializer(many=True)
-    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    levels = LvApprovalLevelSerializer(many=True,source='leave_levels',required=False)
 
     class Meta:
         model = LVApprovalWorkflow
         fields = '__all__'
 
+    # ---------------- REPRESENTATION ---------------- #
     def to_representation(self, instance):
+
         rep = super().to_representation(instance)
-        if instance.request_type:
-            rep['request_type_name'] = instance.request_type.name
-        if instance.branch.exists():
-            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+
+        rep['levels'] = LvApprovalLevelSerializer(
+            instance.leave_levels.all().order_by('level'),
+            many=True,
+            context=self.context
+        ).data
+
+        rep['request_type_name'] = (
+            instance.request_type.name if instance.request_type else None
+        )
+
+        rep['branch_names'] = [
+            b.branch_name for b in instance.branch.all()
+        ] if instance.branch.exists() else []
+
         return rep
 
+    # ---------------- CREATE ---------------- #
     def create(self, validated_data):
-        levels_data = validated_data.pop('levels', [])
+
+        # ✅ MUST match related_name / source
+        levels_data = validated_data.pop('leave_levels', [])
         branches = validated_data.pop('branch', [])
+
         workflow = LVApprovalWorkflow.objects.create(**validated_data)
-        workflow.branch.set(branches)
-        
+
+        if branches:
+            workflow.branch.set(branches)
+
         for level_data in levels_data:
-           LeaveApprovalLevels.objects.create(workflow=workflow, **level_data)
+            LeaveApprovalLevels.objects.create(
+                workflow=workflow,
+                **level_data
+            )
+
         return workflow
 
+    # ---------------- UPDATE (FIXED) ---------------- #
     def update(self, instance, validated_data):
-        levels_data = validated_data.pop('levels', None)
+
+        levels_data = validated_data.pop('leave_levels', None)
         branches = validated_data.pop('branch', None)
-        
-        instance.request_type = validated_data.get('request_type', instance.request_type)
-        instance.approval_type = validated_data.get('approval_type', instance.approval_type)
+
+        instance.request_type = validated_data.get(
+            'request_type',
+            instance.request_type
+        )
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
         instance.save()
 
         if branches is not None:
             instance.branch.set(branches)
 
+        if instance.approval_type != 'multi_approval':
+            instance.leave_levels.all().delete()
+            return instance
+
         if levels_data is not None:
-            instance.levels.all().delete()
+            instance.leave_levels.all().delete()
+
             for level_data in levels_data:
-                 LeaveApprovalLevels.objects.create(workflow=instance, **level_data)
-        
+                LeaveApprovalLevels.objects.create(
+                    workflow=instance,
+                    **level_data
+                )
+
         return instance
 
 class LvEmailTemplateSerializer(serializers.ModelSerializer):
@@ -940,16 +979,28 @@ class EmployeeOvertimeSerializer(serializers.ModelSerializer):
         return rep
 
 class LVEscalationRuleSerializer(serializers.ModelSerializer):
-    request_type_name = serializers.CharField(source='request_type.name', read_only=True)
-    approver_name = serializers.CharField(source='approver.username', read_only=True)
-    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+    request_type_name = serializers.CharField(
+        source='workflow.request_type.name',
+        read_only=True
+    )
+
+    approver_name = serializers.CharField(
+        source='approver.username',
+        read_only=True
+    )
+
+    escalate_to_name = serializers.CharField(
+        source='escalate_to.username',
+        read_only=True
+    )
+    branch = serializers.PrimaryKeyRelatedField(source='workflow.branch',many=True,read_only=True)
 
     class Meta:
         model = LeaveApprovalLevels
         fields = [
             'id',
             'level',
-            'request_type',
+            'workflow',
             'request_type_name',
             'approver',
             'approver_name',
@@ -960,9 +1011,11 @@ class LVEscalationRuleSerializer(serializers.ModelSerializer):
             'escalate_after_hours',
             'escalate_after_minutes',
         ]
+
         read_only_fields = [
-            'level','approver', 'request_type', 'branch',
-            'request_type_name', 'approver_name', 'escalate_to_name'
+            'request_type_name',
+            'approver_name',
+            'escalate_to_name'
         ]
 class AttendanceRecheckSerializer(serializers.ModelSerializer):
     class Meta:

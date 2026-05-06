@@ -70,14 +70,11 @@ class PayStructure(models.Model):
     ]
 
     SALARY_CALCULATION_CHOICES = [
-        ('CALENDAR', 'Actual days in month'),
-        ('FIXED', 'Organisation working days'),
+        ('CALENDAR_DAYS', 'Calendar Days'),
+        ('ORGANIZATION_DAYS', 'Organization Days'),
+        ('FIXED_DAYS', 'Fixed Days'),
     ]
 
-    PAYDAY_TYPE_CHOICES = [
-        ('FIXED_DAY', 'Fixed day'),
-        ('LAST_WORKING_DAY', 'Last working day'),
-    ]
 
     ATTENDANCE_CYCLE_CHOICES = [
         ('MONTH', 'Calendar Month'),
@@ -100,7 +97,7 @@ class PayStructure(models.Model):
     salary_calculation_type = models.CharField(
         max_length=20,
         choices=SALARY_CALCULATION_CHOICES,
-        default='CALENDAR'
+        default='CALENDAR_DAYS'
     )
     fixed_working_days = models.PositiveSmallIntegerField(
         null=True,
@@ -124,12 +121,6 @@ class PayStructure(models.Model):
         help_text="Example: 25"
     )
 
-    # 4️⃣ Payday rule
-    payday_type = models.CharField(
-        max_length=20,
-        choices=PAYDAY_TYPE_CHOICES,
-        default='FIXED_DAY'
-    )
     payday = models.PositiveSmallIntegerField(
         null=True,
         blank=True
@@ -140,6 +131,13 @@ class PayStructure(models.Model):
 
     def __str__(self):
         return f"PayStructure - {self.branch}"
+
+    def clean(self):
+        super().clean()
+        if self.salary_calculation_type in ['ORGANIZATION_DAYS', 'FIXED_DAYS'] and self.fixed_working_days is None:
+            raise ValidationError({
+                'fixed_working_days': f"Fixed working days is required when calculation type is {self.get_salary_calculation_type_display()}."
+            })
 class PayrollRun(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),

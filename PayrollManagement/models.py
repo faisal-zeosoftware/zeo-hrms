@@ -660,15 +660,16 @@ class  LoanApplication(models.Model):
                 workflow__loan_type=self.loan_type,
                 level=next_level_number
             ).first()
+
         if not next_level:
             self.status = 'Approved'
             self.approved_on = timezone.now()
             self.save()
             return
+
         if self.approvals.filter(level=next_level_number).exists():
             return
 
-        # ✅ FIX 3: ensure approver exists (prevents crash)
         if not next_level.approver:
             self.status = 'Approved'
             self.approved_on = timezone.now()
@@ -691,10 +692,8 @@ class  LoanApplication(models.Model):
             note=note_to_carry
         )
 
-        # escalation scheduling (unchanged)
         loan_schedule_escalation(new_approval, next_level)
 
-        # notification (unchanged)
         send_notification_email(
             user=next_level.approver,
             employee=None,
@@ -712,7 +711,7 @@ class  LoanApplication(models.Model):
             },
             email_template_model=LoanEmailTemplate,
             notification_model=LoanNotification
-        )            
+        )                  
             
 
 class LoanRepayment(models.Model):
@@ -843,6 +842,8 @@ class LoanApproval(models.Model):
 def create_initial_loan_approval(sender, instance, created, **kwargs):
     if not created:
         return
+
+    # ---------------- GET WORKFLOW ----------------
     workflow = LoanApprovalWorkflow.objects.filter(
         loan_type=instance.loan_type,
         branch=instance.employee.emp_branch_id
@@ -862,7 +863,6 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
         first_level = LoanCommonWorkflow.objects.order_by('level').first()
     else:
         first_level = workflow.loan_levels.order_by('level').first()
-
     if not first_level and approval_type == 'multi_approval':
         return
 

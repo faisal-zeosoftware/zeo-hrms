@@ -691,4 +691,3 @@ def create_workflow_and_default_level(sender, instance, created, **kwargs):
         role="Auto Level",
         approver=None
     )
-

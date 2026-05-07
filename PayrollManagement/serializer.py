@@ -320,6 +320,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             branch=branch
         ).first()
 
+        # ✅ FIX 1: fallback if branch-based not found
         if not workflow:
             workflow = LoanApprovalWorkflow.objects.filter(
                 loan_type=loan_type
@@ -367,7 +368,17 @@ class LoanRepaymentSerializer(serializers.ModelSerializer):
 class LoanApprovalLevelsSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApprovalLevels
-        fields = '__all__'
+        fields = [
+            "id",
+            "level",
+            "role",
+            "approver",
+            "escalate_to",
+            "escalate_after_days",
+            "escalate_after_hours",
+            "escalate_after_minutes",
+        ]
+        read_only_fields = ('workflow',)
 
 class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = LoanApprovalLevelsSerializer(source='loan_levels', many=True)
@@ -426,7 +437,6 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
                 )
 
         return instance
-    
 class LoanApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApproval
@@ -444,6 +454,7 @@ class LoanApprovalSerializer(serializers.ModelSerializer):
         if instance.loan_request:
             rep['document_number']= getattr(instance.loan_request,'document_number')
         return rep
+    
     
 class SIFSerializer(serializers.Serializer):
     payroll_run_id = serializers.IntegerField()
@@ -1071,7 +1082,6 @@ class LoanEscalationRuleSerializer(serializers.ModelSerializer):
             'level', 'role', 'approver', 'loan_type', 
             'loan_type_name', 'approver_name', 'escalate_to_name'
         ]
-
 class PayStructureSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayStructure

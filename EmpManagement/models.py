@@ -1928,6 +1928,7 @@ class EmployeeResignation(models.Model):
     reason_for_leaving = models.TextField(blank=True, null=True)
     attachment = models.FileField(upload_to='resignation_docs/', blank=True, null=True)
     status           =  models.CharField(max_length=20, default='Pending')
+    created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     class Meta:
         permissions = [
             ("view_approved_resignations", "Can view approved resignations"),

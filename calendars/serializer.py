@@ -245,16 +245,6 @@ class LeaveEncashmentTransactionSerializer(serializers.ModelSerializer):
             rep['leave_type'] = instance.leave_type.name
         return rep
 
-class LeaveEntitlementSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = leave_entitlement
-        fields = '__all__'
-    def to_representation(self, instance):
-        rep = super(LeaveEntitlementSerializer, self).to_representation(instance)
-        if instance.leave_type:  
-            rep['leave_type'] = instance.leave_type.name
-        return rep
-
 class LeaveResetPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = LeaveResetPolicy
@@ -265,6 +255,17 @@ class LeaveResetPolicySerializer(serializers.ModelSerializer):
             rep['leave_type'] = instance.leave_type.name
         if instance.leave_entitlement:
             rep['leave_entitlement'] = str(instance.leave_entitlement)
+        return rep
+    
+class LeaveEntitlementSerializer(serializers.ModelSerializer):
+    reset_policy = LeaveResetPolicySerializer(read_only=True)
+    class Meta:
+        model = leave_entitlement
+        fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(LeaveEntitlementSerializer, self).to_representation(instance)
+        if instance.leave_type:  
+            rep['leave_type'] = instance.leave_type.name
         return rep
 class LeaveRequestSerializer(serializers.ModelSerializer):
     # document_numbering_details = serializers.SerializerMethodField()

@@ -218,10 +218,11 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def create(self, validated_data):
-        levels_data = validated_data.pop('asset_levels', [])
+        levels_data = validated_data.pop('asset_levels', [])  # ✅ FIXED
         branches = validated_data.pop('branch', [])
 
         workflow = AssetApprovalWorkflow.objects.create(**validated_data)
+
         if branches:
             workflow.branch.set(branches)
 
@@ -232,11 +233,11 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         return workflow
 
+
     def update(self, instance, validated_data):
-        levels_data = validated_data.pop('asset_levels', None)
+        levels_data = validated_data.pop('asset_levels', None)  # ✅ FIXED
         branches = validated_data.pop('branch', None)
 
-        # DRF-safe update
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
@@ -245,7 +246,7 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
             instance.branch.set(branches)
 
         if levels_data is not None:
-            instance.asset_levels.all().delete()
+            instance.asset_levels.all().delete()  # ✅ FIXED
 
             AssetApprovalLevel.objects.bulk_create([
                 AssetApprovalLevel(workflow=instance, **level)
@@ -266,7 +267,7 @@ class AssetApprovalSerializer(serializers.ModelSerializer):
         if instance.approver:  
             rep['approver'] = instance.approver.username       
         return rep       
-
+    
 class AssetAllocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetAllocation
@@ -483,9 +484,30 @@ class BranchSerializer(serializers.ModelSerializer):
         return AnnouncementSerializer(announcements, many=True).data
 
 class EscalationRuleSerializer(serializers.ModelSerializer):
-    asset_type_name = serializers.CharField(source='asset_type.name', read_only=True)
-    approver_name = serializers.CharField(source='approver.username', read_only=True)
-    escalate_to_name = serializers.CharField(source='escalate_to.username', read_only=True)
+    asset_type = serializers.PrimaryKeyRelatedField(
+        source='workflow.asset_type',
+        read_only=True
+    )
+    asset_type_name = serializers.CharField(
+        source='workflow.asset_type.name',
+        read_only=True
+    )
+
+    # ✅ FIX: ManyToMany must use many=True
+    branch = serializers.PrimaryKeyRelatedField(
+        source='workflow.branch',
+        many=True,
+        read_only=True
+    )
+
+    approver_name = serializers.CharField(
+        source='approver.username',
+        read_only=True
+    )
+    escalate_to_name = serializers.CharField(
+        source='escalate_to.username',
+        read_only=True
+    )
 
     class Meta:
         model = AssetApprovalLevel
@@ -505,8 +527,14 @@ class EscalationRuleSerializer(serializers.ModelSerializer):
             'escalate_after_minutes',
         ]
         read_only_fields = [
-            'level', 'role', 'approver', 'asset_type', 'branch',
-            'asset_type_name', 'approver_name', 'escalate_to_name'
+            'level',
+            'role',
+            'approver',
+            'asset_type',
+            'branch',
+            'asset_type_name',
+            'approver_name',
+            'escalate_to_name'
         ]
 class UserBranchAccessSerializer(serializers.ModelSerializer):
     class Meta:

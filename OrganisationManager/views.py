@@ -1084,27 +1084,65 @@ class AssetApprovalViewset(viewsets.ModelViewSet):
     lookup_field = 'pk'
 
     def get_queryset(self):
-        """
-        Filter approvals based on the authenticated user.
-        """
-        user = self.request.user  # Get the logged-in user
-        if user.is_superuser:
-            return AssetApproval.objects.all()
-        return AssetApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+        user = self.request.user
 
+        qs = AssetApproval.objects.select_related(
+            'asset_request',
+            'approver'
+        ).all()
+
+        # ---------------- USER FILTER ---------------- #
+        if not user.is_superuser:
+            qs = qs.filter(approver=user)
+
+        # ---------------- BRANCH FILTER ---------------- #
+        branch_param = self.request.query_params.get('branch_id')
+
+        branch_ids = []
+
+        if branch_param and branch_param.lower() != 'null':
+
+            branch_param = branch_param.strip()
+
+            if branch_param.startswith('[') and branch_param.endswith(']'):
+                branch_param = branch_param[1:-1]
+
+            branch_ids = [
+                int(i)
+                for i in branch_param.split(',')
+                if i.strip().isdigit()
+            ]
+
+        multi_branch = self.request.query_params.getlist('branch_id')
+
+        if len(multi_branch) > 1:
+            branch_ids = [
+                int(i)
+                for i in multi_branch
+                if i.strip().isdigit()
+            ]
+
+        # ---------------- FIX: SAFE FILTER ---------------- #
+        if branch_ids:
+            qs = qs.filter(
+                asset_request__branch__id__in=branch_ids
+            )
+
+        return qs.distinct()
+
+    # ---------------- APPROVE ---------------- #
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()
-        note = request.data.get('note','')  # Get the note from the request
-        approval.approve(note=note)
-        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
+        approval.approve(note=request.data.get('note', ''))
+        return Response({'status': 'approved'})
 
+    # ---------------- REJECT ---------------- #
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         approval = self.get_object()
-        note = request.data.get('note','')  # Get the note from the request
-        approval.reject(note=note)
-        return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+        approval.reject(note=request.data.get('note', ''))
+        return Response({'status': 'rejected'})
     
 class AssetApprovalLevelViewset(viewsets.ModelViewSet):
     queryset =  AssetApprovalWorkflow.objects.all()
@@ -1713,6 +1751,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         docs = Document.objects.filter(folder_id=folder_id)
         serializer = self.get_serializer(docs, many=True)
         return Response(serializer.data)
+    
 class EscalationRuleViewSet(viewsets.ModelViewSet):
     """
     API for managing escalation settings on each approval level.
@@ -1762,6 +1801,7 @@ class EscalationRuleViewSet(viewsets.ModelViewSet):
             {"message": "Escalation rule reset successfully"},
             status=200
         )
+
 
 
 class UserBranchAccessViewSet(viewsets.ModelViewSet):

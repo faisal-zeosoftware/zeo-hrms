@@ -402,55 +402,23 @@ class AssetRequest(models.Model):
             )
             return
 
-        # ---------------- MIN APPROVAL CHECK (LOAN LOGIC) ---------------- #
-        approved_count = self.approvals.filter(status=AssetApproval.APPROVED).count()
-        min_required = getattr(self.asset_type, 'min_approvals_required', None)
-
-        if min_required and approved_count >= min_required:
-            self.status = 'Approved'
-            self.save()
-
-            if self.requested_asset:
-                AssetAllocation.objects.create(
-                    asset=self.requested_asset,
-                    employee=self.employee,
-                    assigned_date=timezone.now().date()
-                )
-                self.requested_asset.status = "assigned"
-                self.requested_asset.save()
-
-            send_notification_email(
-                user=self.created_by,
-                employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
-                template_type="asset_approved",
-                context={
-                    **get_employee_context(self.employee),
-                    'asset_type': self.asset_type.name,
-                    'requested_asset': self.requested_asset.name if self.requested_asset else None,
-                    'request_date': self.request_date,
-                    'reason': self.reason,
-                },
-                email_template_model=AssetEmailTemplate,
-                notification_model=RequestNotification,
-            )
-            return
-
-        # ---------------- NEXT LEVEL (LOAN STYLE) ---------------- #
-        last_level = self.approvals.aggregate(
+        # ---------------- CURRENT APPROVED LEVEL ---------------- #
+        current_level = self.approvals.filter(
+            status=AssetApproval.APPROVED
+        ).aggregate(
             max_level=Max('level')
         )['max_level'] or 0
 
-        next_level_number = last_level + 1
+        next_level_number = current_level + 1
 
-        # ✅ FIX: safer M2M lookup + fallback
+        # ---------------- NEXT LEVEL ---------------- #
         next_level = AssetApprovalLevel.objects.filter(
             workflow__asset_type=self.asset_type,
-            workflow__branch__in=[self.employee.emp_branch_id],
+            workflow__branch=self.employee.emp_branch_id,
             level=next_level_number
         ).first()
 
-        # ✅ fallback if branch mapping missing
+        # ---------------- FALLBACK ---------------- #
         if not next_level:
             next_level = AssetApprovalLevel.objects.filter(
                 workflow__asset_type=self.asset_type,
@@ -459,78 +427,102 @@ class AssetRequest(models.Model):
 
         # ---------------- FINAL APPROVAL ---------------- #
         if not next_level:
+
+            # check pending approvals
+            pending_exists = self.approvals.filter(
+                status=AssetApproval.PENDING
+            ).exists()
+
+            if not pending_exists:
+                self.status = 'Approved'
+                self.save()
+
+                if self.requested_asset:
+                    AssetAllocation.objects.create(
+                        asset=self.requested_asset,
+                        employee=self.employee,
+                        assigned_date=timezone.now().date()
+                    )
+
+                    self.requested_asset.status = "assigned"
+                    self.requested_asset.save()
+
+                send_notification_email(
+                    user=self.created_by,
+                    employee=self.employee,
+                    message=f"Your request {self.document_number} has been approved.",
+                    template_type="asset_approved",
+                    context={
+                        **get_employee_context(self.employee),
+                        'asset_type': self.asset_type.name,
+                        'requested_asset': self.requested_asset.name if self.requested_asset else None,
+                        'request_date': self.request_date,
+                        'reason': self.reason,
+                    },
+                    email_template_model=AssetEmailTemplate,
+                    notification_model=RequestNotification,
+                )
+
+            return
+
+        # ---------------- CHECK EXISTING NEXT LEVEL ---------------- #
+        existing_next = self.approvals.filter(
+            level=next_level.level
+        ).first()
+
+        if existing_next:
+            return
+
+        # ---------------- LAST APPROVAL NOTE ---------------- #
+        last_approval = self.approvals.order_by('-level', '-id').first()
+
+        note_to_carry = None
+
+        if last_approval and last_approval.note:
+            if not last_approval.note.startswith(
+                ("Escalated to", "Escalated from")
+            ):
+                note_to_carry = last_approval.note
+
+        # ---------------- SAFETY ---------------- #
+        if not next_level.approver:
             self.status = 'Approved'
             self.save()
-
-            if self.requested_asset:
-                AssetAllocation.objects.create(
-                    asset=self.requested_asset,
-                    employee=self.employee,
-                    assigned_date=timezone.now().date()
-                )
-                self.requested_asset.status = "assigned"
-                self.requested_asset.save()
-
-            send_notification_email(
-                user=self.created_by,
-                employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
-                template_type="asset_approved",
-                context={
-                    **get_employee_context(self.employee),
-                    'asset_type': self.asset_type.name,
-                    'requested_asset': self.requested_asset.name if self.requested_asset else None,
-                    'request_date': self.request_date,
-                    'reason': self.reason,
-                },
-                email_template_model=AssetEmailTemplate,
-                notification_model=RequestNotification,
-            )
             return
 
         # ---------------- CREATE NEXT APPROVAL ---------------- #
-        if not self.approvals.filter(level=next_level.level).exists():
+        approval = AssetApproval.objects.create(
+            asset_request=self,
+            approver=next_level.approver,
+            role=next_level.role,
+            level=next_level.level,
+            status=AssetApproval.PENDING,
+            created_by=self.created_by,
+            note=note_to_carry
+        )
 
-            last_approval = self.approvals.order_by('-level', '-id').first()
+        # ---------------- ESCALATION ---------------- #
+        asset_schedule_escalation(approval, next_level)
 
-            note_to_carry = None
-            if last_approval and last_approval.note:
-                if not last_approval.note.startswith(("Escalated to", "Escalated from")):
-                    note_to_carry = last_approval.note
+        # ---------------- NOTIFICATION ---------------- #
+        send_notification_email(
+            user=next_level.approver,
+            employee=None,
+            message=f"New asset request: {self.document_number}",
+            template_type="asset_created",
+            context={
+                **get_employee_context(self.employee),
+                'asset_type': self.asset_type.name,
+                'requested_asset': self.requested_asset.name if self.requested_asset else None,
+                'request_date': self.request_date,
+                'reason': self.reason,
+            },
+            email_template_model=AssetEmailTemplate,
+            notification_model=RequestNotification,
+        )
 
-            # ✅ SAFETY
-            if not next_level.approver:
-                self.status = 'Approved'
-                self.save()
-                return
-
-            approval = AssetApproval.objects.create(
-                asset_request=self,
-                approver=next_level.approver,
-                role=next_level.role,
-                level=next_level.level,
-                status=AssetApproval.PENDING,
-                created_by=self.created_by,
-                note=note_to_carry
-            )
-
-            asset_schedule_escalation(approval, next_level)
-
-            send_notification_email(
-                user=next_level.approver,
-                employee=None,
-                message=f"New asset request: {self.document_number}",
-                template_type="asset_created",
-                context={
-                    **get_employee_context(self.employee),
-                    'asset_type': self.asset_type.name,
-                    'requested_asset': self.requested_asset.name if self.requested_asset else None,
-                    'request_date': self.request_date,
-                    'reason': self.reason,
-                },
-                email_template_model=AssetEmailTemplate,
-                notification_model=RequestNotification,
-            )
+        self.status = 'Pending'
+        self.save()
 
 class AssetApprovalWorkflow(models.Model):
     asset_type = models.ForeignKey('AssetType', related_name='approval_levels', on_delete=models.CASCADE, null=True, blank=True)  # Nullable for common workflow
@@ -572,7 +564,6 @@ class AssetApprovalLevel(models.Model):
         from datetime import timedelta
         total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
         return timedelta(minutes=total_minutes)
-
 
 class AssetApproval(models.Model):
     PENDING = 'Pending'
@@ -635,28 +626,35 @@ def create_initial_approval(sender, instance, created, **kwargs):
     if not created:
         return
 
-    # ---------------- GET FIRST LEVEL ---------------- #
-    first_level = AssetApprovalLevel.objects.filter(
-        workflow__asset_type=instance.asset_type,
-        workflow__branch=instance.employee.emp_branch_id   # ✅ FIXED
-    ).order_by('level').first()
+    # ---------------- GET WORKFLOW ---------------- #
+    workflow = AssetApprovalWorkflow.objects.filter(
+        asset_type=instance.asset_type,
+        branch__id__in=[instance.branch_id]   # ✅ FIXED
+    ).first()
 
-    # ✅ FIX 1: fallback if branch-based not found
-    if not first_level:
-        first_level = AssetApprovalLevel.objects.filter(
-            workflow__asset_type=instance.asset_type,
-            workflow__branch__isnull=True   # ✅ safer fallback (common workflow)
-        ).order_by('level').first()
+    # fallback workflow
+    if not workflow:
+        workflow = AssetApprovalWorkflow.objects.filter(
+            asset_type=instance.asset_type,
+            branch__isnull=True
+        ).first()
 
-    if not first_level:
+    if not workflow:
         return
 
-    approval_type = first_level.workflow.approval_type
+    # ---------------- GET FIRST LEVEL ---------------- #
+    first_level = workflow.asset_levels.order_by('level').first()
+
+    # FIX: DO NOT blindly create level (prevents broken flow)
+    if not first_level:
+        first_level = None
+
+    approval_type = workflow.approval_type
 
     # ---------------- NO APPROVAL ---------------- #
     if approval_type == 'no_approval':
 
-        approver = instance.created_by or getattr(instance.employee, 'users', None)
+        approver = instance.created_by or instance.employee.users
 
         if not approver:
             raise Exception("No system user linked to employee.")
@@ -672,33 +670,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         instance.status = 'approved'
         instance.save(update_fields=["status"])
-
-        # allocate asset
-        if instance.requested_asset:
-            AssetAllocation.objects.create(
-                asset=instance.requested_asset,
-                employee=instance.employee,
-                assigned_date=timezone.now().date()
-            )
-
-            instance.requested_asset.status = "assigned"
-            instance.requested_asset.save(update_fields=["status"])
-
-        send_notification_email(
-            user=approver,
-            employee=instance.employee,
-            message=f"Your request {instance.document_number} has been automatically approved.",
-            template_type="asset_approved",
-            context={
-                **get_employee_context(instance.employee),
-                'asset_type': instance.asset_type.name,
-                'requested_asset': instance.requested_asset.name if instance.requested_asset else None,
-                'request_date': instance.request_date,
-                'reason': instance.reason
-            },
-            email_template_model=AssetEmailTemplate,
-            notification_model=RequestNotification
-        )
         return
 
     # ---------------- REPORTING MANAGER ---------------- #
@@ -713,64 +684,37 @@ def create_initial_approval(sender, instance, created, **kwargs):
             asset_request=instance,
             approver=manager,
             role="Reporting Manager",
-            level=first_level.level,
+            level=first_level.level if first_level else 1,
             status=AssetApproval.PENDING,
             created_by=instance.created_by
         )
 
-        asset_schedule_escalation(approval, first_level)
+        if first_level:
+            asset_schedule_escalation(approval, first_level)
 
-        send_notification_email(
-            user=manager,
-            employee=None,
-            message=f"New asset request from {instance.employee}",
-            template_type="asset_created",
-            context={
-                **get_employee_context(instance.employee),
-                'asset_type': instance.asset_type.name,
-                'requested_asset': instance.requested_asset.name if instance.requested_asset else None,
-                'request_date': instance.request_date,
-                'reason': instance.reason
-            },
-            email_template_model=AssetEmailTemplate,
-            notification_model=RequestNotification
-        )
         return
 
     # ---------------- MULTI APPROVAL ---------------- #
     if approval_type == 'multi_approval':
 
-        # ✅ FIX 2: safe approver check
-        if not first_level or not first_level.approver:
-            raise Exception("Approver not configured for asset approval level.")
+        if not first_level:
+            raise Exception("Approval level not configured for workflow.")
 
-        approval = AssetApproval.objects.create(
-            asset_request=instance,
-            approver=first_level.approver,
-            role=first_level.role,
-            level=first_level.level,
-            status=AssetApproval.PENDING,
-            created_by=instance.created_by
-        )
+        if first_level.approver:
 
-        asset_schedule_escalation(approval, first_level)
+            approval = AssetApproval.objects.create(
+                asset_request=instance,
+                approver=first_level.approver,
+                role=first_level.role,
+                level=first_level.level,
+                status=AssetApproval.PENDING,
+                created_by=instance.created_by
+            )
 
-        send_notification_email(
-            user=first_level.approver,
-            employee=None,
-            message=f"New asset request: {instance.asset_type.name}",
-            template_type="asset_created",
-            context={
-                **get_employee_context(instance.employee),
-                'asset_type': instance.asset_type.name,
-                'requested_asset': instance.requested_asset.name if instance.requested_asset else None,
-                'request_date': instance.request_date,
-                'reason': instance.reason
-            },
-            email_template_model=AssetEmailTemplate,
-            notification_model=RequestNotification
-        )
+            asset_schedule_escalation(approval, first_level)
+
         return
+
 
 
 class AssetAllocation(models.Model):

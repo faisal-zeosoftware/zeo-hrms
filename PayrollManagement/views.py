@@ -1008,6 +1008,7 @@ class AdvSalaryEscalationRuleViewSet(viewsets.ModelViewSet):
             "message": "Escalation rule updated successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'])
     def reset(self, request, pk=None):
         instance = self.get_object()
@@ -1016,7 +1017,11 @@ class AdvSalaryEscalationRuleViewSet(viewsets.ModelViewSet):
         instance.escalate_after_hours = 0
         instance.escalate_after_minutes = 0
         instance.save()
-        return Response({"message": "Escalation rule reset successfully"}, status=200)
+
+        return Response(
+            {"message": "Escalation rule reset successfully"},
+            status=status.HTTP_200_OK
+        )
 
 class LoanEscalationRuleViewSet(viewsets.ModelViewSet):
     """

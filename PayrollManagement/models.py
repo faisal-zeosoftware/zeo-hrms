@@ -218,46 +218,117 @@ class Payslip(models.Model):
         ('processed', 'Processed'),
         ('paid', 'Paid'),
         ('rejected', 'Rejected'),
-        ('Approved', 'Approved'),  
+        ('Approved', 'Approved'),
     ]
-    payroll_run = models.ForeignKey(PayrollRun, on_delete=models.CASCADE, related_name='payslips')
-    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE, related_name='payslips')
-    gross_salary = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # Added
+
+    payroll_run = models.ForeignKey(
+        PayrollRun,
+        on_delete=models.CASCADE,
+        related_name='payslips'
+    )
+
+    employee = models.ForeignKey(
+        'EmpManagement.emp_master',
+        on_delete=models.CASCADE,
+        related_name='payslips'
+    )
+
+    gross_salary = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     net_salary = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     total_deductions = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     total_additions = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending'
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
-    # New fields for working days
-    total_working_days = models.PositiveIntegerField(default=0, help_text="Total working days in the payroll period")
-    days_worked = models.PositiveIntegerField(default=0, help_text="Number of days the employee worked")
-    pro_rata_adjustment = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Pro-rata adjustment")  # New field
-    arrears = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Arrears amount")  # New field
-    send_email = models.BooleanField(default=False, help_text="Send this payslip via email if True")
-    payslip_pdf = models.FileField(upload_to='payslips/',null=True,blank=True,validators=[FileExtensionValidator(allowed_extensions=['pdf'])],)
-    confirm_status = models.BooleanField(default=False, help_text="confirm this payslip  if True")
-    trial_status = models.BooleanField(default=False, help_text="confirm this payslip  if True")
+
+    total_working_days = models.PositiveIntegerField(
+        default=0,
+        help_text="Total working days in the payroll period"
+    )
+
+    days_worked = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of days the employee worked"
+    )
+
+    pro_rata_adjustment = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Pro-rata adjustment"
+    )
+
+    arrears = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Arrears amount"
+    )
+
+    send_email = models.BooleanField(
+        default=False,
+        help_text="Send this payslip via email if True"
+    )
+
+    payslip_pdf = models.FileField(
+        upload_to='payslips/',
+        null=True,
+        blank=True,
+        validators=[FileExtensionValidator(allowed_extensions=['pdf'])],
+    )
+
+    confirm_status = models.BooleanField(
+        default=False,
+        help_text="confirm this payslip if True"
+    )
+
+    trial_status = models.BooleanField(
+        default=False,
+        help_text="confirm this payslip if True"
+    )
+
     rejection_reason = models.TextField(null=True, blank=True)
-    currency = models.ForeignKey("Core.crncy_mstr", on_delete=models.SET_NULL, null=True, blank=True)
+
+    currency = models.ForeignKey(
+        "Core.crncy_mstr",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
     def save(self, *args, **kwargs):
-        if not self.currency and self.employee and self.employee.emp_country_id:
-            if hasattr(self.employee.emp_country_id, 'currency'):
-                self.currency = self.employee.emp_country_id.currency.first()
+
+        if (
+            not self.currency and
+            self.employee and
+            self.employee.emp_country_id and
+            hasattr(self.employee.emp_country_id, 'currency')
+        ):
+            self.currency = self.employee.emp_country_id.currency
+
         super().save(*args, **kwargs)
+
     def move_to_next_level(self):
 
-        # ❌ Stop if rejected (case-safe)
+        # -------- REJECT CHECK --------
         if self.approvals.filter(status__iexact='Rejected').exists():
             self.status = 'Rejected'
             self.save(update_fields=['status'])
             return
 
-        # ✅ Get current approved level (case-safe)
+        # -------- CURRENT LEVEL --------
         current_level = self.approvals.filter(
             status__iexact='Approved'
-        ).aggregate(max_level=Max('level'))['max_level'] or 0
+        ).aggregate(
+            max_level=Max('level')
+        )['max_level'] or 0
 
-        # ✅ safe employee + branch
+        # -------- EMPLOYEE / BRANCH CHECK --------
         if not self.employee or not self.employee.emp_branch_id:
             return
 
@@ -268,6 +339,7 @@ class Payslip(models.Model):
         if not workflow:
             return
 
+        # -------- NEXT LEVEL --------
         next_level = workflow.payslip_levels.filter(
             level=current_level + 1
         ).first()
@@ -282,20 +354,28 @@ class Payslip(models.Model):
             if not approver:
                 return
 
-            PayslipApproval.objects.create(
+            # ✅ prevent duplicate approvals
+            if not PayslipApproval.objects.filter(
                 request=self,
-                approver=approver,
-                role=next_level.role,
-                level=next_level.level,
-                status='Pending',
-                employee=self.employee
-            )
+                level=next_level.level
+            ).exists():
+
+                PayslipApproval.objects.create(
+                    request=self,
+                    approver=approver,
+                    role=next_level.role,
+                    level=next_level.level,
+                    status='Pending',
+                    employee=self.employee
+                )
 
         else:
             self.status = 'Approved'
             self.save(update_fields=['status'])
 
+
 class PayslipApprovalWorkflow(models.Model):
+
     APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
         ('reporting_manager', 'Reporting Manager'),
@@ -307,58 +387,131 @@ class PayslipApprovalWorkflow(models.Model):
         choices=APPROVAL_TYPE_CHOICES,
         default='no_approval'
     )
-    branch= models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+
+    branch = models.ManyToManyField(
+        'OrganisationManager.brnch_mstr',
+        blank=True
+    )
+
 
 class PayslipCommonWorkflow(models.Model):
-    workflow = models.ForeignKey(PayslipApprovalWorkflow,related_name='payslip_levels',on_delete=models.CASCADE,null=True)
+
+    workflow = models.ForeignKey(
+        PayslipApprovalWorkflow,
+        related_name='payslip_levels',
+        on_delete=models.CASCADE,
+        null=True
+    )
+
     level = models.PositiveIntegerField()
-    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+
+    approver = models.ForeignKey(
+        'UserManagement.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True
+    )
+
     role = models.CharField(max_length=100)
+
     class Meta:
         ordering = ['level']
 
     def __str__(self):
         return f"Level {self.level} - {self.role} ({self.approver})"
-    
+
+
 class PayslipApproval(models.Model):
+
     STATUS_CHOICES = [
         ('Pending', 'Pending'),
         ('Approved', 'Approved'),
         ('Rejected', 'Rejected'),
     ]
 
-    request = models.ForeignKey(Payslip, on_delete=models.CASCADE, related_name='approvals')
-    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
-    approver = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
+    request = models.ForeignKey(
+        Payslip,
+        on_delete=models.CASCADE,
+        related_name='approvals'
+    )
+
+    employee = models.ForeignKey(
+        'EmpManagement.emp_master',
+        on_delete=models.CASCADE
+    )
+
+    approver = models.ForeignKey(
+        'UserManagement.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True
+    )
+
     role = models.CharField(max_length=100, null=True, blank=True)
+
     level = models.PositiveIntegerField()
+
     note = models.TextField(null=True, blank=True)
-    rejection_reason     = models.TextField(null=True, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
+
+    rejection_reason = models.TextField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='Pending'
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.request} - {self.approver} - {self.status}"
 
     def approve(self, note=None):
+
         self.status = 'Approved'
+
         if note:
             self.note = note
-        self.save()
+
+        self.save(update_fields=['status', 'note'])
+
         self.request.move_to_next_level()
 
     def reject(self, rejection_reason, note=None):
+
         self.status = 'Rejected'
+
         if note:
             self.note = note
-        self.save()
+
+        self.rejection_reason = rejection_reason
+
+        self.save(update_fields=[
+            'status',
+            'note',
+            'rejection_reason'
+        ])
+
         self.request.status = 'Rejected'
-        self.request.remarks = rejection_reason
-        self.request.save()
+
+        # ✅ FIXED
+        self.request.rejection_reason = rejection_reason
+
+        self.request.save(update_fields=[
+            'status',
+            'rejection_reason'
+        ])
+
+
 @receiver(post_save, sender=Payslip)
 def create_initial_payslip_approval(sender, instance, created, **kwargs):
+
     if not created:
         return
+
+    # prevent duplicate initial approval
+    if instance.approvals.exists():
+        return
+
+    # -------- SAFE BRANCH CHECK --------
     if not instance.employee or not instance.employee.emp_branch_id:
         return
 
@@ -373,24 +526,28 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
 
     # -------- NO APPROVAL --------
     if approval_type == 'no_approval':
+
         PayslipApproval.objects.create(
-            request=instance,  # keeping your field name (no change)
+            request=instance,
             approver=instance.employee.user if hasattr(instance.employee, 'user') else None,
             role="Auto Approval",
             level=1,
-            status='Approved',  # (kept as-is to avoid changing logic)
+            status='Approved',
             employee=instance.employee
         )
 
         instance.status = 'Approved'
-        instance.save(update_fields=["status"])
+        instance.save(update_fields=['status'])
+
         return
 
     # -------- REPORTING MANAGER --------
     if approval_type == 'reporting_manager':
+
         manager = getattr(instance.employee, 'emp_reporting_manager', None)
 
         if manager:
+
             PayslipApproval.objects.create(
                 request=instance,
                 approver=manager,
@@ -399,15 +556,16 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
                 status='Pending',
                 employee=instance.employee
             )
+
         else:
-            # fallback
             instance.status = 'Approved'
-            instance.save(update_fields=["status"])
+            instance.save(update_fields=['status'])
 
         return
 
     # -------- MULTI APPROVAL --------
     if approval_type == 'multi_approval':
+
         first_level = PayslipCommonWorkflow.objects.filter(
             workflow=workflow
         ).order_by('level').first()
@@ -415,7 +573,6 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
         if not first_level:
             return
 
-        # ✅ FIX 3: ensure approver exists
         if not first_level.approver:
             return
 
@@ -427,6 +584,7 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
             status='Pending',
             employee=instance.employee
         )
+
         return
     
 class PayslipComponent(models.Model):
@@ -999,67 +1157,20 @@ class AdvanceSalaryRequest(models.Model):
             )
             return
 
-        # ✅ Get current approved level
-        current_level = self.approvals.filter(
-            status='Approved'
-        ).aggregate(max_level=Max('level'))['max_level'] or 0
+        # ---------------- MINIMUM APPROVAL CHECK ----------------
+        approved_count = self.approvals.filter(status='Approved').count()
+        min_required = getattr(self, 'min_approvals_required', None)
 
-        # ✅ Get workflow (branch based)
-        workflow = AdvanceApprovalWorkflow.objects.filter(
-            branch__id=self.employee.emp_branch_id.id
-        ).first()
+        if min_required and approved_count >= min_required:
+            self.status = 'Approved'
+            self.approval_date = timezone.now()
+            self.save()
 
-        if not workflow:
-            return  # or raise error if strict
-
-        # ✅ Get next level FROM THIS WORKFLOW ONLY
-        next_level = workflow.advance_levels.filter(
-            level=current_level + 1
-        ).first()
-
-        if next_level:
-
-            # ✅ Determine approver based on approval type
-            if workflow.approval_type == 'reporting_manager':
-                approver = self.employee.emp_reporting_manager
-            else:
-                approver = next_level.approver
-
-            if not approver:
-                raise Exception(f"No approver configured for level {next_level.level}")
-
-            last_approval = self.approvals.order_by('-level', '-id').first()
-
-            # ✅ Carry forward note safely
-            note_to_carry = None
-            if last_approval and last_approval.note:
-                if not (
-                    last_approval.note.startswith("Escalated to") or
-                    last_approval.note.startswith("Escalated from")
-                ):
-                    note_to_carry = last_approval.note
-
-            new_approval = AdvanceSalaryApproval.objects.create(
-                request=self,
-                approver=approver,
-                role=next_level.role,
-                level=next_level.level,
-                status='Pending',
-                employee=self.employee,
-                note=note_to_carry
-            )
-
-            # ✅ Escalation
-            if hasattr(next_level, "get_escalation_timedelta"):
-                if next_level.get_escalation_timedelta().total_seconds() > 0:
-                    schedule_escalation(new_approval, next_level)
-
-            # ✅ Notify next approver
             send_notification_email(
-                user=approver,
-                employee=None,
-                message=f"New Salary Advance request: {self.document_number}, Employee: {self.employee}",
-                template_type="request_created",
+                user=self.created_by,
+                employee=self.employee,
+                message="Your request has been approved.",
+                template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
                     'document_number': self.document_number,
@@ -1070,9 +1181,94 @@ class AdvanceSalaryRequest(models.Model):
                 email_template_model=AdvanceSalaryEmailTemplate,
                 notification_model=AdvanceSalaryNotification
             )
+            return
+
+        # ---------------- CURRENT LEVEL ----------------
+        last_approved = self.approvals.filter(
+            status='Approved'
+        ).order_by('-level').first()
+
+        current_level = last_approved.level if last_approved else 0
+
+        # ---------------- WORKFLOW ----------------
+        workflow = AdvanceApprovalWorkflow.objects.filter(
+            branch=self.employee.emp_branch_id
+        ).first()
+
+        if not workflow:
+            return
+
+        # ---------------- NEXT LEVEL ----------------
+        next_level = workflow.advance_levels.filter(
+            level=current_level + 1
+        ).first()
+
+        if next_level:
+            if workflow.approval_type == 'reporting_manager':
+                approver = self.employee.emp_reporting_manager
+            else:
+                approver = next_level.approver
+
+            if not approver:
+                raise Exception(f"No approver configured for level {next_level.level}")
+
+            last_approval = self.approvals.order_by('-level', '-id').first()
+
+            note_to_carry = None
+            if last_approval and last_approval.note:
+                if not (
+                    last_approval.note.startswith("Escalated to") or
+                    last_approval.note.startswith("Escalated from")
+                ):
+                    note_to_carry = last_approval.note
+
+            if not AdvanceSalaryApproval.objects.filter(
+                request=self,
+                level=next_level.level,
+                status__in=['Pending', 'Approved', 'Escalated']
+            ).exists():
+
+                new_approval = AdvanceSalaryApproval.objects.create(
+                    request=self,
+                    approver=approver,
+                    role=next_level.role,
+                    level=next_level.level,
+                    status='Pending',
+                    employee=self.employee,
+                    note=note_to_carry
+                )
+
+                # ---------------- ESCALATION (FIXED) ----------------
+                if (
+                    hasattr(next_level, "get_escalation_timedelta")
+                    and next_level.get_escalation_timedelta()
+                    and next_level.get_escalation_timedelta().total_seconds() > 0
+                    and not getattr(new_approval, "escalated", False)
+                ):
+                    schedule_escalation(
+                        approval=new_approval,
+                        level=next_level
+                    )
+
+                # ---------------- NOTIFICATION ----------------
+                send_notification_email(
+                    user=approver,
+                    employee=None,
+                    message=f"New Salary Advance request: {self.document_number}, Employee: {self.employee}",
+                    template_type="request_created",
+                    context={
+                        **get_employee_context(self.employee),
+                        'document_number': self.document_number,
+                        'requested_amount': self.requested_amount,
+                        'reason': self.reason,
+                        'remarks': self.remarks,
+                    },
+                    email_template_model=AdvanceSalaryEmailTemplate,
+                    notification_model=AdvanceSalaryNotification
+                )
 
         else:
-            # ✅ Final approval
+            # ---------------- FINAL APPROVAL ----------------
             self.status = 'Approved'
             self.approval_date = timezone.now()
             self.save()
@@ -1092,6 +1288,7 @@ class AdvanceSalaryRequest(models.Model):
                 email_template_model=AdvanceSalaryEmailTemplate,
                 notification_model=AdvanceSalaryNotification
             )
+            return
     def pause(self, start_date, reason=None):
         """Pause the loan repayments."""
         if self.status not in ['Approved']:
@@ -1224,11 +1421,9 @@ class AdvanceSalaryApproval(models.Model):
 def create_initial_advance_approval(sender, instance, created, **kwargs):
     if not created:
         return
-
-    # ✅ FIX: correct branch filtering
     workflow = AdvanceApprovalWorkflow.objects.filter(
-        branch__id=instance.employee.emp_branch_id.id
-    ).first()
+        branch=instance.employee.emp_branch_id
+    ).order_by('-id').first()
 
     if not workflow:
         return
@@ -1306,11 +1501,12 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
     # ---------------- MULTI APPROVAL ----------------
     if approval_type == 'multi_approval':
 
-        # ✅ FIX: use workflow levels (NOT global)
         first_level = workflow.advance_levels.order_by('level').first()
 
         if not first_level:
             return
+        if not first_level.approver:
+            raise Exception(f"No approver configured for level {first_level.level}")
 
         AdvanceSalaryApproval.objects.create(
             request=instance,
@@ -1336,6 +1532,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             notification_model=AdvanceSalaryNotification
         )
         return
+    
 class AirTicketPolicy(models.Model):
     ALLOWANCE_TYPE_CHOICES = [
         ('CASH', 'Cash'),
@@ -1458,8 +1655,8 @@ class AirTicketRequest(models.Model):
     def __str__(self):
         return f"{self.employee} - {self.get_request_type_display()} ({self.get_status_display()})"
     def move_to_next_level(self):
-        from .utils import airticket_schedule_escalation
         from django.utils import timezone
+        from .utils import airticket_schedule_escalation
 
         # ---------------- REJECT CHECK ----------------
         if self.approvals.filter(status=AirticketApproval.REJECTED).exists():
@@ -1482,22 +1679,41 @@ class AirTicketRequest(models.Model):
             )
             return
 
-        # ---------------- GET LAST APPROVAL ----------------
-        last_approval = self.approvals.order_by('-level', '-id').first()
-        current_level = last_approval.level if last_approval else 0
-
-        # ---------------- GET WORKFLOW (FIX) ----------------
-        if not self.branch:   # ✅ safe guard
-            return
-
+        # ---------------- WORKFLOW ----------------
         workflow = AirticketApprovalWorkflow.objects.filter(
-            branch__id=self.branch.id   # ✅ FIXED (ManyToMany)
+            branch__id=self.branch.id
         ).first()
 
         if not workflow:
             return
 
-        # ---------------- NEXT LEVEL ----------------
+        approval_type = workflow.approval_type
+        if approval_type in ['reporting_manager', 'no_approval']:
+            self.status = 'APPROVED'
+            self.approved_date = timezone.now()
+            self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request {self.document_number} has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'document_number': self.document_number,
+                    'request_type': self.request_type,
+                },
+                email_template_model=AirticketEmailTemplate,
+                notification_model=RequestNotification
+            )
+            return
+
+        last_approved = self.approvals.filter(
+            status=AirticketApproval.APPROVED
+        ).order_by('-level').first()
+
+        current_level = last_approved.level if last_approved else 0
+
         next_level = workflow.airticket_levels.filter(
             level__gt=current_level
         ).order_by('level').first()
@@ -1522,21 +1738,16 @@ class AirTicketRequest(models.Model):
                 notification_model=RequestNotification
             )
             return
+        if not next_level.approver:
+            raise Exception(f"No approver configured for level {next_level.level}")
+        last_approval = self.approvals.order_by('-level', '-id').first()
 
-        # ---------------- NOTE CARRY ----------------
         note_to_carry = None
         if last_approval and last_approval.note:
-            if not (
-                last_approval.note.startswith("Escalated to") or
-                last_approval.note.startswith("Escalated from")
-            ):
+            if not last_approval.note.startswith(("Escalated to", "Escalated from")):
                 note_to_carry = last_approval.note
 
-        # ---------------- SAFETY (optional but important) ----------------
-        if not next_level.approver:
-            raise Exception(f"No approver set for level {next_level.level}")
-
-        # ---------------- CREATE NEXT APPROVAL ----------------
+        # ---------------- CREATE NEXT LEVEL ----------------
         new_approval = AirticketApproval.objects.create(
             request=self,
             approver=next_level.approver,
@@ -1549,8 +1760,6 @@ class AirTicketRequest(models.Model):
 
         # ---------------- ESCALATION ----------------
         airticket_schedule_escalation(new_approval, next_level)
-
-        # ---------------- NOTIFICATION ----------------
         send_notification_email(
             user=next_level.approver,
             employee=None,
@@ -1564,6 +1773,7 @@ class AirTicketRequest(models.Model):
             email_template_model=AirticketEmailTemplate,
             notification_model=RequestNotification
         )
+
 class AirticketApprovalWorkflow(models.Model):
     APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
@@ -1658,10 +1868,8 @@ class AirticketApproval(models.Model):
         self.status = self.REJECTED
         if note:
             self.note = note
-        self.rejection_reason = rejection_reason  
+        self.rejection_reason = rejection_reason 
         self.save()
-
-        
         self.request.status = 'REJECTED'
         self.request.notes = rejection_reason
         self.request.save()
@@ -1679,35 +1887,27 @@ class AirticketApproval(models.Model):
             notification_model=RequestNotification
         )
 @receiver(post_save, sender=AirTicketRequest)
-def create_initial_advance_approval(sender, instance, created, **kwargs):
+def create_initial_airticket_approval(sender, instance, created, **kwargs):
     from .utils import airticket_schedule_escalation
 
     if not created:
         return
 
-    # ---------------- GET WORKFLOW (FIX) ----------------
-    if not instance.branch:   # ✅ safe guard
+    if not instance.branch:
         return
 
     workflow = AirticketApprovalWorkflow.objects.filter(
-        branch__id=instance.branch.id   # ✅ FIXED (ManyToMany)
+        branch__id=instance.branch.id
     ).first()
 
     if not workflow:
         return
 
-    first_level = workflow.airticket_levels.order_by('level').first()
-    if not first_level:
-        return
-
     approval_type = workflow.approval_type
 
-    # ---------------- NO APPROVAL ----------------
-    if approval_type == 'no_approval':
-        approver = instance.created_by or getattr(instance.employee, "users", None)
 
-        if not approver:
-            raise Exception("Employee has no system user.")
+    if approval_type == 'no_approval':
+        approver = instance.created_by
 
         AirticketApproval.objects.create(
             request=instance,
@@ -1721,8 +1921,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         instance.status = "APPROVED"
         instance.save(update_fields=['status'])
         return
-
-    # ---------------- REPORTING MANAGER ----------------
+    
     if approval_type == 'reporting_manager':
         manager = instance.employee.emp_reporting_manager
 
@@ -1733,17 +1932,19 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             request=instance,
             approver=manager,
             role="Reporting Manager",
-            level=first_level.level,
+            level=1,
             status=AirticketApproval.PENDING,
             employee=instance.employee
         )
-
         return
-
-    # ---------------- MULTI APPROVAL ----------------
+    
     if approval_type == 'multi_approval':
 
-        # ✅ optional safety (prevents silent failure)
+        first_level = workflow.airticket_levels.order_by('level').first()
+
+        if not first_level:
+            raise Exception("No approval levels configured.")
+
         if not first_level.approver:
             raise Exception(f"No approver set for level {first_level.level}")
 

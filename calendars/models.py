@@ -2687,7 +2687,34 @@ class EmployeeYearlyCalendar(models.Model):
 
     def __str__(self):
         return f"Yearly Calendar for {self.emp} - {self.year}"
+class AttendanceCalendar(models.Model):
+    STATUS_CHOICES = [
+        ('Present', 'Present'),
+        ('Absent', 'Absent'),
+        ('Leave', 'Leave'),
+        ('Weekend', 'Weekend'),
+        ('Holiday', 'Holiday'),
+    ]
+    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE, related_name='attendance_calendar_entries')
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Absent')
+    leave_type = models.ForeignKey('leave_type', on_delete=models.SET_NULL, null=True, blank=True)
+    is_half_day = models.BooleanField(default=False)
+    half_day_period = models.CharField(max_length=20, choices=[('first_half', 'First Half'), ('second_half', 'Second Half')], null=True, blank=True)
+    unpaid_fraction = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    is_manual = models.BooleanField(default=False)
+    remarks = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        unique_together = ('employee', 'date')
+        ordering = ['date']
+        verbose_name = "Attendance Calendar"
+        verbose_name_plural = "Attendance Calendars"
+
+    def __str__(self):
+        return f"{self.employee.emp_first_name} - {self.date} - {self.status}"
     def populate_calendar(self, holidays, weekends, attendance, leave_requests):
         """
         Populate the calendar with holidays, weekends, attendance, and leave requests.

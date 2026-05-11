@@ -3,7 +3,7 @@ from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,as
                      EmployeeMachineMapping,LeaveReport,LeaveApprovalLevels,LeaveApproval,LvEmailTemplate,LvApprovalNotify,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                      AttendanceReport,lvBalanceReport,EmployeeYearlyCalendar,CompensatoryLeaveRequest,CompensatoryLeaveTransaction,CompensatoryLeaveBalance,ShiftPattern,EmployeeShiftSchedule,ShiftOverride,LeaveResetPolicy,LeaveCarryForwardTransaction,
                      LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
-                     LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow
+                     LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow,AttendanceCalendar
                      )
 from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,HolidayAssignSerializer,HolidayCalandarSerializer,HolidaySerializer,WeekendDetailSerializer,LeaveTypeSerializer,LeaveEntitlementSerializer,ApplicableSerializer,EmployeeLeaveBalanceSerializer,AccrualSerializer,ResetSerializer,LeaveRequestSerializer,
                          AttendanceSerializer,ShiftSerializer,ImportAttendanceSerializer,EmployeeMappingSerializer,LeaveReportSerializer,LvApprovalLevelSerializer,EmployeeYearlyCalendarSerializer,
@@ -11,7 +11,7 @@ from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,Holi
                          CompensatoryLeaveRequestSerializer,CompensatoryLeaveTransactionSerializer,CompensatoryLeaveBalanceSerializer,ShiftOverrideSerializer,ShiftPatternSerializer,EmployeeShiftScheduleSerializer,LeaveResetPolicySerializer,LeaveCarryForwardTransactionSerializer,
                          LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer,OvertimeRuleSerializer,
                          AttendanceLogSerializer,AttendancePolicySerializer,LeavePayRuleSerializer,
-                         LatinEarlyoutEmailTemplateSerializer,LateinEarlyRequestNotificationSerializer,LateinEarlyoutRequestSerializer,LateinEarlyoutApprovalLevelSerializer, LateinEarlyoutApprovalSerializer,LVApprovalWorkflowSerializer,LatinEarlyApprovalWorkflowSerializer
+                         LatinEarlyoutEmailTemplateSerializer,LateinEarlyRequestNotificationSerializer,LateinEarlyoutRequestSerializer,LateinEarlyoutApprovalLevelSerializer, LateinEarlyoutApprovalSerializer,LVApprovalWorkflowSerializer,LatinEarlyApprovalWorkflowSerializer,AttendanceCalendarSerializer
                          )
 from . import face_utils
 from rest_framework import viewsets,filters,status
@@ -3290,3 +3290,106 @@ class LVEscalationRuleViewSet(viewsets.ModelViewSet):
             {"message": "Escalation rule reset successfully"},
             status=status.HTTP_200_OK
         )
+
+class AttendanceCalendarViewSet(viewsets.ModelViewSet):
+    queryset = AttendanceCalendar.objects.all()
+    serializer_class = AttendanceCalendarSerializer
+    filterset_fields = ['employee', 'date', 'status']
+
+    @action(detail=False, methods=['post'])
+    def sync_range(self, request):
+        from .utils import sync_attendance_calendar
+        employee_id = request.data.get('employee')
+        start_date_str = request.data.get('start_date')
+        end_date_str = request.data.get('end_date')
+
+        if not all([employee_id, start_date_str, end_date_str]):
+            return Response({"error": "Missing parameters"}, status=400)
+
+        try:
+            employee = emp_master.objects.get(id=employee_id)
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            sync_attendance_calendar(employee, start_date, end_date)
+            return Response({"message": "Calendar synced successfully"})
+        except Exception as e:
+            return Response({"error": str(e)}, status=400)
+    @action(detail=False, methods=['get'])
+    def calendar_view(self, request):
+        employee_id = request.query_params.get('employee_id')
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+
+        if not all([employee_id, start_date_str, end_date_str]):
+            return Response({"error": "employee_id, start_date, and end_date are required"}, status=400)
+
+        try:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+
+        employee = get_object_or_404(emp_master, id=employee_id)
+        
+        # Get existing records
+        records = AttendanceCalendar.objects.filter(
+            employee=employee,
+            date__range=(start_date, end_date)
+        ).select_related('leave_type')
+        
+        record_map = {r.date: r for r in records}
+        
+        from .utils import get_employee_weekend_days, get_employee_holidays
+        weekend_days = get_employee_weekend_days(employee)
+        holiday_dates = get_employee_holidays(employee, start_date, end_date)
+
+        calendar_data = []
+        curr_date = start_date
+        while curr_date <= end_date:
+            record = record_map.get(curr_date)
+            
+            if record:
+                status = record.status
+                leave_name = record.leave_type.name if record.leave_type else None
+                is_half_day = record.is_half_day
+                remarks = record.remarks
+            else:
+                # Determine status on the fly if no record exists
+                weekday = curr_date.strftime("%A")
+                if curr_date in holiday_dates:
+                    status = "Holiday"
+                elif weekday in weekend_days:
+                    status = "Weekend"
+                else:
+                    status = "Present" # Default
+                
+                leave_name = None
+                is_half_day = False
+                remarks = "Auto-determined"
+
+            # Format for display
+            display_status = status
+            if status == "Leave" and leave_name:
+                display_status = f"Leave ({leave_name})"
+                if is_half_day:
+                    display_status += " (Half Day)"
+            
+            calendar_data.append({
+                "date": curr_date.strftime('%Y-%m-%d'),
+                "day": curr_date.strftime('%A'),
+                "status": status,
+                "display_status": display_status,
+                "leave_type": leave_name,
+                "is_half_day": is_half_day,
+                "remarks": remarks
+            })
+            curr_date += timedelta(days=1)
+
+        return Response({
+            "employee_id": employee.id,
+            "employee_code": employee.emp_code,
+            "employee_name": f"{employee.emp_first_name} {employee.emp_last_name}",
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+            "calendar": calendar_data
+        })

@@ -5,7 +5,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
-                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,
+                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet
                     
                     )
 
@@ -69,6 +69,8 @@ router.register(r'lateinearlyrequest-notification',LateinEarlyRequestNotificatio
 router.register(r'lateinearly-request', LateinEarlyoutRequestViewset, basename='lateinearly-request')
 router.register(r'lateineralyout-approval-level', LateinEarlyoutApprovalLevelViewset, basename='lateineralyout-approval-level')
 router.register(r'lateineralyout-approval', LateinEarlyoutApprovalViewset, basename='lateineralyout-approval')
+router.register(r'attendance-calendar', AttendanceCalendarViewSet, basename='attendance-calendar')
+
 
 
 

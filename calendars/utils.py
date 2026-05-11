@@ -201,7 +201,86 @@ def get_attendance_summary(employee, start_date, end_date):
         "total_present": total_present,
         "total_absent": total_absent
     }
+def sync_attendance_calendar(employee, start_date, end_date):
+    """
+    Synchronize the AttendanceCalendar for an employee within a date range.
+    """
+    from .models import AttendanceCalendar, Attendance, employee_leave_request
+    
+    weekend_days = get_employee_weekend_days(employee)
+    holiday_dates = get_employee_holidays(employee, start_date, end_date)
+    
+    # Fetch existing attendances and leaves for bulk check
+    attendances = set(Attendance.objects.filter(
+        employee=employee, 
+        date__range=(start_date, end_date)
+    ).values_list('date', flat=True))
+    
+    leaves = employee_leave_request.objects.filter(
+        employee=employee,
+        status='approved',
+        start_date__lte=end_date,
+        end_date__gte=start_date
+    ).select_related('leave_type')
 
+    for day in daterange(start_date, end_date):
+        # Skip if manual override exists
+        entry = AttendanceCalendar.objects.filter(employee=employee, date=day).first()
+        if entry and entry.is_manual:
+            continue
+            
+        weekday = day.strftime("%A")
+        status = "Absent"
+        leave_obj = None
+        is_half_day = False
+        half_day_period = None
+        unpaid_fraction = 0.0
+        
+        # 1. Check Leaves (priority)
+        current_leave = None
+        for l in leaves:
+            if l.start_date <= day <= l.end_date:
+                current_leave = l
+                break
+        
+        if current_leave:
+            status = "Leave"
+            leave_obj = current_leave.leave_type
+            is_half_day = current_leave.dis_half_day
+            half_day_period = current_leave.half_day_period
+            
+            # Calculate unpaid fraction
+            duration = 0.5 if is_half_day else 1.0
+            if getattr(leave_obj, 'type', '') == 'unpaid':
+                unpaid_fraction = duration
+            else:
+                unpaid_fraction = 0.0
+            
+        elif day in holiday_dates:
+            status = "Holiday"
+            unpaid_fraction = 0.0
+        elif weekday in weekend_days:
+            status = "Weekend"
+            unpaid_fraction = 0.0
+        else:
+            # If the day is neither a leave day nor a weekend/holiday,
+            # it should automatically be marked as present.
+            status = "Present"
+            unpaid_fraction = 0.0
+
+        AttendanceCalendar.objects.update_or_create(
+            employee=employee,
+            date=day,
+            defaults={
+                'status': status,
+                'leave_type': leave_obj,
+                'is_half_day': is_half_day,
+                'half_day_period': half_day_period,
+                'unpaid_fraction': unpaid_fraction,
+                'remarks': "Auto-synced"
+            }
+        )
+        
 def schedule_escalation(approval, level_rule):
     from django.db import connection
     from .tasks import escalate_approval_task

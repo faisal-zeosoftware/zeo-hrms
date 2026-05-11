@@ -5,7 +5,8 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                      LeaveApprovalLevels,LeaveApproval,LvApprovalNotify,LvEmailTemplate,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
                     LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
-                    LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow
+                    LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow,
+                    AttendanceCalendar
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -1033,4 +1034,11 @@ class OvertimeRuleSerializer(serializers.ModelSerializer):
 class AttendancePolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendancePolicy
+        fields = '__all__'
+class AttendanceCalendarSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.emp_first_name', read_only=True)
+    leave_type_name = serializers.CharField(source='leave_type.name', read_only=True)
+
+    class Meta:
+        model = AttendanceCalendar
         fields = '__all__'

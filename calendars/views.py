@@ -269,7 +269,7 @@ class Applicableviewset(viewsets.ModelViewSet):
 class leave_balance_viewset(viewsets.ModelViewSet):
     queryset = emp_leave_balance.objects.all()
     serializer_class = EmployeeLeaveBalanceSerializer
-    permission_classes = [EmpLeaveBalancePermission] 
+    # permission_classes = [EmpLeaveBalancePermission] 
 
 class Acrualviewset(viewsets.ModelViewSet):
     queryset = leave_accrual_transaction.objects.all()

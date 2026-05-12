@@ -84,8 +84,8 @@ class TenantUserListView(generics.ListAPIView):
             # Filter users based on schema_name and only show active users
             return CustomUser.objects.filter(
                 tenants__schema_name=schema_name,
-                is_active=True  # Filter for users that are active
-            ).exclude(is_ess=True)
+                is_active=True)  # Filter for users that are active
+            # ).exclude(is_ess=True)
 
 from django.contrib.auth import login
 

@@ -2784,6 +2784,57 @@ class DocRequestTypeViewset(viewsets.ModelViewSet):
 class DocumentRequestViewset(viewsets.ModelViewSet):
     queryset = DocumentRequest.objects.all()
     serializer_class = DocRequestSerializer
+    def perform_create(self, serializer):
+
+        with transaction.atomic():
+
+            employee = serializer.validated_data.get('employee')
+            document_number = serializer.validated_data.get('document_number')
+
+            if not employee:
+                raise ValidationError("Employee is required.")
+
+            branch = employee.emp_branch_id or employee.work_location
+
+            if not branch:
+                raise ValidationError(
+                    "Employee branch is missing in employee master."
+                )
+            
+            try:
+                doc_config = DocumentNumbering.objects.get(
+                    branch_id=branch.id,
+                    type='document_request'
+                )
+
+            except DocumentNumbering.DoesNotExist:
+                raise NotFound(
+                    f"No document numbering configuration found "
+                    f"for branch {branch} and document request."
+                )
+
+            current_date = timezone.now().date()
+            if document_number:
+
+                if (
+                    doc_config.start_date
+                    and doc_config.end_date
+                    and not (
+                        doc_config.start_date
+                        <= current_date
+                        <= doc_config.end_date
+                    )
+                ):
+                    raise ValidationError(
+                        "Document number cannot be assigned "
+                        "outside the valid date range."
+                    )
+
+            else:
+                document_number = doc_config.get_next_number()
+            serializer.save(
+                document_number=document_number
+        )
 class DocumentApprovalViewset(viewsets.ModelViewSet):
     queryset = DocumentApproval.objects.all()
     serializer_class = DocApprovalSerializer

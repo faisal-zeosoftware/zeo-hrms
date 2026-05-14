@@ -1152,6 +1152,8 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
         # ✅ employee code
         if instance.employee:
             rep['employee'] = instance.employee.emp_code
+        if instance.branch:
+            rep['branch']=instance.branch.branch_name
 
         # ✅ get current (latest) approval
         latest_approval = instance.resign_approvals.order_by('-level').first()

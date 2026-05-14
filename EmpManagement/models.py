@@ -1919,6 +1919,7 @@ class EmployeeResignation(models.Model):
 
     document_date = models.DateField()
     employee = models.ForeignKey('emp_master', on_delete=models.CASCADE, related_name='resignations')
+    branch           = models.ForeignKey("OrganisationManager.brnch_mstr", on_delete=models.CASCADE)
     # employee_name = models.CharField(max_length=255)
     resigned_on = models.DateField()
     notice_period = models.PositiveIntegerField(null=True, blank=True, help_text="Notice period in days")

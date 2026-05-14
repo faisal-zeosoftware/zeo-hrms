@@ -1916,7 +1916,7 @@ class EmployeeResignation(models.Model):
         ('retirement', 'Retirement'),
         ('death_or_disablement', 'Death or Disablement')
     ]
-
+    document_number  = models.CharField(max_length=50, unique=True, null=True, blank=True)
     document_date = models.DateField()
     employee = models.ForeignKey('emp_master', on_delete=models.CASCADE, related_name='resignations')
     branch           = models.ForeignKey("OrganisationManager.brnch_mstr", on_delete=models.CASCADE)

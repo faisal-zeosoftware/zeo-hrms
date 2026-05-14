@@ -342,15 +342,25 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
         fields = ['id', 'approvals','document_number', 'reason', 'status', 'created_at_date','request_type','remarks']
         # fields = ['id', 'doc_number', 'reason', 'status', 'created_at_date', 'approvals']
 class DocRequestSerializer(serializers.ModelSerializer):
+    document_numbering_details = serializers.SerializerMethodField()
     class Meta:
         model = DocumentRequest
         fields = '__all__'
+    def get_document_numbering_details(self, obj):
+        return {
+            "document_number": obj.document_number,
+            "prefix": obj.document_number.split('-')[0] if obj.document_number else None,
+            # "year": obj.document_number.split('-')[1] if obj.document_number else None,
+        }
+    
     def to_representation(self, instance):
         rep = super(DocRequestSerializer, self).to_representation(instance)
         if instance.request_type:  
             rep['request_type'] = instance.request_type.type_name
         if instance.employee:  
             rep['employee'] = instance.employee.emp_first_name
+        if instance.branch:
+            rep['branch']=instance.branch.branch_name
         
         return rep
     def validate(self, data):

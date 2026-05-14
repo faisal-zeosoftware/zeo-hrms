@@ -165,7 +165,8 @@ class DocumentNumbering(models.Model):
         ('air_ticket_request', 'Air Ticket Request'),
         ('loan_request', 'Loan Request'),
         ('asset_request','Asset Request'),
-        ('document_request','Document Request')
+        ('document_request','Document Request'),
+        ('resignation_request','Resignation Request')
 
 
     ]

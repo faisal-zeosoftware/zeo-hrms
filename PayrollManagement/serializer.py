@@ -122,12 +122,21 @@ class PaySlipComponentSerializer(serializers.ModelSerializer):
         model = PayslipComponent
         fields = ['id', 'component_name', 'component_type', 'amount']
 
+class PayslipLeaveSerializer(serializers.ModelSerializer):
+    leave_type_name = serializers.CharField(
+        source="leave_type.leave_type", read_only=True
+    )
+
+    class Meta:
+        model = PayslipLeave
+        fields = ["leave_type", "leave_type_name", "days"]
 class PayslipSerializer(serializers.ModelSerializer):
     currency_details = serializers.SerializerMethodField()
     payroll_run = PayrollRunSerializer(read_only=True)
     employee = serializers.StringRelatedField()
     components = serializers.SerializerMethodField()
     currency_details = serializers.SerializerMethodField()
+    leave_details = PayslipLeaveSerializer(many=True, read_only=True)
 
     class Meta:
         model = Payslip

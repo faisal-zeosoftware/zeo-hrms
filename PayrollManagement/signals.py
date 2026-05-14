@@ -33,7 +33,6 @@ from dateutil.relativedelta import relativedelta
 from simpleeval import SimpleEval, NameNotDefined, FunctionNotDefined
 from calendars .utils import get_employee_holidays,get_employee_weekend_days
 from .utils import get_ot_rate
-from .models import LoanType, LoanApprovalWorkflow,LoanApprovalLevels
 
 
 def evaluate_formula(formula, variables, employee, component):
@@ -153,9 +152,13 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         start_date = today.replace(day=1)
         end_date = today.replace(day=monthrange(today.year, today.month)[1])
     
+    # Fetch PayStructure for branch-specific defaults
+    PayStructure = apps.get_model("PayrollManagement", "PayStructure")
+    pay_structure = PayStructure.objects.filter(branch=employee.emp_branch_id).first()
+
     variables = {
         'calendar_days': Decimal(str((end_date - start_date).days + 1)),
-        'fixed_days': Decimal('30.0'),
+        'fixed_days': Decimal(str(pay_structure.fixed_working_days if pay_structure and pay_structure.fixed_working_days else '30.0')),
         'standard_hours': Decimal('160.0'),
     }
 
@@ -265,27 +268,14 @@ def get_formula_variables(employee, start_date=None, end_date=None):
 def daterange(start_date, end_date):
     for n in range(int((end_date - start_date).days) + 1):
         yield start_date + timedelta(n)
+
 def get_working_days(employee, start_date, end_date):
-    weekend_days = get_employee_weekend_days(employee)
-    holiday_dates = get_employee_holidays(employee, start_date, end_date)
-
-    working_days = 0
-
-    for day in daterange(start_date, end_date):
-        weekday_name = day.strftime("%A")
-        if weekday_name in weekend_days:
-            continue
-        if day in holiday_dates:
-            continue
-        if Attendance.objects.filter(
-            employee=employee,
-            date=day,
-            check_in_time__isnull=False,
-            check_out_time__isnull=False
-        ).exists():
-            working_days += 1
-
-    return working_days
+    AttendanceCalendar = apps.get_model("calendars", "AttendanceCalendar")
+    return AttendanceCalendar.objects.filter(
+        employee=employee,
+        date__range=(start_date, end_date),
+        status='Present'
+    ).count()
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.apps import apps
@@ -308,13 +298,116 @@ from django.apps import apps
 
 logger = logging.getLogger(__name__)
 
-# --- helpers you already have (import or define here) ---
-# The code expects evaluate_formula, get_formula_variables, daterange, get_working_days to exist
-# If they're already in this file, keep them. If not, import them:
-# from .utils import evaluate_formula, get_formula_variables, daterange, get_working_days
-# (For brevity I assume they exist in this module as in your provided code.)
+def get_payroll_dates_and_days(instance):
 
-# ---------- Core payroll processing helper ----------
+    PayStructure = apps.get_model("PayrollManagement", "PayStructure")
+
+    total_days_in_month = monthrange(instance.year, instance.month)[1]
+
+    start_date = date(instance.year, instance.month, 1)
+    end_date = date(instance.year, instance.month, total_days_in_month)
+
+    total_days = Decimal(str(total_days_in_month))
+
+    pay_structure = None
+
+    if instance.branch:
+        pay_structure = PayStructure.objects.filter(
+            branch=instance.branch
+        ).first()
+
+    if pay_structure:
+
+        # ==========================================
+        # CUSTOM ATTENDANCE CYCLE
+        # ==========================================
+        if pay_structure.attendance_cycle_type == 'CUSTOM':
+
+            cutoff_day = pay_structure.cycle_end_day or 26
+
+            # Current payroll month cutoff date
+            try:
+                end_date = date(
+                    instance.year,
+                    instance.month,
+                    cutoff_day
+                )
+            except ValueError:
+                last_day = monthrange(
+                    instance.year,
+                    instance.month
+                )[1]
+
+                end_date = date(
+                    instance.year,
+                    instance.month,
+                    last_day
+                )
+
+            # Previous cutoff + 1 day
+            prev_month = end_date - relativedelta(months=1)
+
+            try:
+                previous_cutoff = date(
+                    prev_month.year,
+                    prev_month.month,
+                    cutoff_day
+                )
+            except ValueError:
+                last_day_prev = monthrange(
+                    prev_month.year,
+                    prev_month.month
+                )[1]
+
+                previous_cutoff = date(
+                    prev_month.year,
+                    prev_month.month,
+                    last_day_prev
+                )
+
+            start_date = previous_cutoff + relativedelta(days=1)
+
+        # ==========================================
+        # SALARY CALCULATION
+        # ==========================================
+        calc_type = pay_structure.salary_calculation_type
+
+        if calc_type == 'FIXED_DAYS':
+
+            total_days = Decimal(
+                str(pay_structure.fixed_working_days or 30)
+            )
+
+        elif calc_type == 'ORGANIZATION_DAYS':
+
+            config_working_days = (
+                pay_structure.working_days or []
+            )
+
+            config_working_days = [
+                d.upper() for d in config_working_days
+            ]
+
+            org_days_count = 0
+
+            current = start_date
+
+            while current <= end_date:
+
+                if current.strftime('%a').upper() in config_working_days:
+                    org_days_count += 1
+
+                current += relativedelta(days=1)
+
+            total_days = Decimal(str(org_days_count))
+
+        elif calc_type == 'CALENDAR_DAYS':
+
+            total_days = Decimal(
+                str((end_date - start_date).days + 1)
+            )
+
+    return start_date, end_date, total_days
 def process_payroll(instance, employees_qs, start_date, end_date, total_days):
     """
     Create payslips for employees_qs for the given PayrollRun instance.
@@ -345,75 +438,16 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
             logger.exception(f"Error getting formula variables for {employee}: {e}")
             variables = {}
 
-        # Unpaid leave calculation (INCLUDING Leave Pay Rules)
-        LeavePayRule = apps.get_model("calendars", "LeavePayRule")
-
-        approved_leaves = employee_leave_request.objects.filter(
+        # Unpaid leave calculation: Source of Truth is AttendanceCalendar
+        AttendanceCalendar = apps.get_model("calendars", "AttendanceCalendar")
+        
+        # Aggregate unpaid_fraction from the calendar for the payroll period
+        unpaid_leave_days_val = AttendanceCalendar.objects.filter(
             employee=employee,
-            status="approved",
-            start_date__lte=end_date,
-            end_date__gte=start_date,
-        ).order_by('start_date')
-
-        unpaid_leave_days = Decimal("0.00")
-
-        for leave in approved_leaves:
-            leave_duration = Decimal("0.5") if getattr(leave, "dis_half_day", False) else Decimal(str(getattr(leave, "number_of_days", 0) or 0))
-            if leave_duration <= 0:
-                continue
-
-            if getattr(leave.leave_type, 'enable_leave_pay_rule', False):
-                # Calculate leaves taken in the same year BEFORE this specific leave
-                previous_leaves = employee_leave_request.objects.filter(
-                    employee=employee,
-                    status="approved",
-                    leave_type=leave.leave_type,
-                    start_date__year=leave.start_date.year,
-                    start_date__lt=leave.start_date
-                )
-                
-                prev_taken = Decimal("0.00")
-                for pl in previous_leaves:
-                    prev_taken += Decimal("0.5") if getattr(pl, "dis_half_day", False) else Decimal(str(getattr(pl, "number_of_days", 0) or 0))
-
-                rules = LeavePayRule.objects.filter(leave_type=leave.leave_type).order_by('sequence')
-                
-                if not rules.exists():
-                    if getattr(leave.leave_type, 'type', '') == 'unpaid':
-                        unpaid_leave_days += leave_duration
-                    continue
-
-                remaining_leave = leave_duration
-                current_pos = prev_taken
-                this_leave_unpaid = Decimal("0.00")
-                slab_start = Decimal("0.00")
-                
-                for rule in rules:
-                    slab_end = slab_start + Decimal(str(rule.days))
-                    if current_pos < slab_end:
-                        available_in_slab = slab_end - current_pos
-                        days_in_slab = min(remaining_leave, available_in_slab)
-                        
-                        unpaid_fraction = Decimal("1.00") - (Decimal(str(rule.pay_percentage)) / Decimal("100.00"))
-                        this_leave_unpaid += days_in_slab * unpaid_fraction
-                        
-                        remaining_leave -= days_in_slab
-                        current_pos += days_in_slab
-                    
-                    slab_start = slab_end
-                    if remaining_leave <= 0:
-                        break
-                
-                # Any remaining leave exceeding all slabs is fully unpaid (0% pay)
-                if remaining_leave > 0:
-                    this_leave_unpaid += remaining_leave * Decimal("1.00")
-                    
-                unpaid_leave_days += this_leave_unpaid
-                
-            else:
-                # Normal behavior
-                if getattr(leave.leave_type, 'type', '') == 'unpaid':
-                    unpaid_leave_days += leave_duration
+            date__range=(start_date, end_date)
+        ).aggregate(total=Sum('unpaid_fraction'))['total'] or 0
+        
+        unpaid_leave_days = Decimal(str(unpaid_leave_days_val))
 
         days_worked = Decimal(total_days) - unpaid_leave_days
         if days_worked < 0:
@@ -426,7 +460,37 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
             total_working_days=total_days,
             days_worked=days_worked,
         )
+        # Record Leave Details from AttendanceCalendar
+        leave_entries = AttendanceCalendar.objects.filter(
+            employee=employee,
+            date__range=(start_date, end_date),
+            status='Leave'
+        ).values('leave_type').annotate(total_days=Count('id'))
 
+        PayslipLeave = apps.get_model("PayrollManagement", "PayslipLeave")
+        for entry in leave_entries:
+            if entry['leave_type']:
+                lt_id = entry['leave_type']
+                # Calculate actual days (handling half days if they exist in calendar)
+                # But Wait, AttendanceCalendar has is_half_day. Let's do a more precise calculation.
+                precise_days = Decimal("0.00")
+                day_records = AttendanceCalendar.objects.filter(
+                    employee=employee,
+                    date__range=(start_date, end_date),
+                    status='Leave',
+                    leave_type_id=lt_id
+                )
+                for rec in day_records:
+                    if rec.is_half_day:
+                        precise_days += Decimal("0.5")
+                    else:
+                        precise_days += Decimal("1.0")
+                
+                PayslipLeave.objects.update_or_create(
+                    payslip=payslip,
+                    leave_type_id=lt_id,
+                    defaults={'days': precise_days}
+                )
         total_additions = Decimal("0.00")
         total_deductions = Decimal("0.00")
 
@@ -578,11 +642,9 @@ def payrollrun_post_save(sender, instance, created, **kwargs):
 
     EmpMaster = apps.get_model("EmpManagement", "emp_master")
 
-    # Try to build date range
+    # Calculate dates and total days based on PayStructure
     try:
-        total_days = monthrange(instance.year, instance.month)[1]
-        start_date = datetime(instance.year, instance.month, 1).date()
-        end_date = datetime(instance.year, instance.month, total_days).date()
+        start_date, end_date, total_days = get_payroll_dates_and_days(instance)
     except Exception as e:
         logger.exception(f"Invalid date for PayrollRun {getattr(instance, 'id', None)}: {e}")
         return
@@ -623,10 +685,9 @@ def payrollrun_m2m_changed(sender, instance, action, pk_set, **kwargs):
         logger.info(f"PayrollRun {instance.id} status is {instance.status}; skipping m2m processing.")
         return
 
+    # Calculate dates and total days based on PayStructure
     try:
-        total_days = monthrange(instance.year, instance.month)[1]
-        start_date = datetime(instance.year, instance.month, 1).date()
-        end_date = datetime(instance.year, instance.month, total_days).date()
+        start_date, end_date, total_days = get_payroll_dates_and_days(instance)
     except Exception as e:
         logger.exception(f"Invalid date for PayrollRun {getattr(instance,'id', None)} in m2m handler: {e}")
         return
@@ -675,19 +736,4 @@ def update_dependents_on_fixed_change(sender, instance, **kwargs):
                 emp_struct.save(update_fields=["amount"])
             except Exception as e:
                 logger.error(f"Error updating dependent component {comp.name} for {instance.employee}: {e}")
-@receiver(post_save, sender=LoanType)
-def create_workflow_and_default_level(sender, instance, created, **kwargs):
-    if not created:
-        return
 
-    workflow = LoanApprovalWorkflow.objects.create(
-        loan_type=instance,
-        approval_type='no_approval'
-    )
-
-    LoanApprovalLevels.objects.create(
-        workflow=workflow,
-        level=1,
-        role="Auto Level",
-        approver=None
-    )

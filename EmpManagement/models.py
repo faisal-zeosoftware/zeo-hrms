@@ -1732,7 +1732,7 @@ class DocumentApproval(models.Model):
         (APPROVED, 'Approved'),
         (REJECTED, 'Rejected'),
     ]
-    general_request = models.ForeignKey(DocumentRequest, related_name='doc_approvals', on_delete=models.CASCADE)
+    document_request = models.ForeignKey(DocumentRequest, related_name='doc_approvals', on_delete=models.CASCADE)
     approver        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE,null=True)
     role            = models.CharField(max_length=50, null=True, blank=True)
     level           = models.IntegerField(default=1)

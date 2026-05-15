@@ -289,6 +289,13 @@ class LoanTypeSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({ f"{loan_type} is already exists."
         })
         return attrs
+    def to_representation(self, instance):
+        rep = super(LoanTypeSerializer, self).to_representation(instance)
+        rep['branch'] = [
+            branch.branch_name
+            for branch in instance.branch.all()
+        ]
+        return rep
 
 class LoanApplicationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -300,6 +307,8 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             rep['employee'] =instance.employee.emp_first_name
         if instance.loan_type:
             rep['loan_type'] =instance.loan_type.loan_type
+        if instance.branch:
+            rep['branch'] =instance.branch.branch_name
         return rep
     def validate(self, data):
         loan_type = data.get('loan_type')
@@ -389,6 +398,11 @@ class LoanApprovalLevelsSerializer(serializers.ModelSerializer):
             "escalate_after_minutes",
         ]
         read_only_fields = ('workflow',)
+    def to_representation(self, instance):
+        rep = super(LoanApprovalLevelsSerializer, self).to_representation(instance)
+        if instance.approver:
+            rep['approver'] =instance.approver.username
+        return rep
 
 class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = LoanApprovalLevelsSerializer(source='loan_levels', many=True)
@@ -447,6 +461,14 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
                 )
 
         return instance
+    
+    def to_representation(self, instance):
+        rep = super( LoanApprovalWorkflowSerializer, self).to_representation(instance)
+        # if instance.branch.exists():
+        rep['branch'] = [b.branch_name for b in instance.branch.all()]
+        if instance.loan_type:
+             rep['loan_type'] =instance.loan_type.loan_type
+        return rep
 class LoanApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApproval
@@ -635,6 +657,14 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
                 })
 
         return data
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+         # ✅ employee code
+        if instance.employee:
+            rep['employee'] = instance.employee.emp_code
+        if instance.branch:
+            rep['branch']=instance.branch.branch_name
+        return rep
     
 class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):
     class Meta:
@@ -710,7 +740,7 @@ class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
         rep = super().to_representation(instance)
 
         if instance.branch.exists():
-            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+            rep['branch'] = [b.branch_name for b in instance.branch.all()]
 
         return rep
 
@@ -821,7 +851,7 @@ class PayslipApprovalWorkflowSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         if instance.branch.exists():
-            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+            rep['branch'] = [b.branch_name for b in instance.branch.all()]
 
         return rep
 
@@ -925,6 +955,9 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
 
         if instance.allocation:
             rep['allocation'] = instance.allocation.policy.name
+        
+        if instance.branch:
+            rep['branch'] = instance.branch.branch_name
 
         return rep
 
@@ -1016,6 +1049,13 @@ class AirticketApprovalWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketApprovalWorkflow
         fields = '__all__'
+        
+    def to_representation(self, instance):
+        rep = super(AirticketApprovalWorkflowSerializer, self).to_representation(instance)
+        if instance.branch:
+           rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+           return rep
+
 
     def create(self, validated_data):
         levels_data = validated_data.pop('airticket_levels', [])   # ✅ FIX

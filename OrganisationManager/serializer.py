@@ -175,6 +175,12 @@ class AssetTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetType
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(AssetTypeSerializer, self).to_representation(instance)
+        if instance.branch:
+           rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+           return rep
+        
 class AssetSerializer(serializers.ModelSerializer):
     asset_custom_fields=AssetCustomFieldValueSerializer(many=True, read_only=True, source='custom_field_values')
     class Meta:
@@ -208,6 +214,11 @@ class AssetApprovalLevelSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
+    def to_representation(self, instance):
+        rep = super(AssetApprovalLevelSerializer, self).to_representation(instance)
+        if instance.approver:  
+            rep['approver'] = instance.approver.username
+        return rep
     
 class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = AssetApprovalLevelSerializer(many=True,source='asset_levels')
@@ -216,6 +227,13 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetApprovalWorkflow
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(AssetApprovalWorkflowSerializer, self).to_representation(instance)
+        if instance.branch:
+           rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+        if instance.asset_type:
+            rep['asset_type'] = instance.asset_type.name
+        return rep
 
     def create(self, validated_data):
         levels_data = validated_data.pop('asset_levels', [])  # ✅ FIXED
@@ -397,10 +415,14 @@ class AssetRequestSerializer(serializers.ModelSerializer):
             rep['asset_type'] = instance.asset_type.name
 
         if instance.employee:
-            rep['employee_code'] = instance.employee.emp_code
+            rep['employee'] = instance.employee.emp_code
 
         if instance.requested_asset:
             rep['requested_asset'] = instance.requested_asset.name
+
+        if instance.branch:
+            rep['branch']=instance.branch.branch_name
+
 
         return rep
     

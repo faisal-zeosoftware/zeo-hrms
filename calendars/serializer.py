@@ -495,21 +495,21 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
 
         return data
 
-    # def to_representation(self, instance):
-    #     rep = super(LateinEarlyoutRequestSerializer, self).to_representation(instance)
-    #     if instance.employee:
-    #         rep['employee'] = instance.employee.emp_code
-    #     return rep
+    def to_representation(self, instance):
+        rep = super(LateinEarlyoutRequestSerializer, self).to_representation(instance)
+        if instance.employee:
+            rep['employee'] = instance.employee.emp_code
+        return rep
     
 class LateinEarlyoutApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = LateinEarlyoutApprovalLevel
         fields = '__all__'
-    # def to_representation(self, instance):
-    #     rep = super(LateinEarlyoutApprovalLevelSerializer, self).to_representation(instance)
-    #     if instance.approver:  
-    #         rep['approver'] = instance.approver.username
-    #         return rep
+    def to_representation(self, instance):
+        rep = super(LateinEarlyoutApprovalLevelSerializer, self).to_representation(instance)
+        if instance.approver:  
+            rep['approver'] = instance.approver.username
+            return rep
 
 class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = LateinEarlyoutApprovalLevelSerializer(many=True,source='lateinearlyout_levels')
@@ -518,6 +518,11 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = LatinEarlyApprovalWorkflow
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(LatinEarlyApprovalWorkflowSerializer, self).to_representation(instance)
+        if instance.branch:
+           rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+           return rep
 
     # ---------------- VALIDATION ----------------
     def validate(self, data):
@@ -748,14 +753,6 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
         if instance.escalate_to:
             rep['escalate_to'] = instance.escalate_to.username
 
-        if instance.workflow and instance.workflow.request_type:
-            rep['request_type'] = instance.workflow.request_type.name
-
-        if instance.workflow and instance.workflow.branch.exists():
-            rep['branch'] = [
-                b.branch_name for b in instance.workflow.branch.all()
-            ]
-
         return rep
     
 class LvApprovalSerializer(serializers.ModelSerializer):
@@ -797,11 +794,11 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
             context=self.context
         ).data
 
-        rep['request_type_name'] = (
+        rep['request_type'] = (
             instance.request_type.name if instance.request_type else None
         )
 
-        rep['branch_names'] = [
+        rep['branch'] = [
             b.branch_name for b in instance.branch.all()
         ] if instance.branch.exists() else []
 

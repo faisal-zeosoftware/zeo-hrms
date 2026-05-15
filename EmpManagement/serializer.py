@@ -596,6 +596,8 @@ class RequestTypeSerializer(serializers.ModelSerializer):
         rep = super(RequestTypeSerializer, self).to_representation(instance)
         if instance.salary_component:  # Check if emp_state_id is not None
             rep['salary_component'] = instance.salary_component.name
+        if instance.branch:
+           rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
         return rep
 class EmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -743,18 +745,7 @@ class ApprovalLevelSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         if instance.approver:
-            emp = instance.approver.employees.first()
-            if emp:
-                rep['approver'] = f"{emp.emp_first_name or ''} {emp.emp_last_name or ''}".strip() or instance.approver.username
-            else:
-                rep['approver'] = instance.approver.username
-        
-        if instance.escalate_to:
-            emp_esc = instance.escalate_to.employees.first()
-            if emp_esc:
-                rep['escalate_to'] = f"{emp_esc.emp_first_name or ''} {emp_esc.emp_last_name or ''}".strip() or instance.escalate_to.username
-            else:
-                rep['escalate_to'] = instance.escalate_to.username
+            rep['approver'] = instance.approver.username
         return rep
 
 
@@ -769,9 +760,9 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         if instance.request_type:
-            rep['request_type_name'] = instance.request_type.name
+            rep['request_type'] = instance.request_type.name
         if instance.branch.exists():
-            rep['branch_names'] = [b.branch_name for b in instance.branch.all()]
+            rep['branch'] = [b.branch_name for b in instance.branch.all()]
         return rep
 
     def create(self, validated_data):
@@ -861,7 +852,7 @@ class DocApprovalSerializer(serializers.ModelSerializer):
         if instance.approver:  
             rep['approver'] = instance.approver.username
         if instance.general_request:
-            rep['general_request'] = instance.general_request.request_type.type_name
+            rep['document_request'] = instance.document_request.request_type.type_name
         return rep
     
 class DocApprovalLevelSerializer(serializers.ModelSerializer):
@@ -879,6 +870,14 @@ class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentApprovalWorkflow
         fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super(DocumentApprovalWorkflowSerializer, self).to_representation(instance)
+        if instance.request_type:  
+            rep['request_type'] = instance.request_type.type_name
+        if instance.branch:
+           rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+        return rep
 
     def create(self, validated_data):
         # ✅ FIX KEY
@@ -990,7 +989,7 @@ class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
             context=self.context
         ).data
 
-        rep['branch_names'] = [
+        rep['branch'] = [
             b.branch_name for b in instance.branch.all()
         ] if instance.branch.exists() else []
 

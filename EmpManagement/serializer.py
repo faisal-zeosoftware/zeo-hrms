@@ -852,7 +852,7 @@ class DocApprovalSerializer(serializers.ModelSerializer):
         if instance.approver:  
             rep['approver'] = instance.approver.username
         if instance.general_request:
-            rep['document_request'] = instance.document_request.request_type.type_name
+            rep['document_request'] = instance.document_request.document_number
         return rep
     
 class DocApprovalLevelSerializer(serializers.ModelSerializer):
@@ -959,7 +959,7 @@ class ResignationApprovalSerializer(serializers.ModelSerializer):
 
         
         if instance.resignation_request:
-            rep['resignation_request'] = instance.resignation_request.termination_type
+            rep['resignation_request'] = instance.resignation_request.document_number
 
         if instance.approver:
             rep['approver'] = instance.approver.username

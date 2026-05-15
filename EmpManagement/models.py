@@ -1643,7 +1643,7 @@ class DocumentRequest(models.Model):
                 return
 
             DocumentApproval.objects.create(
-                general_request=self,
+                document_request=self,
                 approver=manager,
                 role="Reporting Manager",
                 level=current_approved_levels + 1,
@@ -1661,7 +1661,7 @@ class DocumentRequest(models.Model):
             last_approval = self.doc_approvals.order_by('-level').first()
 
             approval = DocumentApproval.objects.create(
-                general_request=self,
+                document_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
@@ -1747,23 +1747,23 @@ class DocumentApproval(models.Model):
         if note:
             self.note = note
         self.save()
-        self.general_request.move_to_next_level()
+        self.document_request.move_to_next_level()
     def reject(self,note=None):
         self.status = self.REJECTED
         if note:
             self.note = note
         self.save()
-        self.general_request.status = 'Rejected'
-        self.general_request.save()
+        self.document_request.status = 'Rejected'
+        self.document_request.save()
         send_notification_email(
-        user=self.general_request.created_by,
-        employee=self.general_request.employee,
-        message=f"Your request {self.general_request.document_number} has been rejected.",
+        user=self.document_request.created_by,
+        employee=self.document_request.employee,
+        message=f"Your request {self.document_request.document_number} has been rejected.",
         template_type="request_rejected",
         context={
-            **get_employee_context(self.general_request.employee),
-            'doc_number': self.general_request.document_number,
-            'request_type': self.general_request.request_type.type_name,
+            **get_employee_context(self.document_request.employee),
+            'doc_number': self.document_request.document_number,
+            'request_type': self.document_request.request_type.type_name,
             'rejection_reason': self.note or 'Rejected'
         },
         email_template_model=DocRequestEmailTemplate,
@@ -1796,7 +1796,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             approver = instance.created_by
 
             DocumentApproval.objects.create(
-                general_request=instance,
+                document_request=instance,
                 approver=approver,
                 role="Auto Approval",
                 level=1,
@@ -1831,7 +1831,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 raise Exception("Employee has no reporting manager.")
 
             DocumentApproval.objects.create(
-                general_request=instance,
+                document_request=instance,
                 approver=manager_user,
                 role="Reporting Manager",
                 level=first_level.level,
@@ -1858,7 +1858,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         if approval_type == 'multi_approval':
 
             DocumentApproval.objects.create(
-                general_request=instance,
+                document_request=instance,
                 approver=first_level.approver,
                 role=first_level.role,
                 level=first_level.level,

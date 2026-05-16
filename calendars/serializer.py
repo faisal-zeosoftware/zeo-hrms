@@ -6,7 +6,7 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
                     LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
                     LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow,
-                    AttendanceCalendar
+                    AttendanceCalendar,CompensatoryLeaveAllocation
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -898,6 +898,15 @@ class lvBalanceReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = lvBalanceReport
         fields = '__all__'
+
+class CompensatoryLeaveAllocationSerializer(serializers.ModelSerializer):
+    attendances = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Attendance.objects.all()
+    )
+    class Meta:
+        model = CompensatoryLeaveAllocation
+        fields ='__all__'
 
 class CompensatoryLeaveRequestSerializer(serializers.ModelSerializer):
     class Meta:

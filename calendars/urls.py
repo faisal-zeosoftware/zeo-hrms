@@ -5,7 +5,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
-                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet
+                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset
                     
                     )
 
@@ -39,6 +39,8 @@ router.register(r'shiftpattern', ShiftPatternViewSet, basename='shiftpattern')
 router.register(r'employee-shift', EmployeeShiftScheduleViewSet, basename='employee-shift')
 router.register(r'shift-overrides', ShiftOverrideViewSet, basename='shift-overrides')
 router.register(r'employee-leave-rejoins', EmployeeRejoiningViewset, basename='employee-leave-rejoins')
+router.register(r'compensatory-leave-allocation',CompensatoryLeaveAllocationviewset, basename='compensatory-leave-allocation')
+
 router.register(r'compensatory-leave-request',CompensatoryLeaveRequestviewset, basename='compensatory-leave-request')
 router.register(r'compensatory-leave-balance',CompensatoryLeaveBalancetviewset, basename='compensatory-leave-balance')
 router.register(r'emp-cmpnstry-lv-transaction',CompensatoryLeaveTransactionviewset, basename='emp-cmpnstry-lv-transaction')

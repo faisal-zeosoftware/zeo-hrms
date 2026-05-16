@@ -881,6 +881,24 @@ class LvCommonWorkflow(models.Model):
         return f"Level {self.level} - {self.role or self.approver}"
 
 #compensatory leave
+
+class CompensatoryLeaveAllocation(models.Model):
+    employee        = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
+    attendances      = models.ManyToManyField('Attendance', related_name='compensatory_allocations')
+    reason          = models.TextField()
+    credited_days   = models.FloatField(default=1.0)
+    created_at      = models.DateTimeField(auto_now_add=True)
+    is_allocated = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        'UserManagement.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+
+    def __str__(self):
+        return f"Allocation for {self.employee}"
+
 class CompensatoryLeaveTransaction(models.Model):
     """Logs the addition and deduction of compensatory leave days."""
     TRANSACTION_TYPE_CHOICES = [
@@ -2138,6 +2156,37 @@ def handle_rejoining(sender, instance, **kwargs):
             'unpaid_leave_days': unpaid_days,
         }
     )
+@receiver(post_save, sender=Attendance)
+def create_compensatory_record(sender, instance, created, **kwargs):
+
+    if not created:
+        return
+
+    if instance.is_compensated:
+        return
+
+    if not (instance.is_weekend() or instance.is_holiday()):
+        return
+
+    if not instance.total_hours:
+        return
+
+    existing = CompensatoryLeaveAllocation.objects.filter(
+        employee=instance.employee,
+        attendances=instance
+    ).exists()
+
+    if existing:
+        return
+
+    allocation = CompensatoryLeaveAllocation.objects.create(
+        employee=instance.employee,
+        credited_days=1,
+        reason=f"Worked on {instance.date}",
+        created_by=instance.created_by
+    )
+
+    allocation.attendances.add(instance)
 class AttendanceLog(models.Model):
     attendance = models.ForeignKey(Attendance, on_delete=models.CASCADE, related_name='logs')
     log_type = models.CharField(max_length=10, choices=(('check_in', 'Check In'), ('check_out', 'Check Out')))

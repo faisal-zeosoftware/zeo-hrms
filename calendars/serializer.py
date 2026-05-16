@@ -900,10 +900,7 @@ class lvBalanceReportSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class CompensatoryLeaveAllocationSerializer(serializers.ModelSerializer):
-    attendances = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=Attendance.objects.all()
-    )
+    attendances = AttendanceSerializer(many=True, read_only=True)
     class Meta:
         model = CompensatoryLeaveAllocation
         fields ='__all__'

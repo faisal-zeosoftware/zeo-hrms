@@ -51,7 +51,7 @@ class company(TenantMixin):
     industry_type  = models.CharField(max_length=10,choices=INDUSTRY_CHOICES,blank=True,null=True)
     address_line1  = models.CharField(max_length=255, blank=True, null=True)
     address_line2  = models.CharField(max_length=255, blank=True, null=True)
-    financial_year = models.DateField()  
+    financial_year = models.DateField(null=True,blank=True)  
     city           = models.CharField(max_length=100,null=True,blank=True)
     timezone       = models.CharField(max_length=50)
 

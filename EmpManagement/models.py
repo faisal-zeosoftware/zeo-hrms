@@ -39,6 +39,7 @@ class emp_master(models.Model):
     
     emp_code                 = models.CharField(max_length=50,unique=True)
     emp_first_name           = models.CharField(max_length=50,null=True,blank =True)
+    emp_middle_name          = models.CharField(max_length=50,null=True,blank =True)
     emp_last_name            = models.CharField(max_length=50,null=True,blank =True)
     emp_gender               = models.CharField(max_length=20,choices=GENDER_CHOICES,null=True,blank =True)
     emp_date_of_birth        = models.DateField(null=True,blank =True)

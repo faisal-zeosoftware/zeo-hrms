@@ -26,12 +26,12 @@ class company(TenantMixin):
         ('RET', 'Retail'),
         ('OTH', 'Other'),
     ]
-    name = models.CharField(max_length=100)
+    name        = models.CharField(max_length=100)
     schema_name = models.SlugField(unique=True, blank=True, null=True)  # Ensure unique schemas
-    paid_until = models.DateField(auto_now_add=True)
-    created_on = models.DateField(auto_now_add=True)
-    country = models.ForeignKey('Core.cntry_mstr', on_delete=models.CASCADE)
-    logo = models.ImageField(null=True, blank=True)
+    paid_until  = models.DateField(auto_now_add=True)
+    created_on  = models.DateField(auto_now_add=True)
+    country     = models.ForeignKey('Core.cntry_mstr', on_delete=models.CASCADE)
+    logo        = models.ImageField(null=True, blank=True)
     employer_unique_id = models.CharField(
         max_length=13,
         validators=[RegexValidator(r'^\d{13}$', 'Must be a 13-digit number')],
@@ -46,13 +46,14 @@ class company(TenantMixin):
         blank=True,
         null=True
     )
-    currency = models.ForeignKey('Core.crncy_mstr', on_delete=models.SET_NULL, null=True, blank=True)
-    state = models.ForeignKey('Core.state_mstr', on_delete=models.SET_NULL, null=True, blank=True)
-    industry_type = models.CharField(max_length=10,choices=INDUSTRY_CHOICES,blank=True,null=True)
-    address_line1 = models.CharField(max_length=255, blank=True, null=True)
-    address_line2 = models.CharField(max_length=255, blank=True, null=True)
-    financial_year_start_month = models.IntegerField(default=1)  
-    financial_year_start_day = models.IntegerField(default=1)
+    currency       = models.ForeignKey('Core.crncy_mstr', on_delete=models.SET_NULL, null=True, blank=True)
+    state          = models.ForeignKey('Core.state_mstr', on_delete=models.SET_NULL, null=True, blank=True)
+    industry_type  = models.CharField(max_length=10,choices=INDUSTRY_CHOICES,blank=True,null=True)
+    address_line1  = models.CharField(max_length=255, blank=True, null=True)
+    address_line2  = models.CharField(max_length=255, blank=True, null=True)
+    financial_year = models.DateField()  
+    city           = models.CharField(max_length=100,null=True,blank=True)
+    timezone       = models.CharField(max_length=50)
 
     # Automatically create schema when saving
     auto_create_schema = True

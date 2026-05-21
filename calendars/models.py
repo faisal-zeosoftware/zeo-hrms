@@ -410,6 +410,7 @@ class leave_type(models.Model):
     use_common_workflow           = models.BooleanField(default=False)
     include_dashboard             = models.BooleanField(default=False)
     enable_leave_pay_rule         = models.BooleanField(default=False, help_text="Enable pay rules based on leave duration")    
+    is_compensatory               = models.BooleanField(default=False)    
     branch                        = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='leave_types')
     created_at                    = models.DateTimeField(default=timezone.now)
     created_by                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')

@@ -3,7 +3,7 @@ from django.dispatch import receiver
 from django_tenants.utils import schema_context
 from django.apps import apps
 from datetime import date
-from .models import AssetType,AssetApprovalWorkflow,AssetApprovalLevel
+from .models import AssetType,AssetApprovalWorkflow,AssetApprovalLevel,ctgry_master,dept_master,desgntn_master
 @receiver(post_schema_sync)
 def create_tenant_defaults(sender, tenant, **kwargs):
     with schema_context(tenant.schema_name):
@@ -143,7 +143,63 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                     "is_air_ticket": is_air_ticket,
                 },
             )
+        default_departments = [
+            ("Human Resources", "HR"),
+            ("Information Technology", "IT"),
+            ("Finance", "FIN"),
+            ("Sales", "SAL"),
+            ("Operations", "OPS"),
+        ]
 
+        for name, code in default_departments:
+            department, created = dept_master.objects.get_or_create(
+                dept_code=f"{code}-{tenant.schema_name[:3].upper()}",
+                defaults={
+                    "dept_name": name,
+                    "dept_description": f"Default {name} Department",
+                }
+            )
+
+            department.branch.add(branch)
+
+        # Default Designations
+        default_designations = [
+            ("Manager", "MGR"),
+            ("Team Lead", "TL"),
+            ("Executive", "EXE"),
+            ("Senior Executive", "SE"),
+            ("Assistant", "AST"),
+        ]
+
+        for title, code in default_designations:
+            designation, created = desgntn_master.objects.get_or_create(
+                desgntn_code=f"{code}-{tenant.schema_name[:3].upper()}",
+                defaults={
+                    "desgntn_job_title": title,
+                    "desgntn_description": f"Default {title} Designation",
+                }
+            )
+
+            designation.branch.add(branch)
+
+        # Default Categories
+        default_categories = [
+            ("Permanent", "PERM"),
+            ("Contract", "CONT"),
+            ("Intern", "INT"),
+            ("Trainee", "TRN"),
+        ]
+
+        for title, code in default_categories:
+            category, created = ctgry_master.objects.get_or_create(
+                ctgry_code=f"{code}-{tenant.schema_name[:3].upper()}",
+                defaults={
+                    "ctgry_title": title,
+                    "ctgry_description": f"Default {title} Category",
+                }
+            )
+
+            category.branch.add(branch)
 from django.db.models.signals import post_save
 # from django.dispatch import receiver
 # from calendars .models import leave_type

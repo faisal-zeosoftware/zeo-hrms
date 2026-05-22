@@ -86,29 +86,32 @@ def create_tenant_defaults(sender, tenant, **kwargs):
 
         # Default leave types
         default_leaves = [
-            ("Sick Leave", "SL", "paid"),
-            ("Annual Leave", "AL", "paid"),
-            ("Casual Leave", "CL", "paid"),
-            ("Maternity Leave", "ML", "paid"),
-            ("Paternity Leave", "PL", "paid"),
+            ("Sick Leave", "SL", "paid",True,False),
+            ("Annual Leave", "AL", "paid",False,False),
+            ("Casual Leave", "CL", "paid",False,False),
+            ("Maternity Leave", "ML", "paid",False,False),
+            ("Paternity Leave", "PL", "paid",False,False),
+            ("Compensatory Leave", "COMP", "paid",False,True),
         ]
-        for name, code, leave_type_value in default_leaves:
-            leave_type.objects.get_or_create(
-                code=f"{code}-{tenant.schema_name[:3].upper()}",
-                branch=branch,
-                defaults={
-                    "name": name,
-                    "type": leave_type_value,
-                    "unit": "days",
-                    "negative": False,
-                    "description": f"Default {name}",
-                    "allow_half_day": True,
-                    "include_weekend": False,
-                    "include_holiday":False,
-                    "use_common_workflow": True,
-                    "include_dashboard": True,
-                },
-            )
+        for (name,code,leave_type_value,enable_leave_pay_rule,is_compensatory,) in default_leaves:
+            leave_type.objects.update_or_create(
+            code=f"{code}-{tenant.schema_name[:3].upper()}",
+            branch=branch,
+            defaults={
+                "name": name,
+                "type": leave_type_value,
+                "unit": "days",
+                "negative": False,
+                "description": f"Default {name}",
+                "allow_half_day": True,
+                "include_weekend": False,
+                "include_holiday": False,
+                "use_common_workflow": True,
+                "include_dashboard": True,
+                "enable_leave_pay_rule":enable_leave_pay_rule,
+                "is_compensatory":is_compensatory,
+            },
+        )
 
         # Default salary components - PASSING branch EXPLICITLY
         default_salary_components = [

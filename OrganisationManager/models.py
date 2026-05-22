@@ -72,7 +72,7 @@ class brnch_mstr(models.Model):
 #departments model
 class dept_master(models.Model):
     dept_name        = models.CharField(max_length=50)
-    dept_code        = models.CharField(max_length=50,unique=True)
+    dept_code        = models.CharField(max_length=50,unique=True,null=True,blank=True)
     dept_description = models.CharField(max_length=200,null=True,blank=True)
     dept_created_at  = models.DateTimeField(auto_now_add=True)
     dept_created_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
@@ -100,7 +100,7 @@ class dept_master(models.Model):
 #designation master
 class desgntn_master(models.Model):
     desgntn_job_title   =  models.CharField(max_length=50)
-    desgntn_code        = models.CharField(max_length=50,unique=True)
+    desgntn_code        = models.CharField(max_length=50,unique=True,null=True,blank=True)
     desgntn_description = models.CharField(max_length=200,null=True,blank=True)
     desgntn_created_at  = models.DateTimeField(auto_now_add=True)
     desgntn_created_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
@@ -123,7 +123,7 @@ class desgntn_master(models.Model):
 #CATOGARY master
 class ctgry_master(models.Model):
     ctgry_title       =  models.CharField(max_length=50)
-    ctgry_code        = models.CharField(max_length=50,unique=True)    
+    ctgry_code        = models.CharField(max_length=50,unique=True,null=True,blank=True)    
     ctgry_description = models.CharField(max_length=200,null=True,blank=True)
     ctgry_created_at  = models.DateTimeField(auto_now_add=True)
     ctgry_created_by  = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')

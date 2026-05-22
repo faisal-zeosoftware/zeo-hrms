@@ -53,7 +53,7 @@ class company(TenantMixin):
     address_line2  = models.CharField(max_length=255, blank=True, null=True)
     financial_year = models.DateField(null=True,blank=True)  
     city           = models.CharField(max_length=100,null=True,blank=True)
-    timezone       = models.CharField(max_length=50)
+    timezone       = models.CharField(max_length=50,null=True,blank=True)
 
     # Automatically create schema when saving
     auto_create_schema = True
@@ -115,6 +115,7 @@ class CustomUser(UserProfile):
     otp = models.CharField(max_length=6, blank=True, null=True)
     otp_created_at = models.DateTimeField(blank=True, null=True)
     is_2fa_verified = models.BooleanField(default=False)
+    timezone = models.CharField(max_length=50,null=True,blank=True)
 
     USERNAME_FIELD = 'username'  # Authentication uses username
     REQUIRED_FIELDS = ['email']  # No required fields other than username

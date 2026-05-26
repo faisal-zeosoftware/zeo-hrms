@@ -82,6 +82,10 @@ class emp_master(models.Model):
     visa_location            = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.SET_NULL,related_name='visa_location',null=True,blank =True)
     face_encoding            = models.JSONField(null=True, blank=True)
     barcode_number           = models.CharField(max_length=100, unique=True, null=True, blank=True, help_text="Unique barcode or card ID for attendance scanning")
+    ATTENDANCE_SOURCE_CHOICES = [
+        ("manual", "Manual Attendance"),
+        ("biometric", "Biometric Attendance"),]
+    attendance_source = models.CharField(max_length=20,choices=ATTENDANCE_SOURCE_CHOICES,default="manual",help_text="Primary attendance source for payroll calculations",blank=True,null=True)
     class Meta:
         permissions = (
             ('import_emp_master', 'Can import employee master'),

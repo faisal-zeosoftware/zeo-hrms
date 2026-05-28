@@ -275,6 +275,9 @@ class Announcement(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     specific_employees = models.ManyToManyField(emp_master, blank=True, related_name='employee_announcements')
     branches = models.ManyToManyField(brnch_mstr, blank=True, related_name='branch_announcements')
+    emp_dept_id = models.ManyToManyField(dept_master,null=True,blank =True)
+    emp_desgntn_id = models.ManyToManyField(desgntn_master,null=True,blank =True)
+    emp_ctgry_id = models.ManyToManyField(ctgry_master,null=True,blank =True)
     attachment = models.FileField(upload_to='announcements/', null=True, blank=True)
     allow_comments = models.BooleanField(default=True)
     created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True)
@@ -313,6 +316,10 @@ class AssetEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
+    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
 
     def __str__(self):
         return f"{self.template_type} - {self.subject}"

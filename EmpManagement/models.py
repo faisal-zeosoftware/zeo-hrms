@@ -1132,8 +1132,10 @@ class EmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
-
+    branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
+    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
 
@@ -1573,16 +1575,20 @@ class SelectedEmpNotify(models.Model):
 
 
 class NotificationSettings(models.Model):
-    branch              = models.ForeignKey("OrganisationManager.brnch_mstr", on_delete=models.CASCADE)
-    notify_users        = models.ManyToManyField('UserManagement.CustomUser', blank=True)  # Allows multiple employee selections
-    days_before_expiry  = models.IntegerField(default=7)  # Default reminder 7 days before expiry
-    days_after_expiry   = models.IntegerField(default=0)  # Default reminder 0 days after expiry (on expiry day)
+    branch              = models.ManyToManyField("OrganisationManager.brnch_mstr",blank=True)
+    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
+    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
+    notify_users        = models.ManyToManyField('UserManagement.CustomUser',blank=True )
+    days_before_expiry  = models.PositiveBigIntegerField(default=7)
+    days_after_expiry   = models.PositiveBigIntegerField(default=0)
+    send_email          = models.BooleanField(default=True)
     created_at          = models.DateTimeField(auto_now_add=True)
-    created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=['branch'], name='unique_branch_notification')
-        ]
+    created_by          = models.ForeignKey( 'UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,related_name='%(class)s_created_by')
+    # class Meta:
+    #     constraints = [
+    #         models.UniqueConstraint(fields=['branch'], name='unique_branch_notification')
+    #     ]
 
     def __str__(self):
         return f"Reminder Settings for {self.branch.name}"
@@ -1596,6 +1602,10 @@ class DocExpEmailTemplate(models.Model):
     body            = models.TextField()
     created_at      = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
+    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
 
     def __str__(self):
         return self.template_name
@@ -1624,7 +1634,10 @@ class DocRequestEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
+    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
     
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
@@ -1970,8 +1983,10 @@ class ResignationEmailTemplate(models.Model):
     body                = models.TextField()
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
-   
+    branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
+    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
     

@@ -1219,13 +1219,26 @@ class GeneralRequest(models.Model):
 
     def move_to_next_level(self):
 
-        # ---------------- REJECT ---------------- #
+        # ---------------- REJECT ----------------
         if self.approvals.filter(status=Approval.REJECTED).exists():
             self.status = 'Rejected'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request has been rejected.",
+                template_type="request_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    'request': str(self),
+                },
+                email_template_model=EmailTemplate,
+                notification_model=RequestNotification,
+            )
             return
 
-        # ---------------- GET WORKFLOW ---------------- #
+        # ---------------- GET WORKFLOW ----------------
         workflow = ApprovalWorkflow.objects.filter(
             request_type=self.request_type,
         ).first()
@@ -1245,31 +1258,53 @@ class GeneralRequest(models.Model):
 
         approval_type = workflow.approval_type
 
-
         # =========================================================
-        # ✅ MINIMUM APPROVAL CHECK (ADDED)
+        # MINIMUM APPROVAL CHECK
         # =========================================================
         approved_count = self.approvals.filter(status=Approval.APPROVED).count()
-
-        # (safe get in case field missing/null)
         min_required = getattr(self.request_type, 'min_approvals_required', None)
 
         if min_required and approved_count >= min_required:
             self.status = 'Approved'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request': str(self),
+                },
+                email_template_model=EmailTemplate,
+                notification_model=RequestNotification,
+            )
             return
 
-
         # =========================================================
-        # ✅ NO APPROVAL
+        # NO APPROVAL
         # =========================================================
         if approval_type == 'no_approval':
             self.status = 'Approved'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request has been auto approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request': str(self),
+                },
+                email_template_model=EmailTemplate,
+                notification_model=RequestNotification,
+            )
             return
 
         # =========================================================
-        # ✅ REPORTING MANAGER
+        # REPORTING MANAGER
         # =========================================================
         if approval_type == 'reporting_manager':
 
@@ -1277,10 +1312,23 @@ class GeneralRequest(models.Model):
                 self.status = 'Approved'
                 self.save()
 
+                send_notification_email(
+                    user=self.created_by,
+                    employee=self.employee,
+                    message=f"Your request has been approved by reporting manager.",
+                    template_type="request_approved",
+                    context={
+                        **get_employee_context(self.employee),
+                        'request': str(self),
+                    },
+                    email_template_model=EmailTemplate,
+                    notification_model=RequestNotification,
+                )
+
             return
 
         # =========================================================
-        # ✅ MULTI APPROVAL (LEVEL BASED)
+        # MULTI APPROVAL
         # =========================================================
 
         last_approved = self.approvals.filter(
@@ -1304,9 +1352,35 @@ class GeneralRequest(models.Model):
                 status=Approval.PENDING
             )
 
+            send_notification_email(
+                user=next_level.approver,
+                employee=None,
+                message=f"New request waiting for your approval.",
+                template_type="request_created",
+                context={
+                    **get_employee_context(self.employee),
+                    'request': str(self),
+                },
+                email_template_model=EmailTemplate,
+                notification_model=RequestNotification,
+            )
+
         else:
             self.status = 'Approved'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                message=f"Your request has been fully approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request': str(self),
+                },
+                email_template_model=EmailTemplate,
+                notification_model=RequestNotification,
+            )
 
            
 

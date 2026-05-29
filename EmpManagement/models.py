@@ -1570,18 +1570,17 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         # ---------------- EMAIL + NOTIFICATION ----------------
         send_notification_email(
-            user=manager,
-            employee=instance.employee,
-            message=f"New request {instance.request_type} is waiting for your approval.",
-            template_type="approval_pending",
-            context={
-                **get_employee_context(instance.employee),
-                'request_type': instance.request_type.request_type
-            },
-            email_template_model=EmailTemplate,
-            notification_model=RequestNotification
-        )
-
+        user=manager,
+        employee=instance.employee,
+        message=f"New request {instance.request_type} is approved.",
+        template_type="request_created",
+        context={
+            **get_employee_context(instance.employee),
+            'request_type': instance.request_type.name
+        },
+        email_template_model=EmailTemplate,
+        notification_model=RequestNotification
+    )
         return
 
     # ---------------- MULTI APPROVAL ----------------
@@ -1599,17 +1598,17 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
             # ---------------- EMAIL + NOTIFICATION ----------------
             send_notification_email(
-                user=first_level.approver,
-                employee=instance.employee,
-                message=f"New request {instance.request_type} requires your approval.",
-                template_type="approval_pending",
-                context={
-                    **get_employee_context(instance.employee),
-                    'request_type': instance.request_type.request_type
-                },
-                email_template_model=EmailTemplate,
-                notification_model=RequestNotification
-            )
+            user=first_level.approver,
+            employee=instance.employee,
+            message=f"New request {instance.request_type} requires your approval.",
+            template_type="request_created",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.request_type.name
+            },
+            email_template_model=EmailTemplate,
+            notification_model=RequestNotification
+        )
 
         return
     

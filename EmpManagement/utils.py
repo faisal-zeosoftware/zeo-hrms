@@ -6,6 +6,8 @@ from django.core.mail import EmailMultiAlternatives, get_connection
 from django.conf import settings
 import logging
 from django_tenants.utils import connection
+from django_tenants.utils import schema_context
+from django.db import connection as db_connection
 
 
 

@@ -8,6 +8,8 @@ from django_tenants.utils import schema_context
 from Core .models import TaxSystem,crncy_mstr,state_mstr
 from Core .serializer import StateSerializer
 from tenant_users.tenants.models import UserTenantPermissions
+from .models import UserNotificationInbox
+from django.db.models import Count
        
 class CustomUserSerializer(serializers.ModelSerializer):
     tenants = serializers.PrimaryKeyRelatedField(queryset=company.objects.all(), many=True, write_only=True)
@@ -242,6 +244,7 @@ class ValidateCredentialsSerializer(serializers.Serializer):
         return {"user_id": user.id}
 class UserAllocatedCompanySerializer(CompanySerializer):
     branches = serializers.SerializerMethodField()
+    notifications = serializers.SerializerMethodField()
 
     class Meta(CompanySerializer.Meta):
         fields = "__all__"
@@ -286,3 +289,55 @@ class UserAllocatedCompanySerializer(CompanySerializer):
         except Exception as e:
             print(e)
             return []
+    def get_notifications(self, obj):
+
+        user = self.context.get("user")
+
+        if not user:
+            return {}
+
+        notifications = UserNotificationInbox.objects.filter(
+            user=user,
+            schema_name=obj.schema_name
+        )
+
+        unread_notifications = notifications.filter(
+            is_read=False
+        )
+
+        grouped = unread_notifications.values(
+            'notification_type'
+        ).annotate(
+            count=Count('id')
+        )
+
+        request_wise_counts = {
+            item['notification_type']: item['count']
+            for item in grouped
+        }
+
+        latest_notifications = notifications.order_by(
+            '-created_at'
+        )[:10]
+
+        return {
+
+            "total_unread": unread_notifications.count(),
+
+            "request_wise_counts": request_wise_counts,
+
+            "latest_notifications": [
+
+                {
+                    "id": item.id,
+                    "title": item.title,
+                    "message": item.message,
+                    "type": item.notification_type,
+                    "branch_name": item.branch_name,
+                    "is_read": item.is_read,
+                    "created_at": item.created_at
+                }
+
+                for item in latest_notifications
+            ]
+        }

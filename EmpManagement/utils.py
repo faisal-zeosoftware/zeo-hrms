@@ -30,6 +30,7 @@ def get_employee_context(employee):
 logger = logging.getLogger(__name__)
 
 def send_notification_email(
+    
     *,
     user=None,
     employee=None,
@@ -37,7 +38,12 @@ def send_notification_email(
     template_type="",
     context=None,
     email_template_model=None,
-    notification_model=None
+    notification_model=None,
+    branch=None,
+    notification_type="general",
+    title="",
+
+    
 ):
     """
     Generic utility to send email and create in-app notification.
@@ -50,14 +56,48 @@ def send_notification_email(
 
     try:
         # Create notification
-        notification_model.objects.create(
+        created_notification = notification_model.objects.create(
             recipient_user=user,
             recipient_employee=employee,
             message=message
         )
     except Exception as e:
         logger.warning(f"Notification creation failed: {e}")
+    #usernotification tenant wise
+    try:
 
+        if user and created_notification:
+
+            from UserManagement.models import UserNotificationInbox
+
+            current_schema = db_connection.schema_name
+
+            with schema_context('public'):
+
+                UserNotificationInbox.objects.create(
+                    user=user,
+
+                    branch_id=branch.id if branch else None,
+
+                    branch_name=branch.branch_name if branch else None,
+
+                    schema_name=current_schema,
+
+                    notification_type=notification_type,
+
+                    title=title,
+
+                    message=message,
+
+                    source_model=notification_model.__name__,
+
+                    source_id=created_notification.id
+                )
+
+    except Exception as e:
+
+        logger.warning(f"Global inbox creation failed: {e}")
+    #email setup
     try:
         email_template = email_template_model.objects.get(template_type=template_type)
     except email_template_model.DoesNotExist:

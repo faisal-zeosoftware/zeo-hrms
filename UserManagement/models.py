@@ -130,3 +130,51 @@ class CustomUser(UserProfile):
         return self.username
     # Add any additional fields if needed
 
+class UserNotificationInbox(models.Model):
+
+    NOTIFICATION_TYPES = [
+        ('general', 'General'),
+        ('request', 'Request'),
+        ('doc_request', 'Document Request'),
+        ('resignation', 'Resignation'),
+        ('late_early', 'Late/Early'),
+        ('loan', 'Loan'),
+        ('advance_salary', 'Advance Salary'),
+    ]
+
+    user = models.ForeignKey(
+        'UserManagement.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='notification_inbox'
+    )
+    # TENANT IDENTIFICATION
+    schema_name = models.CharField(max_length=100)
+
+    # BRANCH DETAILS
+    branch_id = models.IntegerField(null=True, blank=True)
+
+    branch_name = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True
+    )
+
+    notification_type = models.CharField(
+        max_length=50,
+        choices=NOTIFICATION_TYPES
+    )
+
+    title = models.CharField(max_length=255, null=True, blank=True)
+
+    message = models.TextField()
+
+    source_model = models.CharField(max_length=100)
+
+    source_id = models.IntegerField()
+
+    is_read = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']

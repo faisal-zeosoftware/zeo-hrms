@@ -1226,16 +1226,39 @@ class GeneralRequest(models.Model):
             self.status = 'Rejected'
             self.save()
 
+            # send_notification_email(
+            #     user=self.created_by,
+            #     employee=self.employee,
+            #     message=f"Your request has been rejected.",
+            #     template_type="request_rejected",
+            #     context={
+            #         **get_employee_context(self.employee),
+            #         'request': str(self),
+            #     },
+            #     email_template_model=EmailTemplate,
+            #     notification_model=RequestNotification,
+            # )
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request has been rejected.",
+
+                branch=self.branch,
+
+                title="Request Rejected",
+
+                notification_type="request",
+
+                message="Your request has been rejected.",
+
                 template_type="request_rejected",
+
                 context={
                     **get_employee_context(self.employee),
                     'request': str(self),
                 },
+
                 email_template_model=EmailTemplate,
+
                 notification_model=RequestNotification,
             )
             return
@@ -1270,19 +1293,43 @@ class GeneralRequest(models.Model):
             self.status = 'Approved'
             self.save()
 
+            # send_notification_email(
+            #     user=self.created_by,
+            #     employee=self.employee,
+            #     message=f"Your request has been approved.",
+            #     template_type="request_approved",
+            #     context={
+            #         **get_employee_context(self.employee),
+            #         'request': str(self),
+            #     },
+            #     email_template_model=EmailTemplate,
+            #     notification_model=RequestNotification,
+            # )
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
+
+                branch=self.branch,
+
+                title="Request Approved",
+
+                notification_type="general",
+
                 message=f"Your request has been approved.",
+
                 template_type="request_approved",
+
                 context={
                     **get_employee_context(self.employee),
                     'request': str(self),
                 },
+
                 email_template_model=EmailTemplate,
+
                 notification_model=RequestNotification,
             )
             return
+            
 
         # =========================================================
         # NO APPROVAL
@@ -1291,19 +1338,43 @@ class GeneralRequest(models.Model):
             self.status = 'Approved'
             self.save()
 
+            # send_notification_email(
+            #     user=self.created_by,
+            #     employee=self.employee,
+            #     message=f"Your request has been auto approved.",
+            #     template_type="request_approved",
+            #     context={
+            #         **get_employee_context(self.employee),
+            #         'request': str(self),
+            #     },
+            #     email_template_model=EmailTemplate,
+            #     notification_model=RequestNotification,
+            # )
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
+
+                branch=self.branch,
+
+                title="Request Approved",
+
+                notification_type="general",
+
                 message=f"Your request has been auto approved.",
+
                 template_type="request_approved",
+
                 context={
                     **get_employee_context(self.employee),
                     'request': str(self),
                 },
+
                 email_template_model=EmailTemplate,
+
                 notification_model=RequestNotification,
             )
             return
+            
 
         # =========================================================
         # REPORTING MANAGER
@@ -1314,18 +1385,43 @@ class GeneralRequest(models.Model):
                 self.status = 'Approved'
                 self.save()
 
+                # send_notification_email(
+                #     user=self.created_by,
+                #     employee=self.employee,
+                #     message=f"Your request has been approved by reporting manager.",
+                #     template_type="request_approved",
+                #     context={
+                #         **get_employee_context(self.employee),
+                #         'request': str(self),
+                #     },
+                #     email_template_model=EmailTemplate,
+                #     notification_model=RequestNotification,
+                # )
                 send_notification_email(
-                    user=self.created_by,
-                    employee=self.employee,
-                    message=f"Your request has been approved by reporting manager.",
-                    template_type="request_approved",
-                    context={
-                        **get_employee_context(self.employee),
-                        'request': str(self),
-                    },
-                    email_template_model=EmailTemplate,
-                    notification_model=RequestNotification,
-                )
+                user=self.created_by,
+                employee=self.employee,
+
+                branch=self.branch,
+
+                title="Request Approved",
+
+                notification_type="general",
+
+                message=f"Your request has been approved by reporting manager.",
+
+                template_type="request_approved",
+
+                context={
+                    **get_employee_context(self.employee),
+                    'request': str(self),
+                },
+
+                email_template_model=EmailTemplate,
+
+                notification_model=RequestNotification,
+            )
+            
+                
 
             return
 
@@ -1354,37 +1450,83 @@ class GeneralRequest(models.Model):
                 status=Approval.PENDING
             )
 
+            # send_notification_email(
+            #     user=next_level.approver,
+            #     employee=None,
+            #     message=f"New request waiting for your approval.",
+            #     template_type="request_created",
+            #     context={
+            #         **get_employee_context(self.employee),
+            #         'request': str(self),
+            #     },
+            #     email_template_model=EmailTemplate,
+            #     notification_model=RequestNotification,
+            # )
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
+
+                branch=self.branch,
+
+                title="Request Created",
+
+                notification_type="general",
+
                 message=f"New request waiting for your approval.",
+
                 template_type="request_created",
+
                 context={
                     **get_employee_context(self.employee),
                     'request': str(self),
                 },
+
                 email_template_model=EmailTemplate,
+
                 notification_model=RequestNotification,
             )
+            
 
         else:
             self.status = 'Approved'
             self.save()
 
+            # send_notification_email(
+            #     user=self.created_by,
+            #     employee=self.employee,
+            #     message=f"Your request has been fully approved.",
+            #     template_type="request_approved",
+            #     context={
+            #         **get_employee_context(self.employee),
+            #         'request': str(self),
+            #     },
+            #     email_template_model=EmailTemplate,
+            #     notification_model=RequestNotification,
+            # )
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request has been fully approved.",
+
+                branch=self.branch,
+
+                title="Request Approved",
+
+                notification_type="general",
+
+                message=f"Your request has been fully approved",
+
                 template_type="request_approved",
+
                 context={
                     **get_employee_context(self.employee),
                     'request': str(self),
                 },
+
                 email_template_model=EmailTemplate,
+
                 notification_model=RequestNotification,
             )
-
-           
+                       
 
 class ApprovalWorkflow(models.Model):
     APPROVAL_TYPE_CHOICES = [
@@ -1456,7 +1598,7 @@ class Approval(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at      = models.DateField(auto_now=True)
-   
+
     def approve(self,note=None):
         self.status = self.APPROVED
         if note:
@@ -1470,21 +1612,46 @@ class Approval(models.Model):
         self.save()
         self.general_request.status = 'Rejected'
         self.general_request.save()
+    #     send_notification_email(
+    #     user=self.general_request.created_by,
+    #     employee=self.general_request.employee,
+    #     message=f"Your request {self.general_request.document_number} has been rejected.",
+    #     template_type="request_rejected",
+    #     context={
+    #         **get_employee_context(self.general_request.employee),
+    #         'doc_number': self.general_request.document_number,
+    #         'request_type': self.general_request.request_type.name,
+    #         'rejection_reason': self.note or 'Rejected'
+    #     },
+    #     email_template_model=EmailTemplate,
+    #     notification_model=RequestNotification
+    # )
         send_notification_email(
-        user=self.general_request.created_by,
-        employee=self.general_request.employee,
-        message=f"Your request {self.general_request.document_number} has been rejected.",
-        template_type="request_rejected",
-        context={
-            **get_employee_context(self.general_request.employee),
-            'doc_number': self.general_request.document_number,
-            'request_type': self.general_request.request_type.name,
-            'rejection_reason': self.note or 'Rejected'
-        },
-        email_template_model=EmailTemplate,
-        notification_model=RequestNotification
-    )
+                user=self.general_request.created_by,
+                employee=self.general_request.employee,
 
+                branch=self.general_request.branch,
+
+                title="Request Rejected",
+
+                notification_type="request",
+
+                message="Your request {self.general_request.document_number} has been rejected.",
+
+                template_type="request_rejected",
+
+                context={
+                    **get_employee_context(self.general_request.employee),
+                    'request': str(self),
+                    'doc_number': self.general_request.document_number,
+                    'request_type': self.general_request.request_type.name,
+                    'rejection_reason': self.note or 'Rejected'
+                },
+
+                email_template_model=EmailTemplate,
+
+                notification_model=RequestNotification,
+            )
 @receiver(post_save, sender=GeneralRequest)
 def create_initial_approval(sender, instance, created, **kwargs):
     if not created:
@@ -1537,18 +1704,41 @@ def create_initial_approval(sender, instance, created, **kwargs):
         instance.save(update_fields=["status"])
 
         # ---------------- EMAIL + NOTIFICATION ----------------
+        # send_notification_email(
+        #     user=approver,
+        #     employee=instance.employee,
+        #     message=f"Your request {instance.request_type} has been automatically approved.",
+        #     template_type="request_approved",
+        #     context={
+        #         **get_employee_context(instance.employee),
+        #         'request_type': instance.request_type.name
+        #     },
+        #     email_template_model=EmailTemplate,
+        #     notification_model=RequestNotification
+        # )
         send_notification_email(
-            user=approver,
-            employee=instance.employee,
-            message=f"Your request {instance.request_type} has been automatically approved.",
-            template_type="request_approved",
-            context={
-                **get_employee_context(instance.employee),
-                'request_type': instance.request_type.name
-            },
-            email_template_model=EmailTemplate,
-            notification_model=RequestNotification
-        )
+                user=approver,
+                employee=instance.employee,
+
+                branch=instance.employee.emp_branch_id,
+
+                title="Request Approved",
+
+                notification_type="general",
+
+                message=f"Your request {instance.request_type} has been automatically approved.",
+
+                template_type="request_approved",
+
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.request_type.name,
+                },
+
+                email_template_model=EmailTemplate,
+
+                notification_model=RequestNotification,
+            )
 
         return
 
@@ -1569,19 +1759,45 @@ def create_initial_approval(sender, instance, created, **kwargs):
         )
 
         # ---------------- EMAIL + NOTIFICATION ----------------
+        # send_notification_email(
+        #     user=manager,
+        #     employee=instance.employee,
+        #     message=f"New request {instance.request_type} is waiting for your approval.",
+        #     template_type="approval_pending",
+        #     context={
+        #         **get_employee_context(instance.employee),
+        #         'request_type': instance.request_type.request_type
+        #     },
+        #     email_template_model=EmailTemplate,
+        #     notification_model=RequestNotification
+        # )
         send_notification_email(
-        user=manager,
-        employee=instance.employee,
-        message=f"New request {instance.request_type} is approved.",
-        template_type="request_created",
-        context={
-            **get_employee_context(instance.employee),
-            'request_type': instance.request_type.name
-        },
-        email_template_model=EmailTemplate,
-        notification_model=RequestNotification
-    )
+                user=manager,
+                employee=instance.employee,
+
+                branch=instance.employee.emp_branch_id,
+
+                title="Request Created",
+
+                notification_type="general",
+
+                message=f"New request {instance.request_type} is waiting for your approval.",
+
+                template_type="request_created",
+
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.request_type.request_type
+                },
+
+                email_template_model=EmailTemplate,
+
+                notification_model=RequestNotification,
+            )
+
         return
+
+        
 
     # ---------------- MULTI APPROVAL ----------------
     if approval_type == 'multi_approval':
@@ -1597,18 +1813,41 @@ def create_initial_approval(sender, instance, created, **kwargs):
             )
 
             # ---------------- EMAIL + NOTIFICATION ----------------
+            # send_notification_email(
+            #     user=first_level.approver,
+            #     employee=instance.employee,
+            #     message=f"New request {instance.request_type} requires your approval.",
+            #     template_type="approval_pending",
+            #     context={
+            #         **get_employee_context(instance.employee),
+            #         'request_type': instance.request_type.request_type
+            #     },
+            #     email_template_model=EmailTemplate,
+            #     notification_model=RequestNotification
+            # )
             send_notification_email(
-            user=first_level.approver,
-            employee=instance.employee,
-            message=f"New request {instance.request_type} requires your approval.",
-            template_type="request_created",
-            context={
-                **get_employee_context(instance.employee),
-                'request_type': instance.request_type.name
-            },
-            email_template_model=EmailTemplate,
-            notification_model=RequestNotification
-        )
+                user=first_level.approver,
+                employee=instance.employee,
+
+                branch=instance.employee.emp_branch_id,
+
+                title="Request Created",
+
+                notification_type="general",
+
+                message=f"New request {instance.request_type} requires your approval.",
+
+                template_type="request_created",
+
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.request_type.name
+                },
+
+                email_template_model=EmailTemplate,
+
+                notification_model=RequestNotification,
+            )
 
         return
     

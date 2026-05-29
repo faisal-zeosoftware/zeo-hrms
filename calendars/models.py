@@ -2235,6 +2235,9 @@ class LatinEarlyoutEmailTemplate(models.Model):
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
+    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
    
     def __str__(self):
         return f"{self.template_type} - {self.subject}"

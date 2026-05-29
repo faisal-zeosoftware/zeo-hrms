@@ -1498,6 +1498,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             request_type=instance.request_type,
         ).first()
 
+        # ✅ FIX: do NOT silently return
         if not workflow:
             workflow = ApprovalWorkflow.objects.create(
                 request_type=instance.request_type,
@@ -1506,6 +1507,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         first_level = workflow.levels.order_by('level').first()
 
+    # ✅ FIX: ensure first_level always exists for multi approval safety
     if workflow and not first_level:
         first_level = ApprovalLevel.objects.create(
             workflow=workflow,
@@ -1533,6 +1535,21 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         instance.status = "Approved"
         instance.save(update_fields=["status"])
+
+        # ---------------- EMAIL + NOTIFICATION ----------------
+        send_notification_email(
+            user=approver,
+            employee=instance.employee,
+            message=f"Your request {instance.request_type} has been automatically approved.",
+            template_type="request_approved",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.request_type.name
+            },
+            email_template_model=EmailTemplate,
+            notification_model=RequestNotification
+        )
+
         return
 
     # ---------------- REPORTING MANAGER ----------------
@@ -1550,6 +1567,21 @@ def create_initial_approval(sender, instance, created, **kwargs):
             level=1,
             status=Approval.PENDING
         )
+
+        # ---------------- EMAIL + NOTIFICATION ----------------
+        send_notification_email(
+            user=manager,
+            employee=instance.employee,
+            message=f"New request {instance.request_type} is waiting for your approval.",
+            template_type="approval_pending",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.request_type.request_type
+            },
+            email_template_model=EmailTemplate,
+            notification_model=RequestNotification
+        )
+
         return
 
     # ---------------- MULTI APPROVAL ----------------
@@ -1564,6 +1596,21 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 level=first_level.level,
                 status=Approval.PENDING
             )
+
+            # ---------------- EMAIL + NOTIFICATION ----------------
+            send_notification_email(
+                user=first_level.approver,
+                employee=instance.employee,
+                message=f"New request {instance.request_type} requires your approval.",
+                template_type="approval_pending",
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.request_type.request_type
+                },
+                email_template_model=EmailTemplate,
+                notification_model=RequestNotification
+            )
+
         return
     
 class SelectedEmpNotify(models.Model):

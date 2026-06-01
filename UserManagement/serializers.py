@@ -8,6 +8,8 @@ from django_tenants.utils import schema_context
 from Core .models import TaxSystem,crncy_mstr,state_mstr
 from Core .serializer import StateSerializer
 from tenant_users.tenants.models import UserTenantPermissions
+from calendars .models import employee_leave_request
+from EmpManagement .models import GeneralRequest
 from .models import UserNotificationInbox
 from django.db.models import Count
        
@@ -138,6 +140,8 @@ class CompanySerializer(serializers.ModelSerializer):
     currency_details = serializers.SerializerMethodField()
     state_label = serializers.SerializerMethodField()  # Avoid duplicate logic
     states = serializers.SerializerMethodField()
+    notification_count = serializers.SerializerMethodField()
+    latest_notifications = serializers.SerializerMethodField()
     # country = serializers.CharField(source='country.country_name', read_only=True)
     # state = serializers.CharField(source='state.state_name', read_only=True)
     # currency = serializers.CharField(source='currency.currency_name', read_only=True)
@@ -190,7 +194,107 @@ class CompanySerializer(serializers.ModelSerializer):
         return None
     def get_state_label(self, obj):
         return obj.country.get_state_label() if obj.country else None  # Use method from model
-    
+    def get_notification_count(self, obj):
+
+        user = self.context.get("user")
+
+        if not user:
+            return 0
+
+        total_count = 0
+
+        try:
+
+            with schema_context(obj.schema_name):
+
+                # =====================================
+                # LEAVE REQUEST NOTIFICATIONS
+                # =====================================
+
+                leave_count = employee_leave_request.objects.filter(
+                    status='pending'
+                ).count()
+
+                total_count += leave_count
+
+                # =====================================
+                # GENERAL REQUEST NOTIFICATIONS
+                # =====================================
+
+                general_request_count = GeneralRequest.objects.filter(
+                    status='pending'
+                ).count()
+
+                total_count += general_request_count
+
+        except Exception:
+            pass
+
+        return total_count
+
+    # =========================================================
+    # LATEST NOTIFICATIONS
+    # =========================================================
+
+    def get_latest_notifications(self, obj):
+
+        user = self.context.get("user")
+
+        if not user:
+            return []
+
+        notifications = []
+
+        try:
+
+            with schema_context(obj.schema_name):
+
+                # =====================================
+                # LEAVE REQUESTS
+                # =====================================
+
+                leave_requests = employee_leave_request.objects.filter(
+                    status='pending'
+                ).order_by('-id')[:5]
+
+                for leave in leave_requests:
+
+                    notifications.append({
+                        "type": "leave_request",
+                        "title": "Leave Request",
+                        "message": f"{leave.employee.first_name} submitted leave request",
+                        "created_at": leave.created_at
+                    })
+
+                # =====================================
+                # GENERAL REQUESTS
+                # =====================================
+
+                general_requests = GeneralRequest.objects.filter(
+                    status='pending'
+                ).order_by('-id')[:5]
+
+                for req in general_requests:
+
+                    notifications.append({
+                        "type": "general_request",
+                        "title": "General Request",
+                        "message": req.subject,
+                        "created_at": req.created_at
+                    })
+
+        except Exception:
+            pass
+
+        # SORT ALL NOTIFICATIONS
+        notifications = sorted(
+            notifications,
+            key=lambda x: x['created_at'],
+            reverse=True
+        )
+
+        return notifications[:10]
+
     def to_representation(self, instance):
         """Override to return names instead of IDs for country, state, and currency"""
         rep = super().to_representation(instance)

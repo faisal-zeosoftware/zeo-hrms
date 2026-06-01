@@ -47,17 +47,29 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
         user_profile = self.get_object()
         tenants = user_profile.tenants.all()
 
-        # 🔥 SUPERUSER → ALL branches
-        if user_profile.is_superuser:
-            serializer = CompanySerializer(tenants, many=True)
-        else:
-            serializer = UserAllocatedCompanySerializer(
-                tenants,
-                many=True,
-                context={"user": user_profile}
-            )
+        serializer = UserAllocatedCompanySerializer(
+            tenants,
+            many=True,
+            context={"user": user_profile}
+        )
 
         return Response(serializer.data)
+    # @action(detail=True, methods=['get'])
+    # def tenants(self, request, pk=None):
+    #     user_profile = self.get_object()
+    #     tenants = user_profile.tenants.all()
+
+    #     # 🔥 SUPERUSER → ALL branches
+    #     if user_profile.is_superuser:
+    #         serializer = CompanySerializer(tenants, many=True)
+    #     else:
+    #         serializer = UserAllocatedCompanySerializer(
+    #             tenants,
+    #             many=True,
+    #             context={"user": user_profile}
+    #         )
+
+    #     return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
     def deactivate_user(self, request, pk=None):

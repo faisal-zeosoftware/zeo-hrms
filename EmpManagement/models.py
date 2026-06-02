@@ -164,7 +164,8 @@ class emp_master(models.Model):
                         username=username,
                         email=email,
                         password=password,
-                        is_ess=True
+                        is_ess=True,
+                        must_change_password=True
                     )
                     self.users = user
                     super().save(update_fields=['users'])
@@ -174,6 +175,7 @@ class emp_master(models.Model):
 
                     user.is_active = True
                     user.is_ess = True
+                    user.must_change_password = True
                     user.save()
                     logger.info(f"User {user.username} created and linked to employee {self.emp_code}.")
             except Exception as e:

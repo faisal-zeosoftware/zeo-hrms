@@ -116,6 +116,8 @@ class CustomUser(UserProfile):
     otp_created_at = models.DateTimeField(blank=True, null=True)
     is_2fa_verified = models.BooleanField(default=False)
     timezone = models.CharField(max_length=50,null=True,blank=True)
+    must_change_password = models.BooleanField(default=False)
+
 
     USERNAME_FIELD = 'username'  # Authentication uses username
     REQUIRED_FIELDS = ['email']  # No required fields other than username

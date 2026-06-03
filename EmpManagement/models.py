@@ -857,7 +857,7 @@ from django.dispatch import receiver
 #EMPLOYEE DOCUMENTS
 class Emp_Documents(models.Model):
     emp_id               =models.ForeignKey('emp_master',on_delete = models.CASCADE,related_name='emp_documents')
-    document_type        = models.ForeignKey('Core.document_type',on_delete = models.CASCADE)
+    document_type        = models.ForeignKey('document_type',on_delete = models.CASCADE)
     emp_doc_number       = models.CharField(max_length=50,unique=True)
     emp_doc_issued_date  = models.DateField()
     emp_doc_expiry_date  = models.DateField()

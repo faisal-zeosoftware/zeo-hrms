@@ -13,7 +13,7 @@ from rest_framework.authentication import SessionAuthentication,TokenAuthenticat
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from rest_framework.parsers import MultiPartParser, FormParser
 import csv
-from .permissions import CountryPermission,StatePermission,DocTypePermission,LanguageSkillPermission,MarketingSkillPermission,ProgrammingLanguageSkillPermission
+from .permissions import CountryPermission,StatePermission,LanguageSkillPermission,MarketingSkillPermission,ProgrammingLanguageSkillPermission
 import pandas as pd,openpyxl
 # Create your views here.
 

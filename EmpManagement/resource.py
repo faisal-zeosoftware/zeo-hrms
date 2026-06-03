@@ -11,13 +11,13 @@ from import_export.widgets import Widget
 from django.core.exceptions import ValidationError
 from django.db import models
 import re
-from Core.models import document_type,state_mstr,cntry_mstr,Nationality,ReligionMaster
+from Core.models import state_mstr,cntry_mstr,Nationality,ReligionMaster
 from OrganisationManager.models import brnch_mstr,ctgry_master,dept_master,desgntn_master
 from import_export.widgets import ForeignKeyWidget
 from django.core.files.base import ContentFile
 import os
 from django.core.files.storage import default_storage
-from .models import NotificationSettings
+from .models import NotificationSettings,document_type
 from .tasks import send_document_notification
 from UserManagement .models import CustomUser
 

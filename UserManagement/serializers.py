@@ -12,6 +12,7 @@ from calendars .models import employee_leave_request
 from EmpManagement .models import GeneralRequest
 from .models import UserNotificationInbox
 from django.db.models import Count
+from OrganisationManager.models import UserBranchAccess, brnch_mstr
        
 class CustomUserSerializer(serializers.ModelSerializer):
     tenants = serializers.PrimaryKeyRelatedField(queryset=company.objects.all(), many=True, write_only=True)
@@ -400,44 +401,108 @@ class UserAllocatedCompanySerializer(CompanySerializer):
         fields = "__all__"
 
     def get_branches(self, obj):
-        from OrganisationManager.models import UserBranchAccess, brnch_mstr
-        from django_tenants.utils import schema_context
 
         user = self.context.get("user")
+
         if not user:
             return []
 
         try:
+
             with schema_context(obj.schema_name):
 
-                # 🔥 SUPERUSER → ALL BRANCHES
+                # SUPERUSER -> ALL BRANCHES
                 if user.is_superuser:
-                    return list(
-                        brnch_mstr.objects.all().values(
-                            "id",
-                            "branch_name"
-                        )
+
+                    branches = brnch_mstr.objects.all()
+
+                # NORMAL USER -> ONLY ALLOCATED BRANCHES
+                else:
+
+                    branch_ids = []
+
+                    access_qs = (
+                        UserBranchAccess.objects
+                        .filter(user=user)
+                        .prefetch_related("branch")
                     )
 
-                # 👤 NORMAL USER → ASSIGNED BRANCHES
-                qs = (
-                    UserBranchAccess.objects
-                    .filter(user=user)
-                    .prefetch_related("branch")
-                )
+                    for access in access_qs:
+                        branch_ids.extend(
+                            access.branch.values_list(
+                                "id",
+                                flat=True
+                            )
+                        )
 
-                branches = []
-                for access in qs:
-                    for b in access.branch.all():
-                        branches.append({
-                            "id": b.id,
-                            "name": b.branch_name
-                        })
+                    branches = brnch_mstr.objects.filter(
+                        id__in=branch_ids
+                    )
 
-                return branches
+                branch_data = []
+
+                for branch in branches:
+
+                    notifications = (
+                        UserNotificationInbox.objects
+                        .filter(
+                            user=user,
+                            schema_name=obj.schema_name,
+                            branch_id=branch.id
+                        )
+                        .order_by("-created_at")
+                    )
+
+                    unread_notifications = notifications.filter(
+                        is_read=False
+                    )
+
+                    # Notification type wise counts
+                    grouped = (
+                        unread_notifications
+                        .values("notification_type")
+                        .annotate(count=Count("id"))
+                    )
+
+                    notification_summary = [
+                        {
+                            "type": item["notification_type"],
+                            "count": item["count"]
+                        }
+                        for item in grouped
+                    ]
+
+                    branch_data.append({
+
+                        "id": branch.id,
+
+                        "branch_name": branch.branch_name,
+
+                        # Total unread notifications
+                        "notification_count": unread_notifications.count(),
+
+                        # Type-wise unread counts
+                        "notification_summary": notification_summary,
+
+                        # Latest notifications
+                        "notifications": [
+                            {
+                                "id": item.id,
+                                "title": item.title,
+                                "message": item.message,
+                                "type": item.notification_type,
+                                "branch_name": item.branch_name,
+                                "is_read": item.is_read,
+                                "created_at": item.created_at
+                            }
+                            for item in notifications[:10]
+                        ]
+                    })
+
+                return branch_data
 
         except Exception as e:
-            print(e)
+            print("Branch notification error:", str(e))
             return []
     def get_notifications(self, obj):
 

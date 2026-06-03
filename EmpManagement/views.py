@@ -10,7 +10,7 @@ from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQ
                      EmployeeMarketingSkill,Approval,ApprovalLevel,RequestNotification,Emp_CustomFieldValue,
                      EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,JobHistory_CustomFieldValue,
                      DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,
-                     ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow
+                     ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type
                      )
 from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,NotificationSerializer,RequestTypeSerializer,
                          EmpJobHistorySerializer,EmpLeaveRequestSerializer,DocumentSerializer,GeneralRequestSerializer,
@@ -21,7 +21,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
                          DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer,ResignationTemplateSerializer,ResignationRequestNotificationSerializer,
-                         ApprovalWorkflowSerializer,DocumentApprovalWorkflowSerializer,ResignationApprovalWorkflowSerializer)
+                         ApprovalWorkflowSerializer,DocumentApprovalWorkflowSerializer,ResignationApprovalWorkflowSerializer,Document_typeSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -1558,6 +1558,21 @@ class Emp_QualificationViewSet(viewsets.ModelViewSet):
         return EmpQualification.objects.none()
     def get_serializer_context(self):
         return {'request': self.request}
+    
+
+    
+class DocumentViewSet(viewsets.ModelViewSet):
+    queryset = document_type.objects.all()
+    serializer_class = Document_typeSerializer
+    # permission_classes = [DocTypePermission,] 
+    def get_queryset(self):
+        """Return only active document types by default."""
+        return document_type.objects.filter(is_active=True)
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.is_active = False  # Soft delete instead of actual deletion
+        instance.save()
+        return Response({"message": "Document type deactivated successfully"}, status=status.HTTP_204_NO_CONTENT)
     
 
 #EMP_DOCUMENT 

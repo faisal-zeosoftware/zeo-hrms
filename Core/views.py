@@ -1,7 +1,7 @@
 from django.shortcuts import render
-from .models import (state_mstr,crncy_mstr,cntry_mstr,document_type,LanguageMaster,Nationality,LanguageSkill,ProgrammingLanguageSkill,MarketingSkill,TaxSystem,ReligionMaster)
+from .models import (state_mstr,crncy_mstr,cntry_mstr,LanguageMaster,Nationality,LanguageSkill,ProgrammingLanguageSkill,MarketingSkill,TaxSystem,ReligionMaster)
 from .serializer import (CountrySerializer,StateSerializer,LanguageMasterSerializer,
-                         CurrencySerializer,Document_typeSerializer,CntryBulkUploadSerializer,NationalityBlkUpldSerializer,LanguageBlkupldSerializer,
+                         CurrencySerializer,CntryBulkUploadSerializer,NationalityBlkUpldSerializer,LanguageBlkupldSerializer,
                          MarketingBlkupldSerializer,LanguageSkillSerializer,MarketingSkillSerializer,ProgrammingLanguageSkillSerializer,
                          ProLangBlkupldSerializer,MarketingBlkupldSerializer,LanguageBlkupldSerializer,TaxSystemSerializer,ReligionMasterBlkupldSerializer,NationalitySerializer,ReligionMasterSerializer,StateBulkUploadSerializer)
 from . permissions import LanguageMasterPermission
@@ -221,18 +221,18 @@ class CurrencyViewSet(viewsets.ModelViewSet):
     # authentication_classes = [SessionAuthentication,]
     
 
-class DocumentViewSet(viewsets.ModelViewSet):
-    queryset = document_type.objects.all()
-    serializer_class = Document_typeSerializer
-    permission_classes = [DocTypePermission,] 
-    def get_queryset(self):
-        """Return only active document types by default."""
-        return document_type.objects.filter(is_active=True)
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        instance.is_active = False  # Soft delete instead of actual deletion
-        instance.save()
-        return Response({"message": "Document type deactivated successfully"}, status=status.HTTP_204_NO_CONTENT)
+# class DocumentViewSet(viewsets.ModelViewSet):
+#     queryset = document_type.objects.all()
+#     serializer_class = Document_typeSerializer
+#     permission_classes = [DocTypePermission,] 
+#     def get_queryset(self):
+#         """Return only active document types by default."""
+#         return document_type.objects.filter(is_active=True)
+#     def destroy(self, request, *args, **kwargs):
+#         instance = self.get_object()
+#         instance.is_active = False  # Soft delete instead of actual deletion
+#         instance.save()
+#         return Response({"message": "Document type deactivated successfully"}, status=status.HTTP_204_NO_CONTENT)
 
 class LanguageViewSet(viewsets.ModelViewSet):
     queryset = LanguageMaster.objects.all()

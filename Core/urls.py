@@ -1,6 +1,6 @@
 from django.urls import path, include
 from .  views import (CountryViewSet,StateViewSet,CurrencyViewSet,LanguageViewSet,
-                      DocumentViewSet,CountryBulkuploadViewSet,NationalityBlkupldViewSet,LanguageSkillViewSet,MarketingSkillViewSet,ProgrammingLanguageSkillViewSet,LanguageBlkupldViewSet,MarketingBlkupldViewSet,
+                    CountryBulkuploadViewSet,NationalityBlkupldViewSet,LanguageSkillViewSet,MarketingSkillViewSet,ProgrammingLanguageSkillViewSet,LanguageBlkupldViewSet,MarketingBlkupldViewSet,
                     ProLangBlkupldViewSet,TaxSystemViewSet,NationalityViewSet,ReligionMasterViewSet,ReligionMasterBlkupldViewSet,StateBulkuploadViewSet)
 
 from rest_framework.routers import DefaultRouter
@@ -16,7 +16,7 @@ router.register(r'Nationality-Bulkupload', NationalityBlkupldViewSet,basename="n
 router.register(r'religion', ReligionMasterViewSet,basename='religion')
 router.register(r'Religion-Bulkupload', ReligionMasterBlkupldViewSet,basename="religion_bulkupload")
 router.register(r'Currency', CurrencyViewSet)
-router.register(r'Documents', DocumentViewSet)
+# router.register(r'Documents', DocumentViewSet)
 router.register(r'language', LanguageViewSet)
 router.register(r'language_skill', LanguageSkillViewSet, basename='employee-language_skill')
 router.register(r'marketing-skill', MarketingSkillViewSet, basename='employee-marketing_skill')

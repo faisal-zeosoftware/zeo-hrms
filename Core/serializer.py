@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import(state_mstr,cntry_mstr,TaxSystem,crncy_mstr,document_type,LanguageMaster,Nationality,LanguageSkill,MarketingSkill,ProgrammingLanguageSkill,
+from .models import(state_mstr,cntry_mstr,TaxSystem,crncy_mstr,LanguageMaster,Nationality,LanguageSkill,MarketingSkill,ProgrammingLanguageSkill,
                     ReligionMaster)
 #STATE SERIALIZER
 class StateSerializer(serializers.ModelSerializer):
@@ -53,10 +53,10 @@ class NationalityBlkUpldSerializer(serializers.ModelSerializer):
         model = Nationality
         fields = '__all__'
     
-class Document_typeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = document_type
-        fields = '__all__'
+# class Document_typeSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = document_type
+#         fields = '__all__'
 # LANGUAGES
 class LanguageMasterSerializer(serializers.ModelSerializer):
     # br_created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())

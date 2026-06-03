@@ -229,16 +229,16 @@ class crncy_mstr(models.Model):
         return self.currency_name
     
 # document master
-class document_type(models.Model):
-    type_name   = models.CharField(max_length=50,unique=True)
-    description = models.CharField(max_length=200)
-    is_active   = models.BooleanField(default=True)  # Add is_active field
-    def __str__(self):
-        return self.type_name
-    def save(self, *args, **kwargs):
-        if not self.pk:  # Only set is_active=True on creation
-            self.is_active = True
-        super().save(*args, **kwargs)
+# class document_type(models.Model):
+#     type_name   = models.CharField(max_length=50,unique=True)
+#     description = models.CharField(max_length=200)
+#     is_active   = models.BooleanField(default=True)  # Add is_active field
+#     def __str__(self):
+#         return self.type_name
+#     def save(self, *args, **kwargs):
+#         if not self.pk:  # Only set is_active=True on creation
+#             self.is_active = True
+#         super().save(*args, **kwargs)
     
 #LANGUAGE MASTER 
 class LanguageMaster(models.Model):

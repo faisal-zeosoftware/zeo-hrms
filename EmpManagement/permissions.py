@@ -240,6 +240,44 @@ class EmpQualificationCustomFieldPermission(permissions.BasePermission):
                 return True
 
         return False
+    
+class DocTypePermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+
+        if user_permissions.is_superuser:
+            return True
+
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_document_type',
+            'retrieve': 'view_document_type',
+            'create': 'add_document_type',
+            'update': 'change_document_type',
+            'partial_update': 'change_document_type',
+            'destroy': 'delete_document_type',
+        }
+
+        required_perm = action_permissions.get(view.action)
+
+        if not required_perm:
+            return False
+
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+
+        return False
+
 
 class ReportPermission(permissions.BasePermission):
     def has_permission(self, request, view):

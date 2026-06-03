@@ -9,7 +9,7 @@ from .views import (EmpFamViewSet, EmpJobHistoryvSet, EmpViewSet,NotificationVie
                     EmailConfigurationViewSet,UpdateESSUserView,ESSUserListView,NotificationSettingsViewSet,DocExpEmailTemplateViewset,CommonWorkflowViewSet,Doc_CustomFieldValueViewSet,EmployeeBankDetailViewset,
                     EmpBankBulkuploadViewSet,EmplistViewSet,Fam_CustomFieldValueViewSet,JobHistory_CustomFieldValueViewSet,Qf_CustomFieldValueViewSet,DocumentRequestViewset,
                     DocumentApprovalViewset,DocumentApprovalLevelViewset,DocRequestEmailTemplateViewset,DocRequestNotificationViewset,EmployeeResignationViewset,ResignationApprovalLevelViewset,ResignationApprovalViewset,EndOfServiceViewset,
-                    DocRequestTypeViewset,EmployeeByUserViewSet,EscalationRuleViewSet,ResignationEmailTemplateViewset,ResignationRequestNotificationViewSet
+                    DocRequestTypeViewset,EmployeeByUserViewSet,EscalationRuleViewSet,ResignationEmailTemplateViewset,ResignationRequestNotificationViewSet,DocumentViewSet
                     )
 
 # Define the main router for top-level routes
@@ -87,6 +87,7 @@ employee_router.register(r'emp-qualification', Emp_QualificationViewSet, basenam
 employee_router.register(r'emp-documents', Emp_DocumentViewSet, basename='employee-documents')
 employee_router.register(r'emp-leave-request', EmpLeaveRequestViewSet, basename='employee-leave-request')
 employee_router.register(r'notification', NotificationViewset, basename='employee-document-notification')
+router.register(r'Documents', DocumentViewSet)
 
 # Define the URL patterns
 urlpatterns = [

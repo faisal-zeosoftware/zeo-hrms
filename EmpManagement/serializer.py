@@ -23,7 +23,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
@@ -138,6 +138,11 @@ class Emp_qf_Serializer(serializers.ModelSerializer):
         if instance.emp_id:  # Check if emp_state_id is not None
             rep['emp_id'] = instance.emp_id.emp_first_name + " " + instance.emp_id.emp_last_name
         return rep
+ 
+class Document_typeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = document_type
+        fields = '__all__'
  
 
 #EMPLOYEE DOCUMENT CREDENTIALS

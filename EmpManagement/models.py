@@ -832,6 +832,19 @@ class Qualification_CustomFieldValue(models.Model):
                     raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
             else:
                 raise ValidationError({'field_value': 'Date value is required.'})
+            
+
+class document_type(models.Model):
+    type_name   = models.CharField(max_length=50,unique=True)
+    description = models.CharField(max_length=200)
+    is_active   = models.BooleanField(default=True)  # Add is_active field
+    def __str__(self):
+        return self.type_name
+    def save(self, *args, **kwargs):
+        if not self.pk:  # Only set is_active=True on creation
+            self.is_active = True
+        super().save(*args, **kwargs)
+    
     
     
 

@@ -809,32 +809,42 @@ class SelectedEmpNotifySerializer(serializers.ModelSerializer):
         model = SelectedEmpNotify
         fields = '__all__'
 
-class NotificationSettingsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = NotificationSettings
-        fields = '__all__'
-    def validate_branch(self, value):
-        # Exclude current instance when updating
-        instance = getattr(self, 'instance', None)
-        if NotificationSettings.objects.filter(branch=value).exclude(id=instance.id if instance else None).exists():
-            raise serializers.ValidationError(
-                "Notification settings for this branch already exist."
-            )
-        return value
-    def to_representation(self, instance):
-        rep = super().to_representation(instance)
+    class NotificationSettingsSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = NotificationSettings
+            fields = '__all__'
+        def validate_branch(self, value):
+                instance = getattr(self, 'instance', None)
 
-        rep['branch'] = [
-            branch.branch_name
-            for branch in instance.branch.all()
-        ]
+                # Convert single value to list if needed
+                if not isinstance(value, (list, tuple)):
+                    value = [value]
 
-        rep['notify_users'] = [
-            user.username
-            for user in instance.notify_users.all()
-        ]
+                qs = NotificationSettings.objects.filter(branch__in=value)
 
-        return rep
+                if instance:
+                    qs = qs.exclude(id=instance.id)
+
+                if qs.exists():
+                    raise serializers.ValidationError(
+                        "One or more selected branches already have notification settings."
+                    )
+
+                return value
+        def to_representation(self, instance):
+            rep = super().to_representation(instance)
+
+            rep['branch'] = [
+                branch.branch_name
+                for branch in instance.branch.all()
+            ]
+
+            rep['notify_users'] = [
+                user.username
+                for user in instance.notify_users.all()
+            ]
+
+            return rep
 class DocExpEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocExpEmailTemplate

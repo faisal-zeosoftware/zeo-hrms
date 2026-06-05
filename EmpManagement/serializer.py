@@ -822,11 +822,17 @@ class NotificationSettingsSerializer(serializers.ModelSerializer):
             )
         return value
     def to_representation(self, instance):
-        rep = super(NotificationSettingsSerializer, self).to_representation(instance)
-        if instance.branch:  
-            rep['branch'] = instance.branch.branch_name
-        if instance.notify_users.exists():  
-            rep['notify_users'] = [cat.username for cat in instance.notify_users.all()]
+        rep = super().to_representation(instance)
+
+        rep['branch'] = [
+            branch.branch_name
+            for branch in instance.branch.all()
+        ]
+
+        rep['notify_users'] = [
+            user.username
+            for user in instance.notify_users.all()
+        ]
 
         return rep
 class DocExpEmailTemplateSerializer(serializers.ModelSerializer):

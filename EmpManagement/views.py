@@ -2721,7 +2721,7 @@ class ESSUserListView(APIView):
 
 class NotificationSettingsViewSet(BranchAccessMixin,viewsets.ModelViewSet):
     queryset = NotificationSettings.objects.all()
-    serializer_class = NotificationSettingsSerializer
+    serializer_class =  NotificationSettingsSerializer
 
 class DocExpEmailTemplateViewset(viewsets.ModelViewSet):
     queryset = DocExpEmailTemplate.objects.all()

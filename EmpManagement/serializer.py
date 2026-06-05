@@ -809,7 +809,7 @@ class SelectedEmpNotifySerializer(serializers.ModelSerializer):
         model = SelectedEmpNotify
         fields = '__all__'
 
-    class NotificationSettingsSerializer(serializers.ModelSerializer):
+class NotificationSettingsSerializer(serializers.ModelSerializer):
         class Meta:
             model = NotificationSettings
             fields = '__all__'

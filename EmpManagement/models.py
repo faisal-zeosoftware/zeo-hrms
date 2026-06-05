@@ -835,6 +835,7 @@ class Qualification_CustomFieldValue(models.Model):
             
 
 class document_type(models.Model):
+    branch      = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
     type_name   = models.CharField(max_length=50,unique=True)
     description = models.CharField(max_length=200)
     is_active   = models.BooleanField(default=True)  # Add is_active field

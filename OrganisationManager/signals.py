@@ -4,6 +4,7 @@ from django_tenants.utils import schema_context
 from django.apps import apps
 from datetime import date
 from .models import AssetType,AssetApprovalWorkflow,AssetApprovalLevel,ctgry_master,dept_master,desgntn_master
+from EmpManagement .models import document_type
 @receiver(post_schema_sync)
 def create_tenant_defaults(sender, tenant, **kwargs):
     with schema_context(tenant.schema_name):
@@ -203,6 +204,23 @@ def create_tenant_defaults(sender, tenant, **kwargs):
             )
 
             category.branch.add(branch)
+
+
+        country_name = (tenant.country.country_name.strip().upper()if tenant.country else "")
+        if country_name in ["UAE", "UNITED ARAB EMIRATES"]:
+            default_document_types = [
+                "Emirates ID",
+                "Passport",]
+            for name in default_document_types:
+                doc_type, created = document_type.objects.get_or_create(
+                    type_name=name,
+                    defaults={
+                        "description": f"Default {name} document type",
+                    }
+                )
+
+                doc_type.branch.add(branch)
+
 from django.db.models.signals import post_save
 # from django.dispatch import receiver
 # from calendars .models import leave_type

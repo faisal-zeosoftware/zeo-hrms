@@ -4,7 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.views import TokenObtainPairView
 # from . import views
 from .views import (RegisterUserAPIView, CompanyViewSet, DomainViewset, TenantUserListView, CustomTokenObtainPairView, UserDetailView,NoEssUerListView,GroupPermTenantUserListView,
-                    ValidateCredentialsView,SendOTPView,VerifyOTPView,SendResetPasswordOTP,VerifyResetOTP,ResetPassword)
+                    ValidateCredentialsView,SendOTPView,VerifyOTPView,SendResetPasswordOTP,VerifyResetOTP,ResetPassword,ChangePasswordView)
 from . import views
 router = DefaultRouter()
 
@@ -28,5 +28,7 @@ urlpatterns = [
     path("send-reset-otp/", SendResetPasswordOTP.as_view(),name='send-reset-otp'),
     path("verify-reset-otp/", VerifyResetOTP.as_view(),name='verify-reset-otp/'),
     path("reset-password/", ResetPassword.as_view(),name='reset-password'),
+    path("change-password/", ChangePasswordView.as_view(), name="change-password"),
+
 
 ]

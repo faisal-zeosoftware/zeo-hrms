@@ -274,7 +274,7 @@ class Announcement(models.Model):
     schedule_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     specific_employees = models.ManyToManyField(emp_master, blank=True, related_name='employee_announcements')
-    branch= models.ManyToManyField(brnch_mstr, blank=True, related_name='branch_announcements')
+    branches= models.ManyToManyField(brnch_mstr, blank=True, related_name='branch_announcements')
     department= models.ManyToManyField(dept_master,null=True,blank =True)
     designation = models.ManyToManyField(desgntn_master,null=True,blank =True)
     category= models.ManyToManyField(ctgry_master,null=True,blank =True)

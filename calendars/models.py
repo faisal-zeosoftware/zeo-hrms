@@ -378,7 +378,22 @@ def update_employee_yearly_calendar_with_holidays(employee, holiday_calendar):
         logger.error(f"Failed to update EmployeeYearlyCalendar for employee ID {employee.id}: {e}")
 
 #leavemangement            
+class Leave_category(models.Model):
+    name = models.CharField(max_length=50)
+    code = models.CharField(max_length=30)
+    description = models.CharField(max_length=200, null=True, blank=True)
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE, null=True, blank=True, related_name='leave_categories')
+    created_at = models.DateTimeField(default=timezone.now)
+    created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['name', 'branch'], name='unique_leave_category_name_per_branch'),
+            models.UniqueConstraint(fields=['code', 'branch'], name='unique_leave_category_code_per_branch'),
+        ]
+
+    def __str__(self):
+        return f"{self.name}"
 class leave_type(models.Model):
     type_choice =   [
         ('paid','paid'),
@@ -412,6 +427,7 @@ class leave_type(models.Model):
     enable_leave_pay_rule         = models.BooleanField(default=False, help_text="Enable pay rules based on leave duration")    
     is_compensatory               = models.BooleanField(default=False)    
     branch                        = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='leave_types')
+    leave_category                = models.ForeignKey('leave_category', on_delete=models.SET_NULL, null=True, blank=True, related_name='leave_types')
     created_at                    = models.DateTimeField(default=timezone.now)
     created_by                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 
@@ -2235,9 +2251,6 @@ class LatinEarlyoutEmailTemplate(models.Model):
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     branch              = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
-    Department          = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
-    Category            = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
-    Designation         = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
    
     def __str__(self):
         return f"{self.template_type} - {self.subject}"

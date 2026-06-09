@@ -1405,3 +1405,33 @@ class EmployeeRejoiningPermission(permissions.BasePermission):
                 return True
 
         return False
+
+class LeaveCategoryPermission(permissions.BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+        if user_permissions.is_superuser:
+            return True
+        # Map view actions to required permissions
+        action_permissions = {
+            'list': 'view_leave_category',
+            'retrieve': 'view_leave_category',
+            'create': 'add_leave_category',
+            'update': 'change_leave_category',
+            'partial_update': 'change_leave_category',
+            'destroy': 'delete_leave_category',
+        }
+        required_perm = action_permissions.get(view.action)
+        if not required_perm:
+            return False
+        # Check if any group contains the required permission
+        for group in user_permissions.groups.all():
+            if group.permissions.filter(codename=required_perm).exists():
+                return True
+        return False

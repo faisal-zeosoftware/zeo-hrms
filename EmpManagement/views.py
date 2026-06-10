@@ -168,9 +168,10 @@ class EmpViewSet(viewsets.ModelViewSet):
         employee = self.get_object()
         if request.method == 'POST':
     # Add the employee.pk to the request data
-            request.data['emp_id'] = employee.pk
+            data = request.data.copy()
+            data['emp_id'] = employee.pk
 
-            serializer = DocumentSerializer(data=request.data, context={'request': request})
+            serializer = DocumentSerializer(data=data, context={'request': request})
             serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)

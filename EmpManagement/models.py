@@ -928,7 +928,7 @@ def check_document_expiry_and_notify(document):
         return  # No notification needed
 
     # 🔹 Notify Employee
-    send_document_notification(document, expiry_date, status)
+    send_document_notification(document, expiry_date, status,settings)
 
     # 🔹 Notify ESS Users
     if ess_users:

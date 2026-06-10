@@ -1883,6 +1883,7 @@ class NotificationSettings(models.Model):
     notify_users        = models.ManyToManyField('UserManagement.CustomUser',blank=True )
     days_before_expiry  = models.PositiveBigIntegerField(default=7)
     days_after_expiry   = models.PositiveBigIntegerField(default=0)
+    document_type        = models.ForeignKey('document_type',on_delete = models.CASCADE)
     send_email          = models.BooleanField(default=True)
     created_at          = models.DateTimeField(auto_now_add=True)
     created_by          = models.ForeignKey( 'UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,related_name='%(class)s_created_by')

@@ -40,7 +40,10 @@ def send_document_expiry_notifications_for_all_tenants():
                     employee_docs = []
 
                     for doc in documents:
-                        settings = NotificationSettings.objects.filter(branch=doc.emp_id.emp_branch_id).first()
+                        settings = NotificationSettings.objects.filter(
+                            branch=doc.emp_id.emp_branch_id,
+                            document_type=doc.document_type
+                            ).first()
                         if not settings:
                             continue
 
@@ -66,7 +69,7 @@ def send_document_expiry_notifications_for_all_tenants():
         traceback.print_exc()
 
 
-def send_document_notification(document, expiry_date, status):
+def send_document_notification(document, expiry_date, status,settings):
     try:
         employee = document.emp_id
 
@@ -97,9 +100,8 @@ def send_document_notification(document, expiry_date, status):
             message=message,
             document_id=document
         )
-
-        # Send individual email
-        send_template_email('Employee Notification', employee.emp_personal_email, context)
+        if settings.send_email:
+            send_template_email('Employee Notification', employee.emp_personal_email, context)
 
     except Exception as e:
         print(f"[ERROR] Failed in send_document_notification: {e}")
@@ -116,6 +118,10 @@ def send_ess_user_notifications(employee_docs):
         for branch, docs in branch_docs.items():
             settings = NotificationSettings.objects.filter(branch=branch).first()
             if not settings:
+                continue
+
+             # Don't send emails if checkbox is unchecked
+            if not settings.send_email:
                 continue
 
             selected_employees = settings.notify_users.all()

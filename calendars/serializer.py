@@ -263,15 +263,74 @@ class LeaveResetPolicySerializer(serializers.ModelSerializer):
         return rep
     
 class LeaveEntitlementSerializer(serializers.ModelSerializer):
-    reset_policy = LeaveResetPolicySerializer(read_only=True)
+    reset_policy = LeaveResetPolicySerializer(required=False)
+
     class Meta:
         model = leave_entitlement
         fields = '__all__'
+
+    def create(self, validated_data):
+        reset_policy_data = validated_data.pop('reset_policy', None)
+
+        entitlement = leave_entitlement.objects.create(**validated_data)
+
+        if reset_policy_data:
+            LeaveResetPolicy.objects.create(
+                leave_entitlement=entitlement,
+                leave_type=entitlement.leave_type,
+                **reset_policy_data
+            )
+
+        return entitlement
+
+    def update(self, instance, validated_data):
+        reset_policy_data = validated_data.pop('reset_policy', None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.save()
+
+        if reset_policy_data:
+
+            reset_policy, created = LeaveResetPolicy.objects.get_or_create(
+                leave_entitlement=instance,
+                defaults={
+                    'leave_type': instance.leave_type
+                }
+            )
+
+            for attr, value in reset_policy_data.items():
+                setattr(reset_policy, attr, value)
+
+            reset_policy.leave_type = instance.leave_type
+            reset_policy.save()
+
+        return instance
+
     def to_representation(self, instance):
-        rep = super(LeaveEntitlementSerializer, self).to_representation(instance)
-        if instance.leave_type:  
-            rep['leave_type'] = instance.leave_type.name
+        rep = super().to_representation(instance)
+
+        if instance.leave_type:
+            rep['leave_type_name'] = instance.leave_type.name
+
+        try:
+            rep['reset_policy'] = LeaveResetPolicySerializer(
+                instance.reset_policy
+            ).data
+        except LeaveResetPolicy.DoesNotExist:
+            rep['reset_policy'] = None
+
         return rep
+    # reset_policy = LeaveResetPolicySerializer(read_only=True)
+    # class Meta:
+    #     model = leave_entitlement
+    #     fields = '__all__'
+    # def to_representation(self, instance):
+    #     rep = super(LeaveEntitlementSerializer, self).to_representation(instance)
+    #     if instance.leave_type:  
+    #         rep['leave_type'] = instance.leave_type.name
+    #     return rep
 class LeaveRequestSerializer(serializers.ModelSerializer):
     # document_numbering_details = serializers.SerializerMethodField()
     class Meta:

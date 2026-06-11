@@ -54,7 +54,7 @@ class company(TenantMixin):
     financial_year = models.DateField(null=True,blank=True)  
     city           = models.CharField(max_length=100,null=True,blank=True)
     timezone       = models.CharField(max_length=50,null=True,blank=True)
-
+    pincode        = models.CharField(max_length=10,blank=True,null=True)
     # Automatically create schema when saving
     auto_create_schema = True
     def save(self, *args, **kwargs):

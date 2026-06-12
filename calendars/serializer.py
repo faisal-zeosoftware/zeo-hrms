@@ -272,7 +272,17 @@ class LeaveEntitlementSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         reset_policy_data = validated_data.pop('reset_policy', None)
 
+        departments = validated_data.pop('departments', [])
+        branches = validated_data.pop('branches', [])
+        designations = validated_data.pop('designations', [])
+        categories = validated_data.pop('categories', [])
+
         entitlement = leave_entitlement.objects.create(**validated_data)
+
+        entitlement.departments.set(departments)
+        entitlement.branches.set(branches)
+        entitlement.designations.set(designations)
+        entitlement.categories.set(categories)
 
         if reset_policy_data:
             LeaveResetPolicy.objects.create(
@@ -286,13 +296,29 @@ class LeaveEntitlementSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         reset_policy_data = validated_data.pop('reset_policy', None)
 
+        departments = validated_data.pop('departments', None)
+        branches = validated_data.pop('branches', None)
+        designations = validated_data.pop('designations', None)
+        categories = validated_data.pop('categories', None)
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
         instance.save()
 
-        if reset_policy_data:
+        if departments is not None:
+            instance.departments.set(departments)
 
+        if branches is not None:
+            instance.branches.set(branches)
+
+        if designations is not None:
+            instance.designations.set(designations)
+
+        if categories is not None:
+            instance.categories.set(categories)
+
+        if reset_policy_data:
             reset_policy, created = LeaveResetPolicy.objects.get_or_create(
                 leave_entitlement=instance,
                 defaults={
@@ -322,7 +348,6 @@ class LeaveEntitlementSerializer(serializers.ModelSerializer):
             rep['reset_policy'] = None
 
         return rep
-    # reset_policy = LeaveResetPolicySerializer(read_only=True)
     # class Meta:
     #     model = leave_entitlement
     #     fields = '__all__'

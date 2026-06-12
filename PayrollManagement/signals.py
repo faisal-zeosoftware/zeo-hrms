@@ -552,7 +552,9 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
             repayment_count = LoanRepayment.objects.filter(loan=loan).count()
             if repayment_count < loan.repayment_period:
                 emi_amount = loan.emi_amount
-                loan_component = SalaryComponent.objects.filter(is_loan_component=True).first()
+                # loan_component = SalaryComponent.objects.filter(is_loan_component=True).first()
+                loan_component = SalaryComponent.objects.filter(special_component_type='loan').first()
+
                 if loan_component:
                     PayslipComponent.objects.update_or_create(
                         payslip=payslip, component=loan_component, defaults={"amount": emi_amount}
@@ -578,7 +580,8 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
                         loan.save()
 
         # Advance Salary
-        advance_component = SalaryComponent.objects.filter(is_advance_salary=True).first()
+        # advance_component = SalaryComponent.objects.filter(is_advance_salary=True).first()
+        advance_component = SalaryComponent.objects.filter(special_component_type='advance_salary').first()
         approved_advances = AdvanceSalaryRequest.objects.filter(employee=employee, status="Approved")
         for advance in approved_advances:
             if advance_component and advance.requested_amount > 0:
@@ -591,7 +594,8 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
                 advance.save(update_fields=["status"])
 
         # Air tickets
-        air_ticket_component = SalaryComponent.objects.filter(is_air_ticket=True).first()
+        # air_ticket_component = SalaryComponent.objects.filter(is_air_ticket=True).first()
+        air_ticket_component = SalaryComponent.objects.filter(special_component_type='air_ticket').first()
         approved_tickets = AirTicketRequest.objects.filter(
             employee=employee, status="APPROVED", request_type="ENCASHMENT"
         )

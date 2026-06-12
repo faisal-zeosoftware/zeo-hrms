@@ -11,26 +11,84 @@ from EmpManagement .models import RequestNotification
 from django.db.models import Max 
 
 # Create your models here.
+class PayrollCategory(models.Model):
+    CATEGORY_TYPES = [
+        ('earning', 'Earning'),
+        ('deduction', 'Deduction'),
+        ('benefit', 'Benefit'),
+        ('reimbursement', 'Reimbursement'),
+        ('other', 'Other'),
+    ]
+
+    name = models.CharField(max_length=100)
+    code = models.CharField(max_length=30)
+
+    category_type = models.CharField(
+        max_length=20,
+        choices=CATEGORY_TYPES,
+        default='other'
+    )
+
+    description = models.TextField(blank=True, null=True)
+
+    branch = models.ForeignKey(
+        'OrganisationManager.brnch_mstr',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='payroll_categories'
+    )
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['name', 'branch'],
+                name='unique_payroll_category_name_per_branch'
+            ),
+            models.UniqueConstraint(
+                fields=['code', 'branch'],
+                name='unique_payroll_category_code_per_branch'
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+    
 class SalaryComponent(models.Model):
     COMPONENT_TYPES = [
         ('deduction', 'Deduction'),
         ('addition', 'Addition'),
         ('others', 'Others'),
     ]
+    SPECIAL_COMPONENT_CHOICES = [
+        ('none', 'None'),
+        ('loan', 'Loan Deduction'),
+        ('advance_salary', 'Advance Salary'),
+        ('air_ticket', 'Air Ticket'),
+        ('gratuity', 'Gratuity'),
+    ]
+    COMPONENT_VALUE_TYPES = [
+    ('fixed', 'Fixed'),
+    ('variable', 'Variable'),]
 
     name = models.CharField(max_length=100)  # Component name (e.g., HRA, PF)
     component_type = models.CharField(max_length=20, choices=COMPONENT_TYPES)
+    payroll_category = models.ForeignKey('PayrollManagement.PayrollCategory',on_delete=models.SET_NULL,null=True,blank=True,related_name='salary_components')
+    special_component_type = models.CharField(max_length=30,choices=SPECIAL_COMPONENT_CHOICES,default='none')
     branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='salary_components')
     code = models.CharField(max_length=20,null=True)
     deduct_leave=models.BooleanField(default=False)
-    is_fixed = models.BooleanField(default=True, help_text="Is this component fixed (True) or variable (False)?")
+    # is_fixed = models.BooleanField(default=True, help_text="Is this component fixed (True) or variable (False)?")
+    component_value_type = models.CharField(max_length=20,choices=COMPONENT_VALUE_TYPES,default='fixed')
     formula = models.CharField(max_length=255, blank=True, null=True, help_text="Formula to calculate this component (e.g., 'basic_salary * 0.4')")
     description = models.TextField(blank=True, null=True)
-    is_loan_component = models.BooleanField(default=False, help_text="Mark if this is the loan deduction component")
+    # is_loan_component = models.BooleanField(default=False, help_text="Mark if this is the loan deduction component")
     show_in_payslip = models.BooleanField(default=True, help_text="Should this component be shown on the payslip?")
-    is_advance_salary = models.BooleanField(default=False, help_text="Used for advance salary deductions")
-    is_air_ticket = models.BooleanField(default=False, help_text="Used for air ticket")
-    is_gratuity = models.BooleanField(default=False, help_text="Used for emp-gratuity")
+    # is_advance_salary = models.BooleanField(default=False, help_text="Used for advance salary deductions")
+    # is_air_ticket = models.BooleanField(default=False, help_text="Used for air ticket")
+    # is_gratuity = models.BooleanField(default=False, help_text="Used for emp-gratuity")
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['name', 'branch'], name='unique_salary_component_name_per_branch'),
@@ -38,7 +96,6 @@ class SalaryComponent(models.Model):
         ]
     def __str__(self):
         return f"{self.name} ({self.get_component_type_display()})"
-
 class EmployeeSalaryStructure(models.Model):
     employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE, related_name='salary_structures')
     component = models.ForeignKey(SalaryComponent, on_delete=models.CASCADE, related_name='employee_components')

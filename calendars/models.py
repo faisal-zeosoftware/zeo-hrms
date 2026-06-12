@@ -623,7 +623,7 @@ class LeaveResetPolicy(models.Model):
         ('carry_forward','carry forward'),
         ('carry_forward_with_expiry','carry forward with expiry')
     ]
-    leave_type                     = models.ForeignKey('leave_type', on_delete=models.CASCADE,related_name='reset_policy')
+    leave_type                     = models.ForeignKey('leave_type', on_delete=models.CASCADE,related_name='reset_policy',null=True,blank=True)
     leave_entitlement              = models.OneToOneField('leave_entitlement', on_delete=models.CASCADE, related_name='reset_policy', null=True, blank=True)
     reset                          = models.BooleanField(default=False)
     frequency                      = models.CharField(max_length=20, choices=TIME_UNIT_CHOICES)

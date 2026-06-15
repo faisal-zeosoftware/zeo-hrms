@@ -549,3 +549,43 @@ def apply_check_out_policy(employee, check_out_time):
         dt = dt.replace(minute=minutes, second=0)
 
     return dt.time()
+
+def get_employee_attendance_validation_policy(employee):
+    """
+    Retrieves the active AttendanceValidationPolicy for the employee
+    based on priority: employee > category > department > branch > company.
+    """
+    from .models import AttendanceValidationPolicy
+    # Employee
+    policy = AttendanceValidationPolicy.objects.filter(
+        employee=employee,
+        is_active=True
+    ).first()
+
+    # Category
+    policy = AttendanceValidationPolicy.objects.filter(
+        category=employee.emp_ctgry_id,
+        is_active=True
+    ).first()
+
+    # Department
+    policy = AttendanceValidationPolicy.objects.filter(
+        department=employee.emp_dept_id,
+        is_active=True
+    ).first()
+
+    # Branch
+    policy = AttendanceValidationPolicy.objects.filter(
+        branch=employee.emp_branch_id,
+        is_active=True
+    ).first()
+
+    # Company
+    policy = AttendanceValidationPolicy.objects.filter(
+        employee__isnull=True,
+        category__isnull=True,
+        department__isnull=True,
+        branch__isnull=True,
+        is_active=True
+    ).first()
+    return policy

@@ -4,7 +4,7 @@ from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,as
                      AttendanceReport,lvBalanceReport,EmployeeYearlyCalendar,CompensatoryLeaveRequest,CompensatoryLeaveTransaction,CompensatoryLeaveBalance,ShiftPattern,EmployeeShiftSchedule,ShiftOverride,LeaveResetPolicy,LeaveCarryForwardTransaction,
                      LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
                      LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow,AttendanceCalendar,CompensatoryLeaveAllocation,
-                     Leave_category,
+                     Leave_category,AttendanceValidationPolicy
                      )
 from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,HolidayAssignSerializer,HolidayCalandarSerializer,HolidaySerializer,WeekendDetailSerializer,LeaveTypeSerializer,LeaveEntitlementSerializer,ApplicableSerializer,EmployeeLeaveBalanceSerializer,AccrualSerializer,ResetSerializer,LeaveRequestSerializer,
                          AttendanceSerializer,ShiftSerializer,ImportAttendanceSerializer,EmployeeMappingSerializer,LeaveReportSerializer,LvApprovalLevelSerializer,EmployeeYearlyCalendarSerializer,
@@ -13,7 +13,7 @@ from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,Holi
                          LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer,OvertimeRuleSerializer,
                          AttendanceLogSerializer,AttendancePolicySerializer,LeavePayRuleSerializer,
                          LatinEarlyoutEmailTemplateSerializer,LateinEarlyRequestNotificationSerializer,LateinEarlyoutRequestSerializer,LateinEarlyoutApprovalLevelSerializer, LateinEarlyoutApprovalSerializer,LVApprovalWorkflowSerializer,LatinEarlyApprovalWorkflowSerializer,AttendanceCalendarSerializer,CompensatoryLeaveAllocationSerializer,
-                         LeaveCategorySerializer
+                         LeaveCategorySerializer,AttendanceValidationPolicySerializer
                          )
 from . import face_utils
 from rest_framework import viewsets,filters,status
@@ -58,7 +58,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from datetime import date
 from dateutil.relativedelta import relativedelta
-from .utils import get_attendance_summary
+from .utils import get_attendance_summary,get_employee_attendance_validation_policy
 from .serializer import AttendanceSummarySerializer
 from EmpManagement.models import emp_master
 import calendar
@@ -529,6 +529,9 @@ class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
 class AttendancePolicyViewset(viewsets.ModelViewSet):
     queryset = AttendancePolicy.objects.all()
     serializer_class = AttendancePolicySerializer
+class AttendanceValidationPolicyViewset(viewsets.ModelViewSet):
+    queryset = AttendanceValidationPolicy.objects.all()
+    serializer_class = AttendanceValidationPolicySerializer
 class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
@@ -609,25 +612,43 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             "check_in"
         )
 
-        # 🔐 AUTH
+        # 🔐 RESOLVE EMPLOYEE
         employee = None
+        if barcode:
+            try:
+                employee = emp_master.objects.get(barcode_number=barcode)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Invalid barcode"}, status=400)
+        elif emp_id:
+            try:
+                employee = emp_master.objects.get(id=emp_id)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Employee not found"}, status=404)
+        else:
+            return Response({"detail": "Provide employee ID or barcode"}, status=400)
+
+        # 📋 RESOLVE ACTIVE POLICY
+        policy = get_employee_attendance_validation_policy(employee)
+
+        # 🔐 VALIDATE BARCODE VERIFICATION
+        if policy and policy.enable_barcode_verification:
+            if not barcode:
+                return Response({"detail": "Barcode verification is mandatory."}, status=400)
+            if emp_id and str(employee.id) != str(emp_id):
+                return Response({"detail": "Scanned barcode does not match employee ID"}, status=400)
+
+        # 🔐 AUTH & FACE RECOGNITION
         auth_method = "manual"
         is_verified = False
 
         if barcode:
-            try:
-                employee = emp_master.objects.get(barcode_number=barcode)
-                auth_method = "barcode"
-                is_verified = True
-            except:
-                return Response({"detail": "Invalid barcode"}, status=400)
+            auth_method = "barcode"
+            is_verified = True
 
-        elif face_photo:
-            if not emp_id:
-                return Response({"detail": "Employee ID required for face"}, status=400)
-
-            employee = emp_master.objects.get(id=emp_id)
-
+        if policy and policy.enable_face_recognition:
+            if not face_photo:
+                return Response({"detail": "Face verification is mandatory."}, status=400)
+            
             current_encoding = face_utils.get_face_encoding(face_photo)
             if not current_encoding:
                 return Response({"detail": "No face detected"}, status=400)
@@ -637,17 +658,32 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
             auth_method = "face"
             is_verified = True
+        elif face_photo:
+            # Face photo provided but not mandatory, verify anyway
+            current_encoding = face_utils.get_face_encoding(face_photo)
+            if not current_encoding:
+                return Response({"detail": "No face detected"}, status=400)
 
-        elif emp_id:
-            employee = emp_master.objects.get(id=emp_id)
+            if not face_utils.verify_face(employee.face_encoding, current_encoding):
+                return Response({"detail": "Face does not match"}, status=400)
+
+            auth_method = "face"
+            is_verified = True
+        elif emp_id and not barcode:
+            auth_method = "manual"
             is_verified = True
 
-        else:
-            return Response({"detail": "Provide employee/face/barcode"}, status=400)
+        # 📸 VALIDATE PHOTO CAPTURE
+        if policy and policy.enable_photo_capture:
+            if not check_in_image:
+                return Response({"detail": "Check-in photo capture is mandatory."}, status=400)
 
         # 🌍 GEOFENCE
-        if not validate_employee_geofence(employee, lat, lng):
-            return Response({"detail": "Outside geofence"}, status=400)
+        if policy and policy.enable_geofencing:
+            if not lat or not lng:
+                return Response({"detail": "Location coordinates are required for geofencing"}, status=400)
+            if not validate_employee_geofence(employee, lat, lng):
+                return Response({"detail": "Outside geofence"}, status=400)
 
         attendance, _ = Attendance.objects.get_or_create(
             employee=employee,
@@ -702,20 +738,43 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             "check_out"
         )
 
-        # 🔐 AUTH
+        # 🔐 RESOLVE EMPLOYEE
         employee = None
+        if barcode:
+            try:
+                employee = emp_master.objects.get(barcode_number=barcode)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Invalid barcode"}, status=400)
+        elif emp_id:
+            try:
+                employee = emp_master.objects.get(id=emp_id)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Employee not found"}, status=404)
+        else:
+            return Response({"detail": "Provide employee ID or barcode"}, status=400)
+
+        # 📋 RESOLVE ACTIVE POLICY
+        policy = get_employee_attendance_validation_policy(employee)
+
+        # 🔐 VALIDATE BARCODE VERIFICATION
+        if policy and policy.enable_barcode_verification:
+            if not barcode:
+                return Response({"detail": "Barcode verification is mandatory."}, status=400)
+            if emp_id and str(employee.id) != str(emp_id):
+                return Response({"detail": "Scanned barcode does not match employee ID"}, status=400)
+
+        # 🔐 AUTH & FACE RECOGNITION
         auth_method = "manual"
         is_verified = False
 
         if barcode:
-            employee = emp_master.objects.get(barcode_number=barcode)
-            attendance = Attendance.objects.get(employee=employee, date=now().date())
             auth_method = "barcode"
             is_verified = True
 
-        elif face_photo:
-            employee = emp_master.objects.get(id=emp_id)
-
+        if policy and policy.enable_face_recognition:
+            if not face_photo:
+                return Response({"detail": "Face verification is mandatory."}, status=400)
+            
             current_encoding = face_utils.get_face_encoding(face_photo)
             if not current_encoding:
                 return Response({"detail": "No face detected"}, status=400)
@@ -723,21 +782,39 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if not face_utils.verify_face(employee.face_encoding, current_encoding):
                 return Response({"detail": "Face does not match"}, status=400)
 
-            attendance = Attendance.objects.get(employee=employee, date=now().date())
             auth_method = "face"
             is_verified = True
+        elif face_photo:
+            # Face photo provided but not mandatory, verify anyway
+            current_encoding = face_utils.get_face_encoding(face_photo)
+            if not current_encoding:
+                return Response({"detail": "No face detected"}, status=400)
 
-        elif emp_id:
-            attendance = Attendance.objects.get(employee_id=emp_id, date=now().date())
-            employee = attendance.employee
+            if not face_utils.verify_face(employee.face_encoding, current_encoding):
+                return Response({"detail": "Face does not match"}, status=400)
+
+            auth_method = "face"
+            is_verified = True
+        elif emp_id and not barcode:
+            auth_method = "manual"
             is_verified = True
 
-        else:
-            return Response({"detail": "Provide employee/face/barcode"}, status=400)
+        # 📸 VALIDATE PHOTO CAPTURE
+        if policy and policy.enable_photo_capture:
+            if not check_out_image:
+                return Response({"detail": "Check-out photo capture is mandatory."}, status=400)
 
         # 🌍 GEOFENCE
-        if not validate_employee_geofence(employee, lat, lng):
-            return Response({"detail": "Outside geofence"}, status=400)
+        if policy and policy.enable_geofencing:
+            if not lat or not lng:
+                return Response({"detail": "Location coordinates are required for geofencing"}, status=400)
+            if not validate_employee_geofence(employee, lat, lng):
+                return Response({"detail": "Outside geofence"}, status=400)
+
+        try:
+            attendance = Attendance.objects.get(employee=employee, date=now().date())
+        except Attendance.DoesNotExist:
+            return Response({"detail": "Attendance record not found for today. Please check in first."}, status=404)
 
         tenant_time = localtime(now()).time()
         tenant_time = apply_check_out_policy(employee, tenant_time)

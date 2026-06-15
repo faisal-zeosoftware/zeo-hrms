@@ -5,7 +5,8 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
-                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset,LeaveCategoryviewset
+                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset,LeaveCategoryviewset,
+                    AttendanceValidationPolicyViewset
                     
                     )
 
@@ -33,6 +34,7 @@ router.register(r'leave-encashment-tranaction',LeaveEncashmentTransactionviewset
 # router.register(r'leave-policy', LeavePolicyviewset, basename='leave_policy')
 router.register(r'emp-leave-request', LeaveRequestviewset, basename='emp_leave-request')
 router.register(r'emp-foreign', LeaveTypeViewSet, basename='emp_foreign')
+router.register(r'attendance-validation-policy', AttendanceValidationPolicyViewset, basename='attendance-validation-policy')
 router.register(r'attendance', AttendanceViewSet, basename='attendance')
 router.register(r'attendance-Recheck', AttendanceRecheckViewSet, basename='attendance_recheck')
 router.register(r'shifts', ShiftViewSet,basename='shifts')

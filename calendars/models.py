@@ -1969,6 +1969,34 @@ class AttendancePolicy(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.branch.name}"    
+
+class AttendanceValidationPolicy(models.Model):
+    name = models.CharField(max_length=100)
+    # related_to = models.CharField(max_length=20, choices=EMP_CHOICES, default="company")
+    
+    # Assignments
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+    department = models.ManyToManyField('OrganisationManager.dept_master', blank=True)
+    category = models.ManyToManyField('OrganisationManager.ctgry_master', blank=True)
+    employee = models.ManyToManyField('EmpManagement.emp_master', blank=True)
+    
+    # Validation Rules
+    enable_geofencing = models.BooleanField(default=False)
+    enable_face_recognition = models.BooleanField(default=False)
+    enable_barcode_verification = models.BooleanField(default=False)
+    enable_photo_capture = models.BooleanField(default=False)
+    
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        'UserManagement.CustomUser', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        related_name='%(class)s_created_by'
+    )
+    def __str__(self):
+        return f"{self.name}"    
+
 class Attendance(models.Model):
     employee        = models.ForeignKey("EmpManagement.emp_master", on_delete=models.CASCADE)
     shift           = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True)

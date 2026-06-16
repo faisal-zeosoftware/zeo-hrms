@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,
+                    PayrollCategory
                     )
 
 import calendar
@@ -22,15 +23,19 @@ class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
     emp_name = serializers.SerializerMethodField()
     department = serializers.CharField(source='employee.emp_dept_id.dept_name', read_only=True)
     designation = serializers.CharField(source='employee.emp_desgntn_id.desgntn_job_title', read_only=True)
-    is_fixed = serializers.BooleanField(source='component.is_fixed', read_only=True)
+    # s_fixied = serializers.BooleanField(source='component.is_fixed', read_only=True)
+    component_value_type = serializers.CharField(source='component.component_value_type',read_only=True)
+
+    payroll_category = serializers.CharField(source='component.payroll_category',read_only=True)
 
     class Meta:
         model = EmployeeSalaryStructure
         # Include 'employee' and 'component' for input
         fields = [
             'id', 'employee', 'emp_code',
-            'component', 'component_name', 'component_type',
-            'amount', 'is_active', 'date_created', 'is_fixed','date_updated','department','designation','emp_name'
+            'component', 'component_name', 'component_type','component_value_type',
+            'payroll_category',
+            'amount', 'is_active', 'date_created', 'date_updated','department','designation','emp_name'
         ]
         extra_kwargs = {
             'employee': {'write_only': False},  # Allow it in input and output
@@ -570,7 +575,7 @@ class SIFSerializer(serializers.Serializer):
             fixed_income = sum(
                 struct.amount or Decimal("0.0")
                 for struct in employee.salary_structures.filter(
-                    component__is_fixed=True, is_active=True
+                    component__component_value_type="fixed", is_active=True
                 )
             )
             variable_income = sum(

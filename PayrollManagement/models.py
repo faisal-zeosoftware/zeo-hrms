@@ -62,12 +62,29 @@ class SalaryComponent(models.Model):
         ('addition', 'Addition'),
         ('others', 'Others'),
     ]
-    SPECIAL_COMPONENT_CHOICES = [
-        ('none', 'None'),
+    COMPONENT_MASTER_CHOICES = [
+        ('basic', 'Basic Salary'),
+        ('hra', 'HRA'),
+        ('education_allowance', 'Education Allowance'),
+        ('transport_allowance', 'Transport Allowance'),
+        ('food_allowance', 'Food Allowance'),
+        ('housing_allowance', 'Housing Allowance'),
+        ('telephone_allowance', 'Telephone Allowance'),
+        ('medical_allowance', 'Medical Allowance'),
+        ('travel_allowance', 'Travel Allowance'),
+        ('other_allowance', 'Other Allowance'),
+        ('bonus', 'Bonus'),
+        ('commission', 'Commission'),
+        ('overtime', 'Overtime'),
         ('loan', 'Loan Deduction'),
         ('advance_salary', 'Advance Salary'),
         ('air_ticket', 'Air Ticket'),
         ('gratuity', 'Gratuity'),
+        ('leave_encashment', 'Leave Encashment'),
+        ('pf', 'Provident Fund'),
+        ('esi', 'ESI'),
+        ('tax', 'Tax'),
+        
     ]
     COMPONENT_VALUE_TYPES = [
     ('fixed', 'Fixed'),
@@ -75,20 +92,14 @@ class SalaryComponent(models.Model):
 
     name = models.CharField(max_length=100)  # Component name (e.g., HRA, PF)
     component_type = models.CharField(max_length=20, choices=COMPONENT_TYPES)
-    payroll_category = models.ForeignKey('PayrollManagement.PayrollCategory',on_delete=models.SET_NULL,null=True,blank=True,related_name='salary_components')
-    special_component_type = models.CharField(max_length=30,choices=SPECIAL_COMPONENT_CHOICES,default='none')
+    payroll_category = models.CharField(max_length=50,choices=COMPONENT_MASTER_CHOICES,default='basic')
     branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='salary_components')
     code = models.CharField(max_length=20,null=True)
     deduct_leave=models.BooleanField(default=False)
-    # is_fixed = models.BooleanField(default=True, help_text="Is this component fixed (True) or variable (False)?")
     component_value_type = models.CharField(max_length=20,choices=COMPONENT_VALUE_TYPES,default='fixed')
     formula = models.CharField(max_length=255, blank=True, null=True, help_text="Formula to calculate this component (e.g., 'basic_salary * 0.4')")
     description = models.TextField(blank=True, null=True)
-    # is_loan_component = models.BooleanField(default=False, help_text="Mark if this is the loan deduction component")
     show_in_payslip = models.BooleanField(default=True, help_text="Should this component be shown on the payslip?")
-    # is_advance_salary = models.BooleanField(default=False, help_text="Used for advance salary deductions")
-    # is_air_ticket = models.BooleanField(default=False, help_text="Used for air ticket")
-    # is_gratuity = models.BooleanField(default=False, help_text="Used for emp-gratuity")
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['name', 'branch'], name='unique_salary_component_name_per_branch'),

@@ -32,89 +32,13 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from simpleeval import SimpleEval, NameNotDefined, FunctionNotDefined
 from calendars .utils import get_employee_holidays,get_employee_weekend_days
-from .utils import get_ot_rate
+from .utils import get_ot_rate,evaluate_formula
 
 
-def evaluate_formula(formula, variables, employee, component):
-    try:
-        logger.debug(
-            f"Evaluating formula: {formula} with variables: {variables} for employee: {employee}"
-        )
-        formula = formula.strip("'")
-
-        # 🔑 Convert all numbers into Decimal("...")
-        formula = re.sub(r'(\d+\.\d+|\d+)', r'Decimal("\1")', formula)
-
-        s = SimpleEval()
-        s.names = variables
-        s.functions = {"Decimal": Decimal}  # allow Decimal inside eval
-
-        # ✅ Custom operators
-        s.operators.update({
-            '<': lambda x, y: x < y,
-            '>': lambda x, y: x > y,
-            '>=': lambda x, y: x >= y,
-            '<=': lambda x, y: x <= y,
-            '==': lambda x, y: x == y,
-            '!=': lambda x, y: x != y,
-            'and': lambda x, y: x and y,
-            'or': lambda x, y: x or y,
-            'not': lambda x: not x,
-            '+': lambda x, y: x + y,
-            '-': lambda x, y: x - y,
-            '*': lambda x, y: x * y,
-            '/': lambda x, y: x / y,
-            '%': lambda x, y: x % y,
-        })
-
-        # ✅ Extended IF (works like CASE WHEN)
-        def IF(*args):
-            """
-            Supports:
-            - IF(cond, true_val, false_val)   → normal
-            - IF(cond1, val1, cond2, val2, ..., default_val) → CASE-like
-            """
-            n = len(args)
-            if n < 3:
-                raise ValueError("Invalid IF usage")
-            # Pairwise check (cond, val)
-            for i in range(0, n - 1, 2):
-                if args[i]:
-                    return args[i+1]
-            return args[-1]  # default
-
-        # ✅ Custom functions
-        s.functions.update({
-            "MAX": max,
-            "MIN": min,
-            "AVG": lambda *args: sum(args) / len(args) if args else Decimal("0.00"),
-            "SUM": sum,
-            "ROUND": lambda val, ndigits=2: val.quantize(Decimal("1." + "0"*ndigits)) 
-                if isinstance(val, Decimal) else round(val, ndigits),
-            "IF": IF,
-        })
-
-        result = s.eval(formula)
-
-        # Ensure result is Decimal
-        if not isinstance(result, Decimal):
-            result = Decimal(str(result))
-
-        return result.quantize(Decimal("0.00"))
-
-    except (NameNotDefined, FunctionNotDefined) as e:
-        logger.error(
-            f"Invalid variable or function in formula '{formula}' for employee {employee}: {e}"
-        )
-        return Decimal("0.00")
-    except Exception as e:
-        logger.error(
-            f"Error evaluating formula '{formula}' for employee {employee}: {e}"
-        )
-        return Decimal("0.00")
 @receiver(post_save, sender=SalaryComponent)
 def update_employee_salary_structure(sender, instance, created, **kwargs):
-    if not instance.is_fixed and instance.formula:
+    # if not instance.is_fixed and instance.formula:
+    if instance.component_value_type == "variable" and instance.formula:
         EmpMaster = apps.get_model('EmpManagement', 'emp_master')
         EmployeeSalaryStructure = apps.get_model('PayrollManagement', 'EmployeeSalaryStructure')
         
@@ -202,11 +126,13 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     variables['employee.grade'] = str(getattr(employee, 'grade', ''))
     variables['employee.employee_type'] = str(getattr(employee, 'employee_type', ''))
     variables['employee.joining_date'] = (
-        employee.joining_date.strftime('%Y-%m-%d') if getattr(employee, 'joining_date', None) else ''
+        employee.emp_joined_date.strftime('%Y-%m-%d') if employee.emp_joined_date else ''
     )
-
-    if getattr(employee, 'joining_date', None):
-        delta = relativedelta(end_date, employee.joining_date)
+    
+    # if getattr(employee, 'joining_date', None):
+    if employee.emp_joined_date:
+        # delta = relativedelta(end_date, employee.joining_date)
+        delta = relativedelta(end_date, employee.emp_joined_date)
         variables['years_of_service'] = round(delta.years + delta.months / 12.0, 2)
     else:
         variables['years_of_service'] = 0.0
@@ -248,14 +174,23 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     salary_structs = EmployeeSalaryStructure.objects.filter(employee=employee, is_active=True)
 
     # First add fixed components
+    # for sc in salary_structs:
+    #     if sc.component.is_fixed and sc.amount is not None:
+    #         variables[sc.component.code] = Decimal(sc.amount)
     for sc in salary_structs:
-        if sc.component.is_fixed and sc.amount is not None:
-            variables[sc.component.code] = Decimal(sc.amount)
-
+        if (
+            sc.component.component_value_type == "fixed"
+            and sc.amount is not None
+        ):
+            variables[sc.component.code] = Decimal(str(sc.amount))
     # Then evaluate formula-based components and add them too
     for sc in salary_structs:
         comp = sc.component
-        if not comp.is_fixed and comp.formula:
+        # if not comp.is_fixed and comp.formula:
+        if (
+            comp.component_value_type == "variable"
+            and comp.formula
+        ):
             try:
                 val = evaluate_formula(comp.formula, variables, employee, comp)
                 # Ensure it's always Decimal
@@ -297,7 +232,6 @@ from django.dispatch import receiver
 from django.apps import apps
 
 logger = logging.getLogger(__name__)
-
 def get_payroll_dates_and_days(instance):
 
     PayStructure = apps.get_model("PayrollManagement", "PayStructure")
@@ -500,7 +434,8 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
             comp = sc.component
             amount = Decimal("0.00")
             try:
-                if comp.is_fixed:
+                if comp.component_value_type == "fixed":
+                # if comp.is_fixed:
                     amount = Decimal(str(sc.amount or "0.00"))
                 elif comp.formula:
                     amount = Decimal(str(evaluate_formula(comp.formula, variables, employee, comp)))
@@ -553,8 +488,7 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
             if repayment_count < loan.repayment_period:
                 emi_amount = loan.emi_amount
                 # loan_component = SalaryComponent.objects.filter(is_loan_component=True).first()
-                loan_component = SalaryComponent.objects.filter(special_component_type='loan').first()
-
+                loan_component = SalaryComponent.objects.filter(payroll_category='loan').first()
                 if loan_component:
                     PayslipComponent.objects.update_or_create(
                         payslip=payslip, component=loan_component, defaults={"amount": emi_amount}
@@ -581,7 +515,7 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
 
         # Advance Salary
         # advance_component = SalaryComponent.objects.filter(is_advance_salary=True).first()
-        advance_component = SalaryComponent.objects.filter(special_component_type='advance_salary').first()
+        advance_component = SalaryComponent.objects.filter(payroll_category='advance_salary').first()
         approved_advances = AdvanceSalaryRequest.objects.filter(employee=employee, status="Approved")
         for advance in approved_advances:
             if advance_component and advance.requested_amount > 0:
@@ -595,7 +529,7 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
 
         # Air tickets
         # air_ticket_component = SalaryComponent.objects.filter(is_air_ticket=True).first()
-        air_ticket_component = SalaryComponent.objects.filter(special_component_type='air_ticket').first()
+        air_ticket_component = SalaryComponent.objects.filter(payroll_category='air_ticket').first()
         approved_tickets = AirTicketRequest.objects.filter(
             employee=employee, status="APPROVED", request_type="ENCASHMENT"
         )
@@ -613,7 +547,7 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
         EmployeeSalaryStructure.objects.filter(
             employee=employee,
             is_active=True,
-            component__is_fixed=False,
+            component__component_value_type='variable',
         ).filter(
             Q(component__formula__isnull=True) | Q(component__formula__exact="")
         ).update(amount=Decimal("0.00"))
@@ -720,13 +654,20 @@ def update_dependents_on_fixed_change(sender, instance, **kwargs):
     """
     If a fixed component changes (e.g. Basic), recalc dependent formula components for that employee.
     """
-    if not instance.component.is_fixed:
+    # if not instance.component.is_fixed:
+    #     return
+    if instance.component.component_value_type != "fixed":
         return
-
     SalaryComponent = apps.get_model("PayrollManagement", "SalaryComponent")
     EmployeeSalaryStructure = apps.get_model("PayrollManagement", "EmployeeSalaryStructure")
 
-    formula_components = SalaryComponent.objects.filter(is_fixed=False, formula__isnull=False)
+    # formula_components = SalaryComponent.objects.filter(is_fixed=False, formula__isnull=False)
+    formula_components = SalaryComponent.objects.filter(
+        component_value_type="variable",
+        formula__isnull=False
+    ).exclude(
+        formula=""
+    )
 
     for comp in formula_components:
         if comp.formula and instance.component.code in comp.formula:

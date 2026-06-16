@@ -9,7 +9,7 @@ from calendar import monthrange
 from django_tenants.utils import connection
 from django.apps import apps
 from django.db.models import Q
-
+from simpleeval import SimpleEval, NameNotDefined, FunctionNotDefined
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -35,6 +35,84 @@ def eval_formula(formula, components_dict):
         return Decimal(str(eval(formula)))
     except Exception as e:
         raise ValueError(f"Error evaluating formula '{formula}': {e}")
+    
+def evaluate_formula(formula, variables, employee, component):
+    try:
+        logger.debug(
+            f"Evaluating formula: {formula} with variables: {variables} for employee: {employee}"
+        )
+        formula = formula.strip("'")
+
+        # 🔑 Convert all numbers into Decimal("...")
+        formula = re.sub(r'(\d+\.\d+|\d+)', r'Decimal("\1")', formula)
+
+        s = SimpleEval()
+        s.names = variables
+        s.functions = {"Decimal": Decimal}  # allow Decimal inside eval
+
+        # ✅ Custom operators
+        s.operators.update({
+            '<': lambda x, y: x < y,
+            '>': lambda x, y: x > y,
+            '>=': lambda x, y: x >= y,
+            '<=': lambda x, y: x <= y,
+            '==': lambda x, y: x == y,
+            '!=': lambda x, y: x != y,
+            'and': lambda x, y: x and y,
+            'or': lambda x, y: x or y,
+            'not': lambda x: not x,
+            '+': lambda x, y: x + y,
+            '-': lambda x, y: x - y,
+            '*': lambda x, y: x * y,
+            '/': lambda x, y: x / y,
+            '%': lambda x, y: x % y,
+        })
+
+        # ✅ Extended IF (works like CASE WHEN)
+        def IF(*args):
+            """
+            Supports:
+            - IF(cond, true_val, false_val)   → normal
+            - IF(cond1, val1, cond2, val2, ..., default_val) → CASE-like
+            """
+            n = len(args)
+            if n < 3:
+                raise ValueError("Invalid IF usage")
+            # Pairwise check (cond, val)
+            for i in range(0, n - 1, 2):
+                if args[i]:
+                    return args[i+1]
+            return args[-1]  # default
+
+        # ✅ Custom functions
+        s.functions.update({
+            "MAX": max,
+            "MIN": min,
+            "AVG": lambda *args: sum(args) / len(args) if args else Decimal("0.00"),
+            "SUM": sum,
+            "ROUND": lambda val, ndigits=2: val.quantize(Decimal("1." + "0"*ndigits)) 
+                if isinstance(val, Decimal) else round(val, ndigits),
+            "IF": IF,
+        })
+
+        result = s.eval(formula)
+
+        # Ensure result is Decimal
+        if not isinstance(result, Decimal):
+            result = Decimal(str(result))
+
+        return result.quantize(Decimal("0.00"))
+
+    except (NameNotDefined, FunctionNotDefined) as e:
+        logger.error(
+            f"Invalid variable or function in formula '{formula}' for employee {employee}: {e}"
+        )
+        return Decimal("0.00")
+    except Exception as e:
+        logger.error(
+            f"Error evaluating formula '{formula}' for employee {employee}: {e}"
+        )
+        return Decimal("0.00")
 
 # PayrollManagement/utils.py or PayrollManagement/pdf_utils.py
 from reportlab.lib.pagesizes import letter

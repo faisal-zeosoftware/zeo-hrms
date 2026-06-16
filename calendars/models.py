@@ -408,7 +408,16 @@ class leave_type(models.Model):
         ('fixed','fixed'),
         ('leave_grant','leave_grant')
     ]
-    
+    CATEGORY_CHOICES = [
+        ('annual', 'Annual Leave'),
+        ('sick', 'Sick Leave'),
+        ('casual', 'Casual Leave'),
+        ('maternity', 'Maternity Leave'),
+        ('paternity', 'Paternity Leave'),
+        ('compensatory', 'Compensatory Leave'),
+        ('bereavement', 'Bereavement Leave'),
+        ('unpaid', 'Unpaid Leave'),
+    ]
     name                          = models.CharField(max_length=50)
     # image                         = models.ImageField(upload_to='leave_images/')
     code                          = models.CharField(max_length=30)
@@ -419,15 +428,15 @@ class leave_type(models.Model):
     allow_half_day                = models.BooleanField(default=False)  # Allows half-day leave if set to True
     valid_from                    = models.DateField(null=True,blank=True)
     valid_to                      = models.DateField(null=True,blank=True)
-    # include_weekend_and_holiday   = models.BooleanField(default=False)
+    is_compensatory               = models.BooleanField(default=False)
     include_weekend               = models.BooleanField(default=False)
     include_holiday               = models.BooleanField(default=False)
     use_common_workflow           = models.BooleanField(default=False)
     include_dashboard             = models.BooleanField(default=False)
     enable_leave_pay_rule         = models.BooleanField(default=False, help_text="Enable pay rules based on leave duration")    
-    is_compensatory               = models.BooleanField(default=False)    
+    is_entitlement                = models.BooleanField(default=False)
     branch                        = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE,null=True,blank=True, related_name='leave_types')
-    leave_category                = models.ForeignKey('leave_category', on_delete=models.SET_NULL, null=True, blank=True, related_name='leave_types')
+    leave_category                = models.CharField(max_length=30,choices=CATEGORY_CHOICES,default='annual')
     created_at                    = models.DateTimeField(default=timezone.now)
     created_by                    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 

@@ -5,6 +5,9 @@ from django.apps import apps
 from datetime import date
 from .models import AssetType,AssetApprovalWorkflow,AssetApprovalLevel,ctgry_master,dept_master,desgntn_master
 from EmpManagement .models import document_type
+from django.db.models.signals import post_migrate
+from django.dispatch import receiver
+from django.contrib.auth.models import Group, Permission
 @receiver(post_schema_sync)
 def create_tenant_defaults(sender, tenant, **kwargs):
     with schema_context(tenant.schema_name):
@@ -280,3 +283,170 @@ def create_workflow_and_default_level(sender, instance, created, **kwargs):
         role="Auto Level",
         approver=None
     )
+
+
+SETTINGS_CODES = [
+    #branch_mstr
+    'view_brnch_mstr',
+    'add_brnch_mstr',
+    'change_brnch_mstr',
+    'delete_brnch_mstr',
+
+    #user_master
+    "add_customuser",
+    "change_customuser",
+    "delete_customuser",
+    "view_customuser",
+
+    #user_grouping
+    "add_group",
+    "change_group",
+    "delete_group",
+    "view_group",
+
+    #assign permission for branch
+    "add_userbranchaccess",
+    "change_userbranchaccess",
+    "delete_userbranchaccess",
+    "view_userbranchaccess",
+
+    #assign permission for user
+    "add_permission",
+    "change_permission",
+    "delete_permission",
+    "view_permission",
+
+    #state_mstr
+    'view_state_mstr',
+    'add_state_mstr',
+    'change_state_mstr',
+    'delete_state_mstr',
+
+    #document_type
+    'view_document_type',
+    'add_document_type',
+    'change_document_type',
+    'delete_document_type',
+
+    #company_mstr
+    "add_company",
+    "change_company",
+    "delete_company",
+    "view_company",
+
+    #document_numbering
+    'view_documentnumbering',
+    'add_documentnumbering',
+    'change_documentnumbering',
+    'delete_documentnumbering',
+
+    #company_policy
+    'view_companypolicy',
+    'add_companypolicy',
+    'change_companypolicy',
+    'delete_companypolicy',
+
+    #emailconfiguration
+    "add_emailconfiguration",
+    "change_emailconfiguration",
+    "delete_emailconfiguration",
+    "view_emailconfiguration",
+
+    #announcement
+    "add_announcement",
+    "change_announcement",
+    "delete_announcement",
+    "view_announcement",
+
+    #notificationsettings
+    'view_notificationsettings',
+    'add_notificationsettings',
+    'change_notificationsettings',
+    'delete_notificationsettings',
+]
+PAYROLL_CODES = [
+    # Payroll
+    "add_payrollrun",
+    "change_payrollrun",
+    "delete_payrollrun",
+    "view_payrollrun",
+
+    # Pay Structure
+    "add_paystructure",
+    "change_paystructure",
+    "delete_paystructure",
+    "view_paystructure",
+
+    # Salary Component
+    "add_salarycomponent",
+    "change_salarycomponent",
+    "delete_salarycomponent",
+    "view_salarycomponent",
+    "import_salarycomponent",
+
+    # Employee Salary
+    "add_employeesalarystructure",
+    "change_employeesalarystructure",
+    "delete_employeesalarystructure",
+    "view_employeesalarystructure",
+    "import_employeesalarystructure",
+
+    # Payslip Approvals
+    "add_payslipapproval",
+    "change_payslipapproval",
+    "delete_payslipapproval",
+    "view_payslipapproval",
+
+    # Payroll Approval Level
+    "add_payslipcommonworkflow",
+    "change_payslipcommonworkflow",
+    "delete_payslipcommonworkflow",
+    "view_payslipcommonworkflow",
+
+    # Advance Salary Approval List
+    "add_advancesalaryapproval",
+    "change_advancesalaryapproval",
+    "delete_advancesalaryapproval",
+    "view_advancesalaryapproval",
+
+    # Advance Salary Request
+    "add_advancesalaryrequest",
+    "change_advancesalaryrequest",
+    "delete_advancesalaryrequest",
+    "view_advancesalaryrequest",
+
+    # Advance Salary Escalation
+    "add_advsalary_escalation",
+    "change_advsalary_escalation",
+    "delete_advsalary_escalation",
+    "view_advsalary_escalation",
+    "export_advsalary_escalation",
+
+    # Advance Salary Approval Level
+    "add_advancecommonworkflow",
+    "change_advancecommonworkflow",
+    "delete_advancecommonworkflow",
+    "view_advancecommonworkflow",
+
+    # WPS
+    "add_wps",
+    "change_wps",
+    "delete_wps",
+    "view_wps",
+    "export_wps",
+]
+@receiver(post_migrate)
+def create_default_groups(sender, **kwargs):
+    hr_group, _ = Group.objects.get_or_create(name="HR Manager")
+    hr_group.permissions.set(
+    Permission.objects.exclude(
+        codename__in=SETTINGS_CODES
+    )
+)
+    
+    payroll_group, _ = Group.objects.get_or_create(name="Payroll Manager")
+    payroll_group.permissions.set(
+            Permission.objects.filter(
+                codename__in=PAYROLL_CODES
+            )
+        )

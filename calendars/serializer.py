@@ -178,13 +178,6 @@ class LeaveCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Leave_category
         fields = '__all__'
-class LeaveTypeSerializer(serializers.ModelSerializer):
-    pay_rules = LeavePayRuleSerializer(many=True, read_only=True)
-    leave_category_name = serializers.CharField(source='leave_category.name', read_only=True)
-
-    class Meta:
-        model = leave_type
-        fields = '__all__'
 class ApplicableSerializer(serializers.ModelSerializer):
     class Meta:
         model = applicablity_critirea
@@ -366,6 +359,18 @@ class LeaveResetPolicySerializer(serializers.ModelSerializer):
         if instance.leave_type:  
             rep['leave_type'] = instance.leave_type.name
         return rep
+class LeaveTypeSerializer(serializers.ModelSerializer):
+    pay_rules = LeavePayRuleSerializer(many=True, read_only=True)
+    entitlements = LeaveEntitlementSerializer(
+        source='leave_entitlement_set',
+        many=True,
+        read_only=True
+    )
+    # leave_category_name = serializers.CharField(source='leave_category.name', read_only=True)
+
+    class Meta:
+        model = leave_type
+        fields = '__all__'
 class LeaveRequestSerializer(serializers.ModelSerializer):
     # document_numbering_details = serializers.SerializerMethodField()
     class Meta:

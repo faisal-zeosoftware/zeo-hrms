@@ -378,22 +378,6 @@ def update_employee_yearly_calendar_with_holidays(employee, holiday_calendar):
         logger.error(f"Failed to update EmployeeYearlyCalendar for employee ID {employee.id}: {e}")
 
 #leavemangement            
-class Leave_category(models.Model):
-    name = models.CharField(max_length=50)
-    code = models.CharField(max_length=30)
-    description = models.CharField(max_length=200, null=True, blank=True)
-    branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE, null=True, blank=True, related_name='leave_categories')
-    created_at = models.DateTimeField(default=timezone.now)
-    created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=['name', 'branch'], name='unique_leave_category_name_per_branch'),
-            models.UniqueConstraint(fields=['code', 'branch'], name='unique_leave_category_code_per_branch'),
-        ]
-
-    def __str__(self):
-        return f"{self.name}"
 class leave_type(models.Model):
     type_choice =   [
         ('paid','paid'),

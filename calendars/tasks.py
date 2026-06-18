@@ -26,8 +26,7 @@ def accrue_leaves():
         try:
             with schema_context(tenant_schema_name):
 
-                # entitlements = leave_entitlement.objects.filter(accrual=True)
-                entitlements = leave_entitlement.objects.filter(accrual=True).select_related('leave_type__leave_category')
+                entitlements = leave_entitlement.objects.filter(accrual=True)
                 employees = emp_master.objects.all()
 
                 for employee in employees:
@@ -166,8 +165,7 @@ def reset_leave_balances():
             with schema_context(tenant_schema_name):
                 logger.info(f"Processing leave reset for tenant: {tenant_schema_name}")
 
-                # entitlements = leave_entitlement.objects.all().order_by("leave_type", "min_experience")
-                entitlements = leave_entitlement.objects.all().select_related('leave_type__leave_category').order_by("leave_type", "min_experience")
+                entitlements = leave_entitlement.objects.all().order_by("leave_type", "min_experience")
                 employees = emp_master.objects.all()
 
                 if not employees.exists():
@@ -478,8 +476,7 @@ def deduct_expired_carry_forward_leaves():
             with schema_context(tenant_schema_name):
                 logger.info(f"Processing expired_carry_forward_leaves: {tenant_schema_name}")
 
-                # policies = LeaveResetPolicy.objects.filter(carry_forward_choice='carry_forward_with_expiry')
-                policies = LeaveResetPolicy.objects.filter(carry_forward_choice='carry_forward_with_expiry').select_related('leave_type__leave_category')
+                policies = LeaveResetPolicy.objects.filter(carry_forward_choice='carry_forward_with_expiry')
 
                 for policy in policies:
                     time_unit = policy.cf_time_choice

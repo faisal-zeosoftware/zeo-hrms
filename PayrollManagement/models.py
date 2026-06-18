@@ -11,50 +11,7 @@ from EmpManagement .models import RequestNotification
 from django.db.models import Max 
 
 # Create your models here.
-class PayrollCategory(models.Model):
-    CATEGORY_TYPES = [
-        ('earning', 'Earning'),
-        ('deduction', 'Deduction'),
-        ('benefit', 'Benefit'),
-        ('reimbursement', 'Reimbursement'),
-        ('other', 'Other'),
-    ]
 
-    name = models.CharField(max_length=100)
-    code = models.CharField(max_length=30)
-
-    category_type = models.CharField(
-        max_length=20,
-        choices=CATEGORY_TYPES,
-        default='other'
-    )
-
-    description = models.TextField(blank=True, null=True)
-
-    branch = models.ForeignKey(
-        'OrganisationManager.brnch_mstr',
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name='payroll_categories'
-    )
-
-    created_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=['name', 'branch'],
-                name='unique_payroll_category_name_per_branch'
-            ),
-            models.UniqueConstraint(
-                fields=['code', 'branch'],
-                name='unique_payroll_category_code_per_branch'
-            ),
-        ]
-
-    def __str__(self):
-        return self.name
     
 class SalaryComponent(models.Model):
     COMPONENT_TYPES = [

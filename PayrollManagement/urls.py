@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (SalaryComponentViewSet,EmployeeSalaryStructureViewSet,PayslipViewSet,PayrollRunViewSet,PayslipComponentViewSet,LoanTypeviewset,LoanApplicationviewset,LoanRepaymentviewset,LoanApprovalviewset,LoanApprovalLevelsviewset,
                     EmpBulkuploadSalaryStructureViewSet,PayslipConfirmedViewSet,SIFDataView,AdvanceSalaryRequestViewset,AdvanceSalaryApprovalViewSet,AdvanceCommonWorkflowViewSet,PayslipCommonWorkflowViewSet,PayslipApprovalViewSet,AirTicketPolicyViewSet,AirTicketAllocationViewSet,AirTicketRequestViewSet,
                     LoanEmailTemplateViewSet,LoanNotificationViewSet,AdvSalaryNotificationViewSet,AdvSalaryEmailTemplateViewSet,AirTicketRuleViewSet,LoanEscalationRuleViewSet,AdvSalaryEscalationRuleViewSet,AirticketWorkflowViewSet,AirticketApprovalViewSet,
-                    AirticketEmailTemplateViewSet,AirticketEscalationRuleViewSet,PayStructureViewSet,PayslipLeaveViewSet,PayrollCategoryViewSet
+                    AirticketEmailTemplateViewSet,AirticketEscalationRuleViewSet,PayStructureViewSet,PayslipLeaveViewSet,
                     
                     )
 
@@ -43,7 +43,6 @@ router.register(r'adv-salary-escalation', AdvSalaryEscalationRuleViewSet,basenam
 router.register(r'loan-approval-escalation', LoanEscalationRuleViewSet,basename='loan-approval-escalation')
 router.register(r'payroll-structure', PayStructureViewSet,basename='payroll-settings')
 router.register(r'payslip-leave', PayslipLeaveViewSet,basename='payslip-leave')
-router.register(r'payroll-category', PayrollCategoryViewSet,basename='payroll-category')
 
 urlpatterns = [
     path('api/', include(router.urls)),

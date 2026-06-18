@@ -5,7 +5,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     AttendanceReportViewset,LvBalanceReportViewset,EmployeeYearlyCalendarViewset,ShiftPatternViewSet,EmployeeShiftScheduleViewSet,
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
-                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset,LeaveCategoryviewset,
+                    AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset,
                     AttendanceValidationPolicyViewset
                     
                     )
@@ -26,7 +26,6 @@ router.register(r'accrual', Acrualviewset, basename='acruak')
 router.register(r'reset', Resetviewset, basename='reset')
 # router.register(r'enchash', Enchashviewset, basename='enchash')
 router.register(r'leave-type', LeaveTypeviewset, basename='leave_type')
-router.register(r'leave-category', LeaveCategoryviewset, basename='leave_category')
 router.register(r'leave-entitlement', LeaveEntitlementviewset, basename='leave_entitlement')
 router.register(r'leave-reset-policy', LeaveResetPolicyviewset, basename='leave_reset_policy')
 router.register(r'leave-carry-forward-transaction', LeaveCarryForwardTransactionviewset, basename='leave_carry_forward_transaction')

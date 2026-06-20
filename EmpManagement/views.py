@@ -2373,8 +2373,13 @@ class ApprovalViewset(viewsets.ModelViewSet):
         Filter approvals based on the authenticated user.
         """
         user = self.request.user  # Get the logged-in user
+
+        if not user.is_authenticated:
+            return Approval.objects.none()
+
         if user.is_superuser:
             return Approval.objects.all()
+        
         return Approval.objects.filter(approver=user)  # Filter approvals assigned to the user
 
     @action(detail=True, methods=['post'])

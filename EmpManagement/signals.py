@@ -4,7 +4,10 @@ from django.utils.timezone import now
 from .models import EmployeeResignation, EndOfService
 from django.db import transaction
 from .models import RequestType, ApprovalWorkflow, ApprovalLevel
-
+from django.utils import timezone
+from .utils import send_notification_email
+from django.core.mail import send_mail
+from .models import ApprovalDeligation
 
 @receiver(post_save, sender=EmployeeResignation)
 def deactivate_employee_on_approval(sender, instance, created, **kwargs):
@@ -71,3 +74,60 @@ def create_workflow_and_default_level(sender, instance, created, **kwargs):
         role="Auto Level",
         approver=None
     )
+
+
+
+
+@receiver(post_save, sender=ApprovalDeligation)
+def delegation_notification(sender, instance, created, **kwargs):
+    if not created:
+        return
+    delegate_user = instance.deligate_to
+
+    if delegate_user and delegate_user.email:
+
+        subject = "Delegation Assigned"
+
+        message = f"""
+    Delegation Assigned
+    Hello {delegate_user.get_username() or delegate_user.username},
+        You have been assigned a new delegation request.
+
+    DELEGATION DETAILS
+    ___________________
+    Delegator   : {instance.deligator}
+    Delegate To  : {delegate_user}
+    Reason       : {instance.reason}
+    Start Date   : {instance.start_date}
+    End Date     : {instance.end_date}
+    Created At   : {instance.created_at}
+    
+    REQUEST DETAILS
+    _________________
+    Document Number : {instance.request.document_number}
+    Employee        : {instance.request.employee}
+    Request Type    : {instance.request.request_type}
+    Status          : {instance.request.status}
+    
+    Please take necessary action.
+
+    """
+
+        send_mail(
+                subject,
+                message,
+                None,  # DEFAULT_FROM_EMAIL
+                [delegate_user.email],
+                fail_silently=False,
+            )
+
+        # IN-APP NOTIFICATION
+        send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            notification_type="delegation",
+            message=f"{instance.deligator} has delegated responsibilities to you.",
+            template_type="request_created",
+        )

@@ -23,7 +23,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type,ApprovalDeligation
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
@@ -346,6 +346,16 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
         model = GeneralRequest
         fields = ['id', 'approvals','document_number', 'reason', 'status', 'created_at_date','request_type','remarks']
         # fields = ['id', 'doc_number', 'reason', 'status', 'created_at_date', 'approvals']
+
+
+class ApprovalDeligationSerializer(serializers.ModelSerializer):
+    response = serializers.CharField(required=False, write_only=True)
+
+    class Meta:
+        model = ApprovalDeligation
+        fields = '__all__'
+
+
 class DocRequestSerializer(serializers.ModelSerializer):
     document_numbering_details = serializers.SerializerMethodField()
     class Meta:

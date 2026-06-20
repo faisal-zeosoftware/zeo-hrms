@@ -13,6 +13,7 @@ from django.db import connection as db_connection
 
 
 
+
 def get_employee_context(employee):
     """
     Builds a dictionary of employee attributes to be used in email templates.
@@ -44,6 +45,7 @@ def send_notification_email(
     branch=None,
     notification_type="general",
     title="",
+    delegate_user=None,
 
     
 ):
@@ -61,7 +63,8 @@ def send_notification_email(
         created_notification = notification_model.objects.create(
             recipient_user=user,
             recipient_employee=employee,
-            message=message
+            message=message,
+            deligate_user=delegate_user
         )
     except Exception as e:
         logger.warning(f"Notification creation failed: {e}")

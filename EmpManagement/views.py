@@ -10,7 +10,7 @@ from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQ
                      EmployeeMarketingSkill,Approval,ApprovalLevel,RequestNotification,Emp_CustomFieldValue,
                      EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,JobHistory_CustomFieldValue,
                      DocumentApprovalLevel,DocumentApproval,DocumentRequest,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,
-                     ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type
+                     ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type,ApprovalDeligation
                      )
 from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,NotificationSerializer,RequestTypeSerializer,
                          EmpJobHistorySerializer,EmpLeaveRequestSerializer,DocumentSerializer,GeneralRequestSerializer,
@@ -21,7 +21,7 @@ from .serializer import (Emp_qf_Serializer,EmpFamSerializer,EmpSerializer,Notifi
                          NotificationSettingsSerializer,DocExpEmailTemplateSerializer,CommonWorkflowSerializer,DOC_CustomFieldValueSerializer,EmpBankDetailsSerializer,EmpBankBulkuploadSerializer,EmplistSerializer,Fam_CustomFieldValueSerializer,
                          Qualification_CustomFieldValueSerializer,JobHistory_CustomFieldValueSerializer,DocApprovalLevelSerializer,DocApprovalSerializer,DocRequestSerializer,ResignationApprovalLevelSerializer,ResignationApprovalSerializer,
                          DocRequestEmailTemplateSerializer,DocRequestNotificationSerializer,EndOfServiceSerializer,EmployeeResignationSerializer,DocRequestTypeSerializer,EscalationRuleSerializer,ResignationTemplateSerializer,ResignationRequestNotificationSerializer,
-                         ApprovalWorkflowSerializer,DocumentApprovalWorkflowSerializer,ResignationApprovalWorkflowSerializer,Document_typeSerializer)
+                         ApprovalWorkflowSerializer,DocumentApprovalWorkflowSerializer,ResignationApprovalWorkflowSerializer,Document_typeSerializer,ApprovalDeligationSerializer)
 
 from .resource import EmployeeResource,DocumentResource,EmpCustomFieldValueResource,EmpDocumentCustomFieldValueResource,EmpBankDetailsResource, MarketingSkillResource,ProLangSkillResource
 from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOrInSameBranch,EmpCustomFieldPermission,EmpCustomFieldValuePermission,
@@ -62,11 +62,12 @@ from calendars .serializer import EmployeeLeaveBalanceSerializer,LeaveTypeSerial
 from calendars .models import leave_type, employee_leave_request
 from django.db.models import Q
 from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer,AdvanceSalaryRequestSerializer,AirTicketRequestSerializer
-from .utils import calculate_settlement
+from .utils import calculate_settlement,send_notification_email
 import csv
 import io
 from django.db import models
 from Core .mixins import BranchAccessMixin
+from django.core.mail import send_mail
 
 
 
@@ -2332,27 +2333,27 @@ class GeneralRequestViewset(viewsets.ModelViewSet):
         return Response(history_data, status=status.HTTP_200_OK)
     
 
-    @action(detail=False, methods=['get'])
-    def employee_request_history(self, request):
-        employee_id = request.query_params.get('employee_id')
-        if not employee_id:
-            return Response({'error': 'Employee ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+    # @action(detail=False, methods=['get'])
+    # def employee_request_history(self, request):
+    #     employee_id = request.query_params.get('employee_id')
+    #     if not employee_id:
+    #         return Response({'error': 'Employee ID is required'}, status=status.HTTP_400_BAD_REQUEST)
         
-        requests = GeneralRequest.get_employee_requests(employee_id)
+    #     requests = GeneralRequest.get_employee_requests(employee_id)
 
-        # Manually serialize the fields you want
-        history_data = []
-        for request in requests:
-            history_data.append({
-                'doc_number': request.doc_number,
-                'reason': request.reason,
-                'branch': request.branch.branch_name if request.branch else None,
-                'request_type': request.request_type.name if request.request_type else None,
-                'status': request.status,
-                'created_at_date': request.created_at_date,
-            })
+    #     # Manually serialize the fields you want
+    #     history_data = []
+    #     for request in requests:
+    #         history_data.append({
+    #             'doc_number': request.doc_number,
+    #             'reason': request.reason,
+    #             'branch': request.branch.branch_name if request.branch else None,
+    #             'request_type': request.request_type.name if request.request_type else None,
+    #             'status': request.status,
+    #             'created_at_date': request.created_at_date,
+    #         })
 
-        return Response(history_data, status=status.HTTP_200_OK)
+    #     return Response(history_data, status=status.HTTP_200_OK)
 
 class ApprovalLevelViewset(viewsets.ModelViewSet):
     queryset = ApprovalWorkflow.objects.all()
@@ -2390,7 +2391,44 @@ class ApprovalViewset(viewsets.ModelViewSet):
         approval.reject(note=note)
         return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
 
-    
+class ApprovalDeligationViewSet(viewsets.ModelViewSet):
+    queryset = ApprovalDeligation.objects.all().order_by("-created_at")
+    serializer_class = ApprovalDeligationSerializer
+
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+
+        delegation = self.get_object()
+
+        response_text = request.data.get("response")
+
+        if not response_text:
+            return Response(
+                {"error": "Response is required"},
+                status=400
+            )
+
+        send_mail(
+            subject="Delegation Response Received",
+            message=response_text,
+            from_email=None,
+            recipient_list=[delegation.deligator.email],
+            fail_silently=False,
+        )
+
+        send_notification_email(
+            user=delegation.deligator,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            notification_type="delegation_response",
+            message=response_text,
+            template_type="request_created",
+        )
+
+        return Response({
+            "message": "Response sent successfully"
+        })    
     
 class UserNotificationsViewSet(viewsets.ModelViewSet):
     queryset = RequestNotification.objects.all()

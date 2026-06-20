@@ -347,15 +347,6 @@ class LeaveEntitlementSerializer(serializers.ModelSerializer):
     #         rep['leave_type'] = instance.leave_type.name
     #     return rep
 
-class LeaveResetPolicySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LeaveResetPolicy
-        fields = '__all__'
-    def to_representation(self, instance):
-        rep = super(LeaveResetPolicySerializer, self).to_representation(instance)
-        if instance.leave_type:  
-            rep['leave_type'] = instance.leave_type.name
-        return rep
 class LeaveTypeSerializer(serializers.ModelSerializer):
     pay_rules = LeavePayRuleSerializer(many=True, read_only=True)
     entitlements = LeaveEntitlementSerializer(

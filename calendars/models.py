@@ -577,6 +577,12 @@ class leave_entitlement(models.Model):
     def save(self, *args, **kwargs):
         # self.clean()  # Validate before saving
         super().save(*args, **kwargs)
+@receiver(post_save, sender=leave_entitlement)
+def update_leave_type_entitlement(sender, instance, created, **kwargs):
+    if created:
+        leave_type.objects.filter(
+            id=instance.leave_type_id
+        ).update(is_entitlement=True)
 class LeavePayRule(models.Model):
     leave_type = models.ForeignKey(leave_type, on_delete=models.CASCADE, related_name="pay_rules", null=True)
     sequence = models.PositiveIntegerField(default=1, help_text="Order in which rule applies (e.g. 1 for First, 2 for Next)")

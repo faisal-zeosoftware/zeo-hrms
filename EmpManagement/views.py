@@ -2429,6 +2429,7 @@ class ApprovalDeligationViewSet(viewsets.ModelViewSet):
             notification_type="delegation_response",
             message=response_text,
             template_type="request_created",
+            delegate_user="deligator",
         )
 
         return Response({
@@ -2450,9 +2451,9 @@ class UserNotificationsViewSet(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = RequestNotification.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
-        ).order_by('-created_at')
-
+            Q(recipient_employee__users=user) |
+             Q(deligate_user=user)
+        ).distinct().order_by('-created_at')
         return qs
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse

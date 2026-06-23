@@ -33,7 +33,7 @@ def get_employee_context(employee):
 logger = logging.getLogger(__name__)
 
 def send_notification_email(
-    
+
     *,
     user=None,
     employee=None,
@@ -47,19 +47,24 @@ def send_notification_email(
     title="",
     delegate_user=None,
 
-    
 ):
     """
     Generic utility to send email and create in-app notification.
     """
+
     if context is None:
         context = {}
 
-    if not email_template_model or not notification_model:
-        return {"status": "error", "message": "Template and Notification models are required."}
+    # Default models if not passed
+    from .models import EmailTemplate, RequestNotification, EmailConfiguration
 
+    email_template_model = email_template_model or EmailTemplate
+    notification_model = notification_model or RequestNotification
+
+    created_notification = None
+
+    # Create notification
     try:
-        # Create notification
         created_notification = notification_model.objects.create(
             recipient_user=user,
             recipient_employee=employee,
@@ -68,7 +73,8 @@ def send_notification_email(
         )
     except Exception as e:
         logger.warning(f"Notification creation failed: {e}")
-    #usernotification tenant wise
+
+    # User notification inbox (tenant-wise)
     try:
 
         if user and created_notification:
@@ -102,25 +108,55 @@ def send_notification_email(
     except Exception as e:
 
         logger.warning(f"Global inbox creation failed: {e}")
-    #email setup
+
+    # Email template
     try:
-        email_template = email_template_model.objects.get(template_type=template_type)
+        email_template = email_template_model.objects.get(
+            template_type=template_type
+        )
+
     except email_template_model.DoesNotExist:
-        return {"status": "warning", "message": f"No template found for '{template_type}'."}
+        return {
+            "status": "warning",
+            "message": f"No template found for '{template_type}'."
+        }
+
     except email_template_model.MultipleObjectsReturned:
-        return {"status": "error", "message": f"Multiple templates found for '{template_type}'."}
+        return {
+            "status": "error",
+            "message": f"Multiple templates found for '{template_type}'."
+        }
 
     subject = email_template.subject
+
     template = Template(email_template.body)
-    recipient_name = user.username if user else (employee.emp_first_name if employee else "")
-    context.update({'recipient_name': recipient_name})
+
+    recipient_name = (
+        user.get_username()
+        if user
+        else (
+            employee.emp_first_name
+            if employee
+            else ""
+        )
+    )
+
+    context.update({
+        'recipient_name': recipient_name
+    })
+
     html_message = template.render(Context(context))
     plain_message = strip_tags(html_message)
 
+    # Email configuration
     try:
-        from .models import EmailConfiguration  # update if needed
-        email_config = EmailConfiguration.objects.get(is_active=True)
+
+        email_config = EmailConfiguration.objects.get(
+            is_active=True
+        )
+
         default_email = email_config.email_host_user
+
         connection = get_connection(
             host=email_config.email_host,
             port=email_config.email_port,
@@ -128,9 +164,15 @@ def send_notification_email(
             password=email_config.email_host_password,
             use_tls=email_config.email_use_tls,
         )
+
     except Exception as e:
-        logger.warning(f"Using fallback email config: {e}")
+
+        logger.warning(
+            f"Using fallback email config: {e}"
+        )
+
         default_email = settings.EMAIL_HOST_USER
+
         connection = get_connection(
             host=settings.EMAIL_HOST,
             port=settings.EMAIL_PORT,
@@ -139,12 +181,22 @@ def send_notification_email(
             use_tls=settings.EMAIL_USE_TLS,
         )
 
-    to_email = user.email if user and user.email else (
-        employee.emp_personal_email if employee and employee.emp_personal_email else None
+    # Recipient email
+    to_email = (
+        user.email
+        if user and user.email
+        else (
+            employee.emp_personal_email
+            if employee and employee.emp_personal_email
+            else None
+        )
     )
 
+    # Send email
     if to_email:
+
         try:
+
             email = EmailMultiAlternatives(
                 subject=subject,
                 body=plain_message,
@@ -152,14 +204,36 @@ def send_notification_email(
                 to=[to_email],
                 connection=connection,
             )
-            email.attach_alternative(html_message, "text/html")
-            email.send(fail_silently=False)
-            return {"status": "success", "message": f"Email sent to {to_email}"}
-        except Exception as e:
-            logger.error(f"Email sending failed: {e}")
-            return {"status": "error", "message": str(e)}
 
-    return {"status": "error", "message": "No recipient email found."}
+            email.attach_alternative(
+                html_message,
+                "text/html"
+            )
+
+            email.send(
+                fail_silently=False
+            )
+
+            return {
+                "status": "success",
+                "message": f"Notification created and email sent to {to_email}"
+            }
+
+        except Exception as e:
+
+            logger.error(
+                f"Email sending failed: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
+    return {
+        "status": "success",
+        "message": "Notification created successfully. No recipient email found."
+    }
 
 from decimal import Decimal
 from django.db.models import Q

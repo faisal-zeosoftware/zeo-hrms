@@ -130,4 +130,5 @@ def delegation_notification(sender, instance, created, **kwargs):
             notification_type="delegation",
             message=f"{instance.deligator} has delegated responsibilities to you.",
             template_type="request_created",
+            delegate_user=instance.deligator,
         )

@@ -315,9 +315,31 @@ class EmployeeFilterSerializer(serializers.ModelSerializer):
         fields = ['id','emp_code', 'emp_first_name', 'emp_last_name']
 
 class ApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
     class Meta:
         model = Approval
         fields = '__all__'
+
+    def get_delegation_details(self, obj):
+        delegation = ApprovalDeligation.objects.filter(
+            request=obj.general_request,
+            is_active=True
+        ).first()
+
+        if not delegation:
+            return None
+
+        return {
+            "id": delegation.id,
+            "request": delegation.request.document_number if delegation.request else None,
+            "deligator": delegation.deligator.username if delegation.deligator else None,
+            "delegate_to": delegation.deligate_to.username if delegation.deligate_to else None,
+            "start_date": delegation.start_date,
+            "end_date": delegation.end_date,
+            "reason": delegation.reason,
+            "is_active": delegation.is_active,
+        }
+
 
     def to_representation(self, instance):
         rep = super(ApprovalSerializer, self).to_representation(instance)

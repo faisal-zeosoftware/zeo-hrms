@@ -132,3 +132,4 @@ def delegation_notification(sender, instance, created, **kwargs):
             template_type="request_created",
             delegate_user=instance.deligator,
         )
+

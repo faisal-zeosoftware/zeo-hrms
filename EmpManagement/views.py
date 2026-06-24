@@ -2434,7 +2434,7 @@ class ApprovalDeligationViewSet(viewsets.ModelViewSet):
 
         return Response({
             "message": "Response sent successfully"
-        })    
+        }) 
     
 class UserNotificationsViewSet(viewsets.ModelViewSet):
     queryset = RequestNotification.objects.all()

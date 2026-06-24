@@ -63,18 +63,30 @@ def send_notification_email(
 
     created_notification = None
 
-    # Create notification
     try:
+
+        logger.warning(
+            f"Creating notification | user={user} | delegate_user={delegate_user}"
+        )
+
         created_notification = notification_model.objects.create(
             recipient_user=user,
             recipient_employee=employee,
             message=message,
             deligate_user=delegate_user
         )
-    except Exception as e:
-        logger.warning(f"Notification creation failed: {e}")
 
-    # User notification inbox (tenant-wise)
+        logger.warning(
+            f"Notification created successfully | "
+            f"id={created_notification.id} | "
+            f"deligate_user={created_notification.deligate_user}"
+        )
+
+    except Exception as e:
+
+        logger.exception(f"Notification creation failed: {e}")
+
+    # user notification tenant wise
     try:
 
         if user and created_notification:
@@ -109,19 +121,22 @@ def send_notification_email(
 
         logger.warning(f"Global inbox creation failed: {e}")
 
-    # Email template
+    # email setup
     try:
+
         email_template = email_template_model.objects.get(
             template_type=template_type
         )
 
     except email_template_model.DoesNotExist:
+
         return {
             "status": "warning",
             "message": f"No template found for '{template_type}'."
         }
 
     except email_template_model.MultipleObjectsReturned:
+
         return {
             "status": "error",
             "message": f"Multiple templates found for '{template_type}'."
@@ -148,7 +163,6 @@ def send_notification_email(
     html_message = template.render(Context(context))
     plain_message = strip_tags(html_message)
 
-    # Email configuration
     try:
 
         email_config = EmailConfiguration.objects.get(
@@ -181,7 +195,6 @@ def send_notification_email(
             use_tls=settings.EMAIL_USE_TLS,
         )
 
-    # Recipient email
     to_email = (
         user.email
         if user and user.email
@@ -192,7 +205,6 @@ def send_notification_email(
         )
     )
 
-    # Send email
     if to_email:
 
         try:
@@ -216,7 +228,7 @@ def send_notification_email(
 
             return {
                 "status": "success",
-                "message": f"Notification created and email sent to {to_email}"
+                "message": f"Email sent to {to_email}"
             }
 
         except Exception as e:

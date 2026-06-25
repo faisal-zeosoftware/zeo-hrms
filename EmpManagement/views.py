@@ -2429,7 +2429,7 @@ class ApprovalDeligationViewSet(viewsets.ModelViewSet):
             notification_type="delegation_response",
             message=response_text,
             template_type="request_created",
-            delegate_user="deligator",
+            delegate_user=delegation.deligator,
         )
 
         return Response({

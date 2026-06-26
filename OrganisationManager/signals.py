@@ -9,7 +9,7 @@ from UserManagement .models import company
 from django.db.models.signals import post_migrate
 from django.dispatch import receiver
 from django.contrib.auth.models import Group, Permission
-from PayrollManagement .models import PayrollCategory,SalaryComponent
+from PayrollManagement .models import SalaryComponent
 
 
 @receiver(post_schema_sync)

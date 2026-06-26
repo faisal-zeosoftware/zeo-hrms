@@ -4,7 +4,7 @@ from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,as
                      AttendanceReport,lvBalanceReport,EmployeeYearlyCalendar,CompensatoryLeaveRequest,CompensatoryLeaveTransaction,CompensatoryLeaveBalance,ShiftPattern,EmployeeShiftSchedule,ShiftOverride,LeaveResetPolicy,LeaveCarryForwardTransaction,
                      LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
                      LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow,AttendanceCalendar,CompensatoryLeaveAllocation,
-                     AttendanceValidationPolicy
+                     AttendanceValidationPolicy,LateComingPolicy,EarlyExitPolicy
                      )
 from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,HolidayAssignSerializer,HolidayCalandarSerializer,HolidaySerializer,WeekendDetailSerializer,LeaveTypeSerializer,LeaveEntitlementSerializer,ApplicableSerializer,EmployeeLeaveBalanceSerializer,AccrualSerializer,ResetSerializer,LeaveRequestSerializer,
                          AttendanceSerializer,ShiftSerializer,ImportAttendanceSerializer,EmployeeMappingSerializer,LeaveReportSerializer,LvApprovalLevelSerializer,EmployeeYearlyCalendarSerializer,
@@ -13,7 +13,7 @@ from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,Holi
                          LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer,OvertimeRuleSerializer,
                          AttendanceLogSerializer,AttendancePolicySerializer,LeavePayRuleSerializer,
                          LatinEarlyoutEmailTemplateSerializer,LateinEarlyRequestNotificationSerializer,LateinEarlyoutRequestSerializer,LateinEarlyoutApprovalLevelSerializer, LateinEarlyoutApprovalSerializer,LVApprovalWorkflowSerializer,LatinEarlyApprovalWorkflowSerializer,AttendanceCalendarSerializer,CompensatoryLeaveAllocationSerializer,
-                         AttendanceValidationPolicySerializer
+                         AttendanceValidationPolicySerializer,LateComingPolicySerializer,EarlyExitPolicySerializer
                          )
 from . import face_utils
 from rest_framework import viewsets,filters,status
@@ -3518,3 +3518,10 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
             "end_date": end_date_str,
             "calendar": calendar_data
         })
+
+class LateComingPolicyViewset(viewsets.ModelViewSet):
+    queryset = LateComingPolicy.objects.all()
+    serializer_class = LateComingPolicySerializer
+class EarlyExitPolicyViewset(viewsets.ModelViewSet):
+    queryset = EarlyExitPolicy.objects.all()
+    serializer_class = EarlyExitPolicySerializer

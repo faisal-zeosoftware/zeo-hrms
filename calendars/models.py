@@ -2872,7 +2872,78 @@ class MonthlyAttendanceSummary(models.Model):
     class Meta:
         unique_together = ('employee', 'month', 'year')  # Prevent duplicates
     
+class LateComingPolicy(models.Model):
+
+    PENALTY_CHOICES = [
+        ('half_day', 'Half Day'),
+        ('full_day', 'Full Day'),
+        ('leave_deduction', 'Leave Deduction'),
+    ]
+
+    attendance_policy = models.OneToOneField(
+        AttendancePolicy,
+        on_delete=models.CASCADE,
+        related_name="late_coming_policy"
+    )
+
+    enabled = models.BooleanField(default=False)
+
+    late_occurrence_limit = models.PositiveIntegerField(
+        default=3,
+        help_text="Number of late arrivals before penalty"
+    )
+
+    penalty_type = models.CharField(
+        max_length=20,
+        choices=PENALTY_CHOICES,
+        default='half_day'
+    )
+
+    leave_days_to_deduct = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.5
+    )
+
+    reset_monthly = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.attendance_policy.name} - Late Coming"
     
+class EarlyExitPolicy(models.Model):
+
+    PENALTY_CHOICES = [
+        ('half_day', 'Half Day'),
+        ('full_day', 'Full Day'),
+        ('leave_deduction', 'Leave Deduction'),
+    ]
+
+    attendance_policy = models.OneToOneField(
+        AttendancePolicy,
+        on_delete=models.CASCADE,
+        related_name="early_exit_policy"
+    )
+
+    enabled = models.BooleanField(default=False)
+
+    occurrence_limit = models.PositiveIntegerField(default=3)
+
+    penalty_type = models.CharField(
+        max_length=20,
+        choices=PENALTY_CHOICES,
+        default='half_day'
+    )
+
+    leave_days_to_deduct = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        default=0.5
+    )
+
+    reset_monthly = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.attendance_policy.name} - Early Exit"
 
 
 

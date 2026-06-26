@@ -476,7 +476,9 @@ class leave_entitlement(models.Model):
         ('Nov', 'November'),
         ('Dec', 'December')
     ]
-    
+    Entitlement_TYPES = [
+    ('fixed', 'Fixed'),
+    ('variable', 'Variable'),]
     # PRORATE_CHOICES = [
     #     ('start_of_policy', 'Start of Policy'),
     #     ('start_and_end_of_policy', 'Start and End of Policy'),
@@ -498,6 +500,7 @@ class leave_entitlement(models.Model):
     branches                       = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True,related_name="lv_entitlement")
     designations                   = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True,related_name="lv_entitlement")
     categories                     = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True,related_name="lv_entitlement")
+    entitlement_type = models.CharField(max_length=20,choices=Entitlement_TYPES,default='fixed')
     created_at                     = models.DateTimeField(auto_now_add=True)
     created_by                     = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 

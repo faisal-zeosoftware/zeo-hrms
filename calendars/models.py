@@ -485,11 +485,11 @@ class leave_entitlement(models.Model):
     #     ('do_not_prorate', 'Do not Prorate')
     # ]
     leave_type                     = models.ForeignKey('leave_type', on_delete=models.CASCADE)
-    min_experience                 = models.PositiveIntegerField(default=0, help_text="Minimum experience required.")
+    min_experience                 = models.PositiveIntegerField(default=0,help_text="Minimum experience required.")
     effective_after_unit           = models.CharField(max_length=10, choices=TIME_UNIT_CHOICES, default='months')
     effective_after_from           = models.CharField(max_length=20, choices=EFFECTIVE_AFTER_CHOICES)
     accrual                        = models.BooleanField(default=False)
-    accrual_rate                   = models.FloatField(default=0, help_text="Accrual rate per period (e.g., days/months/yearly)")
+    accrual_rate                   = models.FloatField(default=0,null=True, blank=True, help_text="Accrual rate per period (e.g., days/months/yearly)")
     accrual_frequency              = models.CharField(max_length=20, choices=TIME_UNIT_CHOICES,null=True, blank=True)
     accrual_month                  = models.CharField(max_length=3, choices=MONTH_CHOICES, default='Jan',null=True,blank=True)
     accrual_day                    = models.CharField(max_length=20, choices=DAY_CHOICES, null=True, blank=True)

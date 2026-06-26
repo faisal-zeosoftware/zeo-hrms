@@ -5,11 +5,16 @@ from django.apps import apps
 from datetime import date
 from .models import AssetType,AssetApprovalWorkflow,AssetApprovalLevel,ctgry_master,dept_master,desgntn_master
 from EmpManagement .models import document_type
+from UserManagement .models import company
 from django.db.models.signals import post_migrate
 from django.dispatch import receiver
 from django.contrib.auth.models import Group, Permission
+from PayrollManagement .models import PayrollCategory,SalaryComponent
+
+
 @receiver(post_schema_sync)
 def create_tenant_defaults(sender, tenant, **kwargs):
+    # from EmpManagement .models import document_type
     with schema_context(tenant.schema_name):
         # Resolve models
         brnch_mstr = apps.get_model('OrganisationManager', 'brnch_mstr')
@@ -88,68 +93,84 @@ def create_tenant_defaults(sender, tenant, **kwargs):
         )
         assignment_h.branch.add(branch)
 
-        # Default leave types
+       # Default leave types
         default_leaves = [
-            ("Sick Leave", "SL", "paid",True,False),
-            ("Annual Leave", "AL", "paid",False,False),
-            ("Casual Leave", "CL", "paid",False,False),
-            ("Maternity Leave", "ML", "paid",False,False),
-            ("Paternity Leave", "PL", "paid",False,False),
-            ("Compensatory Leave", "COMP", "paid",False,True),
+            ("Sick Leave", "SL", "paid", True,  False, "sick"),
+            ("Annual Leave", "AL", "paid", False, False, "annual"),
+            ("Casual Leave", "CL", "paid", False, False, "casual"),
+            ("Maternity Leave", "ML", "paid", False, False, "maternity"),
+            ("Paternity Leave", "PL", "paid", False, False, "paternity"),
+            ("Compensatory Leave", "COMP", "paid", False, True, "compensatory"),
         ]
-        for (name,code,leave_type_value,enable_leave_pay_rule,is_compensatory,) in default_leaves:
-            leave_type.objects.update_or_create(
-            code=f"{code}-{tenant.schema_name[:3].upper()}",
-            branch=branch,
-            defaults={
-                "name": name,
-                "type": leave_type_value,
-                "unit": "days",
-                "negative": False,
-                "description": f"Default {name}",
-                "allow_half_day": True,
-                "include_weekend": False,
-                "include_holiday": False,
-                "use_common_workflow": True,
-                "include_dashboard": True,
-                "enable_leave_pay_rule":enable_leave_pay_rule,
-                "is_compensatory":is_compensatory,
-            },
-        )
 
-        # Default salary components - PASSING branch EXPLICITLY
-        default_salary_components = [
-            ("Basic", "addition", "BAS", True, "", False, True, False, False),
-            ("HRA", "addition", "HRA", True, "", False, True, False, False),
-            ("Air Ticket", "addition", "ATK", True, "", False, True, False, True),
-            ("Petty Cash", "addition", "PC", False, "", False, True, False, False),
-        ]
         for (
             name,
-            component_type,
             code,
-            is_fixed,
-            formula,
-            is_loan_component,
-            show_in_payslip,
-            is_advance_salary,
-            is_air_ticket,
-        ) in default_salary_components:
-            SalaryComponent.objects.get_or_create(
-                code=code,
-                branch=branch, # Link to branch for uniqueness
+            leave_type_value,
+            enable_leave_pay_rule,
+            is_compensatory,
+            leave_category,
+        ) in default_leaves:
+
+            leave_type.objects.update_or_create(
+                code=f"{code}-{tenant.schema_name[:3].upper()}",
+                branch=branch,
                 defaults={
                     "name": name,
-                    "component_type": component_type,
-                    "is_fixed": is_fixed,
-                    "formula": formula,
-                    "description": f"Default {name} Component",
-                    "is_loan_component": is_loan_component,
-                    "show_in_payslip": show_in_payslip,
-                    "is_advance_salary": is_advance_salary,
-                    "is_air_ticket": is_air_ticket,
+                    "type": leave_type_value,
+                    "unit": "days",
+                    "negative": False,
+                    "description": f"Default {name}",
+                    "allow_half_day": True,
+                    "include_weekend": False,
+                    "include_holiday": False,
+                    "use_common_workflow": True,
+                    "include_dashboard": True,
+                    "leave_category":f"leave_category{name}",
+
+                    "enable_leave_pay_rule": enable_leave_pay_rule,
+                    "is_compensatory": is_compensatory,
+
+                    # leave category
+                    "leave_category": leave_category,
                 },
             )
+            # Default salary components - PASSING branch EXPLICITLY
+            default_salary_components = [
+                ("Basic", "addition", "BAS", True, "", False, True, False, False),
+                ("HRA", "addition", "HRA", True, "", False, True, False, False),
+                ("Air Ticket", "addition", "ATK", True, "", False, True, False, True),
+                ("Petty Cash", "addition", "PC", False, "", False, True, False, False),
+            ]
+
+            for (
+                name,
+                component_type,
+                code,
+                fixed,
+                formula,
+                loan,
+                show_in_payslip,
+                advance_salary,
+                air_ticket,
+            ) in default_salary_components:
+                SalaryComponent.objects.get_or_create(
+                    code=code,
+                    branch=branch,  # Link to branch for uniqueness
+                    defaults={
+                        "name": name,
+                        "component_type": component_type,
+                        # "fixed": fixed,
+                        "formula": formula,
+                        "description": f"Default {name} Component",
+                        # "loan": loan,
+                        "show_in_payslip": show_in_payslip,
+                        # "advance_salary":advance_salary,
+                        # "air_ticket":air_ticket,
+                        "payroll_category": f"payroll_category {name}",
+                    },
+                )
+            #department
         default_departments = [
             ("Human Resources", "HR"),
             ("Information Technology", "IT"),
@@ -208,12 +229,14 @@ def create_tenant_defaults(sender, tenant, **kwargs):
 
             category.branch.add(branch)
 
-
         country_name = (tenant.country.country_name.strip().upper()if tenant.country else "")
+        
         if country_name in ["UAE", "UNITED ARAB EMIRATES"]:
+            print("Creating UAE document types...")
             default_document_types = [
                 "Emirates ID",
-                "Passport",]
+                "Passport",
+        ]
             for name in default_document_types:
                 doc_type, created = document_type.objects.get_or_create(
                     type_name=name,
@@ -283,82 +306,68 @@ def create_workflow_and_default_level(sender, instance, created, **kwargs):
         role="Auto Level",
         approver=None
     )
-
-
 SETTINGS_CODES = [
-    #branch_mstr
     'view_brnch_mstr',
     'add_brnch_mstr',
     'change_brnch_mstr',
     'delete_brnch_mstr',
 
-    #user_master
     "add_customuser",
     "change_customuser",
     "delete_customuser",
     "view_customuser",
 
-    #user_grouping
     "add_group",
     "change_group",
     "delete_group",
     "view_group",
 
-    #assign permission for branch
     "add_userbranchaccess",
     "change_userbranchaccess",
     "delete_userbranchaccess",
     "view_userbranchaccess",
 
-    #assign permission for user
     "add_permission",
     "change_permission",
     "delete_permission",
     "view_permission",
 
-    #state_mstr
     'view_state_mstr',
     'add_state_mstr',
     'change_state_mstr',
     'delete_state_mstr',
 
-    #document_type
+
     'view_document_type',
     'add_document_type',
     'change_document_type',
     'delete_document_type',
 
-    #company_mstr
     "add_company",
     "change_company",
     "delete_company",
     "view_company",
 
-    #document_numbering
     'view_documentnumbering',
     'add_documentnumbering',
     'change_documentnumbering',
     'delete_documentnumbering',
 
-    #company_policy
     'view_companypolicy',
     'add_companypolicy',
     'change_companypolicy',
     'delete_companypolicy',
 
-    #emailconfiguration
     "add_emailconfiguration",
     "change_emailconfiguration",
     "delete_emailconfiguration",
     "view_emailconfiguration",
 
-    #announcement
     "add_announcement",
     "change_announcement",
     "delete_announcement",
     "view_announcement",
 
-    #notificationsettings
     'view_notificationsettings',
     'add_notificationsettings',
     'change_notificationsettings',
@@ -450,3 +459,6 @@ def create_default_groups(sender, **kwargs):
                 codename__in=PAYROLL_CODES
             )
         )
+    
+
+

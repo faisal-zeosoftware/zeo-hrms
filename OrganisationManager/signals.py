@@ -137,29 +137,32 @@ def create_tenant_defaults(sender, tenant, **kwargs):
             )
             # Default salary components - PASSING branch EXPLICITLY
             default_salary_components = [
-                ("Basic", "addition", "BAS", True, "", False, True, False, False),
-                ("HRA", "addition", "HRA", True, "", False, True, False, False),
-                ("Air Ticket", "addition", "ATK", True, "", False, True, False, True),
-                ("Petty Cash", "addition", "PC", False, "", False, True, False, False),
-            ]
-
+                ("Basic", "addition", "BAS", "basic", "fixed", "", False, True, False, False),
+                ("HRA", "addition", "HRA", "hra", "fixed", "", False, True, False, False),
+                ("Air Ticket", "addition", "ATK", "air_ticket", "fixed", "", False, True, False, True),
+                ("Petty Cash", "addition", "PC", "other_allowance", "fixed", "", False, True, False, False),
+                ("Gratuity", "addition", "GTY", "gratuity", "variable", "(Basic Salary ÷ 30 × 21) ÷ 12", False, True, False, True),
+                ]
             for (
                 name,
                 component_type,
                 code,
-                fixed,
+                payroll_category,
+                component_value_type,
                 formula,
                 loan,
                 show_in_payslip,
                 advance_salary,
                 air_ticket,
             ) in default_salary_components:
-                SalaryComponent.objects.get_or_create(
+                obj, created = SalaryComponent.objects.get_or_create(
                     code=code,
                     branch=branch,  # Link to branch for uniqueness
                     defaults={
                         "name": name,
                         "component_type": component_type,
+                        "payroll_category": payroll_category,
+                        "component_value_type": component_value_type,
                         # "fixed": fixed,
                         "formula": formula,
                         "description": f"Default {name} Component",
@@ -167,7 +170,6 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                         "show_in_payslip": show_in_payslip,
                         # "advance_salary":advance_salary,
                         # "air_ticket":air_ticket,
-                        "payroll_category": f"payroll_category {name}",
                     },
                 )
             #department

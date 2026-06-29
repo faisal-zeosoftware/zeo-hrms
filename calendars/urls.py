@@ -6,7 +6,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
                     AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset,
-                    AttendanceValidationPolicyViewset,LateComingPolicyViewset,EarlyExitPolicy
+                    AttendanceValidationPolicyViewset,LateComingPolicyViewset,EarlyExitPolicyViewset
                     
                     )
 
@@ -75,7 +75,7 @@ router.register(r'lateineralyout-approval-level', LateinEarlyoutApprovalLevelVie
 router.register(r'lateineralyout-approval', LateinEarlyoutApprovalViewset, basename='lateineralyout-approval')
 router.register(r'attendance-calendar', AttendanceCalendarViewSet, basename='attendance-calendar')
 router.register(r'late-come-policy', LateComingPolicyViewset, basename='late-come-policy')
-router.register(r'early-going-policy', EarlyExitPolicy, basename='early-going-policy')
+router.register(r'early-going-policy', EarlyExitPolicyViewset, basename='early-going-policy')
 
 
 

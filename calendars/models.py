@@ -1981,6 +1981,7 @@ class AttendanceValidationPolicy(models.Model):
     department = models.ManyToManyField('OrganisationManager.dept_master', blank=True)
     category = models.ManyToManyField('OrganisationManager.ctgry_master', blank=True)
     employee = models.ManyToManyField('EmpManagement.emp_master', blank=True)
+    designation = models.ManyToManyField('OrganisationManager.desgntn_master', blank=True)
     
     # Validation Rules
     enable_geofencing = models.BooleanField(default=False)
@@ -2906,6 +2907,12 @@ class LateComingPolicy(models.Model):
     )
 
     reset_monthly = models.BooleanField(default=True)
+    # Assignments
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+    department = models.ManyToManyField('OrganisationManager.dept_master', blank=True)
+    category = models.ManyToManyField('OrganisationManager.ctgry_master', blank=True)
+    employee = models.ManyToManyField('EmpManagement.emp_master', blank=True)
+    designation = models.ManyToManyField('OrganisationManager.desgntn_master', blank=True)
 
     def __str__(self):
         return f"{self.attendance_policy.name} - Late Coming"
@@ -2941,6 +2948,12 @@ class EarlyExitPolicy(models.Model):
     )
 
     reset_monthly = models.BooleanField(default=True)
+    # Assignments
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+    department = models.ManyToManyField('OrganisationManager.dept_master', blank=True)
+    category = models.ManyToManyField('OrganisationManager.ctgry_master', blank=True)
+    employee = models.ManyToManyField('EmpManagement.emp_master', blank=True)
+    designation = models.ManyToManyField('OrganisationManager.desgntn_master', blank=True)
 
     def __str__(self):
         return f"{self.attendance_policy.name} - Early Exit"

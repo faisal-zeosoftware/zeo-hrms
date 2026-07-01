@@ -2845,7 +2845,6 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
     queryset = DocumentRequest.objects.all()
     serializer_class = DocRequestSerializer
     def perform_create(self, serializer):
-
         with transaction.atomic():
 
             employee = serializer.validated_data.get('employee')
@@ -2860,7 +2859,7 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
                 raise ValidationError(
                     "Employee branch is missing in employee master."
                 )
-            
+
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch.id,
@@ -2874,6 +2873,7 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
                 )
 
             current_date = timezone.now().date()
+
             if document_number:
 
                 if (
@@ -2893,8 +2893,10 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
             else:
                 document_number = doc_config.get_next_number()
             serializer.save(
-                document_number=document_number
-        )
+                document_number=document_number,
+                branch=branch,
+                created_by=self.request.user
+            )
 class DocumentApprovalViewset(viewsets.ModelViewSet):
     queryset = DocumentApproval.objects.all()
     serializer_class = DocApprovalSerializer
@@ -2972,9 +2974,11 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
             employee = serializer.validated_data.get('employee')
             document_number = serializer.validated_data.get('document_number')
 
+            # ✅ Employee validation
             if not employee:
                 raise ValidationError("Employee is required.")
 
+            # ✅ Branch fallback
             branch_id = employee.emp_branch_id or employee.work_location
 
             if not branch_id:
@@ -2982,6 +2986,7 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
                     "Employee branch is missing in employee master."
                 )
 
+            # ✅ Get document numbering config
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch_id,
@@ -2997,6 +3002,7 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
 
             current_date = timezone.now().date()
 
+            # ✅ Manual document number validation
             if document_number:
 
                 if doc_config.start_date and doc_config.end_date:
@@ -3011,8 +3017,9 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
                         )
 
             else:
+                # ✅ Auto-generate document number
                 document_number = doc_config.get_next_number()
-            
+
             serializer.save(document_number=document_number)
 
     @action(detail=False, methods=['get'], url_path='approved_resignations',permission_classes=[CanViewApprovedResignations])
@@ -3109,6 +3116,7 @@ class ResignationApprovalLevelViewset(viewsets.ModelViewSet):
 class ResignationApprovalViewset(viewsets.ModelViewSet):
     queryset = ResignationApproval.objects.all()
     serializer_class = ResignationApprovalSerializer
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()
@@ -3125,6 +3133,7 @@ class ResignationApprovalViewset(viewsets.ModelViewSet):
         note = request.data.get('note')  # Get the note from the request
         approval.reject(note=note)
         return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+
 
 class ResignationEmailTemplateViewset(viewsets.ModelViewSet):
     queryset = ResignationEmailTemplate.objects.all()
@@ -3170,6 +3179,25 @@ class ResignationEmailTemplateViewset(viewsets.ModelViewSet):
             'from_addresses': from_addresses,
             'to_addresses': to_list
         })
+class ResignationRequestNotificationViewset(viewsets.ModelViewSet):
+    queryset = ResignationRequestNotification.objects.all()
+    serializer_class = ResignationRequestNotificationSerializer
+    def get_queryset(self):
+        user = self.request.user
+
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return ResignationRequestNotification.objects.all().order_by('-created_at')
+
+        # Normal user → show request notifications assigned directly to them
+        qs = ResignationRequestNotification.objects.filter(
+            Q(recipient_user=user) |
+            Q(recipient_employee__users=user)      # employee assigned to this user
+        ).order_by('-created_at')
+
+        return qs
+    
+
 from rest_framework.response import Response
 from django.http import FileResponse
 from io import BytesIO

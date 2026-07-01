@@ -2992,20 +2992,20 @@ class LatinEarlyoutEmailTemplateViewset(viewsets.ModelViewSet):
 class LateinEarlyRequestNotificationViewset(viewsets.ReadOnlyModelViewSet):
     queryset =LateinEarlyRequestNotification.objects.all()
     serializer_class = LateinEarlyRequestNotificationSerializer   
-    # def get_queryset(self):
-    #     user = self.request.user
+    def get_queryset(self):
+        user = self.request.user
 
-    #     # Admin / staff / superuser → see all request notifications
-    #     if user.is_superuser or user.is_staff:
-    #         return LateinEarlyRequestNotification.objects.all().order_by('-created_at')
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return LateinEarlyRequestNotification.objects.all().order_by('-created_at')
 
-    #     # Normal user → show request notifications assigned directly to them
-    #     qs =LateinEarlyRequestNotification.objects.filter(
-    #         Q(recipient_user=user) |
-    #         Q(recipient_employee__users=user)      # employee assigned to this user
-    #     ).order_by('-created_at')
+        # Normal user → show request notifications assigned directly to them
+        qs =LateinEarlyRequestNotification.objects.filter(
+            Q(recipient_user=user) |
+            Q(recipient_employee__users=user)      # employee assigned to this user
+        ).order_by('-created_at')
 
-    #     return qs
+        return qs
     
 class LateinEarlyoutRequestViewset(viewsets.ModelViewSet):
     queryset = LateinEarlyoutRequest.objects.all()
@@ -3087,7 +3087,7 @@ class LateinEarlyoutRequestViewset(viewsets.ModelViewSet):
         return Response({'detail': 'Approved successfully'})
     
 class LateinEarlyoutApprovalLevelViewset(viewsets.ModelViewSet):
-    queryset = LatinEarlyApprovalWorkflow.objects.all()
+    queryset =LatinEarlyApprovalWorkflow.objects.all()
     serializer_class =LatinEarlyApprovalWorkflowSerializer
 
 class LateinEarlyoutApprovalViewset(viewsets.ModelViewSet):

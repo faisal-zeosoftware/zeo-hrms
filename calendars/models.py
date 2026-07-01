@@ -814,6 +814,7 @@ class LvApprovalNotify(models.Model):
     message            = models.CharField(max_length=255)
     created_at         = models.DateTimeField(auto_now_add=True)
     is_read            = models.BooleanField(default=False)
+    deligate_user = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='leave_deligated_notifications')
 
     def __str__(self):
         if self.recipient_user:
@@ -1377,6 +1378,23 @@ class employee_leave_request(models.Model):
         if self.approvals.filter(status=LeaveApproval.REJECTED).exists():
             self.status = 'rejected'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Rejected",
+                notification_type="leave_request",
+                message=f"Your leave request has been rejected.",
+                template_type="request_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.leave_type.name,
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify,
+            )
+
             return
 
         # ---------------- GET WORKFLOW ---------------- #
@@ -1389,6 +1407,23 @@ class employee_leave_request(models.Model):
         if not workflow:
             self.status = 'approved'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="lv_request",
+                message=f"Your leave request has been automatically approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.leave_type.name,
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify,
+            )
+
             return
 
         approval_type = workflow.approval_type
@@ -1407,24 +1442,77 @@ class employee_leave_request(models.Model):
         if min_required and approved_count >= min_required:
             self.status = 'approved'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="lv_request",
+                message=f"Your leave request has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.leave_type.name,
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify,
+            )
+
             return
 
         # ---------------- NO APPROVAL ---------------- #
         if approval_type == 'no_approval':
             self.status = 'approved'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="lv_request",
+                message=f"Your leave request has been auto approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.leave_type.name,
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify,
+            )
+
             return
 
         # ---------------- REPORTING MANAGER ---------------- #
         if approval_type == 'reporting_manager':
 
             manager = self.employee.emp_reporting_manager
+
+            # ✅ FIX: convert to CustomUser
             if manager and hasattr(manager, 'user'):
                 manager = manager.user
 
             if not manager:
                 self.status = 'approved'
                 self.save()
+
+                send_notification_email(
+                    user=self.created_by,
+                    employee=self.employee,
+                    branch=self.branch,
+                    title="Request Approved",
+                    notification_type="lv_request",
+                    message=f"Your leave request has been approved.",
+                    template_type="request_approved",
+                    context={
+                        **get_employee_context(self.employee),
+                        'request_type': self.leave_type.name,
+                    },
+                    email_template_model=LvEmailTemplate,
+                    notification_model= LvApprovalNotify,
+                )
+
                 return
 
             if not self.approvals.filter(level=1).exists():
@@ -1436,9 +1524,41 @@ class employee_leave_request(models.Model):
                     employee_id=self.employee.id
                 )
 
+                send_notification_email(
+                    user=manager,
+                    employee=self.employee,
+                    branch=self.branch,
+                    title="Request Created",
+                    notification_type="lv_request",
+                    message=f"New leave request is waiting for your approval.",
+                    template_type="request_created",
+                    context={
+                        **get_employee_context(self.employee),
+                        'request_type': self.leave_type.name,
+                    },
+                    email_template_model=LvEmailTemplate,
+                    notification_model= LvApprovalNotify,
+                )
+
             if self.approvals.filter(level=1, status=LeaveApproval.APPROVED).exists():
                 self.status = 'approved'
                 self.save()
+
+                send_notification_email(
+                    user=self.created_by,
+                    branch=self.branch,
+                    title="Request Approved",
+                    notification_type="lv_request",
+                    employee=self.employee,
+                    message=f"Your leave request has been approved by reporting manager.",
+                    template_type="request_approved",
+                    context={
+                        **get_employee_context(self.employee),
+                        'request_type': self.leave_type.name,
+                    },
+                    email_template_model=LvEmailTemplate,
+                    notification_model= LvApprovalNotify,
+                )
 
             return
 
@@ -1458,9 +1578,28 @@ class employee_leave_request(models.Model):
         if next_level:
 
             approver = next_level.approver
+
+            # ✅ SAFETY (avoid NULL crash)
             if not approver:
                 self.status = 'approved'
                 self.save()
+
+                send_notification_email(
+                    user=self.created_by,
+                    employee=self.employee,
+                    branch=self.branch,
+                    title="Request Approved",
+                    notification_type="lv_request",
+                    message=f"Your leave request has been approved.",
+                    template_type="request_approved",
+                    context={
+                        **get_employee_context(self.employee),
+                        'request_type': self.leave_type.name,
+                    },
+                    email_template_model=LvEmailTemplate,
+                    notification_model= LvApprovalNotify,
+                )
+
                 return
 
             LeaveApproval.objects.create(
@@ -1471,9 +1610,41 @@ class employee_leave_request(models.Model):
                 employee_id=self.employee.id
             )
 
+            send_notification_email(
+                user=approver,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Created",
+                notification_type="lv_request",
+                message=f"New leave request requires your approval.",
+                template_type="request_created",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.leave_type.name,
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify,
+            )
+
         else:
             self.status = 'approved'
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="lv_request",
+                message=f"Your leave request has been fully approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.leave_type.name,
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify,
+            )
    
 class EmployeeRejoining(models.Model):
     employee           = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)
@@ -1701,6 +1872,23 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
     if not workflow:
         instance.status = 'approved'
         instance.save(update_fields=['status'])
+
+        send_notification_email(
+            user=instance.created_by,
+            employee=instance.employee,
+            branch=instance.employee.emp_branch_id,
+            title="Request Approved",
+            notification_type="lv_request",
+            message=f"Your leave request {instance.leave_type} has been automatically approved.",
+            template_type="request_approved",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.leave_type.name
+            },
+            email_template_model=LvEmailTemplate,
+            notification_model= LvApprovalNotify,
+        )
+
         return
 
     first_level = workflow.leave_levels.order_by('level').first()
@@ -1725,6 +1913,22 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
         instance.status = 'approved'
         instance.save(update_fields=['status'])
 
+        send_notification_email(
+            user=approver,
+            employee=instance.employee,
+            branch=instance.employee.emp_branch_id,
+            title="Request Approved",
+            notification_type="lv_request",
+            message=f"Your leave request  {instance.leave_type} has been automatically approved.",
+            template_type="request_approved",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.leave_type.name
+            },
+            email_template_model=LvEmailTemplate,
+            notification_model= LvApprovalNotify,
+        )
+
         return
 
     # ---------------- REPORTING MANAGER ----------------
@@ -1732,12 +1936,30 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
 
         manager = employee.emp_reporting_manager
 
+        # ✅ FIX: convert manager → user
         if manager and hasattr(manager, 'user'):
             manager = manager.user
 
         if not manager:
             instance.status = 'approved'
             instance.save(update_fields=['status'])
+
+            send_notification_email(
+                user=instance.created_by,
+                employee=instance.employee,
+                branch=instance.employee.emp_branch_id,
+                title="Request Approved",
+                notification_type="lv_request",
+                message=f"Your leave request {instance.leave_type} has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.leave_type.name
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify
+            )
+
             return
 
         LeaveApproval.objects.create(
@@ -1746,6 +1968,23 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             level=1,
             status=LeaveApproval.PENDING
         )
+
+        send_notification_email(
+            user=manager,
+            employee=instance.employee,
+            branch=instance.employee.emp_branch_id,
+            title="Request Created",
+            notification_type="lv_request",
+            message=f"New leave request {instance.leave_type} is waiting for your approval.",
+            template_type="request_created",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.leave_type.name
+            },
+            email_template_model=LvEmailTemplate,
+            notification_model= LvApprovalNotify,
+        )
+
         return
 
     # ---------------- MULTI APPROVAL ----------------
@@ -1754,10 +1993,28 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
         if not first_level:
             instance.status = 'approved'
             instance.save(update_fields=['status'])
+
+            send_notification_email(
+                user=instance.created_by,
+                employee=instance.employee,
+                branch=instance.employee.emp_branch_id,
+                title="Request Approved",
+                notification_type="lv_request",
+                message=f"Your leave request {instance.leave_type} has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.leave_type.name
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify,
+            )
+
             return
 
         approver = first_level.approver
 
+        # ✅ FIX: fallback like general request
         if not approver:
             approver = instance.created_by
 
@@ -1767,6 +2024,23 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
         if not approver:
             instance.status = 'approved'
             instance.save(update_fields=['status'])
+
+            send_notification_email(
+                user=instance.created_by,
+                employee=instance.employee,
+                branch=instance.employee.emp_branch_id,
+                title="Request Approved",
+                notification_type="lv_request",
+                message=f"Your leave request  {instance.leave_type}has been approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.leave_type.name
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model= LvApprovalNotify
+            )
+
             return
 
         LeaveApproval.objects.create(
@@ -1775,6 +2049,23 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             level=first_level.level,
             status=LeaveApproval.PENDING
         )
+
+        send_notification_email(
+            user=approver,
+            employee=instance.employee,
+            branch=instance.employee.emp_branch_id,
+            title="Request Created",
+            notification_type="lv_request",
+            message=f"New leave request {instance.leave_type} requires your approval.",
+            template_type="request_created",
+            context={
+                **get_employee_context(instance.employee),
+                'request_type': instance.leave_type.name
+            },
+            email_template_model=LvEmailTemplate,
+            notification_model= LvApprovalNotify,
+        )
+        return
 
 class EmployeeMachineMapping(models.Model):
     employee     = models.ForeignKey("EmpManagement.emp_master", on_delete=models.CASCADE)
@@ -2292,6 +2583,7 @@ class LateinEarlyRequestNotification(models.Model):
     message            = models.CharField(max_length=255)
     created_at         = models.DateTimeField(auto_now_add=True)
     is_read            = models.BooleanField(default=False)
+    deligate_user      = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='lateinearlyout_deligated_notifications')
     
     def __str__(self):
         if self.recipient_user:
@@ -2323,6 +2615,16 @@ class LateinEarlyoutRequest(models.Model):
         return f"{self.employee} - {self.request_type} - {self.status}"
 
     def move_to_next_level(self):
+        workflow = LatinEarlyApprovalWorkflow.objects.filter(
+            branch=self.employee.emp_branch_id
+            ).first()
+        if not workflow:
+            return
+        approval_type = workflow.approval_type
+
+        # =========================
+        # REJECT CHECK (GLOBAL)
+        # =========================
         if self.lateinearlyout_approvals.filter(status=LateinEarlyoutApproval.REJECTED).exists():  # ✅ FIX constant
             self.status = 'REJECTED'
             self.save()
@@ -2341,39 +2643,40 @@ class LateinEarlyoutRequest(models.Model):
                 notification_model=LateinEarlyRequestNotification
             )
             return
-
-        current_level = self.lateinearlyout_approvals.filter(
-            status=LateinEarlyoutApproval.APPROVED
-        ).aggregate(max_level=models.Max('level'))['max_level'] or 0
-
-        # ✅ FIX: correct workflow lookup (branch-based)
-        workflow = LatinEarlyApprovalWorkflow.objects.filter(
-            branch=self.employee.emp_branch_id
-        ).distinct().first()
-
-        if not workflow:
-            return
-
-        # ✅ FIX: correct relation name
-        next_level = workflow.lateinearlyout_levels.filter(
-            level=current_level + 1
-        ).first()
-
-        if next_level:
-            LateinEarlyoutApproval.objects.create(
-                lateinearlyout_request=self,
-                approver=next_level.approver,
-                role=next_level.role,
-                level=next_level.level,
-                status=LateinEarlyoutApproval.PENDING   
-            )
-        else:
-            self.status = 'APPROVED'
+        
+        # =========================
+        # NO APPROVAL
+        # =========================
+        
+        if approval_type == "no_approval":
+            self.status = "APPROVED"
             self.save()
-
             send_notification_email(
+            employee=self.employee,
+            message=f"Your {self.request_type} request has been auto approved.",
+            template_type="request_approved",
+            context={
+                **get_employee_context(self.employee),
+                'request_type': self.request_type,
+                'reason': self.reason,
+                'status': self.status,
+            },
+            email_template_model=LatinEarlyoutEmailTemplate,
+            notification_model=LateinEarlyRequestNotification
+            )
+            return
+    
+        # =========================
+        # REPORTING MANAGER
+        # =========================
+        
+        if approval_type == "reporting_manager":
+            if self.lateinearlyout_approvals.filter(status="APPROVED").exists():
+                self.status = "APPROVED"
+                self.save()
+                send_notification_email(
                 employee=self.employee,
-                message=f"Your {self.request_type} request has been approved.",
+                message=f"Your {self.request_type} request has been approved by reporting manager.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2383,7 +2686,72 @@ class LateinEarlyoutRequest(models.Model):
                 },
                 email_template_model=LatinEarlyoutEmailTemplate,
                 notification_model=LateinEarlyRequestNotification
+                )
+                return
+
+        # =========================
+        # MULTI APPROVAL (LIKE GENERALREQUEST)
+        # =========================
+
+        last_approved = self.lateinearlyout_approvals.filter(
+            status=LateinEarlyoutApproval.APPROVED
+        ).order_by('-level').first()
+
+        current_level = (last_approved.level + 1) if last_approved else 1
+
+        # prevent duplicate approval at same level
+        if self.lateinearlyout_approvals.filter(
+            level=current_level,
+            status=LateinEarlyoutApproval.PENDING
+        ).exists():
+            return
+
+        next_level = workflow.lateinearlyout_levels.filter(
+            level=current_level
+        ).first()
+
+        if next_level and next_level.approver:
+
+            LateinEarlyoutApproval.objects.create(
+                lateinearlyout_request=self,
+                approver=next_level.approver,
+                role=next_level.role,
+                level=next_level.level,
+                status=LateinEarlyoutApproval.PENDING
             )
+
+            send_notification_email(
+                user=next_level.approver,
+                employee=None,
+                message=f"New {self.request_type} request waiting for your approval.",
+                template_type="request_created",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.request_type,
+                    'reason': self.reason,
+                },
+                email_template_model=LatinEarlyoutEmailTemplate,
+                notification_model=LateinEarlyRequestNotification
+            )
+
+        else:
+            self.status = "APPROVED"
+            self.save()
+
+            send_notification_email(
+                employee=self.employee,
+                message=f"Your {self.request_type} request has been fully approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    'request_type': self.request_type,
+                    'reason': self.reason,
+                    'status': self.status,
+                },
+                email_template_model=LatinEarlyoutEmailTemplate,
+                notification_model=LateinEarlyRequestNotification
+                )
+
     
 class LatinEarlyApprovalWorkflow(models.Model):
     APPROVAL_TYPE_CHOICES = [
@@ -2477,80 +2845,76 @@ def create_initial_approval(sender, instance, created, **kwargs):
     if not created:
         return
 
-    
-    workflow = LatinEarlyApprovalWorkflow.objects.filter(
-         branch=instance.employee.emp_branch_id
-    ).distinct().first()
+    with transaction.atomic():
 
-    if not workflow:
-        raise Exception("Approval workflow not configured for this branch.")
+        # ================= WORKFLOW =================
+        workflow = LatinEarlyApprovalWorkflow.objects.filter(
+            branch=instance.employee.emp_branch_id
+        ).first()
 
-    approval_type = workflow.approval_type
+        if not workflow:
+            raise Exception("Approval workflow not configured for this branch.")
 
-    # ---------------- NO APPROVAL ----------------
-    if approval_type == 'no_approval':
+        approval_type = workflow.approval_type
 
-        approver = instance.created_by
+        # ================= NO APPROVAL =================
+        if approval_type == 'no_approval':
 
-        LateinEarlyoutApproval.objects.create(
-            lateinearlyout_request=instance,
-            approver=approver,
-            role="Auto Approval",
-            level=1,
-            status=LateinEarlyoutApproval.APPROVED
-        )
+            LateinEarlyoutApproval.objects.create(
+                lateinearlyout_request=instance,
+                approver=instance.created_by,
+                role="Auto Approval",
+                level=1,
+                status=LateinEarlyoutApproval.APPROVED
+            )
+            instance.status = "APPROVED"
+            instance.save(update_fields=["status"])
+            send_notification_email(
+                employee=instance.employee,
+                message=f"Your {instance.request_type} request has been automatically approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.request_type,
+                    'status': instance.status,
+                },
+                email_template_model=LatinEarlyoutEmailTemplate,
+                notification_model=LateinEarlyRequestNotification
+            )
+            return
 
-        instance.status = "APPROVED"
-        instance.save(update_fields=["status"])
+        # ================= REPORTING MANAGER =================
+        if approval_type == 'reporting_manager':
 
-        send_notification_email(
-            employee=instance.employee,
-            message=f"Your {instance.request_type} request has been automatically approved.",
-            template_type="request_approved",
-            context={
-                **get_employee_context(instance.employee),
-                'request_type': instance.request_type,
-                'status': instance.status,
-            },
-            email_template_model=LatinEarlyoutEmailTemplate,
-            notification_model=LateinEarlyRequestNotification
-        )
-        return
+            manager = instance.employee.emp_reporting_manager
 
-    # ---------------- REPORTING MANAGER ----------------
-    if approval_type == 'reporting_manager':
+            if not manager:
+                raise Exception("Employee has no reporting manager.")
 
-        manager = instance.employee.emp_reporting_manager
+            LateinEarlyoutApproval.objects.create(
+                lateinearlyout_request=instance,
+                approver=manager,
+                role="Reporting Manager",
+                level=1,
+                status=LateinEarlyoutApproval.PENDING
+            )
 
-        if not manager:
-            raise Exception("Employee has no reporting manager.")
+            send_notification_email(
+                user=manager,
+                employee=None,
+                message=f"New {instance.request_type} request for approval: {instance.employee}",
+                template_type="request_created",
+                context={
+                    **get_employee_context(instance.employee),
+                    'request_type': instance.request_type,
+                },
+                email_template_model=LatinEarlyoutEmailTemplate,
+                notification_model=LateinEarlyRequestNotification
+            )
+            return
 
-        LateinEarlyoutApproval.objects.create(
-            lateinearlyout_request=instance,
-            approver=manager,
-            role="Reporting Manager",
-            level=1,
-            status=LateinEarlyoutApproval.PENDING
-        )
-
-        send_notification_email(
-            user=manager,
-            employee=None,
-            message=f"New {instance.request_type} request for approval: {instance.employee}",
-            template_type="request_created",
-            context={
-                **get_employee_context(instance.employee),
-                'request_type': instance.request_type,
-            },
-            email_template_model=LatinEarlyoutEmailTemplate,
-            notification_model=LateinEarlyRequestNotification
-        )
-        return
-
-    # ---------------- MULTI APPROVAL ----------------
-    if approval_type == 'multi_approval':
-
-        first_level = workflow.lateinearlyout_levels.order_by('level').first()  # ✅ FIX
+        # ================= MULTI APPROVAL =================
+        first_level = workflow.lateinearlyout_levels.order_by('level').first()
 
         if not first_level:
             raise Exception("Approval levels not configured.")
@@ -2562,11 +2926,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
             level=first_level.level,
             status=LateinEarlyoutApproval.PENDING
         )
-
         send_notification_email(
             user=first_level.approver,
             employee=None,
-            message=f"New {instance.request_type} request for approval: {instance.employee}",
+            message=f"New {instance.request_type} request waiting for approval.",
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),
@@ -2575,7 +2938,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
             email_template_model=LatinEarlyoutEmailTemplate,
             notification_model=LateinEarlyRequestNotification
         )
-        return 
 class EmployeeOvertime(models.Model):
 
     OT_TYPE_CHOICES = (

@@ -363,19 +363,23 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = leave_type
         fields = '__all__'
+
 class LeaveRequestSerializer(serializers.ModelSerializer):
-    # document_numbering_details = serializers.SerializerMethodField()
     class Meta:
         model = employee_leave_request
         fields = '__all__'
+
     def to_representation(self, instance):
-        rep = super(LeaveRequestSerializer, self).to_representation(instance)
-        if instance.employee:  
+        rep = super().to_representation(instance)
+
+        if instance.employee:
             rep['employee'] = instance.employee.emp_first_name
-        if instance.leave_type:  
+
+        if instance.leave_type:
             rep['leave_type'] = instance.leave_type.name
-        
+
         return rep
+
     def validate(self, data):
         leave_type = data.get('leave_type')
         employee = data.get('employee')
@@ -556,10 +560,13 @@ class LateinEarlyRequestNotificationSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = LateinEarlyoutRequest
         fields = '__all__'
+
     def validate(self, data):
+
         employee = data.get('employee')
 
         if not employee:
@@ -567,22 +574,36 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
                 "employee": "Employee is required."
             })
 
-        workflow = LatinEarlyApprovalWorkflow.objects.filter(
-            branch=employee.emp_branch_id
-        ).first()
+        # ================= SAFE BRANCH RESOLUTION =================
+        branch_obj = employee.emp_branch_id or getattr(employee, "work_location", None)
+        branch_id = getattr(branch_obj, "id", None)
 
+        if not branch_id:
+            raise serializers.ValidationError({
+                "employee": "Employee branch is missing."
+            })
+
+        # ================= WORKFLOW LOOKUP =================
+        workflow = LatinEarlyApprovalWorkflow.objects.filter(
+            branch__id=branch_id 
+        ).first()
 
         if not workflow:
             raise serializers.ValidationError({
                 "approval": "Approval workflow not configured for this branch."
             })
 
-        if workflow.approval_type == 'multi_approval' and not workflow.lateinearlyout_levels.exists():  # ✅ FIXED NAME
-            raise serializers.ValidationError({
-                "approval": "Approval levels are not configured."
-            })
+        # ================= RULES =================
+
+        if workflow.approval_type == 'multi_approval':
+
+            if not workflow.lateinearlyout_levels.order_by('level').exists():
+                raise serializers.ValidationError({
+                    "approval": "Approval levels are not configured."
+                })
 
         if workflow.approval_type == 'reporting_manager':
+
             if not getattr(employee, "emp_reporting_manager", None):
                 raise serializers.ValidationError({
                     "employee": "Employee has no reporting manager."
@@ -591,52 +612,82 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
         return data
 
     def to_representation(self, instance):
-        rep = super(LateinEarlyoutRequestSerializer, self).to_representation(instance)
+        rep = super().to_representation(instance)
+
         if instance.employee:
-            rep['employee'] = instance.employee.emp_code
+            rep['employee'] = getattr(instance.employee, "emp_code", None)
+
+        if instance.request_type:
+            rep['request_type'] = instance.request_type
+
         return rep
     
+
 class LateinEarlyoutApprovalLevelSerializer(serializers.ModelSerializer):
+    role = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    level = serializers.IntegerField(required=False)
     class Meta:
         model = LateinEarlyoutApprovalLevel
-        fields = '__all__'
+        fields = ['level', 'role', 'approver']
     def to_representation(self, instance):
         rep = super(LateinEarlyoutApprovalLevelSerializer, self).to_representation(instance)
         if instance.approver:  
             rep['approver'] = instance.approver.username
             return rep
 
+
 class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
-    levels = LateinEarlyoutApprovalLevelSerializer(many=True,source='lateinearlyout_levels')
-    # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    levels = LateinEarlyoutApprovalLevelSerializer(many=True,source='lateinearlyout_levels',required=False)
+    
 
     class Meta:
         model = LatinEarlyApprovalWorkflow
         fields = '__all__'
-    def to_representation(self, instance):
-        rep = super(LatinEarlyApprovalWorkflowSerializer, self).to_representation(instance)
-        if instance.branch:
-           rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
-           return rep
 
-    # ---------------- VALIDATION ----------------
+    # ================= FIX 1: SAFE REPRESENTATION =================
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        if instance.branch.exists():
+            rep['branch'] = [b.branch_name for b in instance.branch.all()]
+        else:
+            rep['branch'] = []
+
+        return rep
+
+    # ================= FIX 2: VALIDATION =================
     def validate(self, data):
-        branches = data.get('branch', [])
+
+        branches = data.get('branch')
+        instance = getattr(self, 'instance', None)
+
+        if not branches:
+            return data
+
+        clean_branch_ids = []
 
         for b in branches:
-            if LatinEarlyApprovalWorkflow.objects.filter(branch=b).exists():
+            clean_branch_ids.append(b.id if hasattr(b, "id") else b)
+
+        for branch_id in clean_branch_ids:
+
+            qs = LatinEarlyApprovalWorkflow.objects.filter(
+                branch__id=branch_id   # ✅ FIX HERE
+            )
+
+            if instance:
+                qs = qs.exclude(id=instance.id)
+
+            if qs.exists():
                 raise serializers.ValidationError(
-                    f"Workflow already exists for branch {b}"
+                    f"Workflow already exists for branch {branch_id}"
                 )
 
         return data
 
-    # ---------------- CREATE ----------------
+    # ================= FIX 3: CREATE =================
     def create(self, validated_data):
-        levels_data = validated_data.pop('levels', None)
-        if levels_data is None:
-            levels_data = validated_data.pop('lateinearlyout_levels', [])
-
+        levels_data = validated_data.pop('levels', None) or validated_data.pop('lateinearlyout_levels', [])
         branches = validated_data.pop('branch', [])
 
         workflow = LatinEarlyApprovalWorkflow.objects.create(**validated_data)
@@ -647,6 +698,10 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
         for level_data in levels_data:
             level_data.pop('workflow', None)
 
+            # FIX: ensure safe defaults
+            if not level_data.get('level'):
+                raise serializers.ValidationError("Level is required")
+
             LateinEarlyoutApprovalLevel.objects.create(
                 workflow=workflow,
                 **level_data
@@ -654,30 +709,50 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         return workflow
 
-    # ---------------- UPDATE ----------------
+    # ================= FIX 4: UPDATE =================
     def update(self, instance, validated_data):
-        levels_data = validated_data.pop('levels', None)
+
+        levels_data = validated_data.pop('lateinearlyout_levels', None)
         branches = validated_data.pop('branch', None)
 
-        instance.approval_type = validated_data.get(
-            'approval_type',
-            instance.approval_type
-        )
+        # ================= BASIC UPDATE =================
+        approval_type = validated_data.get('approval_type', instance.approval_type)
+
+        instance.approval_type = approval_type
         instance.save()
 
+        # ================= BRANCH UPDATE =================
         if branches is not None:
             instance.branch.set(branches)
 
-        if levels_data is not None:
+        # ================= LEVEL LOGIC (FIXED) =================
+
+        # ❌ ALWAYS CLEAR IF NOT MULTI APPROVAL
+        if approval_type != "multi_approval":
             instance.lateinearlyout_levels.all().delete()
+            return instance
 
-            for level_data in levels_data:
-                level_data.pop('workflow', None)
+        # ================= MULTI APPROVAL =================
 
-                LateinEarlyoutApprovalLevel.objects.create(
-                    workflow=instance,
-                    **level_data
-                )
+        # only process if levels provided
+        if levels_data is None:
+            return instance
+
+        # clear old levels
+        instance.lateinearlyout_levels.all().delete()
+
+        for level_data in levels_data:
+
+            LateinEarlyoutApprovalLevel.objects.create(
+                workflow=instance,
+                role=level_data.get("role") or "",
+                approver=level_data.get("approver"),
+                level=level_data.get("level"),
+                # escalate_to=level_data.get("escalate_to"),
+                # escalate_after_days=level_data.get("escalate_after_days"),
+                # escalate_after_hours=level_data.get("escalate_after_hours"),
+                # escalate_after_minutes=level_data.get("escalate_after_minutes"),
+            )
 
         return instance
 
@@ -847,7 +922,6 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
 
         if instance.escalate_to:
             rep['escalate_to'] = instance.escalate_to.username
-
         return rep
     
 class LvApprovalSerializer(serializers.ModelSerializer):
@@ -922,7 +996,11 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
     # ---------------- UPDATE (FIXED) ---------------- #
     def update(self, instance, validated_data):
 
-        levels_data = validated_data.pop('leave_levels', None)
+        levels_data = validated_data.pop('levels', None)
+
+        if levels_data is None:
+            levels_data = validated_data.pop('leave_levels', None)
+
         branches = validated_data.pop('branch', None)
 
         instance.request_type = validated_data.get(
@@ -936,17 +1014,28 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
         )
         instance.save()
 
+        # ---------------- BRANCH UPDATE ---------------- #
         if branches is not None:
             instance.branch.set(branches)
-
         if instance.approval_type != 'multi_approval':
             instance.leave_levels.all().delete()
             return instance
-
+        
         if levels_data is not None:
+
             instance.leave_levels.all().delete()
 
             for level_data in levels_data:
+
+                # 🔥 FIX invalid pk issue (VERY IMPORTANT)
+                if level_data.get("approver") in [0, "0", "", None]:
+                    level_data["approver"] = None
+
+                if level_data.get("escalate_to") in [0, "0", "", None]:
+                    level_data["escalate_to"] = None
+
+                level_data.pop('workflow', None)
+
                 LeaveApprovalLevels.objects.create(
                     workflow=instance,
                     **level_data
@@ -971,6 +1060,12 @@ class LvApprovalNotifySerializer(serializers.ModelSerializer):
     class Meta:
         model = LvApprovalNotify
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(LvApprovalNotifySerializer, self).to_representation(instance)
+        rep['recipient_user'] = instance.recipient_user.username if instance.recipient_user else None
+        rep['recipient_employee'] = instance.recipient_employee.emp_first_name if instance.recipient_employee else None
+        # rep['approval'] = instance.approval.id if instance.approval else None
+        return rep
 
 class LvCommonWorkflowSerializer(serializers.ModelSerializer):
     class Meta:

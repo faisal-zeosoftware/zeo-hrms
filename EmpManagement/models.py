@@ -29,6 +29,7 @@ from django.core.validators import RegexValidator
 import logging
 logger = logging.getLogger((__name__))
 from .utils import send_notification_email,get_employee_context,schedule_escalation
+from django.db import transaction
 
 
 
@@ -1997,6 +1998,7 @@ class DocRequestNotification(models.Model):
     message = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)
+    deligate_user = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='doc_deligated_notifications')
 
     def __str__(self):
         if self.recipient_user:
@@ -2032,116 +2034,194 @@ class DocumentRequest(models.Model):
     created_at_date  =  models.DateField(auto_now_add=True)
     def __str__(self):
         return f"{self.document_number}-{self.request_type.type_name}"
+    
     def move_to_next_level(self):
 
-        # ---------------- MIN APPROVAL CHECK ----------------
-        min_required = self.request_type.min_approvals_required
-        approved_count = self.doc_approvals.filter(status=DocumentApproval.APPROVED).count()
-
-        if min_required is not None and approved_count >= min_required:
-            self.status = 'Approved'
+        # ---------------- REJECT ----------------
+        if self.doc_approvals.filter(status=DocumentApproval.REJECTED).exists():
+            self.status = "Rejected"
             self.save()
 
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request has been approved.",
+                branch=self.branch,
+                title="Request Rejected",
+                notification_type="document",
+                message="Your request has been rejected.",
+                template_type="request_rejected",
+                context={
+                    **get_employee_context(self.employee),
+                    "doc_number": self.document_number,
+                    "request_type": self.request_type.type_name,
+                },
+                email_template_model=DocRequestEmailTemplate,
+                notification_model=DocRequestNotification,
+            )
+            return
+
+        # ---------------- WORKFLOW ----------------
+        workflow = DocumentApprovalWorkflow.objects.filter(
+            request_type=self.request_type,
+            branch__in=[self.employee.emp_branch_id]
+        ).first()
+        if not workflow:
+            workflow = DocumentApprovalWorkflow.objects.filter(
+                request_type=self.request_type
+                ).first()
+        if not workflow:
+            return
+        
+        approval_type = workflow.approval_type
+
+        # ---------------- MINIMUM APPROVAL ----------------
+        approved_count = self.doc_approvals.filter(
+            status=DocumentApproval.APPROVED
+        ).count()
+
+        min_required = getattr(self.request_type, "min_approvals_required", None)
+
+        if min_required and approved_count >= min_required:
+
+            self.status = "Approved"
+            self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="document",
+                message="Your request has been approved.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
-                    'request_type': self.request_type.type_name
+                    "doc_number": self.document_number,
+                    "request_type": self.request_type.type_name,
                 },
                 email_template_model=DocRequestEmailTemplate,
-                notification_model=DocRequestNotification
+                notification_model=DocRequestNotification,
             )
             return
 
-        current_approved_levels = approved_count
-
-        # ---------------- GET WORKFLOW ----------------
-        workflow = DocumentApprovalWorkflow.objects.filter(
-            request_type=self.request_type,
-            branch=self.employee.emp_branch_id
-        ).first()
-
-        if not workflow:
-            return
-
-        # ---------------- APPROVAL TYPE ----------------
-        approval_type = workflow.approval_type
-
         # ---------------- NO APPROVAL ----------------
-        if approval_type == 'no_approval':
-            self.status = 'Approved'
+        if approval_type == "no_approval":
+
+            self.status = "Approved"
             self.save()
+
+            send_notification_email(
+                user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="document",
+                message="Your request has been auto approved.",
+                template_type="request_approved",
+                context={
+                    **get_employee_context(self.employee),
+                    "doc_number": self.document_number,
+                    "request_type": self.request_type.type_name,
+                },
+                email_template_model=DocRequestEmailTemplate,
+                notification_model=DocRequestNotification,
+            )
             return
 
         # ---------------- REPORTING MANAGER ----------------
-        if approval_type == 'reporting_manager':
-            manager = self.employee.emp_reporting_manager
+        if approval_type == "reporting_manager":
 
-            if not manager:
-                return
+            if self.doc_approvals.filter(
+                status=DocumentApproval.APPROVED
+            ).exists():
 
-            DocumentApproval.objects.create(
-                document_request=self,
-                approver=manager,
-                role="Reporting Manager",
-                level=current_approved_levels + 1,
-                status=DocumentApproval.PENDING,
-                created_by=self.created_by
-            )
+                self.status = "Approved"
+                self.save()
+
+                send_notification_email(
+                    user=self.created_by,
+                    employee=self.employee,
+                    branch=self.branch,
+                    title="Request Approved",
+                    notification_type="document",
+                    message="Your request has been approved by reporting manager.",
+                    template_type="request_approved",
+                    context={
+                        **get_employee_context(self.employee),
+                        "doc_number": self.document_number,
+                        "request_type": self.request_type.type_name,
+                    },
+                    email_template_model=DocRequestEmailTemplate,
+                    notification_model=DocRequestNotification,
+                )
+
             return
 
         # ---------------- MULTI APPROVAL ----------------
+        last_approved = self.doc_approvals.filter(
+            status=DocumentApproval.APPROVED
+        ).order_by("-level").first()
+
+        current_level = (last_approved.level + 1) if last_approved else 1
+
+        if self.doc_approvals.filter(
+            level=current_level,
+            status=DocumentApproval.PENDING,
+        ).exists():
+            return
+
         next_level = workflow.document_levels.filter(
-            level=current_approved_levels + 1
+            level=current_level
         ).first()
 
-        if next_level:
-            last_approval = self.doc_approvals.order_by('-level').first()
+        if next_level and next_level.approver:
 
-            approval = DocumentApproval.objects.create(
+            DocumentApproval.objects.create(
                 document_request=self,
                 approver=next_level.approver,
                 role=next_level.role,
                 level=next_level.level,
                 status=DocumentApproval.PENDING,
-                note=last_approval.note if last_approval else None,
-                created_by=self.created_by
+                created_by=self.created_by,
             )
 
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
-                message=f"New request for approval: {self.request_type.type_name}, Employee: {self.employee}",
+                branch=self.branch,
+                title="Request Created",
+                notification_type="document",
+                message="New request waiting for your approval.",
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
-                    'request_type': self.request_type.type_name
+                    "doc_number": self.document_number,
+                    "request_type": self.request_type.type_name,
                 },
                 email_template_model=DocRequestEmailTemplate,
-                notification_model=DocRequestNotification
+                notification_model=DocRequestNotification,
             )
 
         else:
-            self.status = 'Approved'
+
+            self.status = "Approved"
             self.save()
 
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="document",
+                message="Your request has been fully approved.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
-                    'doc_number': self.document_number,
-                    'request_type': self.request_type.type_name
+                    "doc_number": self.document_number,
+                    "request_type": self.request_type.type_name,
                 },
                 email_template_model=DocRequestEmailTemplate,
-                notification_model=DocRequestNotification
+                notification_model=DocRequestNotification,
             )
 
 class DocumentApprovalWorkflow(models.Model):
@@ -2184,120 +2264,174 @@ class DocumentApproval(models.Model):
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at      = models.DateField(auto_now=True)
    
-    def approve(self,note=None):
+    def approve(self, note=None):
+        """
+        Approve current level and move workflow to next level.
+        """
+
         self.status = self.APPROVED
+
         if note:
             self.note = note
-        self.save()
+
+        self.save(update_fields=["status", "note"])
+
         self.document_request.move_to_next_level()
-    def reject(self,note=None):
+
+    def reject(self, note=None):
+        """
+        Reject request and notify creator.
+        """
+
         self.status = self.REJECTED
+
         if note:
             self.note = note
-        self.save()
-        self.document_request.status = 'Rejected'
-        self.document_request.save()
+
+        self.save(update_fields=["status", "note"])
+
+        self.document_request.status = "Rejected"
+        self.document_request.save(update_fields=["status"])
+
         send_notification_email(
-        user=self.document_request.created_by,
-        employee=self.document_request.employee,
-        message=f"Your request {self.document_request.document_number} has been rejected.",
-        template_type="request_rejected",
-        context={
-            **get_employee_context(self.document_request.employee),
-            'doc_number': self.document_request.document_number,
-            'request_type': self.document_request.request_type.type_name,
-            'rejection_reason': self.note or 'Rejected'
-        },
-        email_template_model=DocRequestEmailTemplate,
-        notification_model=DocRequestNotification
-    )
+            user=self.document_request.created_by,
+            employee=self.document_request.employee,
+            message=f"Your request {self.document_request.document_number} has been rejected.",
+            template_type="request_rejected",
+            context={
+                **get_employee_context(self.document_request.employee),
+                "doc_number": self.document_request.document_number,
+                "request_type": self.document_request.request_type.type_name,
+                "rejection_reason": self.note or "Rejected",
+            },
+            email_template_model=DocRequestEmailTemplate,
+            notification_model=DocRequestNotification,
+        )
+
+    def __str__(self):
+        return (
+            f"{self.document_request.document_number} - "
+            f"Level {self.level} - "
+            f"{self.status}"
+        )
+    
 
 @receiver(post_save, sender=DocumentRequest)
 def create_initial_approval(sender, instance, created, **kwargs):
-        if not created:
-            return
 
+    if not created:
+        return
+
+    with transaction.atomic():
         workflow = DocumentApprovalWorkflow.objects.filter(
             request_type=instance.request_type,
-            branch=instance.employee.emp_branch_id
-        ).first()
-
+            branch__in=[instance.employee.emp_branch_id]
+            ).first()
+        # Optional fallback like General Request
         if not workflow:
-            return
+            workflow = DocumentApprovalWorkflow.objects.filter(
+                request_type=instance.request_type
+                ).first()
+            
+            approval_type = workflow.approval_type
 
-        first_level = workflow.document_levels.order_by('level').first()
+        # -------------------------------------------------
+        # NO APPROVAL
+        # -------------------------------------------------
+        if approval_type == "no_approval":
 
-        if not first_level:
-            return
-
-        approval_type = workflow.approval_type
-
-        # ---------------- NO APPROVAL ---------------- #
-        if approval_type == 'no_approval':
-
-            approver = instance.created_by
-
-            DocumentApproval.objects.create(
+            if not DocumentApproval.objects.filter(
                 document_request=instance,
-                approver=approver,
-                role="Auto Approval",
-                level=1,
-                status=DocumentApproval.APPROVED,
-                created_by=instance.created_by
-            )
+                level=1
+            ).exists():
+
+                approver = instance.created_by
+
+                if not approver and hasattr(instance.employee, "user"):
+                    approver = instance.employee.user
+
+                DocumentApproval.objects.create(
+                    document_request=instance,
+                    approver=approver,
+                    role="Auto Approval",
+                    level=1,
+                    status=DocumentApproval.APPROVED,
+                    created_by=instance.created_by
+                )
 
             instance.status = "Approved"
             instance.save(update_fields=["status"])
 
-            send_notification_email(
-                user=approver,
-                employee=instance.employee,
-                message=f"Your request {instance.document_number} has been automatically approved.",
-                template_type="request_approved",
-                context={
-                    **get_employee_context(instance.employee),
-                    'doc_number': instance.document_number,
-                    'request_type': instance.request_type.type_name
-                },
-                email_template_model=DocRequestEmailTemplate,
-                notification_model=DocRequestNotification
-            )
-            return
+            if approver:
+                send_notification_email(
+                    user=approver,
+                    employee=instance.employee,
+                    message=f"Your request {instance.document_number} has been automatically approved.",
+                    template_type="request_approved",
+                    context={
+                        **get_employee_context(instance.employee),
+                        "doc_number": instance.document_number,
+                        "request_type": instance.request_type.type_name,
+                    },
+                    email_template_model=DocRequestEmailTemplate,
+                    notification_model=DocRequestNotification,
+                    branch=instance.branch,
+                    notification_type="document_request",
+                    title="Document Request Approved"
+                )
+                return
 
-        # ---------------- REPORTING MANAGER ---------------- #
-        if approval_type == 'reporting_manager':
-
-            manager_user = instance.employee.emp_reporting_manager
-
-            if not manager_user:
-                raise Exception("Employee has no reporting manager.")
+        # -------------------------------------------------
+        # REPORTING MANAGER
+        # -------------------------------------------------
+        if approval_type == "reporting_manager":
+            manager = getattr(instance.employee, "emp_reporting_manager", None)
+            if not manager:
+                raise Exception("Employee has no valid reporting manager.")
 
             DocumentApproval.objects.create(
                 document_request=instance,
-                approver=manager_user,
+                approver=manager,
                 role="Reporting Manager",
-                level=first_level.level,
                 status=DocumentApproval.PENDING,
-                created_by=instance.created_by
+                level=1,
+                created_by=instance.created_by,
             )
 
             send_notification_email(
-                user=manager_user,
+                user=manager,
                 employee=None,
-                message=f"New request for approval: {instance.request_type.type_name}, Employee: {instance.employee}",
+                message=f"New request waiting for your approval.",
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
-                    'doc_number': instance.document_number,
-                    'request_type': instance.request_type.type_name
+                    "doc_number": instance.document_number,
+                    "request_type": instance.request_type.type_name,
                 },
                 email_template_model=DocRequestEmailTemplate,
-                notification_model=DocRequestNotification
+                notification_model=DocRequestNotification,
+                branch=instance.branch,
+                notification_type="document_request",
+                title="Document Request Approval"
             )
             return
 
-        # ---------------- MULTI APPROVAL ---------------- #
-        if approval_type == 'multi_approval':
+        # -------------------------------------------------
+        # MULTI APPROVAL
+        # -------------------------------------------------
+        if approval_type == "multi_approval":
+
+            first_level = workflow.document_levels.order_by("level").first()
+
+            if not first_level:
+                print("No approval level configured.")
+                return
+
+            if DocumentApproval.objects.filter(
+                document_request=instance,
+                level=first_level.level
+            ).exists():
+                return
 
             DocumentApproval.objects.create(
                 document_request=instance,
@@ -2308,20 +2442,27 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 created_by=instance.created_by
             )
 
-            send_notification_email(
-                user=first_level.approver,
-                employee=None,
-                message=f"New request for approval: {instance.request_type.type_name}, Employee: {instance.employee}",
-                template_type="request_created",
-                context={
-                    **get_employee_context(instance.employee),
-                    'doc_number': instance.document_number,
-                    'request_type': instance.request_type.type_name
-                },
-                email_template_model=DocRequestEmailTemplate,
-                notification_model=DocRequestNotification
-            )
-            return
+            print("First Level Approver :", first_level.approver)
+
+            if first_level.approver:
+
+                send_notification_email(
+                    user=first_level.approver,
+                    employee=None,
+                    message="New request waiting for your approval.",
+                    template_type="request_created",
+                    context={
+                        **get_employee_context(instance.employee),
+                        "doc_number": instance.document_number,
+                        "request_type": instance.request_type.type_name,
+                    },
+                    email_template_model=DocRequestEmailTemplate,
+                    notification_model=DocRequestNotification,
+                    branch=instance.branch,
+                    notification_type="document_request",
+                    title="Document Request Approval"
+                )
+                return
         
 class ResignationEmailTemplate(models.Model):
     template_type = models.CharField(max_length=50, choices=[
@@ -2346,6 +2487,7 @@ class ResignationRequestNotification(models.Model):
     message = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)
+    deligate_user = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='resignation_deligated_notifications')
 
     def __str__(self):
         if self.recipient_user:
@@ -2389,8 +2531,12 @@ class EmployeeResignation(models.Model):
             self.status = 'Rejected'
             self.save()
 
+            # ⚠️ Optional: remove if already sending in reject()
             send_notification_email(
                 employee=self.employee,
+                branch=self.branch,
+                title="Request Rejected",
+                notification_type="resignation",
                 message=f"Your resignation request {self.termination_type} has been rejected.",
                 template_type="resignation_rejected",
                 context={
@@ -2414,6 +2560,7 @@ class EmployeeResignation(models.Model):
             branch__id=self.employee.emp_branch_id_id
             ).first()
 
+        # ✅ ADD fallback (same as GeneralRequest)
         if not workflow:
             workflow = ResignationApprovalWorkflow.objects.create(
                 approval_type='no_approval'
@@ -2429,7 +2576,7 @@ class EmployeeResignation(models.Model):
         approval_type = workflow.approval_type
 
         # =========================================================
-        # ✅ MINIMUM APPROVAL CHECK (ADDED)
+        # MINIMUM APPROVAL CHECK (ADDED)
         # =========================================================
         approved_count = self.resign_approvals.filter(
             status=ResignationApproval.APPROVED
@@ -2440,34 +2587,105 @@ class EmployeeResignation(models.Model):
         if min_required and approved_count >= min_required:
             self.status = 'Approved'
             self.save()
+            send_notification_email(
+                # user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="resignation",
+                message=f"Your request has been approved.",
+                template_type="request_approved",
+                context={
+                     **get_employee_context(self.employee),
+                    'document_date': self.document_date,
+                    'resigned_on': self.resigned_on,
+                    'notice_period': self.notice_period,
+                    'last_working_date': self.last_working_date,
+                    'location': self.location,
+                    'termination_type': self.termination_type,
+                    'reason_for_leaving': self.reason_for_leaving,
+                    'status': self.status,
+                },
+                email_template_model=ResignationEmailTemplate,
+                notification_model=ResignationRequestNotification,
+            )
             return
 
+
         # =========================================================
-        # ✅ NO APPROVAL
+        # NO APPROVAL
         # =========================================================
         if approval_type == 'no_approval':
             self.status = 'Approved'
             self.save()
+            send_notification_email(
+                # user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="resignation",
+                message=f"Your request  {self.termination_type} has been auto approved.",
+                template_type="request_approved",
+                context={
+                     **get_employee_context(self.employee),
+                    'document_date': self.document_date,
+                    'resigned_on': self.resigned_on,
+                    'notice_period': self.notice_period,
+                    'last_working_date': self.last_working_date,
+                    'location': self.location,
+                    'termination_type': self.termination_type,
+                    'reason_for_leaving': self.reason_for_leaving,
+                    'status': self.status,
+                },
+                email_template_model=ResignationEmailTemplate,
+                notification_model=ResignationRequestNotification,
+            )
             return
 
+
+
         # =========================================================
-        # ✅ REPORTING MANAGER
+        #  REPORTING MANAGER
         # =========================================================
         if approval_type == 'reporting_manager':
 
             if self.resign_approvals.filter(status=ResignationApproval.APPROVED).exists():
                 self.status = 'Approved'
                 self.save()
-
+                send_notification_email(
+                # user=self.created_by,
+                employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="resignation",
+                message=f"Your request {self.termination_type} has been approved by reporting manager.",
+                template_type="request_approved",
+                context={
+                     **get_employee_context(self.employee),
+                    'document_date': self.document_date,
+                    'resigned_on': self.resigned_on,
+                    'notice_period': self.notice_period,
+                    'last_working_date': self.last_working_date,
+                    'location': self.location,
+                    'termination_type': self.termination_type,
+                    'reason_for_leaving': self.reason_for_leaving,
+                    'status': self.status,
+                },
+                email_template_model=ResignationEmailTemplate,
+                notification_model=ResignationRequestNotification,
+            )
             return
 
+
+
         # =========================================================
-        # ✅ MULTI APPROVAL (MATCHED WITH GENERAL REQUEST)
+        # MULTI APPROVAL 
         # =========================================================
 
         last_approved = self.resign_approvals.filter(
             status=ResignationApproval.APPROVED
         ).order_by('-level').first()
+
         current_level = (last_approved.level + 1) if last_approved else 1
 
         if self.resign_approvals.filter(level=current_level).exists():
@@ -2489,6 +2707,28 @@ class EmployeeResignation(models.Model):
                 status=ResignationApproval.PENDING,
                 note=last_approval.note if last_approval else None
             )
+            send_notification_email(
+                            employee=self.employee,
+                            branch=self.branch,
+                            title="Request Created",
+                            notification_type="resignation",
+                            message=f"Your New resignation request {self.termination_type} waiting for your approval.",
+                            template_type="resignation_created",
+                            context={
+                                **get_employee_context(self.employee),
+                                'document_date': self.document_date,
+                                'resigned_on': self.resigned_on,
+                                'notice_period': self.notice_period,
+                                'last_working_date': self.last_working_date,
+                                'location': self.location,
+                                'termination_type': self.termination_type,
+                                'reason_for_leaving': self.reason_for_leaving,
+                                'status': self.status,
+                            },
+                            email_template_model=ResignationEmailTemplate,
+                            notification_model=ResignationRequestNotification
+                        )
+
 
         else:
             self.status = 'Approved'
@@ -2496,6 +2736,9 @@ class EmployeeResignation(models.Model):
 
             send_notification_email(
                 employee=self.employee,
+                branch=self.branch,
+                title="Request Approved",
+                notification_type="resignation",
                 message=f"Your resignation request {self.termination_type} has been approved.",
                 template_type="resignation_approved",
                 context={
@@ -2512,6 +2755,8 @@ class EmployeeResignation(models.Model):
                 email_template_model=ResignationEmailTemplate,
                 notification_model=ResignationRequestNotification
             )
+            return
+        
 class ResignationApprovalWorkflow(models.Model):
      APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
@@ -2598,7 +2843,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
     if not created:
         return
-
     workflow = ResignationApprovalWorkflow.objects.filter(
        branch=instance.employee.emp_branch_id 
     ).first()
@@ -2623,11 +2867,15 @@ def create_initial_approval(sender, instance, created, **kwargs):
             level=1,
             status=ResignationApproval.APPROVED
         )
+
         instance.status = "Approved"
         instance.save(update_fields=["status"])
         send_notification_email(
             user=approver,  # can be None, your function should handle it
             employee=instance.employee,
+            branch=instance.employee.emp_branch_id,
+            title="Request Approved",
+            notification_type="resignation",
             message=f"Your resignation request {instance.termination_type} has been automatically approved.",
             template_type="resignation_approved",
             context={
@@ -2661,7 +2909,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         send_notification_email(
             user=manager,
-            employee=None,
+            employee=instance.employee,
+            branch=instance.employee.emp_branch_id,
+            title="Request Created",
+            notification_type="resigantion",
             message=f"New resignation request for approval: {instance.employee}",
             template_type="resignation_created",
             context={
@@ -2697,7 +2948,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         send_notification_email(
             user=first_level.approver,
-            employee=None,
+            employee=instance.employee,
+            branch=instance.employee.emp_branch_id,
+            title="Request Created",
+            notification_type="resignation",
             message=f"New resignation request for approval: {instance.employee}",
             template_type="resignation_created",
             context={

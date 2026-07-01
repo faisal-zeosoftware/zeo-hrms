@@ -310,14 +310,18 @@ class LoanApplicationviewset(viewsets.ModelViewSet):
             employee = serializer.validated_data.get('employee')
             document_number = serializer.validated_data.get('document_number')
 
+            # ✅ Validate employee
             if not employee:
                 raise ValidationError("Employee is required.")
+
+            # ✅ Get branch
             branch_id = employee.emp_branch_id or employee.work_location
 
             if not branch_id:
                 raise ValidationError("Employee branch is missing in employee master.")
 
             try:
+                # 🔥 FIX: changed type to match DB
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch_id,
                     type='loan_request'
@@ -328,16 +332,21 @@ class LoanApplicationviewset(viewsets.ModelViewSet):
                 )
 
             current_date = timezone.now().date()
+
+            # ✅ Manual document number validation
             if document_number:
                 if doc_config.start_date and doc_config.end_date:
                     if not (doc_config.start_date <= current_date <= doc_config.end_date):
                         raise ValidationError(
                             "Document number cannot be assigned outside the valid date range."
                         )
+
+                # ✅ Prevent duplicate numbers
                 if LoanApplication.objects.filter(document_number=document_number).exists():
                     raise ValidationError("Document number already exists.")
 
             else:
+                # ✅ Auto-generate
                 document_number = doc_config.get_next_number()
 
             serializer.save(document_number=document_number)
@@ -392,100 +401,42 @@ class LoanApprovalLevelsviewset(viewsets.ModelViewSet):
     queryset =  LoanApprovalWorkflow.objects.all()
     serializer_class =  LoanApprovalWorkflowSerializer
 
-class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
-    levels = LoanApprovalLevelsSerializer(source='loan_levels', many=True)
+    class LoanApprovalviewset(viewsets.ModelViewSet):
+        queryset = LoanApproval.objects.all()
+        serializer_class = LoanApprovalSerializer
+        lookup_field = 'pk'
+        def get_queryset(self):
+            """
+            Filter approvals based on the authenticated user.
+            """
+            user = self.request.user  # Get the logged-in user
+            if user.is_superuser:
+                return LoanApproval.objects.all()
+            return LoanApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+        @action(detail=True, methods=['post'])
+        def approve(self, request, pk=None):
+            approvals = self.get_object()
+            note = request.data.get('note')  # Get the note from the request
+            approvals.approve(note=note)
+            return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
 
-    class Meta:
-        model = LoanApprovalWorkflow
-        fields = '__all__'
+        
+        @action(detail=True, methods=['post'])
+        def reject(self, request, pk=None):
+            approval = self.get_object()
+            note = request.data.get('note')
+            rejection_reason_id = request.data.get('rejection_reason')
 
-    def create(self, validated_data):
-        # ✅ FIX: use source name
-        levels_data = validated_data.pop('loan_levels', [])
-        branches = validated_data.pop('branch', [])
+            if not rejection_reason_id:
+                raise ValidationError("Rejection reason is required.")
 
-        workflow = LoanApprovalWorkflow.objects.create(**validated_data)
+            # try:
+            #     rejection_reason = LvRejectionReason.objects.get(id=rejection_reason_id)
+            # except LvRejectionReason.DoesNotExist:
+            #     raise ValidationError("Invalid rejection reason.")
 
-        if branches:
-            workflow.branch.set(branches)
-
-        for level_data in levels_data:
-            level_data.pop('workflow', None)
-
-            LoanApprovalLevels.objects.create(
-                workflow=workflow,
-                **level_data
-            )
-
-        return workflow
-
-    def update(self, instance, validated_data):
-        # ✅ FIX: use source name
-        levels_data = validated_data.pop('loan_levels', None)
-        branches = validated_data.pop('branch', None)
-
-        instance.approval_type = validated_data.get(
-            'approval_type',
-            instance.approval_type
-        )
-        instance.loan_type = validated_data.get(
-            'loan_type',
-            instance.loan_type
-        )
-        instance.save()
-
-        if branches is not None:
-            instance.branch.set(branches)
-
-        if levels_data is not None:
-            instance.loan_levels.all().delete()
-
-            for level_data in levels_data:
-                level_data.pop('workflow', None)
-
-                LoanApprovalLevels.objects.create(
-                    workflow=instance,
-                    **level_data
-                )
-
-        return instance
-
-class LoanApprovalviewset(viewsets.ModelViewSet):
-    queryset = LoanApproval.objects.all()
-    serializer_class = LoanApprovalSerializer
-    lookup_field = 'pk'
-    def get_queryset(self):
-        """
-        Filter approvals based on the authenticated user.
-        """
-        user = self.request.user  # Get the logged-in user
-        if user.is_superuser:
-            return LoanApproval.objects.all()
-        return LoanApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
-    @action(detail=True, methods=['post'])
-    def approve(self, request, pk=None):
-        approvals = self.get_object()
-        note = request.data.get('note')  # Get the note from the request
-        approvals.approve(note=note)
-        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
-
-    
-    @action(detail=True, methods=['post'])
-    def reject(self, request, pk=None):
-        approval = self.get_object()
-        note = request.data.get('note')
-        rejection_reason_id = request.data.get('rejection_reason')
-
-        if not rejection_reason_id:
-            raise ValidationError("Rejection reason is required.")
-
-        # try:
-        #     rejection_reason = LvRejectionReason.objects.get(id=rejection_reason_id)
-        # except LvRejectionReason.DoesNotExist:
-        #     raise ValidationError("Invalid rejection reason.")
-
-        approval.reject(rejection_reason=rejection_reason_id, note=note)
-        return Response({'status': 'rejected', 'note': note, 'rejection_reason': rejection_reason_id}, status=status.HTTP_200_OK)
+            approval.reject(rejection_reason=rejection_reason_id, note=note)
+            return Response({'status': 'rejected', 'note': note, 'rejection_reason': rejection_reason_id}, status=status.HTTP_200_OK)
 class SIFDataView(APIView):
     def post(self, request):
         serializer = SIFSerializer(data=request.data)
@@ -739,6 +690,7 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
 
         approval.reject(rejection_reason=rejection_reason, note=note)
         return Response({'status': 'rejected'}, status=status.HTTP_200_OK)
+    
 class AirTicketRuleViewSet(viewsets.ModelViewSet):
     queryset = AirTicketRule.objects.all()
     serializer_class = AirTicketRuleSerializer
@@ -775,32 +727,37 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         with transaction.atomic():
-            employee = serializer.validated_data.get('employee')
-            document_number = serializer.validated_data.get('document_number')  # Get manually entered document number
 
-            branch_id = employee.emp_branch_id.id  
+            employee = serializer.validated_data.get('employee')
+            document_number = serializer.validated_data.get('document_number')
+            branch_id = employee.emp_branch_id
 
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch_id,
                     type='air_ticket_request',
-                    
                 )
             except DocumentNumbering.DoesNotExist:
-                raise NotFound(f"No document numbering configuration found for branch {branch_id} and Air Ticket request.")
+                raise NotFound(
+                    f"No document numbering configuration found for branch {branch_id}"
+                )
 
             current_date = timezone.now().date()
 
-            # Validate if the manually entered document number is within the date range
+            # Validate manual document number
             if document_number:
                 if doc_config.start_date and doc_config.end_date:
                     if not (doc_config.start_date <= current_date <= doc_config.end_date):
-                        raise ValidationError("Document number cannot be assigned outside the valid date range.")
+                        raise ValidationError(
+                            "Document number cannot be assigned outside the valid date range."
+                        )
             else:
-                # If no document number is entered, generate one automatically
                 document_number = doc_config.get_next_number()
 
-            serializer.save(document_number=document_number)
+            serializer.save(
+                document_number=document_number,
+                created_by=self.request.user   # ✅ FIX HERE
+            )
 class AirticketWorkflowViewSet(viewsets.ModelViewSet):
     queryset = AirticketApprovalWorkflow.objects.all()
     serializer_class = AirticketApprovalWorkflowSerializer

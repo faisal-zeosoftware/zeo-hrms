@@ -958,8 +958,11 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
             employee = serializer.validated_data.get('employee')
             document_number = serializer.validated_data.get('document_number')
 
+            # ✅ Employee check
             if not employee:
                 raise ValidationError("Employee is required.")
+
+            # ✅ Branch fetch
             branch_id = employee.emp_branch_id or employee.work_location
 
             if not branch_id:
@@ -977,6 +980,7 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
 
             current_date = timezone.now().date()
 
+            # ✅ Manual document validation
             if document_number:
                 if doc_config.start_date and doc_config.end_date:
                     if not (doc_config.start_date <= current_date <= doc_config.end_date):
@@ -984,33 +988,13 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
                             "Document number cannot be assigned outside the valid date range."
                         )
             else:
+                # ✅ Auto-generate document number
                 document_number = doc_config.get_next_number()
 
             serializer.save(
                 document_number=document_number,
                 branch=branch_id
             )
-
-    @action(detail=False, methods=['get'])
-    def employee_request_history(self, request):
-        employee_id = request.query_params.get('employee_id')
-
-        if not employee_id:
-            return Response({'error': 'Employee ID is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        requests = AssetRequest.objects.filter(employee_id=employee_id).order_by('-request_date')
-
-        history_data = []
-        for req in requests:
-            history_data.append({
-                'reason': req.reason,
-                'asset_type': req.asset_type.name if req.asset_type else None,
-                'status': req.status,
-                'requested_asset': req.requested_asset.name if req.requested_asset else None,
-                'created_at': req.request_date,
-            })
-
-        return Response(history_data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['get'])
     def employee_request_history(self, request):

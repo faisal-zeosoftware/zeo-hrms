@@ -7,7 +7,7 @@ from .models import RequestType, ApprovalWorkflow, ApprovalLevel
 from django.utils import timezone
 from .utils import send_notification_email
 from django.core.mail import send_mail
-from .models import ApprovalDeligation
+from .models import ApprovalDeligation,DocRequestType,DocumentApprovalWorkflow,DocumentApprovalLevel
 
 @receiver(post_save, sender=EmployeeResignation)
 def deactivate_employee_on_approval(sender, instance, created, **kwargs):
@@ -69,6 +69,23 @@ def create_workflow_and_default_level(sender, instance, created, **kwargs):
     )
 
     ApprovalLevel.objects.create(
+        workflow=workflow,
+        level=1,
+        role="Auto Level",
+        approver=None
+    )
+
+@receiver(post_save, sender=DocRequestType)
+def create_workflow_and_default_level(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    workflow = DocumentApprovalWorkflow.objects.create(
+        request_type=instance,
+        approval_type='no_approval'
+    )
+
+    DocumentApprovalLevel.objects.create(
         workflow=workflow,
         level=1,
         role="Auto Level",

@@ -923,13 +923,28 @@ class DocApprovalSerializer(serializers.ModelSerializer):
             rep['document_request'] = instance.document_request.document_number
         return rep
 class DocApprovalLevelSerializer(serializers.ModelSerializer):
+    approver = serializers.PrimaryKeyRelatedField(
+        queryset=CustomUser.objects.all(),   # Replace User with the correct model if different
+        required=False,
+        allow_null=True
+    )
+
     class Meta:
         model = DocumentApprovalLevel
         fields = '__all__'
+
+    def to_internal_value(self, data):
+        data = data.copy()
+
+        if data.get("approver") in [0, "0", ""]:
+            data["approver"] = None
+
+        return super().to_internal_value(data)
+
     def to_representation(self, instance):
-        rep = super(DocApprovalLevelSerializer, self).to_representation(instance)
-        if instance.approver:  
-            rep['approver'] = instance.approver.username
+        rep = super().to_representation(instance)
+        if instance.approver:
+            rep["approver"] = instance.approver.username
         return rep
     
 class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):

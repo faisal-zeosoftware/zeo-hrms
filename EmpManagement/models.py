@@ -2248,7 +2248,7 @@ class DocumentApprovalLevel(models.Model):
     role = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
     approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
 
-    
+
 class DocumentApproval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
@@ -2368,14 +2368,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
             instance.status = "Approved"
             instance.save(update_fields=["status"])
-
-            print("Created By :", instance.created_by)
-            print("Employee :", instance.employee)
-            print("Approver :", approver)
-            print("Email :", approver.email if approver else None)
-
             if approver:
-                result = send_notification_email(
+                send_notification_email(
                     user=approver,
                     employee=instance.employee,
                     message=f"Your request {instance.document_number} has been automatically approved.",
@@ -2391,9 +2385,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     notification_type="document_request",
                     title="Document Request Approved"
                 )
-
-                print("Notification Result :", result)
-
             return
 
         # -------------------------------------------------
@@ -2413,10 +2404,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 created_by=instance.created_by,
             )
 
-            print("Manager :", manager)
-            print("Manager Email :", manager.email)
-
-            result = send_notification_email(
+            send_notification_email(
                 user=manager,
                 employee=None,
                 message=f"New request waiting for your approval.",
@@ -2432,9 +2420,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 notification_type="document_request",
                 title="Document Request Approval"
             )
-
-            print("Notification Result :", result)
-
             return
 
         # -------------------------------------------------
@@ -2462,12 +2447,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 status=DocumentApproval.PENDING,
                 created_by=instance.created_by
             )
-
-            print("First Level Approver :", first_level.approver)
-
+            
             if first_level.approver:
 
-                result = send_notification_email(
+                send_notification_email(
                     user=first_level.approver,
                     employee=None,
                     message="New request waiting for your approval.",
@@ -2483,10 +2466,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     notification_type="document_request",
                     title="Document Request Approval"
                 )
-
-                print("Notification Result :", result)
-
-            return
+                return
         
 class ResignationEmailTemplate(models.Model):
     template_type = models.CharField(max_length=50, choices=[

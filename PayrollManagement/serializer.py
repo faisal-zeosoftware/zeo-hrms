@@ -310,7 +310,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super(LoanApplicationSerializer, self).to_representation(instance)
         if instance.employee:
-            rep['employee'] =instance.employee.emp_first_name
+            rep['employee'] =instance.employee.emp_code
         if instance.loan_type:
             rep['loan_type'] =instance.loan_type.loan_type
         if instance.branch:
@@ -361,6 +361,7 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         # ---------------- GET FIRST LEVEL ----------------
         first_level = workflow.loan_levels.order_by('level').first()
 
+        # ✅ FIX 2: only enforce level for multi approval
         if approval_type == 'multi_approval' and not first_level:
             raise serializers.ValidationError({
                 "loan_type": "Approval levels are not configured."
@@ -427,12 +428,42 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches:
             workflow.branch.set(branches)
 
-        for level_data in levels_data:
-            level_data.pop('workflow', None)
+        # ---------------- MULTI APPROVAL ----------------
+        if workflow.approval_type == 'multi_approval':
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                LoanApprovalLevels.objects.create(
+                    workflow=workflow,
+                    **level_data
+                )
+
+        # ---------------- NO APPROVAL ----------------
+        elif workflow.approval_type == 'no_approval':
 
             LoanApprovalLevels.objects.create(
                 workflow=workflow,
-                **level_data
+                level=1,
+                role='Auto Level',
+                approver=None
+            )
+
+        # ---------------- REPORTING MANAGER ----------------
+        elif workflow.approval_type == 'reporting_manager':
+
+            reporting_manager = None
+
+            request = self.context.get('request')
+
+            if request and hasattr(request.user, 'employee'):
+                reporting_manager = request.user.employee.reporting_manager
+
+            LoanApprovalLevels.objects.create(
+                workflow=workflow,
+                # level=1,
+                role='Reporting Manager',
+                approver=reporting_manager
             )
 
         return workflow
@@ -446,25 +477,59 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
             'approval_type',
             instance.approval_type
         )
+
         instance.loan_type = validated_data.get(
             'loan_type',
             instance.loan_type
         )
+
         instance.save()
 
         if branches is not None:
             instance.branch.set(branches)
 
-        if levels_data is not None:
-            instance.loan_levels.all().delete()
+        # ---------------- RESET LEVELS ----------------
+        instance.loan_levels.all().delete()
 
-            for level_data in levels_data:
-                level_data.pop('workflow', None)
+        # ---------------- MULTI APPROVAL ----------------
+        if instance.approval_type == 'multi_approval':
 
-                LoanApprovalLevels.objects.create(
-                    workflow=instance,
-                    **level_data
-                )
+            if levels_data is not None:
+
+                for level_data in levels_data:
+                    level_data.pop('workflow', None)
+
+                    LoanApprovalLevels.objects.create(
+                        workflow=instance,
+                        **level_data
+                    )
+
+        # ---------------- NO APPROVAL ----------------
+        elif instance.approval_type == 'no_approval':
+
+            LoanApprovalLevels.objects.create(
+                workflow=instance,
+                level=1,
+                role='Auto Level',
+                approver=None
+            )
+
+        # ---------------- REPORTING MANAGER ----------------
+        elif instance.approval_type == 'reporting_manager':
+
+            reporting_manager = None
+
+            request = self.context.get('request')
+
+            if request and hasattr(request.user, 'employee'):
+                reporting_manager = request.user.employee.reporting_manager
+
+            LoanApprovalLevels.objects.create(
+                workflow=instance,
+                level=1,
+                role='Reporting Manager',
+                approver=reporting_manager
+            )
 
         return instance
     
@@ -475,6 +540,7 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
         if instance.loan_type:
              rep['loan_type'] =instance.loan_type.loan_type
         return rep
+    
 class LoanApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanApproval
@@ -624,6 +690,8 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "employee": "Employee is required."
             })
+
+        # ✅ correct branch filtering
         workflow = AdvanceApprovalWorkflow.objects.filter(
             branch=employee.emp_branch_id
         ).first()
@@ -759,15 +827,46 @@ class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches:
             workflow.branch.set(branches)
 
-        for level_data in levels_data:
-            level_data.pop('workflow', None)
+        # ---------------- MULTI APPROVAL ----------------
+        if workflow.approval_type == 'multi_approval':
+
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                AdvanceCommonWorkflow.objects.create(
+                    workflow=workflow,
+                    **level_data
+                )
+
+        # ---------------- NO APPROVAL ----------------
+        elif workflow.approval_type == 'no_approval':
 
             AdvanceCommonWorkflow.objects.create(
                 workflow=workflow,
-                **level_data
+                level=1,
+                role='Auto Level',
+                approver=None
+            )
+
+        # ---------------- REPORTING MANAGER ----------------
+        elif workflow.approval_type == 'reporting_manager':
+
+            reporting_manager = None
+
+            request = self.context.get('request')
+
+            if request and hasattr(request.user, 'employee'):
+                reporting_manager = request.user.employee.reporting_manager
+
+            AdvanceCommonWorkflow.objects.create(
+                workflow=workflow,
+                level=1,
+                role='Reporting Manager',
+                approver=reporting_manager
             )
 
         return workflow
+
 
     def update(self, instance, validated_data):
         levels_data = validated_data.pop('advance_levels', None)
@@ -784,8 +883,10 @@ class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches is not None:
             instance.branch.set(branches)
 
-        # ---------------- LEVELS UPDATE ----------------
+        # ---------------- LEVELS UPDATE (SAFE DIFF LOGIC) ----------------
         if levels_data is not None:
+
+            # ✅ FIX 1: enforce single level rule for reporting_manager / no_approval
             if instance.approval_type in ['reporting_manager', 'no_approval']:
                 levels_data = levels_data[:1]
 
@@ -797,17 +898,35 @@ class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
 
             for level_data in levels_data:
                 level_id = level_data.get('id')
+
+                # ================= UPDATE EXISTING LEVEL =================
                 if level_id and level_id in existing_levels:
 
                     obj = existing_levels[level_id]
 
                     obj.level = level_data.get('level', obj.level)
-                    if instance.approval_type in ['reporting_manager', 'no_approval']:
+
+                    # ✅ FIX 2 (keep consistent rule enforcement)
+                    if instance.approval_type == 'no_approval':
                         obj.approver = None
+                        obj.role = 'Auto Level'
+
+                    elif instance.approval_type == 'reporting_manager':
+
+                        reporting_manager = None
+
+                        request = self.context.get('request')
+
+                        if request and hasattr(request.user, 'employee'):
+                            reporting_manager = request.user.employee.reporting_manager
+
+                        obj.approver = reporting_manager
+                        obj.role = 'Reporting Manager'
+
                     else:
                         obj.approver = level_data.get('approver', obj.approver)
+                        obj.role = level_data.get('role', obj.role)
 
-                    obj.role = level_data.get('role', obj.role)
                     obj.escalate_to = level_data.get('escalate_to', obj.escalate_to)
                     obj.escalate_after_days = level_data.get('escalate_after_days', obj.escalate_after_days)
                     obj.escalate_after_hours = level_data.get('escalate_after_hours', obj.escalate_after_hours)
@@ -819,8 +938,24 @@ class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
                 # ================= CREATE NEW LEVEL =================
                 else:
                     level_data.pop('workflow', None)
-                    if instance.approval_type in ['reporting_manager', 'no_approval']:
+
+                    # ✅ FIX 3: enforce rule here too
+                    if instance.approval_type == 'no_approval':
+
                         level_data['approver'] = None
+                        level_data['role'] = 'Auto Level'
+
+                    elif instance.approval_type == 'reporting_manager':
+
+                        reporting_manager = None
+
+                        request = self.context.get('request')
+
+                        if request and hasattr(request.user, 'employee'):
+                            reporting_manager = request.user.employee.reporting_manager
+
+                        level_data['approver'] = reporting_manager
+                        level_data['role'] = 'Reporting Manager'
 
                     new_obj = AdvanceCommonWorkflow.objects.create(
                         workflow=instance,
@@ -828,6 +963,8 @@ class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
                     )
 
                     incoming_ids.append(new_obj.id)
+
+            # ================= DELETE REMOVED LEVELS =================
             instance.advance_levels.exclude(id__in=incoming_ids).delete()
 
         return instance
@@ -1018,6 +1155,8 @@ class AirticketWorkflowSerializer(serializers.ModelSerializer):
         fields = '__all__'
     def to_representation(self, instance):
         rep = super().to_representation(instance)
+
+        # ✅ Role fallback (same as resignation)
         if not instance.role:
             if instance.workflow.approval_type == 'reporting_manager':
                 rep['role'] = "Reporting Manager"
@@ -1026,6 +1165,7 @@ class AirticketWorkflowSerializer(serializers.ModelSerializer):
             else:
                 rep['role'] = "Approver"
 
+        # ✅ Reporting manager logic
         if instance.workflow.approval_type == 'reporting_manager':
             employee = self.context.get('employee')
 
@@ -1042,9 +1182,11 @@ class AirticketWorkflowSerializer(serializers.ModelSerializer):
         return rep
 
     def to_internal_value(self, data):
+        # ✅ FIX: handle "Invalid pk 0"
         if data.get('approver') == 0:
             data['approver'] = None
         return super().to_internal_value(data)
+    
 class AirticketEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketEmailTemplate
@@ -1062,7 +1204,6 @@ class AirticketApprovalWorkflowSerializer(serializers.ModelSerializer):
            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
            return rep
 
-
     def create(self, validated_data):
         levels_data = validated_data.pop('airticket_levels', [])   # ✅ FIX
         branches = validated_data.pop('branch', [])
@@ -1072,7 +1213,7 @@ class AirticketApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         for level_data in levels_data:
             AirticketWorkflow.objects.create(
-                workflow=workflow,  
+                workflow=workflow,   # 🔥 auto link
                 **level_data
             )
 
@@ -1093,14 +1234,18 @@ class AirticketApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         if levels_data is not None:
 
+            # ✅ FIX 1: enforce single level rule if needed
             if instance.approval_type in ['reporting_manager', 'no_approval']:
                 levels_data = levels_data[:1]
 
             instance.airticket_levels.all().delete()
 
             for level_data in levels_data:
+
+                # ✅ FIX 2: remove unsafe FK injection
                 level_data.pop('workflow', None)
 
+                # ✅ FIX 3: enforce business rule
                 if instance.approval_type in ['reporting_manager', 'no_approval']:
                     level_data['approver'] = None
 

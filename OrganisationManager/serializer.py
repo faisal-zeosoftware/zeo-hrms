@@ -244,35 +244,96 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches:
             workflow.branch.set(branches)
 
-        AssetApprovalLevel.objects.bulk_create([
-            AssetApprovalLevel(workflow=workflow, **level)
-            for level in levels_data
-        ])
+        # ---------------- MULTI APPROVAL ----------------
+        if workflow.approval_type == 'multi_approval':
+
+            AssetApprovalLevel.objects.bulk_create([
+                AssetApprovalLevel(workflow=workflow, **level)
+                for level in levels_data
+            ])
+
+        # ---------------- NO APPROVAL ----------------
+        elif workflow.approval_type == 'no_approval':
+
+            AssetApprovalLevel.objects.create(
+                workflow=workflow,
+                level=1,
+                role='Auto Level',
+                approver=None
+            )
+
+        # ---------------- REPORTING MANAGER ----------------
+        elif workflow.approval_type == 'reporting_manager':
+
+            reporting_manager = None
+
+            request = self.context.get('request')
+
+            if request and hasattr(request.user, 'employee'):
+                reporting_manager = request.user.employee.reporting_manager
+
+            AssetApprovalLevel.objects.create(
+                workflow=workflow,
+                level=1,
+                role='Reporting Manager',
+                approver=reporting_manager
+            )
 
         return workflow
 
 
     def update(self, instance, validated_data):
-        levels_data = validated_data.pop('asset_levels', None)  # ✅ FIXED
+        levels_data = validated_data.pop('asset_levels', None)
         branches = validated_data.pop('branch', None)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+
         instance.save()
 
         if branches is not None:
             instance.branch.set(branches)
 
-        if levels_data is not None:
-            instance.asset_levels.all().delete()  # ✅ FIXED
+        instance.asset_levels.all().delete()
 
-            AssetApprovalLevel.objects.bulk_create([
-                AssetApprovalLevel(workflow=instance, **level)
-                for level in levels_data
-            ])
+        # ---------------- MULTI APPROVAL ----------------
+        if instance.approval_type == 'multi_approval':
+
+            if levels_data is not None:
+                AssetApprovalLevel.objects.bulk_create([
+                    AssetApprovalLevel(workflow=instance, **level)
+                    for level in levels_data
+                ])
+
+        # ---------------- NO APPROVAL ----------------
+        elif instance.approval_type == 'no_approval':
+
+            AssetApprovalLevel.objects.create(
+                workflow=instance,
+                level=1,
+                role='Auto Level',
+                approver=None
+            )
+
+        # ---------------- REPORTING MANAGER ----------------
+        elif instance.approval_type == 'reporting_manager':
+
+            reporting_manager = None
+            request = self.context.get('request')
+
+            if request and hasattr(request.user, 'employee'):
+                reporting_manager = request.user.employee.reporting_manager
+
+            AssetApprovalLevel.objects.create(
+                workflow=instance,
+                level=1,
+                role='Reporting Manager',
+                approver=reporting_manager
+            )
 
         return instance
     
+
 class AssetApprovalSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetApproval
@@ -422,7 +483,6 @@ class AssetRequestSerializer(serializers.ModelSerializer):
 
         if instance.branch:
             rep['branch']=instance.branch.branch_name
-
 
         return rep
     

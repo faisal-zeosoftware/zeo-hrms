@@ -73,7 +73,8 @@ def send_notification_email(
             recipient_user=user,
             recipient_employee=employee,
             message=message,
-            deligate_user=delegate_user
+            deligate_user=delegate_user,
+            # notification_type=notification_type
         )
 
         logger.warning(

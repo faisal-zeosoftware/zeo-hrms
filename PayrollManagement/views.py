@@ -401,7 +401,7 @@ class LoanApprovalLevelsviewset(viewsets.ModelViewSet):
     queryset =  LoanApprovalWorkflow.objects.all()
     serializer_class =  LoanApprovalWorkflowSerializer
 
-    class LoanApprovalviewset(viewsets.ModelViewSet):
+class LoanApprovalviewset(viewsets.ModelViewSet):
         queryset = LoanApproval.objects.all()
         serializer_class = LoanApprovalSerializer
         lookup_field = 'pk'

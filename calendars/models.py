@@ -2159,7 +2159,7 @@ class ShiftPattern(models.Model):
     thursday_shift  = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_thursday')
     friday_shift    = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_friday')
     saturday_shift  = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_saturday')
-    sunday_shift    = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_sunday')
+    # sunday_shift    = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_sunday')
 
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(

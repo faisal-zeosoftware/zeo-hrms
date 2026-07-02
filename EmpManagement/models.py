@@ -2022,19 +2022,21 @@ class DocumentTemplate(models.Model):
     def __str__(self):
         return self.title
 class DocumentRequest(models.Model):
-    document_number  = models.CharField(max_length=50, unique=True, null =True, blank=True)
-    branch           =  models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL, null=True)
-    reason           =  models. CharField(max_length=200)
-    request_type     =  models.ForeignKey(DocRequestType,on_delete=models.SET_NULL,null=True)
-    employee         =  models.ForeignKey('emp_master',on_delete = models.CASCADE,related_name='document_requests')
-    total            =  models.IntegerField(null=True)
-    status           =  models.CharField(max_length=20, default='Pending')
-    remarks          =  models.CharField(max_length=50, null=True, blank=True)
-    created_by       =  models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True,blank=True)
-    created_at_date  =  models.DateField(auto_now_add=True)
-    def __str__(self):
-        return f"{self.document_number}-{self.request_type.type_name}"
     
+    document_number  = models.CharField(max_length=50, unique=True, null=True, blank=True)
+    reason           = models.CharField(max_length=200)
+    request_type     = models.ForeignKey(DocRequestType, on_delete=models.SET_NULL, null=True)
+    branch           = models.ForeignKey("OrganisationManager.brnch_mstr", on_delete=models.CASCADE)
+    employee         = models.ForeignKey('emp_master', on_delete=models.CASCADE, related_name='document_requests')
+    total            = models.IntegerField(null=True)
+    status           = models.CharField(max_length=20, default='Pending')
+    remarks          = models.CharField(max_length=50, null=True, blank=True)
+    created_by       = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, null=True, blank=True)
+    created_at_date  = models.DateField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.document_number}-{self.request_type.type_name if self.request_type else 'NoType'}"
+
     def move_to_next_level(self):
 
         # ---------------- REJECT ----------------
@@ -2110,7 +2112,7 @@ class DocumentRequest(models.Model):
             self.status = "Approved"
             self.save()
 
-            send_notification_email(
+            result=send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
                 branch=self.branch,
@@ -2126,6 +2128,7 @@ class DocumentRequest(models.Model):
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification,
             )
+            print(result)
             return
 
         # ---------------- REPORTING MANAGER ----------------
@@ -2244,6 +2247,8 @@ class DocumentApprovalLevel(models.Model):
     level = models.IntegerField()
     role = models.CharField(max_length=50, null=True, blank=True)  # Use this for role-based approval like 'CEO' or 'Manager'
     approver = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True, on_delete=models.SET_NULL)  # Use this for user-based approval
+
+    
 class DocumentApproval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
@@ -2254,15 +2259,17 @@ class DocumentApproval(models.Model):
         (APPROVED, 'Approved'),
         (REJECTED, 'Rejected'),
     ]
+
     document_request = models.ForeignKey(DocumentRequest, related_name='doc_approvals', on_delete=models.CASCADE)
-    approver        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE,null=True)
+    approver        = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, null=True)
     role            = models.CharField(max_length=50, null=True, blank=True)
     level           = models.IntegerField(default=1)
-    status          = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
+    status          = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
     note            = models.TextField(null=True, blank=True)
     created_at      = models.DateField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at      = models.DateField(auto_now=True)
+
    
     def approve(self, note=None):
         """
@@ -2362,8 +2369,13 @@ def create_initial_approval(sender, instance, created, **kwargs):
             instance.status = "Approved"
             instance.save(update_fields=["status"])
 
+            print("Created By :", instance.created_by)
+            print("Employee :", instance.employee)
+            print("Approver :", approver)
+            print("Email :", approver.email if approver else None)
+
             if approver:
-                send_notification_email(
+                result = send_notification_email(
                     user=approver,
                     employee=instance.employee,
                     message=f"Your request {instance.document_number} has been automatically approved.",
@@ -2379,7 +2391,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     notification_type="document_request",
                     title="Document Request Approved"
                 )
-                return
+
+                print("Notification Result :", result)
+
+            return
 
         # -------------------------------------------------
         # REPORTING MANAGER
@@ -2398,7 +2413,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 created_by=instance.created_by,
             )
 
-            send_notification_email(
+            print("Manager :", manager)
+            print("Manager Email :", manager.email)
+
+            result = send_notification_email(
                 user=manager,
                 employee=None,
                 message=f"New request waiting for your approval.",
@@ -2414,6 +2432,9 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 notification_type="document_request",
                 title="Document Request Approval"
             )
+
+            print("Notification Result :", result)
+
             return
 
         # -------------------------------------------------
@@ -2446,7 +2467,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
             if first_level.approver:
 
-                send_notification_email(
+                result = send_notification_email(
                     user=first_level.approver,
                     employee=None,
                     message="New request waiting for your approval.",
@@ -2462,7 +2483,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     notification_type="document_request",
                     title="Document Request Approval"
                 )
-                return
+
+                print("Notification Result :", result)
+
+            return
         
 class ResignationEmailTemplate(models.Model):
     template_type = models.CharField(max_length=50, choices=[

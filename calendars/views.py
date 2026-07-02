@@ -3011,6 +3011,53 @@ class LateinEarlyoutRequestViewset(viewsets.ModelViewSet):
     queryset = LateinEarlyoutRequest.objects.all()
     serializer_class = LateinEarlyoutRequestSerializer
 
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            employee = serializer.validated_data.get('employee')
+            document_number = serializer.validated_data.get('document_number')
+
+            # ✅ Check employee
+            if not employee:
+                raise ValidationError("Employee is required.")
+
+            # ✅ FIX: fallback to work_location if emp_branch_id missing
+            branch_id = employee.emp_branch_id or employee.work_location
+
+            if not branch_id:
+                raise ValidationError("Employee branch is missing in employee master.")
+
+            try:
+                doc_config = DocumentNumbering.objects.select_for_update().get(
+                    branch_id=branch_id,
+                    type='lateinearlyout_request',
+                )
+            except DocumentNumbering.DoesNotExist:
+                raise NotFound(
+                    f"No document numbering configuration found for branch {branch_id} and lateinearly request."
+                )
+
+            current_date = timezone.now().date()
+
+            # ✅ Manual document number validation
+            if document_number:
+                if doc_config.start_date and doc_config.end_date:
+                    if not (doc_config.start_date <= current_date <= doc_config.end_date):
+                        raise ValidationError(
+                            "Document number cannot be assigned outside the valid date range."
+                        )
+            else:
+                # ✅ Auto-generate
+                document_number = doc_config.get_next_number()
+
+            serializer.save(
+                document_number=document_number,
+                branch=branch_id,
+                # created_by=self.request.user
+            )
+
+            
+
     # ---------------- APPROVED REQUESTS ----------------
     @action(detail=False,methods=['get'],url_path='approved_requests' )
     def list_approved_requests(self, request):

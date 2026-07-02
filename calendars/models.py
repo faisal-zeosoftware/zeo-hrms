@@ -2762,17 +2762,18 @@ class LateinEarlyoutRequest(models.Model):
         ('APPROVED', 'Approved'),
         ('REJECTED', 'Rejected'),
     )
-
+    document_number  = models.CharField(max_length=50, unique=True, blank=True)
     date         = models.DateField(null=True, blank=True)
     employee     = models.ForeignKey("EmpManagement.emp_master",on_delete=models.CASCADE)
     request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
+    branch       = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE, null=True, blank=True, related_name='lateinearlyoutreq')
     reason       = models.TextField(null=True, blank=True)
     status       = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     created_at   = models.DateTimeField(auto_now_add=True)
     created_by   = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True)
 
     def __str__(self):
-        return f"{self.employee} - {self.request_type} - {self.status}"
+        return f"{self.document_number} - {self.employee} - {self.request_type} - {self.status}"
 
     def move_to_next_level(self):
         workflow = LatinEarlyApprovalWorkflow.objects.filter(

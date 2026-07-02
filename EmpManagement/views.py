@@ -2443,17 +2443,16 @@ class UserNotificationsViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-
         # Admin / staff / superuser → see all request notifications
         if user.is_superuser or user.is_staff:
             return RequestNotification.objects.all().order_by('-created_at')
-
         # Normal user → show request notifications assigned directly to them
         qs = RequestNotification.objects.filter(
-            Q(recipient_user=user) |
+            Q(recipient_user=user.id) |
             Q(recipient_employee__users=user) |
-             Q(deligate_user=user)
+            Q(deligate_user=user.id)
         ).distinct().order_by('-created_at')
+
         return qs
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
@@ -2850,9 +2849,11 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
             employee = serializer.validated_data.get('employee')
             document_number = serializer.validated_data.get('document_number')
 
+            # ✅ Employee validation
             if not employee:
                 raise ValidationError("Employee is required.")
 
+            # ✅ Branch fallback
             branch = employee.emp_branch_id or employee.work_location
 
             if not branch:
@@ -2860,6 +2861,7 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
                     "Employee branch is missing in employee master."
                 )
 
+            # ✅ Get document numbering configuration
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch.id,
@@ -2874,6 +2876,7 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
 
             current_date = timezone.now().date()
 
+            # ✅ Manual document number validation
             if document_number:
 
                 if (
@@ -2891,7 +2894,10 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
                     )
 
             else:
+                # ✅ Auto-generate document number
                 document_number = doc_config.get_next_number()
+
+            # ✅ Save document request
             serializer.save(
                 document_number=document_number,
                 branch=branch,

@@ -1183,7 +1183,7 @@ class RequestNotification(models.Model):
     created_at         = models.DateTimeField(auto_now_add=True)
     is_read            = models.BooleanField(default=False)
     deligate_user      = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='deligated_notifications')
-
+    is_deligate        = models.BooleanField(default=False)
     def __str__(self):
         if self.recipient_user:
             return f"Notification for {self.recipient_user.username}: {self.message}"

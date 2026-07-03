@@ -2448,9 +2448,9 @@ class UserNotificationsViewSet(viewsets.ModelViewSet):
             return RequestNotification.objects.all().order_by('-created_at')
         # Normal user → show request notifications assigned directly to them
         qs = RequestNotification.objects.filter(
-            Q(recipient_user=user.id) |
-            Q(recipient_employee__users=user) |
-            Q(deligate_user=user.id)
+            Q(recipient_user=user.id, is_deligate=False) |
+            Q(recipient_employee__users=user, is_deligate=False) |
+            Q(deligate_user=user.id, is_deligate=True)
         ).distinct().order_by('-created_at')
 
         return qs

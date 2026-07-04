@@ -1879,6 +1879,7 @@ class ApprovalDeligation(models.Model):
     request = models.ForeignKey(GeneralRequest,null=True,blank=True,on_delete=models.SET_NULL)
     is_active=models.BooleanField(default=True)
     reason=models.TextField(blank=True,null=True)
+    is_deligate = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     created_by = models.ForeignKey(

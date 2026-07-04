@@ -2369,18 +2369,18 @@ class ApprovalViewset(viewsets.ModelViewSet):
     serializer_class = ApprovalSerializer
     lookup_field = 'pk'
     def get_queryset(self):
-        """
-        Filter approvals based on the authenticated user.
-        """
-        user = self.request.user  # Get the logged-in user
+        user = self.request.user
 
         if not user.is_authenticated:
             return Approval.objects.none()
 
         if user.is_superuser:
             return Approval.objects.all()
-        
-        return Approval.objects.filter(approver=user)  # Filter approvals assigned to the user
+
+        return Approval.objects.filter(
+            Q(approver=user) |
+            Q(general_request__delegation_details__deligate_to=user)
+        ).distinct()
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):

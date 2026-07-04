@@ -1876,7 +1876,7 @@ class ApprovalDeligation(models.Model):
     deligate_to=models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True,blank=True,related_name='deligations_received')
     start_date=models.DateField()
     end_date=models.DateField()
-    request = models.ForeignKey(GeneralRequest,null=True,blank=True,on_delete=models.SET_NULL)
+    request = models.ForeignKey(GeneralRequest,null=True,blank=True,on_delete=models.SET_NULL,related_name='delegation_details')
     is_active=models.BooleanField(default=True)
     reason=models.TextField(blank=True,null=True)
     is_deligate = models.BooleanField(default=False)

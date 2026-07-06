@@ -1869,53 +1869,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
             )
 
         return
-
-
-class ApprovalDeligation(models.Model):
-    deligator=models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True,blank=True,related_name='deligations_given')#original Approver
-    deligate_to=models.ForeignKey('UserManagement.CustomUser',on_delete=models.CASCADE,null=True,blank=True,related_name='deligations_received')
-    start_date=models.DateField()
-    end_date=models.DateField()
-    request = models.ForeignKey(GeneralRequest,null=True,blank=True,on_delete=models.SET_NULL,related_name='delegation_details')
-    is_active=models.BooleanField(default=True)
-    reason=models.TextField(blank=True,null=True)
-    is_deligate = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    created_by = models.ForeignKey(
-        'UserManagement.CustomUser',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='delegation_created_by'
-    )
-    def __str__(self):
-        return f"{self.deligator} → {self.deligate_to}"
-    
-    def clean(self):
-        if self.deligator == self.deligate_to:
-            raise ValidationError("Delegator and Delegate cannot be same user.")
-
-        if self.start_date > self.end_date:
-            raise ValidationError("End date must be greater than start date.")
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    # -------------------------
-    # BUSINESS RULE (IMPORTANT)
-    # -------------------------
-    @classmethod
-    def can_delegate(cls, user):
-        if not user or not getattr(user, "is_authenticated", False):
-            return False
-
-        return ApprovalWorkflow.objects.filter(
-            created_by=user,   # ✅ FIXED HERE
-            is_active=True,
-            is_multi_approval=True
-        ).exists()
     
 class SelectedEmpNotify(models.Model):
     # selected_ess_user = models.ForeignKey(emp_master, on_delete=models.SET_NULL, null=True, blank=True)

@@ -23,7 +23,7 @@ from .models import (emp_family,EmpJobHistory,EmpQualification,Emp_Documents,Emp
                     ApprovalLevel,RequestNotification,Emp_CustomFieldValue,EmailTemplate,EmailConfiguration,SelectedEmpNotify,NotificationSettings,
                     DocExpEmailTemplate,CommonWorkflow,Doc_CustomFieldValue,EmployeeBankDetail,Fam_CustomFieldValue,Qualification_CustomFieldValue,
                     JobHistory_CustomFieldValue,DocumentRequest,DocumentApprovalLevel,DocumentApproval,ResignationApprovalLevel,ResignationApproval,DocRequestEmailTemplate,
-                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type,ApprovalDeligation
+                    DocRequestNotification,EndOfService,EmployeeResignation,DocRequestType,ResignationEmailTemplate,ResignationRequestNotification,ApprovalWorkflow,DocumentApprovalWorkflow,ResignationApprovalWorkflow,document_type,
                     )
 
 from OrganisationManager.serializer import CompanyPolicySerializer,AssetRequestSerializer
@@ -320,25 +320,6 @@ class ApprovalSerializer(serializers.ModelSerializer):
         model = Approval
         fields = '__all__'
 
-    def get_delegation_details(self, obj):
-        delegation = ApprovalDeligation.objects.filter(
-            request=obj.general_request,
-            is_active=True
-        ).first()
-
-        if not delegation:
-            return None
-
-        return {
-            "id": delegation.id,
-            "request": delegation.request.document_number if delegation.request else None,
-            "deligator": delegation.deligator.username if delegation.deligator else None,
-            "delegate_to": delegation.deligate_to.username if delegation.deligate_to else None,
-            "start_date": delegation.start_date,
-            "end_date": delegation.end_date,
-            "reason": delegation.reason,
-            "is_active": delegation.is_active,
-        }
 
 
     def to_representation(self, instance):
@@ -368,14 +349,6 @@ class GeneralRequestApprovalSerializer(serializers.ModelSerializer):
         model = GeneralRequest
         fields = ['id', 'approvals','document_number', 'reason', 'status', 'created_at_date','request_type','remarks']
         # fields = ['id', 'doc_number', 'reason', 'status', 'created_at_date', 'approvals']
-
-
-class ApprovalDeligationSerializer(serializers.ModelSerializer):
-    response = serializers.CharField(required=False, write_only=True)
-
-    class Meta:
-        model = ApprovalDeligation
-        fields = '__all__'
 
 
 class DocRequestSerializer(serializers.ModelSerializer):

@@ -2469,6 +2469,7 @@ class Attendance(models.Model):
     total_hours     = models.DurationField(null=True, blank=True)
     check_in_image = models.ImageField(upload_to="attendance/checkin/", null=True, blank=True)
     check_out_image = models.ImageField(upload_to="attendance/checkout/", null=True, blank=True)
+    is_compensated  = models.BooleanField(default=False)    
     created_at      = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
 

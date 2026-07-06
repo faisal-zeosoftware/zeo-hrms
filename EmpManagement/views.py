@@ -2368,6 +2368,7 @@ class ApprovalViewset(viewsets.ModelViewSet):
     queryset = Approval.objects.all()
     serializer_class = ApprovalSerializer
     lookup_field = 'pk'
+
     def get_queryset(self):
         user = self.request.user
 
@@ -2378,23 +2379,174 @@ class ApprovalViewset(viewsets.ModelViewSet):
             return Approval.objects.all()
 
         return Approval.objects.filter(
-            Q(approver=user) |
-            Q(general_request__delegation_details__deligate_to=user)
-        ).distinct()
+        Q(approver=user) |
+        Q(deligate_to=user, is_deligate=True)
+    ).distinct()
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()
-        note = request.data.get('note')  # Get the note from the request
+
+        note = request.data.get("note")
+
         approval.approve(note=note)
-        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
+
+        return Response(
+            {
+                "message": "Request approved successfully.",
+                "status": approval.status,
+                "note": note,
+            },
+            status=status.HTTP_200_OK
+        )
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         approval = self.get_object()
-        note = request.data.get('note')  # Get the note from the request
+
+        note = request.data.get("note")
+
         approval.reject(note=note)
-        return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+
+        return Response(
+            {
+                "message": "Request rejected successfully.",
+                "status": approval.status,
+                "note": note,
+            },
+            status=status.HTTP_200_OK
+        )
+
+    
+    @action(detail=True, methods=["post"])
+    def delegate(self, request, pk=None):
+        approval = self.get_object()
+
+        delegate_user_id = request.data.get("deligate_to")
+
+        if not delegate_user_id:
+            return Response(
+                {"error": "Delegate user is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delegate_user = get_object_or_404(CustomUser, pk=delegate_user_id)
+
+        if delegate_user == approval.approver:
+            return Response(
+                {"error": "You cannot delegate to yourself."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if approval.is_deligate:
+            return Response(
+                {"error": "This approval has already been delegated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        approval.deligate_to = delegate_user
+        approval.is_deligate = True
+        approval.deligate_response = None
+        approval.save()
+
+        if delegate_user.email:
+
+            subject = "Delegation Assigned"
+
+            message = f"""
+                Delegation Assigned
+
+                Hello {delegate_user.get_username() or delegate_user.username},
+
+                You have been assigned a new delegation request.
+
+                DELEGATION DETAILS
+                ___________________
+
+                Original Approver : {approval.approver.username}
+                Delegate To       : {delegate_user.username}
+                Delegated At      : {approval.updated_at}
+
+                REQUEST DETAILS
+                _________________
+
+                Document Number : {approval.general_request.document_number}
+                Employee        : {approval.general_request.employee}
+                Request Type    : {approval.general_request.request_type}
+                Status          : {approval.general_request.status}
+
+                Please review the request and send your response to the original approver.
+
+                Thank You.
+                """
+
+            send_mail(
+                subject,
+                message,
+                None,
+                [delegate_user.email],
+                fail_silently=False,
+            )
+
+        created_notification = send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            message=f"{approval.approver.username} has delegated request {approval.general_request.document_number} to you.",
+            template_type="request_created",
+            delegate_user=approval.approver,
+        )
+
+        print("Notification Created:", created_notification)
+
+        return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+        approval = self.get_object()
+
+        response_text = request.data.get("deligate_response")
+
+        if not response_text:
+            return Response({"error": "Response is required"}, status=400)
+
+        approval.deligate_response = response_text
+        approval.save()
+
+        # ---------------- EMAIL ----------------
+        if approval.approver and approval.approver.email:
+            send_mail(
+                subject="Delegation Response Received",
+                message=response_text,
+                from_email=None,
+                recipient_list=[approval.approver.email],
+                fail_silently=False,
+            )
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=approval.approver,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            message=response_text,
+            template_type="request_created",
+            delegate_user=approval.deligate_to,
+        )
+
+        return Response({
+            "message": "Response sent successfully",
+            "response": response_text
+        })
     
 class UserNotificationsViewSet(viewsets.ModelViewSet):
     queryset = RequestNotification.objects.all()

@@ -1593,6 +1593,7 @@ class ApprovalLevel(models.Model):
         from datetime import timedelta
         total_minutes = (self.escalate_after_days * 24 * 60) + (self.escalate_after_hours * 60) + self.escalate_after_minutes
         return timedelta(minutes=total_minutes)
+    
 class Approval(models.Model):
     PENDING = 'Pending'
     APPROVED = 'Approved'
@@ -1611,6 +1612,9 @@ class Approval(models.Model):
     level           = models.IntegerField(default=1)
     status          = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
     note            = models.TextField(null=True, blank=True)
+    deligate_to     = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='deligations_received')
+    is_deligate     = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     escalated = models.BooleanField(default=False)
     escalated_at = models.DateTimeField(null=True, blank=True)
     is_escalation = models.BooleanField(default=False)
@@ -1622,6 +1626,7 @@ class Approval(models.Model):
         self.status = self.APPROVED
         if note:
             self.note = note
+
         self.save()
         self.general_request.move_to_next_level()
     def reject(self, note=None):

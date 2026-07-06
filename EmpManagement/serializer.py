@@ -316,19 +316,27 @@ class EmployeeFilterSerializer(serializers.ModelSerializer):
 
 class ApprovalSerializer(serializers.ModelSerializer):
     delegation_details = serializers.SerializerMethodField()
+
     class Meta:
         model = Approval
         fields = '__all__'
 
-
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
 
     def to_representation(self, instance):
-        rep = super(ApprovalSerializer, self).to_representation(instance)
-        if instance.general_request:  
-            rep['general_request'] = instance.general_request.document_number
-        if instance.approver:  
-            rep['approver'] = instance.approver.username       
-        return rep       
+        rep = super().to_representation(instance)
+
+        rep['general_request'] = instance.general_request.id if instance.general_request else None
+        rep['approver'] = instance.approver.id if instance.approver else None
+        rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
+
+        return rep
 
 class LvRqstApprovalSerializer(serializers.ModelSerializer):
     from calendars.serializer import LvApprovalSerializer

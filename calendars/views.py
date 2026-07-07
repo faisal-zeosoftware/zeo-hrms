@@ -703,7 +703,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             lat=lat,
             lng=lng,
             is_face_verified=is_verified,
-            auth_method=auth_method
+            auth_method=auth_method,
+            
         )
 
         attendance.save()

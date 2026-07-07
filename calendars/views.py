@@ -711,6 +711,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         return Response({
             "status": "Check-in successful",
             "face_verified": is_verified,
+            "check_in_location": attendance.check_in_location,
             "check_in_image": request.build_absolute_uri(
                 attendance.check_in_image.url
             ) if attendance.check_in_image else None

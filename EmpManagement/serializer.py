@@ -332,7 +332,7 @@ class ApprovalSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
-        rep['general_request'] = instance.general_request.id if instance.general_request else None
+        rep['general_request'] = instance.general_request.document_number
         rep['approver'] = instance.approver.id if instance.approver else None
         rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
 

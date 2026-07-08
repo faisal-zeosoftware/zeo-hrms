@@ -597,6 +597,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         lat = request.data.get("check_in_lat")
         lng = request.data.get("check_in_lng")
+        check_in_location = request.data.get("check_in_location")
 
         face_photo = face_utils.convert_base64_to_file(
             request.FILES.get("face_photo") or request.data.get("face_photo"),
@@ -691,24 +692,28 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         if not attendance.check_in_time:
             attendance.check_in_time = current_time
-            attendance.check_in_lat = lat
-            attendance.check_in_lng = lng
+        attendance.check_in_lat = lat
+        attendance.check_in_lng = lng
+        attendance.check_in_location = check_in_location
 
-            if check_in_image:
-                attendance.check_in_image = check_in_image
+        if check_in_image:
+            attendance.check_in_image = check_in_image
 
         AttendanceLog.objects.create(
             attendance=attendance,
             log_type='check_in',
             lat=lat,
             lng=lng,
+            location=check_in_location,
             is_face_verified=is_verified,
             auth_method=auth_method,
             
         )
 
         attendance.save()
-
+        print(attendance.check_in_location)
+        attendance.save()
+        print(attendance.check_in_location)
         return Response({
             "status": "Check-in successful",
             "face_verified": is_verified,
@@ -725,6 +730,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         lat = request.data.get("check_out_lat")
         lng = request.data.get("check_out_lng")
+        check_out_location = request.data.get("check_out_location")
 
         face_photo = face_utils.convert_base64_to_file(
             request.FILES.get("face_photo") or request.data.get("face_photo"),
@@ -820,6 +826,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         attendance.check_out_time = tenant_time
         attendance.check_out_lat = lat
         attendance.check_out_lng = lng
+        attendance.check_out_location = check_out_location
 
         if check_out_image:
             attendance.check_out_image = check_out_image
@@ -829,6 +836,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             log_type='check_out',
             lat=lat,
             lng=lng,
+            location=check_out_location,
             is_face_verified=is_verified,
             auth_method=auth_method
         )
@@ -839,6 +847,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         return Response({
             "status": "Check-out recorded successfully",
                 "working_hours": str(attendance.total_hours) if attendance.total_hours else None,
+                "check_out_location": attendance.check_out_location,
                 "check_out_image": request.build_absolute_uri(
                     attendance.check_out_image.url
                 ) if attendance.check_out_image else None

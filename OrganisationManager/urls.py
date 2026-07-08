@@ -4,7 +4,7 @@ from . views import (FiscalYearViewSet,PeriodViewSet,BranchViewSet,DepartmentVie
                    save_notification_settings,CompanyPolicyViewSet,list_data_in_schema,CategoryBulkUploadViewSet,AnnouncementViewSet,
                    AnnouncementCommentViewSet,AssetTypeViewSet,AssetMasterViewSet,Asset_CustomFieldValueViewSet,AssetReportViewset,AssetTransactionReportViewset,AssetAllocationViewSet,AssetRequestViewSet,AssetCustomFieldViewSet,
                    GratuityTableViewset,FolderViewSet,DocumentViewSet,AssetEmailTemplateViewset,AssetApprovalLevelViewset,AssetApprovalViewset,EscalationRuleViewSet,BranchGeoFenceViewSet,UserBranchAccessViewSet,
-                   UserAccessibleBranchListAPIView
+                   UserAccessibleBranchListAPIView,AssetNotificationsViewSet
                    )
 from rest_framework.routers import DefaultRouter
 
@@ -34,6 +34,7 @@ router.register(r'assets', AssetMasterViewSet, basename='asset-master')
 router.register(r'asset-allocations', AssetAllocationViewSet, basename='asset-allocations')
 router.register(r'asset-Request', AssetRequestViewSet, basename='assets-Request')
 router.register(r'asset-email-template', AssetEmailTemplateViewset, basename='asset-email-template')
+router.register(r'asset-notification',AssetNotificationsViewSet, basename='asset-notification')
 router.register(r'asset-request-approvals', AssetApprovalViewset,basename='asset_request_approvals')
 router.register(r'asset-request-approvals-levels', AssetApprovalLevelViewset,basename='asset_request_approvals_levels')
 router.register(r'asset-escalation-rules',EscalationRuleViewSet, basename='asset-escalation-rules')

@@ -13,13 +13,13 @@ from reportlab.pdfgen import canvas
 from .models import (brnch_mstr,dept_master,DocumentNumbering,
                      desgntn_master,ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,Announcement,
                      AnnouncementComment,AnnouncementView,Asset, AssetAllocation,AssetRequest,AssetCustomField,AssetType,
-                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable,AssetApprovalLevel,AssetApproval,AssetEmailTemplate,UserBranchAccess,BranchGeoFence,AssetApprovalWorkflow)
+                     AssetReport,AssetCustomFieldValue,AssetTransactionReport,GratuityTable,AssetApprovalLevel,AssetApproval,AssetEmailTemplate,UserBranchAccess,BranchGeoFence,AssetApprovalWorkflow,AssetNotification)
 
 from . serializer import (BranchSerializer,PermissionSerializer,GroupSerializer,permserializer,DocumentNumberingSerializer,
                           CtgrySerializer,DeptSerializer,DesgSerializer,FiscalYearSerializer,PeriodSerializer,DeptUploadSerializer,CtgryUploadSerializer,
                           DesgUploadSerializer,CompanyPolicySerializer,AnnouncementSerializer,AnnouncementCommentSerializer,AssetSerializer,AssetAllocationSerializer,AssetRequestSerializer,AssetCustomFieldSerializer,
                           AssetTypeSerializer,AssetCustomFieldValueSerializer,AssetReportSerializer,AssetTransactionReportSerializer,GratuityTableSerializer,FolderSerializer, DocumentSerializer,AssetApprovalLevelSerializer,AssetApprovalSerializer,
-                          AssetEmailTemplateSerializer,EscalationRuleSerializer,UserBranchAccessSerializer,BranchGeoFenceSerializer,AssetApprovalWorkflowSerializer)
+                          AssetEmailTemplateSerializer,EscalationRuleSerializer,UserBranchAccessSerializer,BranchGeoFenceSerializer,AssetApprovalWorkflowSerializer,AssetNotifySerializer)
 from rest_framework.permissions import IsAuthenticated,AllowAny,IsAuthenticatedOrReadOnly,IsAdminUser
 from .resource import (DepartmentResource,DesignationResource,DesgtnReportResource,DeptReportResource,CategoryResource)
 from EmpManagement.models import emp_master
@@ -1095,6 +1095,26 @@ class AssetEmailTemplateViewset(viewsets.ModelViewSet):
             'from_addresses': from_addresses,
             'to_addresses': to_list
         })
+    
+
+class AssetNotificationsViewSet(viewsets.ModelViewSet):
+    queryset = AssetNotification.objects.all()
+    serializer_class = AssetNotifySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return AssetNotification.objects.all().order_by('-created_at')
+        # Normal user → show request notifications assigned directly to them
+        qs = AssetNotification.objects.filter(
+            Q(recipient_user=user.id, is_deligate=False) |
+            Q(recipient_employee__users=user,is_deligate=False) |
+            Q(deligate_user=user.id,is_deligate=True)
+        ).distinct().order_by('-created_at')
+
+        return qs
 
 class AssetApprovalViewset(viewsets.ModelViewSet):
     queryset = AssetApproval.objects.all()
@@ -1110,8 +1130,14 @@ class AssetApprovalViewset(viewsets.ModelViewSet):
         ).all()
 
         # ---------------- USER FILTER ---------------- #
+        if not user.is_authenticated:
+            return AssetApproval.objects.none()
+
         if not user.is_superuser:
-            qs = qs.filter(approver=user)
+            qs = qs.filter(
+                Q(approver=user) |
+                Q(deligate_to=user, is_deligate=True)
+            )
 
         # ---------------- BRANCH FILTER ---------------- #
         branch_param = self.request.query_params.get('branch_id')
@@ -1161,6 +1187,140 @@ class AssetApprovalViewset(viewsets.ModelViewSet):
         approval = self.get_object()
         approval.reject(note=request.data.get('note', ''))
         return Response({'status': 'rejected'})
+    
+    @action(detail=True, methods=["post"])
+    def delegate(self, request, pk=None):
+        approval = self.get_object()
+
+        delegate_user_id = request.data.get("deligate_to")
+
+        if not delegate_user_id:
+            return Response(
+                {"error": "Delegate user is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delegate_user = get_object_or_404(CustomUser, pk=delegate_user_id)
+
+        if delegate_user == approval.approver:
+            return Response(
+                {"error": "You cannot delegate to yourself."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if approval.is_deligate:
+            return Response(
+                {"error": "This approval has already been delegated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        approval.deligate_to = delegate_user
+        approval.is_deligate = True
+        approval.deligate_response = None
+        approval.save()
+
+        if delegate_user.email:
+
+            subject = "Delegation Assigned"
+
+            message = f"""
+                Delegation Assigned
+
+                Hello {delegate_user.get_username() or delegate_user.username},
+
+                You have been assigned a new delegation request.
+
+                REQUEST DETAILS
+                _________________
+
+                Document Number : {approval.asset_request.document_number}
+                Employee        : {approval.asset_request.employee}
+                Request Type    : {approval.asset_request.asset_type}
+                Status          : {approval.asset_request.status}
+
+                Please review the request and send your response to the original approver.
+
+                Thank You.
+                """
+
+            send_mail(
+                subject,
+                message,
+                None,
+                [delegate_user.email],
+                fail_silently=False,
+            )
+            created_notification = send_notification_email(
+                user=delegate_user,
+                employee=None,
+                branch=None,
+                title="Delegation Assigned",
+                message=f"{approval.approver.username} has delegated request {approval.asset_request.document_number} to you.",
+                delegate_user=approval.approver,
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.asset_request.employee),
+                        "doc_number": approval.asset_request.document_number,
+                        "request_type": approval.asset_request.asset_type.name,
+                    },
+                    email_template_model=AssetEmailTemplate,
+                    notification_model=AssetNotification,
+                    )
+            print("Notification Created:", created_notification)
+            return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+        approval = self.get_object()
+
+        response_text = request.data.get("deligate_response")
+
+        if not response_text:
+            return Response({"error": "Response is required"}, status=400)
+
+        approval.deligate_response = response_text
+        approval.save()
+
+        # ---------------- EMAIL ----------------
+        if approval.approver and approval.approver.email:
+            send_mail(
+                subject="Delegation Response Received",
+                message=response_text,
+                from_email=None,
+                recipient_list=[approval.approver.email],
+                fail_silently=False,
+            )
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=approval.approver,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            message=response_text,
+            delegate_user=approval.deligate_to,
+            template_type="request_created",
+            context={
+                    **get_employee_context(approval.asset_request.employee),
+                    "doc_number": approval.asset_request.document_number,
+                    "request_type": approval.asset_request.asset_type.name,
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=AssetNotification,
+        )
+
+        return Response({
+            "message": "Response sent successfully",
+            "response": response_text
+        })
     
 class AssetApprovalLevelViewset(viewsets.ModelViewSet):
     queryset =  AssetApprovalWorkflow.objects.all()

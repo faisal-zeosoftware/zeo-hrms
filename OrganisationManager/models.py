@@ -326,6 +326,21 @@ class AssetEmailTemplate(models.Model):
 
     def __str__(self):
         return f"{self.template_type} - {self.subject}"
+    
+class AssetNotification(models.Model):
+    recipient_user     = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True,on_delete=models.CASCADE)
+    recipient_employee = models.ForeignKey('EmpManagement.emp_master', null=True, blank=True, on_delete=models.CASCADE)
+    message            = models.CharField(max_length=255)
+    created_at         = models.DateTimeField(auto_now_add=True)
+    is_read            = models.BooleanField(default=False)
+    deligate_user      = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='asset_deligated_notifications')
+    is_deligate        = models.BooleanField(default=False)
+
+    def __str__(self):
+        if self.recipient_user:
+            return f"Notification for {self.recipient_user.username}: {self.message}"
+        else:
+            return f"Notification for employee: {self.message}" 
 
 class AssetType(models.Model):
     name        = models.CharField(max_length=255, unique=True)
@@ -401,7 +416,9 @@ class AssetRequest(models.Model):
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request {self.document_number} has been rejected.",
+                message=(f"Your AssetRequest {self.asset_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                    ),
                 template_type="asset_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -411,7 +428,7 @@ class AssetRequest(models.Model):
                     "reason": self.reason,
                 },
                 email_template_model=AssetEmailTemplate,
-                notification_model=RequestNotification,
+                notification_model=AssetNotification,
             )
             return
 
@@ -455,7 +472,9 @@ class AssetRequest(models.Model):
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
+                message=(f"Your AssetRequest {self.asset_type}"
+                        f"(Document No: {self.document_number}) has been AutoApproved."
+                    ),
                 template_type="asset_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -465,7 +484,7 @@ class AssetRequest(models.Model):
                     "reason": self.reason,
                 },
                 email_template_model=AssetEmailTemplate,
-                notification_model=RequestNotification,
+                notification_model=AssetNotification,
             )
             return
 
@@ -512,7 +531,9 @@ class AssetRequest(models.Model):
                 send_notification_email(
                     user=self.created_by,
                     employee=self.employee,
-                    message=f"Your request {self.document_number} has been approved.",
+                    message=(f"Your AssetRequest {self.asset_type}"
+                        f"(Document No: {self.document_number}) has been Approved."
+                    ),
                     template_type="asset_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -522,7 +543,7 @@ class AssetRequest(models.Model):
                         "reason": self.reason,
                     },
                     email_template_model=AssetEmailTemplate,
-                    notification_model=RequestNotification,
+                    notification_model=AssetNotification,
                 )
                 return
 
@@ -557,7 +578,9 @@ class AssetRequest(models.Model):
             send_notification_email(
                 user=next_level.approver,
                 employee=self.employee,
-                message=f"New asset request: {self.document_number}",
+                message=(f"Your AssetRequest {self.asset_type}"
+                        f"(Document No: {self.document_number}) is waiting for your Approval."
+                    ),
                 template_type="asset_created",
                 context={
                     **get_employee_context(self.employee),
@@ -567,7 +590,7 @@ class AssetRequest(models.Model):
                     "reason": self.reason,
                 },
                 email_template_model=AssetEmailTemplate,
-                notification_model=RequestNotification,
+                notification_model=AssetNotification,
             )
 
             self.status = "Pending"
@@ -632,6 +655,9 @@ class AssetApproval(models.Model):
     level           = models.IntegerField(default=1)
     status          = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
     note            = models.TextField(null=True, blank=True)
+    deligate_to     = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='asset_deligations_received')
+    is_deligate     = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     escalated       = models.BooleanField(default=False)
     escalated_at    = models.DateTimeField(null=True, blank=True)
     is_escalation   = models.BooleanField(default=False)
@@ -656,7 +682,9 @@ class AssetApproval(models.Model):
         send_notification_email(
             user=self.asset_request.created_by,
             employee=self.asset_request.employee,
-            message=f"Your Request {self.asset_request.asset_type} has been Rejected!",
+            message=(f"Your AssetRequest {self.asset_type}"
+                    f"(Document No: {self.document_number}) has been Rejected."
+                    ),
             template_type='asset_rejected',
             context={       
                 **get_employee_context(self.asset_request.employee),
@@ -666,7 +694,7 @@ class AssetApproval(models.Model):
                 'reason' : self.asset_request.reason 
             },
             email_template_model=AssetEmailTemplate,
-            notification_model=RequestNotification
+            notification_model=AssetNotification
         )
 
 @receiver(post_save, sender=AssetRequest)
@@ -723,7 +751,9 @@ def create_initial_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Approved",
             notification_type="asset",
-            message=f"Your asset request {instance.asset_type} has been automatically approved.",
+            message=(f"Your AssetRequest {instance.asset_type}"
+                     f"(Document No: {instance.document_number}) has been AutoApproved."
+                    ),
             template_type="asset_approved",
             context={
                 **get_employee_context(instance.employee),
@@ -733,7 +763,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 "reason": instance.reason,
             },
             email_template_model=AssetEmailTemplate,
-            notification_model=RequestNotification,
+            notification_model=AssetNotification,
         )
 
         return
@@ -766,7 +796,9 @@ def create_initial_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Asset Request Pending",
             notification_type="asset",
-            message=f"New asset request {instance.asset_type} requires your approval.",
+            message=(f"Your AssetRequest {instance.asset_type}"
+                        f"(Document No: {instance.document_number}) requires your Approval."
+                    ),
             template_type="asset_created",
             context={
                 **get_employee_context(instance.employee),
@@ -776,7 +808,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 "reason": instance.reason,
             },
             email_template_model=AssetEmailTemplate,
-            notification_model=RequestNotification,
+            notification_model=AssetNotification,
         )
 
         return
@@ -808,7 +840,9 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 branch=instance.employee.emp_branch_id,
                 title="Asset Request Pending",
                 notification_type="asset",
-                message=f"New asset request {instance.asset_type} requires your approval.",
+                message=(f"Your AssetRequest {instance.asset_type}"
+                        f"(Document No: {instance.document_number}) requires your Approval."
+                    ),
                 template_type="asset_created",
                 context={
                     **get_employee_context(instance.employee),

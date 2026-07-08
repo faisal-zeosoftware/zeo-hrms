@@ -1,7 +1,7 @@
 from .models import (brnch_mstr,dept_master,desgntn_master,DocumentNumbering,
                      ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,
                      Announcement,AnnouncementView,AnnouncementComment,Asset,AssetAllocation,AssetType, AssetRequest,AssetCustomField,AssetReport,
-                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable,Folder, Document,AssetEmailTemplate,AssetApprovalLevel,AssetApproval,UserBranchAccess,BranchGeoFence, AssetApprovalWorkflow)
+                     AssetCustomFieldValue,AssetTransactionReport,GratuityTable,Folder, Document,AssetEmailTemplate,AssetApprovalLevel,AssetApproval,UserBranchAccess,BranchGeoFence, AssetApprovalWorkflow,AssetNotification)
 from rest_framework import serializers
 from tenant_users.tenants.models import UserTenantPermissions
 from django.contrib.auth.models import Permission,Group
@@ -335,17 +335,29 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
     
 
 class AssetApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
+
     class Meta:
         model = AssetApproval
         fields = '__all__'
 
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+
     def to_representation(self, instance):
         rep = super(AssetApprovalSerializer, self).to_representation(instance)
         if instance.asset_request:  
-            rep['asset_request'] = str(instance.asset_request.asset_type)
+            rep['asset_request'] = str(instance.asset_request.document_number)
         if instance.approver:  
-            rep['approver'] = instance.approver.username       
-        return rep       
+            rep['approver'] = instance.approver.username
+        if instance.deligate_to:
+            rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None       
+        return rep    
     
 class AssetAllocationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -373,6 +385,12 @@ class AssetEmailTemplateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
         })
         return attrs
+
+class AssetNotifySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AssetNotification
+        fields = '__all__'
+
 
 
 

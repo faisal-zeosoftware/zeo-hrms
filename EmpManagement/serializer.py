@@ -806,23 +806,55 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
         return workflow
 
     def update(self, instance, validated_data):
+
         levels_data = validated_data.pop('levels', None)
         branches = validated_data.pop('branch', None)
 
-        instance.request_type = validated_data.get('request_type', instance.request_type)
-        instance.approval_type = validated_data.get('approval_type', instance.approval_type)
+        instance.request_type = validated_data.get(
+            'request_type',
+            instance.request_type
+        )
+
+        instance.approval_type = validated_data.get(
+            'approval_type',
+            instance.approval_type
+        )
+
         instance.save()
 
         if branches is not None:
             instance.branch.set(branches)
 
         if levels_data is not None:
+
             instance.levels.all().delete()
 
-            # ✅ ONLY ADD THIS CONDITION
+            # existing logic
             if instance.approval_type == 'multi_approval':
+
                 for level_data in levels_data:
-                    ApprovalLevel.objects.create(workflow=instance, **level_data)
+                    ApprovalLevel.objects.create(
+                        workflow=instance,
+                        **level_data
+                    )
+
+            elif instance.approval_type == 'reporting_manager':
+
+                ApprovalLevel.objects.create(
+                    workflow=instance,
+                    level=1,
+                    role='Reporting Manager',
+                    approver=None
+                )
+
+            elif instance.approval_type == 'no_approval':
+
+                ApprovalLevel.objects.create(
+                    workflow=instance,
+                    level=1,
+                    role='Auto Level',
+                    approver=None
+                )
 
         return instance
     
@@ -893,16 +925,29 @@ class DocRequestTypeSerializer(serializers.ModelSerializer):
            return rep
 
 class DocApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
     class Meta:
         model = DocumentApproval
         fields = '__all__'
+
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+    
     def to_representation(self, instance):
         rep = super(DocApprovalSerializer, self).to_representation(instance)
         if instance.approver:  
             rep['approver'] = instance.approver.username
         if instance.document_request:
             rep['document_request'] = instance.document_request.document_number
+        if instance.deligate_to:
+            rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
         return rep
+        
 class DocApprovalLevelSerializer(serializers.ModelSerializer):
     approver = serializers.PrimaryKeyRelatedField(
         queryset=CustomUser.objects.all(),   # Replace User with the correct model if different
@@ -974,12 +1019,20 @@ class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
             # ✅ FIX RELATION NAME
             instance.document_levels.all().delete()
 
-            for level_data in levels_data:
-                level_data.pop('workflow', None)
+            if instance.approval_type == "reporting_manager":
                 DocumentApprovalLevel.objects.create(
                     workflow=instance,
-                    **level_data
+                    level=1,
+                    role="Reporting Manager",
+                    approver=None,
                 )
+            else:
+                for level_data in levels_data:
+                    level_data.pop('workflow', None)
+                    DocumentApprovalLevel.objects.create(
+                        workflow=instance,
+                        **level_data
+                    )
 
         return instance
     
@@ -1012,19 +1065,30 @@ class ResignationApprovalLevelSerializer(serializers.ModelSerializer):
         return rep
         
 class ResignationApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
     class Meta:
         model = ResignationApproval
         fields = '__all__'
 
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
-        
+        # ✅ FIX: no early return
         if instance.resignation_request:
             rep['resignation_request'] = instance.resignation_request.document_number
 
         if instance.approver:
             rep['approver'] = instance.approver.username
+        if instance.deligate_to: 
+            rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
 
         return rep
         

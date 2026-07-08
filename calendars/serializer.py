@@ -926,10 +926,21 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
     
 class LvApprovalSerializer(serializers.ModelSerializer):
     created_at = serializers.DateField(read_only=True)
+    delegation_details = serializers.SerializerMethodField()
 
     class Meta:
         model = LeaveApproval
         fields = '__all__'
+
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+    
+
     def to_representation(self, instance):
         rep = super(LvApprovalSerializer, self).to_representation(instance)
         if instance.approver:
@@ -942,6 +953,8 @@ class LvApprovalSerializer(serializers.ModelSerializer):
                 rep['employee_id'] = emp.emp_code
             except emp_master.DoesNotExist:
                 rep['employee_id'] = None 
+        if instance.deligate_to:
+                rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
         return rep
     
 class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
@@ -985,15 +998,34 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches:
             workflow.branch.set(branches)
 
-        for level_data in levels_data:
+        # =========================================================
+        # APPROVAL TYPE
+        # =========================================================
+        if workflow.approval_type == "reporting_manager":
+
             LeaveApprovalLevels.objects.create(
                 workflow=workflow,
-                **level_data
+                level=1,
             )
+
+        elif workflow.approval_type == "no_approval":
+
+            LeaveApprovalLevels.objects.create(
+                workflow=workflow,
+                level=1,
+            )
+
+        else:
+
+            for level_data in levels_data:
+                LeaveApprovalLevels.objects.create(
+                    workflow=workflow,
+                    **level_data
+                )
 
         return workflow
 
-    # ---------------- UPDATE (FIXED) ---------------- #
+    # ---------------- UPDATE---------------- #
     def update(self, instance, validated_data):
 
         levels_data = validated_data.pop('levels', None)
@@ -1017,13 +1049,36 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
         # ---------------- BRANCH UPDATE ---------------- #
         if branches is not None:
             instance.branch.set(branches)
-        if instance.approval_type != 'multi_approval':
-            instance.leave_levels.all().delete()
-            return instance
-        
-        if levels_data is not None:
+        instance.leave_levels.all().delete()
 
-            instance.leave_levels.all().delete()
+        # =========================================================
+        # REPORTING MANAGER
+        # =========================================================
+        if instance.approval_type == "reporting_manager":
+
+            LeaveApprovalLevels.objects.create(
+                workflow=instance,
+                level=1,
+            )
+
+            return instance
+
+        # =========================================================
+        # NO APPROVAL
+        # =========================================================
+        if instance.approval_type == "no_approval":
+
+            LeaveApprovalLevels.objects.create(
+                workflow=instance,
+                level=1,
+            )
+
+            return instance
+
+        # =========================================================
+        # MULTI APPROVAL ONLY
+        # =========================================================
+        if levels_data is not None:
 
             for level_data in levels_data:
 

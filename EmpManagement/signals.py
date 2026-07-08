@@ -58,42 +58,6 @@ def create_eos_on_approval(sender, instance, created, **kwargs):
                 # Optional: log error
                 print(f"Error creating EOS: {e}")
 
-@receiver(post_save, sender=RequestType)
-def create_workflow_and_default_level(sender, instance, created, **kwargs):
-    if not created:
-        return
-
-    workflow = ApprovalWorkflow.objects.create(
-        request_type=instance,
-        approval_type='no_approval'
-    )
-
-    ApprovalLevel.objects.create(
-        workflow=workflow,
-        level=1,
-        role="Auto Level",
-        approver=None
-    )
-
-@receiver(post_save, sender=DocRequestType)
-def create_workflow_and_default_level(sender, instance, created, **kwargs):
-    if not created:
-        return
-
-    workflow = DocumentApprovalWorkflow.objects.create(
-        request_type=instance,
-        approval_type='no_approval'
-    )
-
-    DocumentApprovalLevel.objects.create(
-        workflow=workflow,
-        level=1,
-        role="Auto Level",
-        approver=None
-    )
-
-
-
 
 
 

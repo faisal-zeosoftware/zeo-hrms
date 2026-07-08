@@ -64,7 +64,8 @@ from EmpManagement.models import emp_master
 import calendar
 from django.utils.dateparse import parse_date
 from EmpManagement.utils import send_notification_email, get_employee_context
-from django.core.mail import EmailMessage
+from UserManagement.models import CustomUser
+from django.core.mail import EmailMessage,send_mail
 import math
 import io
 import csv
@@ -1596,6 +1597,17 @@ class LvApprovalViewset(viewsets.ModelViewSet):
             'approver'
         ).filter(leave_request__isnull=False)
 
+        user = self.request.user
+
+        if not user.is_authenticated:
+            return LeaveApproval.objects.none()
+
+        if not user.is_superuser:
+            queryset = queryset.filter(
+                Q(approver=user) |
+                Q(deligate_to=user, is_deligate=True)
+            ).distinct()
+
         branch_ids = self.request.query_params.get('branch_id')
 
         if branch_ids:
@@ -1614,7 +1626,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
 
             if branch_ids:
                 queryset = queryset.filter(
-                   leave_request__employee__emp_branch_id__in=branch_ids  # ✅ FIXED
+                    leave_request__employee__emp_branch_id__in=branch_ids
                 )
 
         return queryset
@@ -1623,6 +1635,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         approval = self.get_object()
 
+        # ✅ SECURITY CHECK
         if not request.user.is_superuser and approval.approver != request.user:
             return Response(
                 {"error": "You are not allowed to approve this request."},
@@ -1658,6 +1671,8 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         approval = self.get_object()
+
+        # ✅ SECURITY CHECK
         if not request.user.is_superuser and approval.approver != request.user:
             return Response(
                 {"error": "You are not allowed to reject this request."},
@@ -1680,6 +1695,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK
         )
+    # Custom action to get grouped leave approvals
     @action(detail=False, methods=['get'])
     def grouped_approvals(self, request):
         approvals = LeaveApproval.objects.select_related('leave_request', 'compensatory_request', 'approver').order_by('leave_request', 'level')
@@ -1707,6 +1723,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
                 'rejection_reason': approval.rejection_reason.reason_text if approval.rejection_reason else None,
             })
 
+        # Format data to a list of dictionaries
         response_data = [
             {
                 'request_id': request_id,
@@ -1716,6 +1733,142 @@ class LvApprovalViewset(viewsets.ModelViewSet):
         ]
 
         return Response(response_data, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=["post"])
+    def delegate(self, request, pk=None):
+        approval = self.get_object()
+
+        delegate_user_id = request.data.get("deligate_to")
+
+        if not delegate_user_id:
+            return Response(
+                {"error": "Delegate user is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delegate_user = get_object_or_404(CustomUser, pk=delegate_user_id)
+
+        if delegate_user == approval.approver:
+            return Response(
+                {"error": "You cannot delegate to yourself."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if approval.is_deligate:
+            return Response(
+                {"error": "This approval has already been delegated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        approval.deligate_to = delegate_user
+        approval.is_deligate = True
+        approval.deligate_response = None
+        approval.save()
+
+        if delegate_user.email:
+
+            subject = "Delegation Assigned"
+
+            message = f"""
+                Delegation Assigned
+
+                Hello {delegate_user.get_username() or delegate_user.username},
+
+                You have been assigned a new delegation request.
+
+                REQUEST DETAILS
+                _________________
+
+                Document Number : {approval.leave_request.document_number}
+                Employee        : {approval.leave_request.employee}
+                Request Type    : {approval.leave_request.leave_type}
+                Status          : {approval.leave_request.status}
+
+                Please review the request and send your response to the original approver.
+
+                Thank You.
+                """
+
+            send_mail(
+                subject,
+                message,
+                None,
+                [delegate_user.email],
+                fail_silently=False,
+            )
+            created_notification = send_notification_email(
+                user=delegate_user,
+                employee=None,
+                branch=None,
+                title="Delegation Assigned",
+                message=f"{approval.approver.username} has delegated request {approval.leave_request.document_number} to you.",
+                delegate_user=approval.approver,
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.leave_request.employee),
+                        "doc_number": approval.leave_request.document_number,
+                        "request_type": approval.leave_request.leave_type,
+                    },
+                    email_template_model=LvEmailTemplate,
+                    notification_model=LvApprovalNotify
+            )
+
+            print("Notification Created:", created_notification)
+
+            return Response(
+                {
+                    "message": "Approval delegated successfully.",
+                    "approval_id": approval.id,
+                    "approver": approval.approver.username,
+                    "delegate_to": delegate_user.username,
+                    "status": approval.status,
+                },
+                status=status.HTTP_200_OK,
+            )
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+        approval = self.get_object()
+
+        response_text = request.data.get("deligate_response")
+
+        if not response_text:
+            return Response({"error": "Response is required"}, status=400)
+
+        approval.deligate_response = response_text
+        approval.save()
+
+        # ---------------- EMAIL ----------------
+        if approval.approver and approval.approver.email:
+            send_mail(
+                subject="Delegation Response Received",
+                message=response_text,
+                from_email=None,
+                recipient_list=[approval.approver.email],
+                fail_silently=False,
+            )
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=approval.approver,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            message=response_text,
+            delegate_user=approval.deligate_to,
+            template_type="request_created",
+             context={
+                 **get_employee_context(approval.leave_request.employee),
+                    "doc_number": approval.leave_request.document_number,
+                    "request_type": approval.leave_request.leave_type,
+                },
+                email_template_model=LvEmailTemplate,
+                notification_model=LvApprovalNotify
+        )
+
+        return Response({
+            "message": "Response sent successfully",
+            "response": response_text
+        })
     
 class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
     queryset = LeaveApprovalReport.objects.all()

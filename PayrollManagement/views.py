@@ -44,6 +44,10 @@ from tablib import Dataset
 from openpyxl.styles import PatternFill,Alignment,Font,NamedStyle,Border, Side
 from django.http import HttpResponse
 import io
+from UserManagement.models import CustomUser
+from django.core.mail import send_mail
+from EmpManagement.utils import send_notification_email,get_employee_context
+from django.shortcuts import get_object_or_404, redirect
 
 
 
@@ -402,41 +406,182 @@ class LoanApprovalLevelsviewset(viewsets.ModelViewSet):
     serializer_class =  LoanApprovalWorkflowSerializer
 
 class LoanApprovalviewset(viewsets.ModelViewSet):
-        queryset = LoanApproval.objects.all()
-        serializer_class = LoanApprovalSerializer
-        lookup_field = 'pk'
-        def get_queryset(self):
-            """
-            Filter approvals based on the authenticated user.
-            """
-            user = self.request.user  # Get the logged-in user
-            if user.is_superuser:
-                return LoanApproval.objects.all()
-            return LoanApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
-        @action(detail=True, methods=['post'])
-        def approve(self, request, pk=None):
-            approvals = self.get_object()
-            note = request.data.get('note')  # Get the note from the request
-            approvals.approve(note=note)
-            return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
+    queryset = LoanApproval.objects.all()
+    serializer_class = LoanApprovalSerializer
+    lookup_field = 'pk'
+    def get_queryset(self):
+        """
+        Filter approvals based on the authenticated user.
+        """
+        user = self.request.user  # Get the logged-in user
+        if user.is_superuser:
+            return LoanApproval.objects.all()
+        return LoanApproval.objects.filter(
+        Q(approver=user) |
+        Q(deligate_to=user, is_deligate=True)
+    ).distinct() # Filter approvals assigned to the user
 
-        
-        @action(detail=True, methods=['post'])
-        def reject(self, request, pk=None):
-            approval = self.get_object()
-            note = request.data.get('note')
-            rejection_reason_id = request.data.get('rejection_reason')
 
-            if not rejection_reason_id:
-                raise ValidationError("Rejection reason is required.")
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        approvals = self.get_object()
+        note = request.data.get('note')  # Get the note from the request
+        approvals.approve(note=note)
+        return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
 
-            # try:
-            #     rejection_reason = LvRejectionReason.objects.get(id=rejection_reason_id)
-            # except LvRejectionReason.DoesNotExist:
-            #     raise ValidationError("Invalid rejection reason.")
+    
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        approval = self.get_object()
+        note = request.data.get('note')
+        rejection_reason_id = request.data.get('rejection_reason')
 
-            approval.reject(rejection_reason=rejection_reason_id, note=note)
-            return Response({'status': 'rejected', 'note': note, 'rejection_reason': rejection_reason_id}, status=status.HTTP_200_OK)
+        if not rejection_reason_id:
+            raise ValidationError("Rejection reason is required.")
+
+        # try:
+        #     rejection_reason = LvRejectionReason.objects.get(id=rejection_reason_id)
+        # except LvRejectionReason.DoesNotExist:
+        #     raise ValidationError("Invalid rejection reason.")
+
+        approval.reject(rejection_reason=rejection_reason_id, note=note)
+        return Response({'status': 'rejected', 'note': note, 'rejection_reason': rejection_reason_id}, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=["post"])
+    def delegate(self, request, pk=None):
+        approval = self.get_object()
+
+        delegate_user_id = request.data.get("deligate_to")
+
+        if not delegate_user_id:
+            return Response(
+                {"error": "Delegate user is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delegate_user = get_object_or_404(CustomUser, pk=delegate_user_id)
+
+        if delegate_user == approval.approver:
+            return Response(
+                {"error": "You cannot delegate to yourself."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if approval.is_deligate:
+            return Response(
+                {"error": "This approval has already been delegated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        approval.deligate_to = delegate_user
+        approval.is_deligate = True
+        approval.deligate_response = None
+        approval.save()
+
+        if delegate_user.email:
+
+            subject = "Delegation Assigned"
+
+            message = f"""
+                Delegation Assigned
+
+                Hello {delegate_user.get_username() or delegate_user.username},
+
+                You have been assigned a new delegation request.
+
+                REQUEST DETAILS
+                _________________
+
+                Document Number : {approval.loan_request.document_number}
+                Employee        : {approval.loan_request.employee}
+                Request Type    : {approval.loan_request.loan_type}
+                Status          : {approval.loan_request.status}
+
+                Please review the request and send your response to the original approver.
+
+                Thank You.
+                """
+
+            send_mail(
+                subject,
+                message,
+                None,
+                [delegate_user.email],
+                fail_silently=False,
+            )
+            created_notification = send_notification_email(
+                user=delegate_user,
+                employee=None,
+                branch=None,
+                title="Delegation Assigned",
+                message=f"{approval.approver.username} has delegated request {approval.loan_request.document_number} to you.",
+                delegate_user=approval.approver,
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.loan_request.employee),
+                        "doc_number": approval.loan_request.document_number,
+                        "request_type": approval.loan_request.loan_type,
+                    },
+                    email_template_model=LoanEmailTemplate,
+                    notification_model=LoanNotification,
+            )
+
+            print("Notification Created:", created_notification)
+
+            return Response(
+                {
+                    "message": "Approval delegated successfully.",
+                    "approval_id": approval.id,
+                    "approver": approval.approver.username,
+                    "delegate_to": delegate_user.username,
+                    "status": approval.status,
+                },
+                status=status.HTTP_200_OK,
+            )
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+        approval = self.get_object()
+
+        response_text = request.data.get("deligate_response")
+
+        if not response_text:
+            return Response({"error": "Response is required"}, status=400)
+
+        approval.deligate_response = response_text
+        approval.save()
+
+        # ---------------- EMAIL ----------------
+        if approval.approver and approval.approver.email:
+            send_mail(
+                subject="Delegation Response Received",
+                message=response_text,
+                from_email=None,
+                recipient_list=[approval.approver.email],
+                fail_silently=False,
+            )
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=approval.approver,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            message=response_text,
+            delegate_user=approval.deligate_to,
+            template_type="request_created",
+            context={
+                 **get_employee_context(approval.loan_request.employee),
+                    "doc_number": approval.loan_request.document_number,
+                    "request_type": approval.loan_request.loan_type,
+                },
+                email_template_model=LoanEmailTemplate,
+                notification_model=LoanNotification,
+        )
+
+        return Response({
+            "message": "Response sent successfully",
+            "response": response_text
+        })
 class SIFDataView(APIView):
     def post(self, request):
         serializer = SIFSerializer(data=request.data)
@@ -656,7 +801,7 @@ class AdvanceCommonWorkflowViewSet(viewsets.ModelViewSet):
     serializer_class = AdvanceApprovalWorkflowSerializer
 
 class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
-    queryset = AdvanceSalaryApproval.objects.all()
+    queryset =AdvanceSalaryApproval.objects.all()
     serializer_class = AdvanceSalaryApprovalSerializer
     def get_queryset(self):
         """
@@ -665,7 +810,10 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
         user = self.request.user  # Get the logged-in user
         if user.is_superuser:
             return AdvanceSalaryApproval.objects.all()
-        return AdvanceSalaryApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+        return AdvanceSalaryApproval.objects.filter(
+        Q(approver=user) |
+        Q(deligate_to=user, is_deligate=True)
+    ).distinct()  # Filter approvals assigned to the user
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -690,6 +838,137 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
 
         approval.reject(rejection_reason=rejection_reason, note=note)
         return Response({'status': 'rejected'}, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=["post"])
+    def delegate(self, request, pk=None):
+        approval = self.get_object()
+
+        delegate_user_id = request.data.get("deligate_to")
+
+        if not delegate_user_id:
+            return Response(
+                {"error": "Delegate user is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delegate_user = get_object_or_404(CustomUser, pk=delegate_user_id)
+
+        if delegate_user == approval.approver:
+            return Response(
+                {"error": "You cannot delegate to yourself."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if approval.is_deligate:
+            return Response(
+                {"error": "This approval has already been delegated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        approval.deligate_to = delegate_user
+        approval.is_deligate = True
+        approval.deligate_response = None
+        approval.save()
+
+        if delegate_user.email:
+
+            subject = "Delegation Assigned"
+
+            message = f"""
+                Delegation Assigned
+
+                Hello {delegate_user.get_username() or delegate_user.username},
+
+                You have been assigned a new delegation request.
+
+                REQUEST DETAILS
+                _________________
+
+                Document Number : {approval.request.document_number}
+                Employee        : {approval.request.employee}
+                Status          : {approval.request.status}
+
+                Please review the request and send your response to the original approver.
+
+                Thank You.
+                """
+
+            send_mail(
+                subject,
+                message,
+                None,
+                [delegate_user.email],
+                fail_silently=False,
+            )
+            created_notification = send_notification_email(
+                user=delegate_user,
+                employee=None,
+                branch=None,
+                title="Delegation Assigned",
+                message=f"{approval.approver.username} has delegated request {approval.request.document_number} to you.",
+                delegate_user=approval.approver,
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.request.employee),
+                    "doc_number": approval.request.document_number,
+                },
+                email_template_model=AdvanceSalaryEmailTemplate,
+                notification_model=AdvanceSalaryNotification
+            )
+            print("Notification Created:", created_notification)
+            
+            return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+        approval = self.get_object()
+
+        response_text = request.data.get("deligate_response")
+
+        if not response_text:
+            return Response({"error": "Response is required"}, status=400)
+
+        approval.deligate_response = response_text
+        approval.save()
+
+        # ---------------- EMAIL ----------------
+        if approval.approver and approval.approver.email:
+            send_mail(
+                subject="Delegation Response Received",
+                message=response_text,
+                from_email=None,
+                recipient_list=[approval.approver.email],
+                fail_silently=False,
+            )
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=approval.approver,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            message=response_text,
+            delegate_user=approval.deligate_to,
+            template_type="request_created",
+            context={
+                    **get_employee_context(approval.request.employee),
+                    "doc_number": approval.request.document_number,
+                },
+                email_template_model=AdvanceSalaryEmailTemplate,
+                notification_model=AdvanceSalaryNotification
+        )
+
+        return Response({
+            "message": "Response sent successfully",
+            "response": response_text
+        })
     
 class AirTicketRuleViewSet(viewsets.ModelViewSet):
     queryset = AirTicketRule.objects.all()

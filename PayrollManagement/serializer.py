@@ -542,9 +542,21 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
         return rep
     
 class LoanApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
+
     class Meta:
         model = LoanApproval
         fields = '__all__'
+
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+    
+
     def to_representation(self, instance):
         rep = super(LoanApprovalSerializer, self).to_representation(instance)
         if instance.loan_request:
@@ -557,6 +569,8 @@ class LoanApprovalSerializer(serializers.ModelSerializer):
                 rep['employee_id'] = None
         if instance.loan_request:
             rep['document_number']= getattr(instance.loan_request,'document_number')
+        if instance.deligate_to:
+            rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
         return rep
     
     
@@ -741,9 +755,19 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
         return rep
     
 class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
     class Meta:
         model = AdvanceSalaryApproval
         fields = '__all__'
+
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+    
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
@@ -755,6 +779,9 @@ class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):
 
         if instance.approver:
             rep['approver'] = instance.approver.username
+
+        if instance.deligate_to:
+            rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
 
         return rep
 

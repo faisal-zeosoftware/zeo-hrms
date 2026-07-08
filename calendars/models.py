@@ -1385,7 +1385,9 @@ class employee_leave_request(models.Model):
                 branch=self.branch,
                 title="Request Rejected",
                 notification_type="leave_request",
-                message=f"Your leave request has been rejected.",
+                message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                    ),
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -1414,7 +1416,9 @@ class employee_leave_request(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="lv_request",
-                message=f"Your leave request has been automatically approved.",
+                message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1449,7 +1453,9 @@ class employee_leave_request(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="lv_request",
-                message=f"Your leave request has been approved.",
+                message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1472,7 +1478,9 @@ class employee_leave_request(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="lv_request",
-                message=f"Your leave request has been auto approved.",
+                message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been AutoApproved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1503,7 +1511,9 @@ class employee_leave_request(models.Model):
                     branch=self.branch,
                     title="Request Approved",
                     notification_type="lv_request",
-                    message=f"Your leave request has been approved.",
+                    message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Approved by ReportingManager."
+                    ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -1530,7 +1540,9 @@ class employee_leave_request(models.Model):
                     branch=self.branch,
                     title="Request Created",
                     notification_type="lv_request",
-                    message=f"New leave request is waiting for your approval.",
+                    message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) is waiting for your Approval."
+                    ),
                     template_type="request_created",
                     context={
                         **get_employee_context(self.employee),
@@ -1550,7 +1562,9 @@ class employee_leave_request(models.Model):
                     title="Request Approved",
                     notification_type="lv_request",
                     employee=self.employee,
-                    message=f"Your leave request has been approved by reporting manager.",
+                    message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Approved by ReportingManager."
+                    ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -1590,7 +1604,9 @@ class employee_leave_request(models.Model):
                     branch=self.branch,
                     title="Request Approved",
                     notification_type="lv_request",
-                    message=f"Your leave request has been approved.",
+                    message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Approved."
+                    ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -1616,7 +1632,9 @@ class employee_leave_request(models.Model):
                 branch=self.branch,
                 title="Request Created",
                 notification_type="lv_request",
-                message=f"New leave request requires your approval.",
+                message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) is requires your Approval."
+                    ),
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -1636,7 +1654,9 @@ class employee_leave_request(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="lv_request",
-                message=f"Your leave request has been fully approved.",
+                message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been fully Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1729,6 +1749,9 @@ class LeaveApproval(models.Model):
     # rejection_reason     = models.ForeignKey(LvRejectionReason,null=True, blank=True, on_delete=models.SET_NULL)
     rejection_reason     = models.TextField(null=True, blank=True)
     approved_days = models.FloatField(blank=True, null=True)  # ✅ NEW FIELD
+    deligate_to     = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='leave_deligations_received')
+    is_deligate     = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     created_at           = models.DateField(auto_now_add=True)
     created_by           = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at           = models.DateField(auto_now=True)
@@ -1781,7 +1804,9 @@ class LeaveApproval(models.Model):
 
             notification = LvApprovalNotify.objects.create(
                 recipient_user=self.leave_request.created_by,
-                message=f"Your leave request has been rejected."
+                message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                    ),
             )
             notification.send_email_notification('request_rejected', {
                 'leave_type': self.leave_request.leave_type,
@@ -1802,7 +1827,9 @@ class LeaveApproval(models.Model):
             if self.leave_request.employee:
                 notification = LvApprovalNotify.objects.create(
                     recipient_employee=self.leave_request.employee,
-                    message=f"Your leave request has been rejected."
+                    message=(f"Your LeaveRequest {self.leave_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                    ),
                 )
                 notification.send_email_notification('request_rejected', {
                     'leave_type': self.leave_request.leave_type,
@@ -1879,7 +1906,9 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Approved",
             notification_type="lv_request",
-            message=f"Your leave request {instance.leave_type} has been automatically approved.",
+            message=(f"Your LeaveRequest {instance.leave_type}"
+                    f"(Document No: {instance.document_number}) has been Approved."
+                    ),
             template_type="request_approved",
             context={
                 **get_employee_context(instance.employee),
@@ -1919,7 +1948,9 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Approved",
             notification_type="lv_request",
-            message=f"Your leave request  {instance.leave_type} has been automatically approved.",
+            message=(f"Your LeaveRequest {instance.leave_type}"
+                    f"(Document No: {instance.document_number}) has been AutoApproved."
+                    ),
             template_type="request_approved",
             context={
                 **get_employee_context(instance.employee),
@@ -1950,7 +1981,9 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
                 branch=instance.employee.emp_branch_id,
                 title="Request Approved",
                 notification_type="lv_request",
-                message=f"Your leave request {instance.leave_type} has been approved.",
+                message=(f"Your LeaveRequest {instance.leave_type}"
+                        f"(Document No: {instance.document_number}) has been Approved by ReportingManager."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(instance.employee),
@@ -1975,7 +2008,9 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="lv_request",
-            message=f"New leave request {instance.leave_type} is waiting for your approval.",
+            message=(f"Your LeaveRequest {instance.leave_type}"
+                        f"(Document No: {instance.document_number}) is waiting for your Approval."
+                    ),
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),
@@ -2000,7 +2035,9 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
                 branch=instance.employee.emp_branch_id,
                 title="Request Approved",
                 notification_type="lv_request",
-                message=f"Your leave request {instance.leave_type} has been approved.",
+                message=(f"Your LeaveRequest {instance.leave_type}"
+                        f"(Document No: {instance.document_number}) has been Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(instance.employee),
@@ -2031,7 +2068,9 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
                 branch=instance.employee.emp_branch_id,
                 title="Request Approved",
                 notification_type="lv_request",
-                message=f"Your leave request  {instance.leave_type}has been approved.",
+                message=(f"Your LeaveRequest {instance.leave_type}"
+                        f"(Document No: {instance.document_number}) has been Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(instance.employee),
@@ -2056,7 +2095,9 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="lv_request",
-            message=f"New leave request {instance.leave_type} requires your approval.",
+            message=(f"Your LeaveRequest {instance.leave_type}"
+                        f"(Document No: {instance.document_number}) is requires your Approval."
+                    ),
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),

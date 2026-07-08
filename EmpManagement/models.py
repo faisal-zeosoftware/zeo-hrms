@@ -1266,7 +1266,9 @@ class GeneralRequest(models.Model):
 
                 notification_type="general",
 
-                message="Your request has been rejected.",
+                message=(f"Your GeneralRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                    ),
 
                 template_type="request_rejected",
 
@@ -1334,7 +1336,9 @@ class GeneralRequest(models.Model):
 
                 notification_type="general",
 
-                message=f"Your request has been approved.",
+                message=(f"Your GeneralRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been Approved."
+                    ),
 
                 template_type="request_approved",
 
@@ -1379,7 +1383,9 @@ class GeneralRequest(models.Model):
 
                 notification_type="general",
 
-                message=f"Your request has been auto approved.",
+                message=(f"Your GeneralRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been AutoApproved."
+                    ),
 
                 template_type="request_approved",
 
@@ -1426,7 +1432,10 @@ class GeneralRequest(models.Model):
 
                 notification_type="general",
 
-                message=f"Your request has been approved by reporting manager.",
+                message=(f"Your GeneralRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been Approved by ReportingManager."
+                    ),
+
 
                 template_type="request_approved",
 
@@ -1491,7 +1500,9 @@ class GeneralRequest(models.Model):
 
                 notification_type="general",
 
-                message=f"New request waiting for your approval.",
+                message=(f"A GeneralRequest {self.request_type} "
+                         f"(Document No: {self.document_number}) is waiting your approval."
+                ),
 
                 template_type="request_created",
 
@@ -1532,7 +1543,9 @@ class GeneralRequest(models.Model):
 
                 notification_type="general",
 
-                message=f"Your request has been fully approved",
+                message=(f"A Generalrequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been fully Approved."
+                        ),
 
                 template_type="request_approved",
 
@@ -1660,7 +1673,9 @@ class Approval(models.Model):
 
                 notification_type="general",
 
-                message=f"Your request {self.general_request.document_number} has been rejected.",
+                message=(f"A GeneralRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                        ),
 
                 template_type="request_rejected",
 
@@ -1680,167 +1695,111 @@ class Approval(models.Model):
 def create_initial_approval(sender, instance, created, **kwargs):
     if not created:
         return
+    
+    with transaction.atomic():
 
-    if instance.request_type.use_common_workflow:
-        first_level = CommonWorkflow.objects.order_by('level').first()
-        workflow = None
-    else:
-        workflow = ApprovalWorkflow.objects.filter(
-            request_type=instance.request_type,
-        ).first()
-
-        # ✅ FIX: do NOT silently return
-        if not workflow:
-            workflow = ApprovalWorkflow.objects.create(
+        if instance.request_type.use_common_workflow:
+            first_level = CommonWorkflow.objects.order_by('level').first()
+            workflow = None
+        else:
+            workflow = ApprovalWorkflow.objects.filter(
                 request_type=instance.request_type,
-                approval_type='no_approval'
-            )
+                branch=instance.employee.emp_branch_id
+                ).first()
+            
+            if not workflow:
+                raise ValidationError(
+                    f"No Approval Workflow configured for '{instance.request_type.name}'."
+                )
 
-        first_level = workflow.levels.order_by('level').first()
+            first_level = workflow.levels.order_by('level').first()
 
-    # ✅ FIX: ensure first_level always exists for multi approval safety
-    if workflow and not first_level:
-        first_level = ApprovalLevel.objects.create(
-            workflow=workflow,
-            level=1,
-            role="Auto Level",
-            approver=None
-        )
+            if not first_level:
+                raise ValidationError(
+                    f"No Approval Level configured for '{instance.request_type.name}'."
+                )
+                
+        approval_type = workflow.approval_type if workflow else 'no_approval'
 
-    approval_type = workflow.approval_type if workflow else 'no_approval'
-
-    # ---------------- NO APPROVAL ----------------
-    if approval_type == 'no_approval':
-        approver = instance.created_by or instance.employee.users
-
-        if not approver:
-            raise Exception("Employee does not have a system user assigned.")
-
-        Approval.objects.create(
-            general_request=instance,
-            approver=approver,
-            role="Auto Approval",
-            level=1,
-            status=Approval.APPROVED
-        )
-
-        instance.status = "Approved"
-        instance.save(update_fields=["status"])
-
-        # ---------------- EMAIL + NOTIFICATION ----------------
-        # send_notification_email(
-        #     user=approver,
-        #     employee=instance.employee,
-        #     message=f"Your request {instance.request_type} has been automatically approved.",
-        #     template_type="request_approved",
-        #     context={
-        #         **get_employee_context(instance.employee),
-        #         'request_type': instance.request_type.name
-        #     },
-        #     email_template_model=EmailTemplate,
-        #     notification_model=RequestNotification
-        # )
-        send_notification_email(
-                user=approver,
-                employee=instance.employee,
-
-                branch=instance.employee.emp_branch_id,
-
-                title="Request Approved",
-
-                notification_type="general",
-
-                message=f"Your request {instance.request_type} has been automatically approved.",
-
-                template_type="request_approved",
-
-                context={
-                    **get_employee_context(instance.employee),
-                    'request_type': instance.request_type.name,
-                },
-
-                email_template_model=EmailTemplate,
-
-                notification_model=RequestNotification,
-            )
-
-        return
-
-    # ---------------- REPORTING MANAGER ----------------
-    if approval_type == 'reporting_manager':
-
-        manager = instance.employee.emp_reporting_manager
-
-        if not manager:
-            raise Exception("Employee has no valid reporting manager.")
-
-        Approval.objects.create(
-            general_request=instance,
-            approver=manager,
-            role="Reporting Manager",
-            level=1,
-            status=Approval.PENDING
-        )
-
-        # ---------------- EMAIL + NOTIFICATION ----------------
-        # send_notification_email(
-        #     user=manager,
-        #     employee=instance.employee,
-        #     message=f"New request {instance.request_type} is waiting for your approval.",
-        #     template_type="approval_pending",
-        #     context={
-        #         **get_employee_context(instance.employee),
-        #         'request_type': instance.request_type.request_type
-        #     },
-        #     email_template_model=EmailTemplate,
-        #     notification_model=RequestNotification
-        # )
-        send_notification_email(
-                user=manager,
-                employee=instance.employee,
-
-                branch=instance.employee.emp_branch_id,
-
-                title="Request Created",
-
-                notification_type="general",
-
-                message=f"New request {instance.request_type} is waiting for your approval.",
-
-                template_type="request_created",
-
-                context={
-                    **get_employee_context(instance.employee),
-                    'request_type': instance.request_type.request_type
-                },
-
-                email_template_model=EmailTemplate,
-
-                notification_model=RequestNotification,
-            )
-
-        return
-
-        
-
-    # ---------------- MULTI APPROVAL ----------------
-    if approval_type == 'multi_approval':
-
-        if first_level and first_level.approver:
+        # ---------------- NO APPROVAL ----------------
+        if approval_type == 'no_approval':
+            approver = instance.employee.users or instance.created_by
+            
+            if not approver:
+                raise Exception("Employee does not have a system user assigned.")
 
             Approval.objects.create(
                 general_request=instance,
-                approver=first_level.approver,
-                role=first_level.role,
-                level=first_level.level,
+                approver=approver,
+                role="Auto Approval",
+                level=1,
+                status=Approval.APPROVED
+            )
+
+            instance.status = "Approved"
+            instance.save(update_fields=["status"])
+
+            # ---------------- EMAIL + NOTIFICATION ----------------
+            # send_notification_email(
+            #     user=approver,
+            #     employee=instance.employee,
+            #     message=f"Your request {instance.request_type} has been automatically approved.",
+            #     template_type="request_approved",
+            #     context={
+            #         **get_employee_context(instance.employee),
+            #         'request_type': instance.request_type.name
+            #     },
+            #     email_template_model=EmailTemplate,
+            #     notification_model=RequestNotification
+            # )
+            send_notification_email(
+                    user=approver,
+                    employee=instance.employee,
+
+                    branch=instance.employee.emp_branch_id,
+
+                    title="Request Approved",
+
+                    notification_type="general",
+
+                    message=(f"A GeneralRequest {instance.request_type}"
+                            f"(Document No: {instance.document_number}) has been AutoApproved ."
+                        ),
+
+                    template_type="request_approved",
+
+                    context={
+                        **get_employee_context(instance.employee),
+                        'request_type': instance.request_type.name,
+                    },
+
+                    email_template_model=EmailTemplate,
+
+                    notification_model=RequestNotification,
+                )
+
+            return
+
+        # ---------------- REPORTING MANAGER ----------------
+        if approval_type == 'reporting_manager':
+            manager = getattr(instance.employee, "emp_reporting_manager", None)
+
+            if not manager:
+                raise Exception("Employee has no valid reporting manager.")
+
+            Approval.objects.create(
+                general_request=instance,
+                approver=manager,
+                role="Reporting Manager",
+                level=1,
                 status=Approval.PENDING
             )
 
             # ---------------- EMAIL + NOTIFICATION ----------------
             # send_notification_email(
-            #     user=first_level.approver,
+            #     user=manager,
             #     employee=instance.employee,
-            #     message=f"New request {instance.request_type} requires your approval.",
+            #     message=f"New request {instance.request_type} is waiting for your approval.",
             #     template_type="approval_pending",
             #     context={
             #         **get_employee_context(instance.employee),
@@ -1850,30 +1809,87 @@ def create_initial_approval(sender, instance, created, **kwargs):
             #     notification_model=RequestNotification
             # )
             send_notification_email(
-                user=first_level.approver,
-                employee=instance.employee,
+                    user=manager,
+                    employee=instance.employee,
 
-                branch=instance.employee.emp_branch_id,
+                    branch=instance.employee.emp_branch_id,
 
-                title="Request Created",
+                    title="Request Created",
 
-                notification_type="general",
+                    notification_type="general",
 
-                message=f"New request {instance.request_type} requires your approval.",
+                    message=(f"A GeneralRequest {instance.request_type}"
+                            f"(Document No: {instance.document_number}) is waiting for your Approval"
+                        ),
 
-                template_type="request_created",
 
-                context={
-                    **get_employee_context(instance.employee),
-                    'request_type': instance.request_type.name
-                },
+                    template_type="request_created",
 
-                email_template_model=EmailTemplate,
+                    context={
+                        **get_employee_context(instance.employee),
+                        'request_type': instance.request_type.name
+                    },
 
-                notification_model=RequestNotification,
-            )
+                    email_template_model=EmailTemplate,
 
-        return
+                    notification_model=RequestNotification,
+                )
+
+            return
+
+            
+
+        # ---------------- MULTI APPROVAL ----------------
+        if approval_type == 'multi_approval':
+
+            if first_level and first_level.approver:
+
+                Approval.objects.create(
+                    general_request=instance,
+                    approver=first_level.approver,
+                    role=first_level.role,
+                    level=first_level.level,
+                    status=Approval.PENDING
+                )
+
+                # ---------------- EMAIL + NOTIFICATION ----------------
+                # send_notification_email(
+                #     user=first_level.approver,
+                #     employee=instance.employee,
+                #     message=f"New request {instance.request_type} requires your approval.",
+                #     template_type="approval_pending",
+                #     context={
+                #         **get_employee_context(instance.employee),
+                #         'request_type': instance.request_type.request_type
+                #     },
+                #     email_template_model=EmailTemplate,
+                #     notification_model=RequestNotification
+                # )
+                send_notification_email(
+                    user=first_level.approver,
+                    employee=instance.employee,
+
+                    branch=instance.employee.emp_branch_id,
+
+                    title="Request Created",
+
+                    notification_type="general",
+
+                    message=(f"A  GeneralRequest {instance.request_type}"
+                             f"(Document No: {instance.document_number}) requires your Approval."
+                        ),
+                    template_type="request_created",
+
+                    context={
+                        **get_employee_context(instance.employee),
+                        'request_type': instance.request_type.name
+                    },
+
+                    email_template_model=EmailTemplate,
+
+                    notification_model=RequestNotification,
+                )
+                return
     
 class SelectedEmpNotify(models.Model):
     # selected_ess_user = models.ForeignKey(emp_master, on_delete=models.SET_NULL, null=True, blank=True)
@@ -2009,7 +2025,9 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Rejected",
                 notification_type="document",
-                message="Your request has been rejected.",
+                message=(f"Your DocumentRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                    ),
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -2053,7 +2071,9 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="document",
-                message="Your request has been approved.",
+                message=(f"Your DocumentRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2071,13 +2091,15 @@ class DocumentRequest(models.Model):
             self.status = "Approved"
             self.save()
 
-            result=send_notification_email(
+            send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="document",
-                message="Your request has been auto approved.",
+                message=(f"Your DocumentRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been AutoApproved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2087,7 +2109,6 @@ class DocumentRequest(models.Model):
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification,
             )
-            print(result)
             return
 
         # ---------------- REPORTING MANAGER ----------------
@@ -2106,7 +2127,9 @@ class DocumentRequest(models.Model):
                     branch=self.branch,
                     title="Request Approved",
                     notification_type="document",
-                    message="Your request has been approved by reporting manager.",
+                    message=(f"Your DocumentRequest {self.request_type}"
+                            f"(Document No: {self.document_number}) has been Approved by ReportingManager."
+                            ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -2153,7 +2176,9 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Created",
                 notification_type="document",
-                message="New request waiting for your approval.",
+                message=(f"Your DocumentRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) is  waiting for you Approval."
+                    ),
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -2175,7 +2200,9 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="document",
-                message="Your request has been fully approved.",
+                message=(f"Your DocumentRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) has been fully Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2225,6 +2252,9 @@ class DocumentApproval(models.Model):
     level           = models.IntegerField(default=1)
     status          = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
     note            = models.TextField(null=True, blank=True)
+    deligate_to     = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='docdeligations_received')
+    is_deligate     = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     created_at      = models.DateField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at      = models.DateField(auto_now=True)
@@ -2262,7 +2292,9 @@ class DocumentApproval(models.Model):
         send_notification_email(
             user=self.document_request.created_by,
             employee=self.document_request.employee,
-            message=f"Your request {self.document_request.document_number} has been rejected.",
+            message=(f"Your DocumentRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) has been Rejected."
+                    ),
             template_type="request_rejected",
             context={
                 **get_employee_context(self.document_request.employee),
@@ -2299,7 +2331,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 request_type=instance.request_type
                 ).first()
             
-            approval_type = workflow.approval_type
+        approval_type = workflow.approval_type
 
         # -------------------------------------------------
         # NO APPROVAL
@@ -2327,11 +2359,17 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
             instance.status = "Approved"
             instance.save(update_fields=["status"])
+
             if approver:
                 send_notification_email(
                     user=approver,
                     employee=instance.employee,
-                    message=f"Your request {instance.document_number} has been automatically approved.",
+                    branch=instance.branch,
+                    notification_type="document_request",
+                    title="Document Request Approved",
+                    message=(f"Your DocumentRequest {instance.request_type}"
+                            f"(Document No: {instance.document_number}) has been AutoApproved."
+                    ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(instance.employee),
@@ -2340,12 +2378,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     },
                     email_template_model=DocRequestEmailTemplate,
                     notification_model=DocRequestNotification,
-                    branch=instance.branch,
-                    notification_type="document_request",
-                    title="Document Request Approved"
                 )
-            return
-
+                return
         # -------------------------------------------------
         # REPORTING MANAGER
         # -------------------------------------------------
@@ -2366,7 +2400,12 @@ def create_initial_approval(sender, instance, created, **kwargs):
             send_notification_email(
                 user=manager,
                 employee=None,
-                message=f"New request waiting for your approval.",
+                branch=instance.branch,
+                notification_type="document_request",
+                title="Document Request Approval",
+                message=(f"Your DocumentRequest {instance.request_type}"
+                         f"(Document No: {instance.document_number}) is waiting for your Approval."
+                    ),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -2375,9 +2414,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 },
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification,
-                branch=instance.branch,
-                notification_type="document_request",
-                title="Document Request Approval"
             )
             return
 
@@ -2406,13 +2442,18 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 status=DocumentApproval.PENDING,
                 created_by=instance.created_by
             )
-            
+
             if first_level.approver:
 
                 send_notification_email(
                     user=first_level.approver,
                     employee=None,
-                    message="New request waiting for your approval.",
+                    branch=instance.branch,
+                    notification_type="document_request",
+                    title="Document Request Approval",
+                    message=(f"Your DocumentRequest {instance.request_type}"
+                            f"(Document No: {instance.document_number}) is waiting for your Approval."
+                    ),
                     template_type="request_created",
                     context={
                         **get_employee_context(instance.employee),
@@ -2421,9 +2462,6 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     },
                     email_template_model=DocRequestEmailTemplate,
                     notification_model=DocRequestNotification,
-                    branch=instance.branch,
-                    notification_type="document_request",
-                    title="Document Request Approval"
                 )
                 return
         
@@ -2500,7 +2538,8 @@ class EmployeeResignation(models.Model):
                 branch=self.branch,
                 title="Request Rejected",
                 notification_type="resignation",
-                message=f"Your resignation request {self.termination_type} has been rejected.",
+                message=(f"Your ResignationRequest {self.termination_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."),
                 template_type="resignation_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -2556,7 +2595,8 @@ class EmployeeResignation(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="resignation",
-                message=f"Your request has been approved.",
+                message=(f"Your ResignationRequest {self.termination_type}"
+                        f"(Document No: {self.document_number}) has been Approved."),
                 template_type="request_approved",
                 context={
                      **get_employee_context(self.employee),
@@ -2587,7 +2627,8 @@ class EmployeeResignation(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="resignation",
-                message=f"Your request  {self.termination_type} has been auto approved.",
+                message=(f"Your ResignationRequest {self.termination_type}"
+                        f"(Document No: {self.document_number})has been AutoApproved."),
                 template_type="request_approved",
                 context={
                      **get_employee_context(self.employee),
@@ -2621,7 +2662,8 @@ class EmployeeResignation(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="resignation",
-                message=f"Your request {self.termination_type} has been approved by reporting manager.",
+                message=(f"Your ResignationRequest {self.termination_type}"
+                        f"(Document No: {self.document_number}) has been Approved by ReportingManager."),
                 template_type="request_approved",
                 context={
                      **get_employee_context(self.employee),
@@ -2675,8 +2717,8 @@ class EmployeeResignation(models.Model):
                             branch=self.branch,
                             title="Request Created",
                             notification_type="resignation",
-                            message=f"Your New resignation request {self.termination_type} waiting for your approval.",
-                            template_type="resignation_created",
+                            message=(f"Your ResignationRequest {self.termination_type}"
+                                    f"(Document No: {self.document_number})waiting for your Approval."),
                             context={
                                 **get_employee_context(self.employee),
                                 'document_date': self.document_date,
@@ -2702,7 +2744,8 @@ class EmployeeResignation(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="resignation",
-                message=f"Your resignation request {self.termination_type} has been approved.",
+                message=(f"Your ResignationRequest {self.termination_type}"
+                        f"(Document No: {self.document_number}) has been fully Approved."),
                 template_type="resignation_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2763,6 +2806,9 @@ class ResignationApproval(models.Model):
     level           = models.IntegerField(default=1)
     status          = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
     note            = models.TextField(null=True, blank=True)
+    deligate_to     = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='resignation_deligations_received')
+    is_deligate     = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     created_at      = models.DateField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
     updated_at      = models.DateField(auto_now=True)
@@ -2783,7 +2829,8 @@ class ResignationApproval(models.Model):
         send_notification_email(
                 user=self.created_by,
                 employee=self.resignation_request.employee,
-                message=f"Your resignation request {self.resignation_request.termination_type} has been rejected.",
+                message=(f"Your ResignationRequest {self.termination_type}"
+                 f"(Document No: {self.document_number}) has been Rejected."),
                 template_type="resignation_rejected",
                 context={
                     **get_employee_context(self.resignation_request.employee),
@@ -2839,7 +2886,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Approved",
             notification_type="resignation",
-            message=f"Your resignation request {instance.termination_type} has been automatically approved.",
+            message=(f"Your ResignationRequest {instance.termination_type}"
+                    f"(Document No: {instance.document_number})has been AutoApproved."),
             template_type="resignation_approved",
             context={
                 **get_employee_context(instance.employee),
@@ -2876,7 +2924,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="resigantion",
-            message=f"New resignation request for approval: {instance.employee}",
+            message=(f"New ResignationRequest {instance.termination_type}"
+                    f"(Document No: {instance.document_number}) is waiting for your Approval"),
             template_type="resignation_created",
             context={
                 **get_employee_context(instance.employee),
@@ -2915,7 +2964,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="resignation",
-            message=f"New resignation request for approval: {instance.employee}",
+            message=(f"Your ResignationRequest {instance.termination_type}"
+                    f"(Document No: {instance.document_number}) is waiting for your Approval"),
             template_type="resignation_created",
             context={
                 **get_employee_context(instance.employee),

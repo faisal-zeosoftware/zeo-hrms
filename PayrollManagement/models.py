@@ -782,7 +782,9 @@ class  LoanApplication(models.Model):
                 branch=self.branch,
                 title="Request Rejected",
                 notification_type="loan",
-                message=f"Your request {self.loan_type} has been rejected.",
+                message=(f"A LoanRequest {self.loan_type}"
+                        f"(Document No: {self.document_number}) has been Rejected."
+                        ),
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -841,7 +843,9 @@ class  LoanApplication(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="loan",
-                message="Your loan request {self.loan_application.loan_type} has been approved.",
+                message=(f"A LoanRequest {self.loan_type}"
+                        f"(Document No: {self.document_number}) has been Approved."
+                        ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -873,7 +877,9 @@ class  LoanApplication(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="loan",
-                message="Your loan request has been automatically approved.",
+                message=(f"A LoanRequest {self.loan_type}"
+                        f"(Document No: {self.document_number}) has been AutoApproved."
+                        ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -907,7 +913,9 @@ class  LoanApplication(models.Model):
                     branch=self.branch,
                     title="Request Approved",
                     notification_type="loan",
-                    message="Your loan request has been approved by the reporting manager.",
+                    message=(f"A LoanRequest {self.loan_type}"
+                        f"(Document No: {self.document_number}) has been Approved by ReportingManager."
+                        ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -980,7 +988,9 @@ class  LoanApplication(models.Model):
                 branch=self.branch,
                 title="Loan Approval Required",
                 notification_type="loan",
-                message="A new loan request is waiting for your approval.",
+                message=(f"A LoanRequest {self.loan_type}"
+                        f"(Document No: {self.document_number}) is waiting for your Approval."
+                        ),
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -1009,7 +1019,9 @@ class  LoanApplication(models.Model):
                 branch=self.branch,
                 title="Loan Request Approved",
                 notification_type="loan",
-                message="Your loan request has been fully approved.",
+                message=(f"A LoanRequest {self.loan_type}"
+                        f"(Document No: {self.document_number}) has been FullyApproved."
+                        ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1101,6 +1113,9 @@ class LoanApproval(models.Model):
     level                = models.IntegerField(default=1)
     status               = models.CharField(max_length=20, choices=STATUS_CHOICES,default=PENDING)
     note                 = models.TextField(null=True, blank=True)
+    deligate_to         = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='loan_deligations_received')
+    is_deligate         = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     escalated = models.BooleanField(default=False)
     escalated_at = models.DateTimeField(null=True, blank=True)
     is_escalation = models.BooleanField(default=False)
@@ -1134,7 +1149,8 @@ class LoanApproval(models.Model):
         branch=self.branch,
         title="Request Rejected",
         notification_type="loan",
-        message=f"Your request {self.loan_request.loan_type} has been rejected.",
+        message=(f"A LoanRequest {self.loan_type}"
+                f"(Document No: {self.document_number}) has been Rejected."),
         template_type="request_rejected",
         context={
             **get_employee_context(self.loan_request.employee),
@@ -1220,7 +1236,9 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
                 branch=instance.employee.emp_branch_id,
                 title="Request Approved",
                 notification_type="loan",
-                message=f"Your loan request {instance.loan_type} has been automatically approved.",
+                message=(f"A LoanRequest {instance.loan_type}"
+                        f"(Document No: {instance.document_number}) has been AutoApproved."
+                        ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(instance.employee),
@@ -1264,7 +1282,9 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
                 branch=instance.employee.emp_branch_id,
                 title="Request Created",
                 notification_type="loan",
-                message=f"New loan request {instance.loan_type} is waiting for your approval.",
+                message=(f"A LoanRequest {instance.loan_type}"
+                        f"(Document No: {instance.document_number}) is waiting for your Approval."
+                        ),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -1305,7 +1325,9 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
                     branch=instance.employee.emp_branch_id,
                     title="Request Created",
                     notification_type="loan",
-                    message=f"New loan request {instance.loan_type} requires your approval.",
+                    message=(f"A LoanRequest {instance.loan_type}"
+                            f"(Document No: {instance.document_number}) is waiting for your Approval."
+                        ),
                     template_type="request_created",
                     context={
                         **get_employee_context(instance.employee),
@@ -1396,7 +1418,7 @@ class AdvanceSalaryRequest(models.Model):
                 branch=self.branch,
                 title="Request Rejected",
                 notification_type="request",
-                message=f"Your request {self.document_number} has been rejected.",
+                message=f"Your AdvanceSalaryRequest {self.document_number} has been Rejected.",
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -1422,7 +1444,7 @@ class AdvanceSalaryRequest(models.Model):
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message="Your request has been approved.",
+                message=f"Your AdvanceSalaryRequest {self.document_number} has been Approved.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1510,7 +1532,7 @@ class AdvanceSalaryRequest(models.Model):
                 send_notification_email(
                     user=approver,
                     employee=None,
-                    message=f"New Salary Advance request: {self.document_number}, Employee: {self.employee}",
+                    message=f"Your AdvanceSalaryRequest {self.document_number} is waiting for your Approval.",
                     template_type="request_created",
                     context={
                         **get_employee_context(self.employee),
@@ -1532,7 +1554,7 @@ class AdvanceSalaryRequest(models.Model):
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
+                message=f"Your AdvanceSalaryRequest {self.document_number} has been Approved.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -1629,6 +1651,9 @@ class AdvanceSalaryApproval(models.Model):
     role = models.CharField(max_length=100, null=True, blank=True)
     level = models.PositiveIntegerField()
     note = models.TextField(null=True, blank=True)
+    deligate_to     = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='advsalary_deligations_received')
+    is_deligate     = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     escalated = models.BooleanField(default=False)
     escalated_at = models.DateTimeField(null=True, blank=True)
     is_escalation = models.BooleanField(default=False)
@@ -1636,7 +1661,7 @@ class AdvanceSalaryApproval(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
     created_at = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
-
+    updated_at      = models.DateField(auto_now=True)
 
     def __str__(self):
         return f"{self.request} - {self.approver} - {self.status}"
@@ -1659,7 +1684,7 @@ class AdvanceSalaryApproval(models.Model):
         send_notification_email(
         user=self.request.created_by,
         employee=self.request.employee,
-        message=f"Your Advance salary  request {self.request} has been rejected.",
+        message=f"Your AdvanceSalaryRequest {self.document_number} has been Rejected.",
         template_type="request_rejected",
         context={
             **get_employee_context(self.request.employee),
@@ -1710,7 +1735,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         send_notification_email(
             user=approver,
             employee=instance.employee,
-            message=f"Your Advance Salary Request {instance.document_number} has been automatically approved.",
+            message=f"Your AdvanceSalaryRequest {instance.document_number} has been AutoApproved.",
             template_type="request_approved",
             context={
                 **get_employee_context(instance.employee),
@@ -1743,7 +1768,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         send_notification_email(
             user=manager,
             employee=None,
-            message=f"New Advance Salary request for approval: {instance.employee} ({instance.document_number})",
+            message=f"Your AdvanceSalaryRequest {instance.document_number} is waiting for your Approval.",
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),
@@ -1780,7 +1805,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         send_notification_email(
             user=first_level.approver,
             employee=None,
-            message=f"New Advance Salary request for approval: {instance.employee} ({instance.document_number})",
+            message=f"Your AdvanceSalaryRequest {instance.document_number} is waiting for your Approval.",
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),

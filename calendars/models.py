@@ -3527,5 +3527,113 @@ class EarlyExitPolicy(models.Model):
         return f"{self.attendance_policy.name} - Early Exit"
 
 
+EVALUATION_TYPE_CHOICES = [
+    ('consecutive', 'Consecutive Days'),
+    ('total', 'Total Occurrences'),
+]
 
+EVALUATION_PERIOD_CHOICES = [
+    ('monthly', 'Monthly'),
+    ('weekly', 'Weekly'),
+    ('custom', 'Custom Date Range'),
+]
+
+PENALTY_CHOICES = [
+    ('warning', 'Warning'),
+    ('leave_deduction', 'Leave Deduction'),
+    ('half_day', 'Half Day'),
+    ('full_day', 'Full Day'),
+]
+
+VIOLATION_TYPE_CHOICES = [
+    ('late_coming', 'Late Coming'),
+    ('early_going', 'Early Going'),
+    ('both', 'Both'),
+]
+
+class EmpAttendancePolicy(models.Model):
+
+    name = models.CharField(max_length=100)
+    branch = models.ForeignKey(
+        "OrganisationManager.brnch_mstr",
+        on_delete=models.CASCADE,
+        related_name="emp_attendance_policies"
+    )
+
+    is_active = models.BooleanField(default=True)
+
+    # Round Off
+    round_off = models.BooleanField(default=False)
+
+    # Check-in rules
+    early_check_in = models.BooleanField(default=False)
+    early_check_in_minutes = models.IntegerField(default=15)
+
+    late_check_in = models.BooleanField(default=False)
+    late_check_in_minutes = models.IntegerField(default=15)
+
+    # Check-out rules
+    early_check_out = models.BooleanField(default=False)
+    early_check_out_minutes = models.IntegerField(default=15)
+
+    late_check_out = models.BooleanField(default=False)
+    late_check_out_minutes = models.IntegerField(default=15)
+
+    # Late Coming Rules
+    late_coming_rule = models.BooleanField(default=False)
+    enable_late_coming = models.BooleanField(default=False)
+    late_evaluation_type = models.CharField(max_length=20, choices=EVALUATION_TYPE_CHOICES, default='total')
+    late_threshold_count = models.PositiveIntegerField(default=3, help_text="Number of occurrences before penalty")
+    late_evaluation_period = models.CharField(max_length=20, choices=EVALUATION_PERIOD_CHOICES, default='monthly')
+    late_penalty_type = models.CharField(max_length=20, choices=PENALTY_CHOICES, default='half_day')
+    late_leave_days_to_deduct = models.DecimalField(max_digits=4, decimal_places=2, default=0.5)
+    late_deduct_from_leave_type = models.ForeignKey(
+        'leave_type', 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True,
+        related_name='late_coming_deductions',
+        help_text="Leave type to deduct from when late penalty is applied"
+    )
+
+    # Early Exit Rules
+    late_early_exit = models.BooleanField(default=False)
+    enable_early_exit = models.BooleanField(default=False)
+    early_evaluation_type = models.CharField(max_length=20, choices=EVALUATION_TYPE_CHOICES, default='total')
+    early_threshold_count = models.PositiveIntegerField(default=3, help_text="Number of occurrences before penalty")
+    early_evaluation_period = models.CharField(max_length=20, choices=EVALUATION_PERIOD_CHOICES, default='monthly')
+    early_penalty_type = models.CharField(max_length=20, choices=PENALTY_CHOICES, default='half_day')
+    early_leave_days_to_deduct = models.DecimalField(max_digits=4, decimal_places=2, default=0.5)
+    early_deduct_from_leave_type = models.ForeignKey(
+        'leave_type', 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True,
+        related_name='early_exit_deductions',
+        help_text="Leave type to deduct from when early exit penalty is applied"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.branch.branch_name}"
+
+class AttendancePolicyAssignment(models.Model):
+    EMP_CHOICES = [
+        ("company", "Company"),
+        ("branch", "Branch"),
+        ("department", "Department"),
+        ("category", "Category"),
+        ("designation", "Designation"),
+        ("employee", "Employee"),
+    ]
+    attendance_policy = models.ForeignKey(EmpAttendancePolicy, on_delete=models.CASCADE, related_name='assignments')
+    related_to = models.CharField(max_length=20, choices=EMP_CHOICES, null=True, blank=True)
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
+    department = models.ManyToManyField('OrganisationManager.dept_master', blank=True)
+    category = models.ManyToManyField('OrganisationManager.ctgry_master', blank=True)
+    designation = models.ManyToManyField('OrganisationManager.desgntn_master', blank=True)
+    employee = models.ManyToManyField('EmpManagement.emp_master', blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Assignment for {self.attendance_policy.name}"
 

@@ -6,7 +6,7 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
                     AttendanceReport,lvBalanceReport,CompensatoryLeaveRequest,CompensatoryLeaveBalance,CompensatoryLeaveTransaction,EmployeeYearlyCalendar,LeaveResetPolicy,LeaveCarryForwardTransaction,
                     LeaveEncashmentTransaction,EmployeeRejoining,EmployeeOvertime,MonthlyAttendanceSummary,AttendanceRecheck,OvertimePolicy,OvertimeRule,AttendanceLog,AttendancePolicy,LeavePayRule,
                     LatinEarlyoutEmailTemplate,LateinEarlyRequestNotification,LateinEarlyoutRequest,LateinEarlyoutApprovalLevel,LateinEarlyoutRequest,LateinEarlyoutApproval,LVApprovalWorkflow,LatinEarlyApprovalWorkflow,
-                    AttendanceCalendar,CompensatoryLeaveAllocation,AttendanceValidationPolicy,LateComingPolicy,EarlyExitPolicy
+                    AttendanceCalendar,CompensatoryLeaveAllocation,AttendanceValidationPolicy,LateComingPolicy,EarlyExitPolicy,AttendancePolicyAssignment,EmpAttendancePolicy
 
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
@@ -1383,4 +1383,14 @@ class LateComingPolicySerializer(serializers.ModelSerializer):
 class EarlyExitPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = EarlyExitPolicy
+        fields = '__all__'
+
+class EmpAttendancePolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmpAttendancePolicy
+        fields = '__all__'
+
+class AttendancePolicyAssignmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AttendancePolicyAssignment
         fields = '__all__'

@@ -2091,7 +2091,7 @@ class DocumentRequest(models.Model):
             self.status = "Approved"
             self.save()
 
-            send_notification_email(
+            result=send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
                 branch=self.branch,
@@ -2109,6 +2109,7 @@ class DocumentRequest(models.Model):
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification,
             )
+            print(result)
             return
 
         # ---------------- REPORTING MANAGER ----------------
@@ -2129,7 +2130,7 @@ class DocumentRequest(models.Model):
                     notification_type="document",
                     message=(f"Your DocumentRequest {self.request_type}"
                             f"(Document No: {self.document_number}) has been Approved by ReportingManager."
-                            ),
+                    ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -2379,7 +2380,9 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     email_template_model=DocRequestEmailTemplate,
                     notification_model=DocRequestNotification,
                 )
-                return
+
+            return
+
         # -------------------------------------------------
         # REPORTING MANAGER
         # -------------------------------------------------
@@ -2414,7 +2417,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 },
                 email_template_model=DocRequestEmailTemplate,
                 notification_model=DocRequestNotification,
-            )
+                )
             return
 
         # -------------------------------------------------
@@ -2443,8 +2446,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 created_by=instance.created_by
             )
 
-            if first_level.approver:
 
+            if first_level.approver:
                 send_notification_email(
                     user=first_level.approver,
                     employee=None,

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,
+                    LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,AirticketNotification
                     
                     )
 
@@ -1158,9 +1158,19 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         return data
     
 class AirtcketApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
     class Meta:
         model = AirticketApproval
         fields = '__all__'
+
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+    
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
@@ -1172,6 +1182,8 @@ class AirtcketApprovalSerializer(serializers.ModelSerializer):
 
         if instance.approver:
             rep['approver'] = instance.approver.username
+        if instance.deligate_to:
+             rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
 
         return rep
     
@@ -1217,6 +1229,10 @@ class AirticketWorkflowSerializer(serializers.ModelSerializer):
 class AirticketEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketEmailTemplate
+        fields = '__all__'
+class AirticketNotifySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AirticketNotification
         fields = '__all__'
 class AirticketApprovalWorkflowSerializer(serializers.ModelSerializer):
     levels = AirticketWorkflowSerializer(many=True, source='airticket_levels')

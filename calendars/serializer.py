@@ -695,20 +695,53 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches:
             workflow.branch.set(branches)
 
-        for level_data in levels_data:
-            level_data.pop('workflow', None)
+        # ---------------- MULTI APPROVAL ----------------
+        if workflow.approval_type == 'multi_approval':
 
-            # FIX: ensure safe defaults
-            if not level_data.get('level'):
-                raise serializers.ValidationError("Level is required")
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
+
+                # FIX: ensure safe defaults
+                if not level_data.get('level'):
+                    raise serializers.ValidationError("Level is required")
+
+                LateinEarlyoutApprovalLevel.objects.create(
+                    workflow=workflow,
+                    **level_data
+                )
+
+        # ---------------- NO APPROVAL ----------------
+        elif workflow.approval_type == 'no_approval':
 
             LateinEarlyoutApprovalLevel.objects.create(
                 workflow=workflow,
-                **level_data
+                level=1,
+                role='Auto Level',
+                approver=None
+            )
+
+        # ---------------- REPORTING MANAGER ----------------
+        elif workflow.approval_type == 'reporting_manager':
+
+            reporting_manager = None
+
+            request = self.context.get('request')
+
+            if request and hasattr(request.user, 'employee') and request.user.employee:
+                reporting_manager = getattr(
+                    request.user.employee,
+                    'reporting_manager',
+                    None
+                )
+
+            LateinEarlyoutApprovalLevel.objects.create(
+                workflow=workflow,
+                level=1,
+                role='Reporting Manager',
+                approver=reporting_manager
             )
 
         return workflow
-
     # ================= FIX 4: UPDATE =================
     def update(self, instance, validated_data):
 
@@ -727,9 +760,41 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         # ================= LEVEL LOGIC (FIXED) =================
 
-        # ❌ ALWAYS CLEAR IF NOT MULTI APPROVAL
-        if approval_type != "multi_approval":
-            instance.lateinearlyout_levels.all().delete()
+        # clear old levels
+        instance.lateinearlyout_levels.all().delete()
+
+        # ================= NO APPROVAL =================
+        if approval_type == "no_approval":
+
+            LateinEarlyoutApprovalLevel.objects.create(
+                workflow=instance,
+                level=1,
+                role="Auto Level",
+                approver=None
+            )
+
+            return instance
+
+        # ================= REPORTING MANAGER =================
+        if approval_type == "reporting_manager":
+
+            reporting_manager = None
+            request = self.context.get("request")
+
+            if request and hasattr(request.user, "employee") and request.user.employee:
+                reporting_manager = getattr(
+                    request.user.employee,
+                    "reporting_manager",
+                    None
+                )
+
+            LateinEarlyoutApprovalLevel.objects.create(
+                workflow=instance,
+                level=1,
+                role="Reporting Manager",
+                approver=reporting_manager
+            )
+
             return instance
 
         # ================= MULTI APPROVAL =================
@@ -737,9 +802,6 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
         # only process if levels provided
         if levels_data is None:
             return instance
-
-        # clear old levels
-        instance.lateinearlyout_levels.all().delete()
 
         for level_data in levels_data:
 
@@ -757,9 +819,28 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
         return instance
 
 class LateinEarlyoutApprovalSerializer(serializers.ModelSerializer):
+    delegation_details = serializers.SerializerMethodField()
     class Meta:
         model = LateinEarlyoutApproval
         fields = '__all__'
+
+    def get_delegation_details(self, obj):
+        return {
+            "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
+            "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "response": obj.deligate_response,
+            "is_deligate": obj.is_deligate,
+        }
+
+    def to_representation(self, instance):
+        rep = super(LateinEarlyoutApprovalSerializer, self).to_representation(instance)
+        if instance.approver:  
+            rep['approver'] = instance.approver.username
+        if instance.lateinearlyout_request:
+            rep['lateinearlyout_request'] = instance.lateinearlyout_request.request_type
+        if instance.deligate_to:
+            rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
+        return rep
 
 class ShiftSerializer(serializers.ModelSerializer):
     class Meta:

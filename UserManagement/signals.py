@@ -17,9 +17,9 @@ from django_tenants.utils import schema_context
 
 def create_default_email_templates(sender, tenant, **kwargs):
     from EmpManagement.models import EmailTemplate, DocExpEmailTemplate, DocRequestEmailTemplate, ResignationEmailTemplate
-    from calendars.models import LvEmailTemplate
+    from calendars.models import LvEmailTemplate,LatinEarlyoutEmailTemplate
     from OrganisationManager.models import AssetEmailTemplate
-    from PayrollManagement.models import LoanEmailTemplate, AdvanceSalaryEmailTemplate
+    from PayrollManagement.models import LoanEmailTemplate, AdvanceSalaryEmailTemplate, AirticketEmailTemplate
 
     with schema_context(tenant.schema_name):
             # GeneralRequest EmailTemplate
@@ -101,6 +101,23 @@ def create_default_email_templates(sender, tenant, **kwargs):
                         'body': f'Dear {{{{ recipient_name }}}},\n\nYour advance salary request has been {"created" if "created" in t_type else "approved" if "approved" in t_type else "rejected"}.\n\nRegards,\nManagement'
                     }
                 )
-
+            #AirticketEmailTemplate
+            for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                AirticketEmailTemplate.objects.get_or_create(
+                    template_type=t_type,
+                    defaults={
+                        'subject': f'Airticket Request - {t_type.replace("_", " ").title()}', 
+                        'body': f'Dear {{{{ recipient_name }}}},\n\nYour airticket request has been {"created" if "created" in t_type else "approved" if "approved" in t_type else "rejected"}.\n\nRegards,\nManagement'
+                    }
+                )
+            #LateinearlyoutEmailTemplate
+            for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                LatinEarlyoutEmailTemplate.objects.get_or_create(
+                    template_type=t_type,
+                    defaults={
+                        'subject': f'Lateinearlyout Request - {t_type.replace("_", " ").title()}', 
+                        'body': f'Dear {{{{ recipient_name }}}},\n\nYour lateinearlyout request has been {"created" if "created" in t_type else "approved" if "approved" in t_type else "rejected"}.\n\nRegards,\nManagement'
+                    }
+                )
 post_save.connect(add_company_to_superusers, sender=company)
 post_schema_sync.connect(create_default_email_templates)

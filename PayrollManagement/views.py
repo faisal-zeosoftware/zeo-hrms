@@ -1,12 +1,12 @@
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow)
+                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,AirticketNotification)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
                          ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
-                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer
+                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer,AirticketNotifySerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -1044,14 +1044,18 @@ class AirticketWorkflowViewSet(viewsets.ModelViewSet):
 class AirticketApprovalViewSet(viewsets.ModelViewSet):
     queryset = AirticketApproval.objects.all()
     serializer_class = AirtcketApprovalSerializer
-    # def get_queryset(self):
-    #     """
-    #     Filter approvals based on the authenticated user.
-    #     """
-    #     user = self.request.user  # Get the logged-in user
-    #     if user.is_superuser:
-    #         return AirticketApproval.objects.all()
-    #     return AirticketApproval.objects.filter(approver=user)  # Filter approvals assigned to the user
+    def get_queryset(self):
+        """
+        Filter approvals based on the authenticated user.
+        """
+        user = self.request.user  # Get the logged-in user
+        if user.is_superuser:
+            return AirticketApproval.objects.all()
+        return AirticketApproval.objects.filter(
+        Q(approver=user) |
+        Q(deligate_to=user, is_deligate=True)
+     ).distinct()
+  # Filter approvals assigned to the user
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -1075,7 +1079,145 @@ class AirticketApprovalViewSet(viewsets.ModelViewSet):
         #     raise ValidationError("This approval has already been processed.")
 
         approval.reject(rejection_reason=rejection_reason, note=note)
-        return Response({'status': 'rejected'}, status=status.HTTP_200_OK)  
+        return Response({'status': 'rejected'}, status=status.HTTP_200_OK)
+      
+    
+    @action(detail=True, methods=["post"])
+    def delegate(self, request, pk=None):
+        approval = self.get_object()
+
+        delegate_user_id = request.data.get("deligate_to")
+
+        if not delegate_user_id:
+            return Response(
+                {"error": "Delegate user is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delegate_user = get_object_or_404(CustomUser, pk=delegate_user_id)
+
+        if delegate_user == approval.approver:
+            return Response(
+                {"error": "You cannot delegate to yourself."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if approval.is_deligate:
+            return Response(
+                {"error": "This approval has already been delegated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        approval.deligate_to = delegate_user
+        approval.is_deligate = True
+        approval.deligate_response = None
+        approval.save()
+
+        if delegate_user.email:
+
+            subject = "Delegation Assigned"
+
+            message = f"""
+                Delegation Assigned
+
+                Hello {delegate_user.get_username() or delegate_user.username},
+
+                You have been assigned a new delegation request.
+            
+                REQUEST DETAILS
+                _________________
+
+                Document Number : {approval.request.document_number}
+                Employee        : {approval.request.employee}
+                Request Type    : {approval.request.request_type}
+                Status          : {approval.request.status}
+
+                Please review the request and send your response to the original approver.
+
+                Thank You.
+                """
+
+            send_mail(
+                subject,
+                message,
+                None,
+                [delegate_user.email],
+                fail_silently=False,
+            )
+            created_notification = send_notification_email(
+                user=delegate_user,
+                employee=None,
+                branch=None,
+                title="Delegation Assigned",
+                message=f"{approval.approver.username} has delegated request {approval.request.document_number} to you.",
+                delegate_user=approval.approver,
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.request.employee),
+                        "doc_number": approval.request.document_number,
+                        "request_type": approval.request.request_type,
+                    },
+                    email_template_model=AirticketEmailTemplate,
+                    notification_model=AirticketNotification,
+            )
+
+            print("Notification Created:", created_notification)
+
+            return Response(
+                {
+                    "message": "Approval delegated successfully.",
+                    "approval_id": approval.id,
+                    "approver": approval.approver.username,
+                    "delegate_to": delegate_user.username,
+                    "status": approval.status,
+                },
+                status=status.HTTP_200_OK,
+            )
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+        approval = self.get_object()
+
+        response_text = request.data.get("deligate_response")
+
+        if not response_text:
+            return Response({"error": "Response is required"}, status=400)
+
+        approval.deligate_response = response_text
+        approval.save()
+
+        # ---------------- EMAIL ----------------
+        if approval.approver and approval.approver.email:
+            send_mail(
+                subject="Delegation Response Received",
+                message=response_text,
+                from_email=None,
+                recipient_list=[approval.approver.email],
+                fail_silently=False,
+            )
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=approval.approver,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            message=response_text,
+            delegate_user=approval.deligate_to,
+            template_type="request_created",
+            context={
+                    **get_employee_context(approval.request.employee),
+                    "doc_number": approval.request.document_number,
+                    "request_type": approval.request.request_type,
+                },
+                email_template_model=AirticketEmailTemplate,
+                notification_model=AirticketNotification,
+        )
+
+        return Response({
+            "message": "Response sent successfully",
+            "response": response_text
+        })
+ 
 class AirticketEmailTemplateViewSet(viewsets.ModelViewSet):
     queryset = AirticketEmailTemplate.objects.all()
     serializer_class = AirticketEmailTemplateSerializer
@@ -1102,6 +1244,25 @@ class AirticketEmailTemplateViewSet(viewsets.ModelViewSet):
             ]
         }
         return Response(placeholders)
+    
+class AirticketNotificationsViewSet(viewsets.ModelViewSet):
+    queryset = AirticketNotification.objects.all()
+    serializer_class = AirticketNotifySerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        # Admin / staff / superuser → see all request notifications
+        if user.is_superuser or user.is_staff:
+            return AirticketNotification.objects.all().order_by('-created_at')
+        # Normal user → show request notifications assigned directly to them
+        qs = AirticketNotification.objects.filter(
+            Q(recipient_user=user.id, is_deligate=False) |
+            Q(recipient_employee__users=user,is_deligate=False) |
+            Q(deligate_user=user.id,is_deligate=True)
+        ).distinct().order_by('-created_at')
+
+        return qs
+    
 class AirticketEscalationRuleViewSet(viewsets.ModelViewSet):
     """
     API for managing escalation settings on each approval level.

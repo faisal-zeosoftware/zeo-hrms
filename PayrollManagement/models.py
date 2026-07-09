@@ -1889,6 +1889,21 @@ class AirTicketAllocation(models.Model):
 
     def __str__(self):
         return f"{self.employee} - {self.amount} ({self.status})"
+    
+class AirticketNotification(models.Model):
+    recipient_user     = models.ForeignKey('UserManagement.CustomUser', null=True, blank=True,on_delete=models.CASCADE)
+    recipient_employee = models.ForeignKey('EmpManagement.emp_master', null=True, blank=True, on_delete=models.CASCADE)
+    message            = models.CharField(max_length=255)
+    created_at         = models.DateTimeField(auto_now_add=True)
+    is_read            = models.BooleanField(default=False)
+    deligate_user      = models.ForeignKey('UserManagement.CustomUser',null=True,blank=True,on_delete=models.CASCADE,related_name='airticket_deligated_notifications')
+    is_deligate        = models.BooleanField(default=False)
+
+    def __str__(self):
+        if self.recipient_user:
+            return f"Notification for {self.recipient_user.username}: {self.message}"
+        else:
+            return f"Notification for employee: {self.message}"
 
 class AirticketEmailTemplate(models.Model):
     template_type = models.CharField(max_length=50, choices=[
@@ -1956,7 +1971,9 @@ class AirTicketRequest(models.Model):
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request {self.document_number} has been rejected.",
+                message=(f"Your AirticketRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) has been Rejected."
+                    ),
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -1965,7 +1982,7 @@ class AirTicketRequest(models.Model):
                     'notes': self.notes,
                 },
                 email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification
+                notification_model=AirticketNotification
             )
             return
 
@@ -1992,7 +2009,9 @@ class AirTicketRequest(models.Model):
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
+                message=(f"Your AirticketRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) has been AutoApproved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2000,7 +2019,7 @@ class AirTicketRequest(models.Model):
                     'request_type': self.request_type,
                 },
                 email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification
+                notification_model=AirticketNotification
             )
             return
 
@@ -2022,7 +2041,9 @@ class AirTicketRequest(models.Model):
                 send_notification_email(
                     user=self.created_by,
                     employee=self.employee,
-                    message=f"Your request {self.document_number} has been approved.",
+                    message=(f"Your AirticketRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) has been Approved By ReportingManager."
+                    ),
                     template_type="request_approved",
                     context={
                         **get_employee_context(self.employee),
@@ -2030,7 +2051,7 @@ class AirTicketRequest(models.Model):
                         'request_type': self.request_type,
                     },
                     email_template_model=AirticketEmailTemplate,
-                    notification_model=RequestNotification
+                    notification_model=AirticketNotification
                 )
                 return
 
@@ -2049,7 +2070,9 @@ class AirTicketRequest(models.Model):
             send_notification_email(
                 user=reporting_manager,
                 employee=None,
-                message=f"New Air Ticket request: {self.document_number}",
+                message=(f"Your AirticketRequest {self.request_type}"
+                        f"(Document No: {self.document_number}) is waiting for your Approval."
+                    ),
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -2057,7 +2080,7 @@ class AirTicketRequest(models.Model):
                     'request_type': self.request_type,
                 },
                 email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification
+                notification_model=AirticketNotification
             )
             return
 
@@ -2083,7 +2106,9 @@ class AirTicketRequest(models.Model):
             send_notification_email(
                 user=self.created_by,
                 employee=self.employee,
-                message=f"Your request {self.document_number} has been approved.",
+                message=(f"Your AirticketRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) has been Approved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2091,7 +2116,7 @@ class AirTicketRequest(models.Model):
                     'request_type': self.request_type,
                 },
                 email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification
+                notification_model=AirticketNotification
             )
             return
 
@@ -2125,7 +2150,9 @@ class AirTicketRequest(models.Model):
         send_notification_email(
             user=next_level.approver,
             employee=None,
-            message=f"New Air Ticket request: {self.document_number}",
+            message=(f"Your DocumentRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) is waiting for your Approval."
+                    ),
             template_type="request_created",
             context={
                 **get_employee_context(self.employee),
@@ -2133,7 +2160,7 @@ class AirTicketRequest(models.Model):
                 'request_type': self.request_type,
             },
             email_template_model=AirticketEmailTemplate,
-            notification_model=RequestNotification
+            notification_model=AirticketNotification
         )
 
 class AirticketApprovalWorkflow(models.Model):
@@ -2200,6 +2227,9 @@ class AirticketApproval(models.Model):
     role = models.CharField(max_length=100, null=True, blank=True)
     level = models.PositiveIntegerField()
     note = models.TextField(null=True, blank=True)
+    deligate_to     = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='airticket_deligations_received')
+    is_deligate     = models.BooleanField(default=False)
+    deligate_response = models.TextField(null=True, blank=True)
     escalated = models.BooleanField(default=False)
     escalated_at = models.DateTimeField(null=True, blank=True)
     is_escalation = models.BooleanField(default=False)
@@ -2207,6 +2237,7 @@ class AirticketApproval(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
     created_at = models.DateTimeField(auto_now_add=True)
     created_by      = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')
+    updated_at = models.DateTimeField(auto_now=True)
 
 
     def __str__(self):
@@ -2243,14 +2274,16 @@ class AirticketApproval(models.Model):
         send_notification_email(
             user=self.request.created_by,
             employee=self.request.employee,
-            message=f"Your air ticket request {self.request.document_number} has been rejected.",
+            message=(f"Your AirticketRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) has been Rejected."
+                    ),
             template_type="request_rejected",
             context={
                 **get_employee_context(self.request.employee),
                 'document_number': self.request.document_number,
             },
             email_template_model=AirticketEmailTemplate,
-            notification_model=RequestNotification
+            notification_model=AirticketNotification
         )
 @receiver(post_save, sender=AirTicketRequest)
 def create_initial_airticket_approval(sender, instance, created, **kwargs):
@@ -2301,7 +2334,9 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                 branch=instance.branch,
                 title="Air Ticket Auto Approved",
                 notification_type="air_ticket",
-                message=f"Your air ticket request {instance.document_number} was auto approved.",
+                message=(f"Your AirticketRequest {instance.request_type}"
+                     f"(Document No: {instance.document_number}) has been AutoApproved."
+                    ),
                 template_type="request_approved",
                 context={
                     **get_employee_context(instance.employee),
@@ -2309,7 +2344,7 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                     "request_type": instance.request_type,
                 },
                 email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification,
+                notification_model=AirticketNotification,
             )
 
             return
@@ -2337,7 +2372,9 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                 branch=instance.branch,
                 title="Air Ticket Approval Request",
                 notification_type="air_ticket",
-                message=f"New air ticket request {instance.document_number} requires your approval.",
+                message=(f"Your AirticketRequest {instance.request_type}"
+                     f"(Document No: {instance.document_number}) is waiting for your Approval."
+                    ),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -2345,7 +2382,7 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                     "request_type": instance.request_type,
                 },
                 email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification,
+                notification_model=AirticketNotification,
             )
 
             return
@@ -2378,7 +2415,9 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                 branch=instance.branch,
                 title="Air Ticket Approval Request",
                 notification_type="air_ticket",
-                message=f"New air ticket request {instance.document_number} requires your approval.",
+                message=(f"Your AirticketRequest {instance.request_type}"
+                     f"(Document No: {instance.document_number}) is waiting for your Approval."
+                    ),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -2386,7 +2425,6 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                     "request_type": instance.request_type,
                 },
                 email_template_model=AirticketEmailTemplate,
-                notification_model=RequestNotification,
-            )
-
+                notification_model=AirticketNotification
+                )
             return

@@ -2834,7 +2834,7 @@ class LateinEarlyoutRequest(models.Model):
 
             send_notification_email(
                 employee=self.employee,
-                message=f"Your {self.request_type} request has been rejected.",
+                message=f"Your LateinEarlyoutRequest {self.request_type} has been Rejected.",
                 template_type="request_rejected",
                 context={
                     **get_employee_context(self.employee),
@@ -2856,7 +2856,7 @@ class LateinEarlyoutRequest(models.Model):
             self.save()
             send_notification_email(
             employee=self.employee,
-            message=f"Your {self.request_type} request has been auto approved.",
+            message=f"Your LateinEarlyoutRequest {self.request_type} has been AutoApproved.",
             template_type="request_approved",
             context={
                 **get_employee_context(self.employee),
@@ -2879,7 +2879,7 @@ class LateinEarlyoutRequest(models.Model):
                 self.save()
                 send_notification_email(
                 employee=self.employee,
-                message=f"Your {self.request_type} request has been approved by reporting manager.",
+                message=f"Your LateinEarlyout Request {self.request_type} has been Approved by ReportingManager.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -2893,7 +2893,7 @@ class LateinEarlyoutRequest(models.Model):
                 return
 
         # =========================
-        # MULTI APPROVAL (LIKE GENERALREQUEST)
+        # MULTI APPROVAL 
         # =========================
 
         last_approved = self.lateinearlyout_approvals.filter(
@@ -2926,7 +2926,7 @@ class LateinEarlyoutRequest(models.Model):
             send_notification_email(
                 user=next_level.approver,
                 employee=None,
-                message=f"New {self.request_type} request waiting for your approval.",
+                message=f"Your LateinEarlyout Request {self.request_type} is waiting for your Approval.",
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -2943,7 +2943,7 @@ class LateinEarlyoutRequest(models.Model):
 
             send_notification_email(
                 employee=self.employee,
-                message=f"Your {self.request_type} request has been fully approved.",
+                message=f"Your LateinEarlyout Request {self.request_type} has been fully Approved.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(self.employee),
@@ -3005,6 +3005,9 @@ class LateinEarlyoutApproval(models.Model):
     level                  = models.IntegerField(default=1)
     status                 = models.CharField(max_length=20,choices=STATUS_CHOICES,default=PENDING)
     note                   = models.TextField(null=True, blank=True)
+    deligate_to            = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,blank=True,related_name='lateinearlyout_deligations_received')
+    is_deligate            = models.BooleanField(default=False)
+    deligate_response      = models.TextField(null=True, blank=True)
     created_at             = models.DateTimeField(auto_now_add=True)
     created_by             = models.ForeignKey('UserManagement.CustomUser',on_delete=models.SET_NULL,null=True,related_name='late_early_created_by')
     updated_at             = models.DateTimeField(auto_now=True)
@@ -3030,7 +3033,7 @@ class LateinEarlyoutApproval(models.Model):
 
         send_notification_email(
             employee=request.employee,
-            message=f"Your {request.request_type} request has been rejected.",
+            message=f"Your LateinEarlyoutRequest {self.request_type} has been Rejected.",
             template_type="request_rejected",
             context={
                 **get_employee_context(request.employee),
@@ -3074,7 +3077,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             instance.save(update_fields=["status"])
             send_notification_email(
                 employee=instance.employee,
-                message=f"Your {instance.request_type} request has been automatically approved.",
+                message=f"Your LateinEarlyoutRequest {instance.request_type} has been AutoApproved.",
                 template_type="request_approved",
                 context={
                     **get_employee_context(instance.employee),
@@ -3105,7 +3108,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             send_notification_email(
                 user=manager,
                 employee=None,
-                message=f"New {instance.request_type} request for approval: {instance.employee}",
+                message=f"Your LateinEarlyoutRequest {instance.request_type} is waiting for your Approval.",
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -3132,7 +3135,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         send_notification_email(
             user=first_level.approver,
             employee=None,
-            message=f"New {instance.request_type} request waiting for approval.",
+            message=f"Your LateinEarlyoutRequest {instance.request_type} is waiting for your Approval.",
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),

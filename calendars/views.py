@@ -3304,6 +3304,22 @@ class LateinEarlyoutApprovalLevelViewset(viewsets.ModelViewSet):
 class LateinEarlyoutApprovalViewset(viewsets.ModelViewSet):
     queryset = LateinEarlyoutApproval.objects.all()
     serializer_class = LateinEarlyoutApprovalSerializer
+
+    def get_queryset(self):
+         user = self.request.user
+
+         if not user.is_authenticated:
+             return LateinEarlyoutApproval.objects.none()
+
+         if user.is_superuser:
+             return LateinEarlyoutApproval.objects.all()
+         
+         return LateinEarlyoutApproval.objects.filter(
+        Q(approver=user) |
+        Q(deligate_to=user, is_deligate=True)
+     ).distinct()
+
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         approval = self.get_object()
@@ -3320,6 +3336,139 @@ class LateinEarlyoutApprovalViewset(viewsets.ModelViewSet):
         note = request.data.get('note')  # Get the note from the request
         approval.reject(note=note)
         return Response({'status': 'rejected', 'note': note}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def delegate(self, request, pk=None):
+        approval = self.get_object()
+
+        delegate_user_id = request.data.get("deligate_to")
+
+        if not delegate_user_id:
+            return Response(
+                {"error": "Delegate user is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        delegate_user = get_object_or_404(CustomUser, pk=delegate_user_id)
+
+        if delegate_user == approval.approver:
+            return Response(
+                {"error": "You cannot delegate to yourself."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if approval.is_deligate:
+            return Response(
+                {"error": "This approval has already been delegated."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        approval.deligate_to = delegate_user
+        approval.is_deligate = True
+        approval.deligate_response = None
+        approval.save()
+
+        if delegate_user.email:
+
+            subject = "Delegation Assigned"
+
+            message = f"""
+                Delegation Assigned
+
+                Hello {delegate_user.get_username() or delegate_user.username},
+
+                You have been assigned a new delegation request.
+
+
+                REQUEST DETAILS
+                _________________
+
+                Employee        : {approval.lateinearlyout_request.employee}
+                Request Type    : {approval.lateinearlyout_request.request_type}
+                Status          : {approval.lateinearlyout_request.status}
+
+                Please review the request and send your response to the original approver.
+
+                Thank You.
+                """
+
+            send_mail(
+                subject,
+                message,
+                None,
+                [delegate_user.email],
+                fail_silently=False,
+            )
+            created_notification = send_notification_email(
+                user=delegate_user,
+                employee=None,
+                branch=None,
+                title="Delegation Assigned",
+                message=f"{approval.approver.username} has delegated request {approval.lateinearlyout_request.request_type} to you.",
+                delegate_user=approval.approver,
+                template_type="request_created",
+                context={
+                    **get_employee_context(approval.lateinearlyout_request.employee),
+                        "request_type": approval.lateinearlyout_request.request_type,
+                    },
+                    email_template_model=LatinEarlyoutEmailTemplate,
+                    notification_model=LateinEarlyRequestNotification,
+                    )
+            print("Notification Created:", created_notification)
+            
+            return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+    @action(detail=True, methods=["post"])
+    def send_response(self, request, pk=None):
+        approval = self.get_object()
+
+        response_text = request.data.get("deligate_response")
+
+        if not response_text:
+            return Response({"error": "Response is required"}, status=400)
+
+        approval.deligate_response = response_text
+        approval.save()
+
+        # ---------------- EMAIL ----------------
+        if approval.approver and approval.approver.email:
+            send_mail(
+                subject="Delegation Response Received",
+                message=response_text,
+                from_email=None,
+                recipient_list=[approval.approver.email],
+                fail_silently=False,
+            )
+
+        # ---------------- NOTIFICATION ----------------
+        send_notification_email(
+            user=approval.approver,
+            employee=None,
+            branch=None,
+            title="Delegation Response Received",
+            message=response_text,
+            delegate_user=approval.deligate_to,
+            template_type="request_created",
+            context={
+                    **get_employee_context(approval.lateinearlyout_request.employee),
+                    "request_type": approval.lateinearlyout_request.request_type,
+                },
+                email_template_model=LatinEarlyoutEmailTemplate,
+                notification_model=LateinEarlyRequestNotification,
+        )
+
+        return Response({
+            "message": "Response sent successfully",
+            "response": response_text
+        })
 
 
 class LeaveResetPreviewAPIView(APIView):

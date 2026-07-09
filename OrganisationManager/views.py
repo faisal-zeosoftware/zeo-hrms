@@ -44,7 +44,7 @@ import os
 from django.utils import timezone
 from django.db.models import Q,Field
 from django.contrib.contenttypes.models import ContentType
-from django.core.mail import EmailMessage
+from django.core.mail import EmailMessage,send_mail
 from EmpManagement.models import EmailConfiguration  # Adjust path
 from django.views.decorators.csrf import csrf_exempt
 from django.db import transaction

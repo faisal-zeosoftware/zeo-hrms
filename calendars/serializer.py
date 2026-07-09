@@ -837,7 +837,7 @@ class LateinEarlyoutApprovalSerializer(serializers.ModelSerializer):
         if instance.approver:  
             rep['approver'] = instance.approver.username
         if instance.lateinearlyout_request:
-            rep['lateinearlyout_request'] = instance.lateinearlyout_request.request_type
+            rep['lateinearlyout_request'] = instance.lateinearlyout_request.document_number
         if instance.deligate_to:
             rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
         return rep

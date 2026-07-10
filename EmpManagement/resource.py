@@ -72,7 +72,7 @@ class CustomForeignKeyWidget(ForeignKeyWidget):
         value = value.strip()  # remove spaces
 
         # Get branch name from Excel
-        branch_name = row.get('Employee Branch Code')
+        branch_name = row.get('Branch*')
 
         matching_branch = brnch_mstr.objects.filter(branch_name__iexact=branch_name.strip()).first()
         if not matching_branch:

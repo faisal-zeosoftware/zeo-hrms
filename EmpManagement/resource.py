@@ -144,69 +144,64 @@ class CustomDateWidget(Widget):
             return ''
         return value.strftime('%d/%m/%Y')
 class EmployeeResource(resources.ModelResource):
-    emp_code = fields.Field(attribute='emp_code', column_name='Employee Code')
-    emp_first_name = fields.Field(attribute='emp_first_name', column_name='Employee First Name')
-    emp_last_name = fields.Field(attribute='emp_last_name', column_name='Employee Last Name')
-    emp_gender = fields.Field(attribute='emp_gender', column_name='Employee Gender')
-    emp_date_of_birth = fields.Field(attribute='emp_date_of_birth', column_name='Employee DOB(DD/MM/YYYY)', widget=CustomDateWidget())
-    emp_personal_email = fields.Field(attribute='emp_personal_email', column_name='Employee Personal Email ID')
-    emp_company_email= fields.Field(attribute='emp_company_email', column_name='Employee Company Email ID')
+    emp_code = fields.Field(attribute='emp_code', column_name='Employee Code*')
+    emp_first_name = fields.Field(attribute='emp_first_name', column_name='First Name*')
+    emp_middle_name = fields.Field(attribute='emp_middle_name', column_name="Middle Name")
+    emp_last_name = fields.Field(attribute='emp_last_name', column_name='Last Name')
+    emp_gender = fields.Field(attribute='emp_gender', column_name='Gender')
+    emp_date_of_birth = fields.Field(attribute='emp_date_of_birth', column_name='Date of Birth(DD/MM/YYYY)*', widget=CustomDateWidget())
+    emp_personal_email = fields.Field(attribute='emp_personal_email', column_name='Personal Email ID')
+    emp_company_email= fields.Field(attribute='emp_company_email', column_name='Email')
     is_ess = fields.Field(attribute='is_ess', column_name='Iss ESS (True/False)')
-    emp_mobile_number_1 = fields.Field(attribute='emp_mobile_number_1', column_name='Employee Personal Mob No')
-    emp_mobile_number_2 = fields.Field(attribute='emp_mobile_number_2', column_name='Employee Company Mobile No')
-    emp_country_id = fields.Field(attribute='emp_country_id', column_name='Employee Country Code',widget=CaseInsensitiveForeignKeyWidget(cntry_mstr, 'country_name'))
-    emp_state_id = fields.Field(attribute='emp_state_id', column_name='Employee State',widget=CaseInsensitiveForeignKeyWidget(state_mstr, 'state_name'))
-    emp_city = fields.Field(attribute='emp_city', column_name='Employee City')
-    emp_permenent_address = fields.Field(attribute='emp_permenent_address', column_name='Employee Permanent Address')
-    emp_present_address = fields.Field(attribute='emp_present_address', column_name='Employee Current Address')
+    emp_mobile_number_1 = fields.Field(attribute='emp_mobile_number_1', column_name='Personal Number')
+    emp_mobile_number_2 = fields.Field(attribute='emp_mobile_number_2', column_name='Company Number')
+    # emp_country_id = fields.Field(attribute='emp_country_id', column_name='Country',widget=CaseInsensitiveForeignKeyWidget(cntry_mstr, 'country_name'))
+    # emp_state_id = fields.Field(attribute='emp_state_id', column_name='State',widget=CaseInsensitiveForeignKeyWidget(state_mstr, 'state_name'))
+    emp_city = fields.Field(attribute='emp_city', column_name='City')
+    emp_permenent_address = fields.Field(attribute='emp_permenent_address', column_name='Permanent Address')
+    emp_present_address = fields.Field(attribute='emp_present_address', column_name='Present Address')
     emp_status = fields.Field(attribute='emp_status', column_name='Employee Status(True/False)')
-    emp_joined_date = fields.Field(attribute='emp_joined_date', column_name='Employee Joining Date(DD/MM/YYYY)', widget=CustomDateWidget())
-    emp_date_of_confirmation = fields.Field(attribute='emp_date_of_confirmation', column_name='Employee Confirmaton Date(DD/MM/YYYY)', widget=CustomDateWidget())
-    emp_relegion = fields.Field(attribute='emp_relegion', column_name='Employee Religion', widget=ForeignKeyWidget(ReligionMaster, 'religion'))
-    emp_blood_group = fields.Field(attribute='emp_blood_group', column_name='Employee Blood Group')
-    emp_nationality = fields.Field(attribute='emp_nationality', column_name='Employee Nationality', widget=CaseInsensitiveForeignKeyWidget(Nationality, 'N_name'))
-    emp_marital_status = fields.Field(attribute='emp_marital_status', column_name='Employee Marital Status')
-    emp_father_name = fields.Field(attribute='emp_father_name', column_name='Employee Father Name')
-    emp_mother_name = fields.Field(attribute='emp_mother_name', column_name='Employee Mother Name')
+    emp_joined_date = fields.Field(attribute='emp_joined_date', column_name='Joining Date(DD/MM/YYYY)*', widget=CustomDateWidget())
+    emp_date_of_confirmation = fields.Field(attribute='emp_date_of_confirmation', column_name='Confirmaton Date(DD/MM/YYYY)', widget=CustomDateWidget())
+    emp_reporting_manager = fields.Field(attribute='emp_reporting_manager', column_name='Reporting Manager',widget=ForeignKeyWidget(CustomUser,'username'))
+    emp_relegion = fields.Field(attribute='emp_relegion', column_name='Religion', widget=ForeignKeyWidget(ReligionMaster, 'religion'))
+    emp_blood_group = fields.Field(attribute='emp_blood_group', column_name='Blood Group')
+    emp_nationality = fields.Field(attribute='emp_nationality', column_name='Nationality*', widget=CaseInsensitiveForeignKeyWidget(Nationality, 'N_name'))
+    emp_marital_status = fields.Field(attribute='emp_marital_status', column_name='Marital Status')
+    emp_father_name = fields.Field(attribute='emp_father_name', column_name='Father Name')
+    emp_mother_name = fields.Field(attribute='emp_mother_name', column_name='Mother Name')
     is_active = fields.Field(attribute='is_active', column_name='Employee Active(True/False)')
     emp_ot_applicable = fields.Field(attribute='emp_ot_applicable', column_name='Employee OT applicable(True/False)')
-    emp_branch_id = fields.Field(attribute='emp_branch_id', column_name='Employee Branch Code', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
-    emp_dept_id = fields.Field(attribute='emp_dept_id', column_name='Employee Department Code', widget=CustomForeignKeyWidget(dept_master, 'dept_name'))
-    emp_desgntn_id = fields.Field(attribute='emp_desgntn_id', column_name='Employee Designation Code', widget=CaseInsensitiveForeignKeyWidget(desgntn_master, 'desgntn_job_title'))
-    emp_ctgry_id = fields.Field(attribute='emp_ctgry_id', column_name='Employee Category Code', widget=ForeignKeyWidget(ctgry_master, 'ctgry_title'))
+    emp_branch_id = fields.Field(attribute='emp_branch_id',column_name='Branch*',widget=CaseInsensitiveForeignKeyWidget(brnch_mstr,'branch_name'))
+    emp_dept_id = fields.Field(attribute='emp_dept_id', column_name='Department*', widget=CustomForeignKeyWidget(dept_master, 'dept_name'))
+    emp_desgntn_id = fields.Field(attribute='emp_desgntn_id', column_name='Designation*', widget=CaseInsensitiveForeignKeyWidget(desgntn_master, 'desgntn_job_title'))
+    emp_ctgry_id = fields.Field(attribute='emp_ctgry_id', column_name='Category*', widget=ForeignKeyWidget(ctgry_master, 'ctgry_title'))
+    attendance_source=fields.Field(attribute='attendance_source',column_name='Attendance Source')
     person_id = fields.Field(attribute='person_id', column_name='Person ID')
-    work_location = fields.Field(attribute='work_locatio', column_name='Employee Work Location', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
-    visa_location = fields.Field(attribute='visa_location', column_name='Employee Visa Location', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
-    emp_profile_pic = fields.Field(attribute='emp_profile_pic', column_name='Employee Profile Picture', widget=FileWidget())
+    work_location = fields.Field(attribute='work_location', column_name='Work Location', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
+    visa_location = fields.Field(attribute='visa_location', column_name='Visa Location', widget=ForeignKeyWidget(brnch_mstr, 'branch_name'))
+    emp_profile_pic = fields.Field(attribute='emp_profile_pic', column_name='Profile Picture', widget=FileWidget())
 
     class Meta:
         model = emp_master     
         fields = (
-            'emp_code','emp_first_name','emp_last_name','emp_gender','emp_date_of_birth',
+            'emp_code','emp_first_name','emp_middle_name','emp_last_name','emp_gender','emp_date_of_birth',
             'emp_personal_email','emp_company_email','is_ess','emp_mobile_number_1',
-            'emp_mobile_number_2','emp_country_id','emp_state_id','emp_city',
+            'emp_mobile_number_2','emp_city',
             'emp_permenent_address','emp_present_address','emp_status','emp_joined_date',
-            'emp_date_of_confirmation','emp_relegion','emp_blood_group','emp_nationality',
+            'emp_date_of_confirmation','emp_reporting_manager','emp_relegion','emp_blood_group','emp_nationality',
             'emp_marital_status','emp_father_name','emp_mother_name',
             'is_active','emp_ot_applicable','emp_branch_id','emp_dept_id','emp_desgntn_id',
-            'emp_ctgry_id','emp_profile_pic','person_id','work_location','visa_location'
+            'emp_ctgry_id','attendance_source','emp_profile_pic','person_id','work_location','visa_location'
         )
         import_id_fields = ['emp_code'] 
         skip_unchanged = True
         report_skipped = True
-    def before_import(self, dataset, **kwargs):
-        self._seen_emails = set()
     def before_import_row(self, row, **kwargs):
         if isinstance(row, list):
             row = dict(zip(self.get_header_names(), row))
 
-        if not hasattr(self, '_seen_emails'):
-            self._seen_emails = set()
-        
         errors = []
-
-        # Normalize row keys (strip whitespace)
-        row = {str(k).strip(): v for k, v in row.items()}
 
         # 1️⃣ Normalize strings and replace None
         for key, value in row.items():
@@ -215,8 +210,8 @@ class EmployeeResource(resources.ModelResource):
             elif value is None:
                 row[key] = ""
         mandatory_fields = {
-        'Employee DOB(DD/MM/YYYY)': 'Employee Date of Birth',
-        'Employee Joining Date(DD/MM/YYYY)': 'Employee Joining Date'
+        'Date of Birth(DD/MM/YYYY)*': 'Employee Date of Birth',
+        'Joining Date(DD/MM/YYYY)*': 'Employee Joining Date'
         }
         for field, display_name in mandatory_fields.items():
             if not row.get(field):
@@ -226,27 +221,25 @@ class EmployeeResource(resources.ModelResource):
         if errors:
             raise ValidationError(errors)
         # 2️⃣ Branch
-        branch_name = row.get('Employee Branch Code', '').strip()
-        department_name = row.get('Employee Department Code', '').strip()
-        designation_name = row.get('Employee Designation Code', '').strip()
-        category_name = row.get('Employee Category Code', '').strip()
-        work_location_name = row.get('Employee Work Location', '').strip()
-        visa_location_name = row.get('Employee Visa Location', '').strip()
+        branch_name = row.get('Branch*', '').strip()
+        department_name = row.get('Department*', '').strip()
+        designation_name = row.get('Designation*', '').strip()
+        category_name = row.get('Category*', '').strip()
+        work_location_name = row.get('Work Location', '').strip()
+        visa_location_name = row.get('Visa Location', '').strip()
 
         matching_branch = None
         if branch_name:
             matching_branch = brnch_mstr.objects.filter(branch_name__iexact=branch_name).first()
             if not matching_branch:
                 errors.append(f"No matching branch found for Branch: '{branch_name}'")
-            else:
-                row['emp_branch_id'] = matching_branch.id
         else:
             errors.append("Employee Branch Code is required.")
 
         # 3️⃣ Department (check branch dependency)
         if matching_branch and department_name:
             dept = dept_master.objects.filter(
-                branch=matching_branch,
+                branch=matching_branch.id,
                 dept_name__iexact=department_name
             ).first()
             if not dept:
@@ -299,8 +292,8 @@ class EmployeeResource(resources.ModelResource):
             row['visa_location'] = None
 
         # 8️⃣ Country, State Validation
-        country_name = row.get('Employee Country Code', '').strip()
-        state_name = row.get('Employee State', '').strip()
+        country_name = row.get('Country Code', '').strip()
+        state_name = row.get('State', '').strip()
 
         if country_name:
             country = cntry_mstr.objects.filter(country_name__iexact=country_name).first()
@@ -321,7 +314,7 @@ class EmployeeResource(resources.ModelResource):
             row['emp_state_id'] = None
 
         # 9️⃣ Nationality
-        nationality_name = row.get('Employee Nationality', '').strip()
+        nationality_name = row.get('Nationality*', '').strip()
         if nationality_name:
             nationality = Nationality.objects.filter(N_name__iexact=nationality_name).first()
             if not nationality:
@@ -332,7 +325,7 @@ class EmployeeResource(resources.ModelResource):
             row['emp_nationality'] = None
 
         # 🔟 Religion
-        religion_name = row.get('Employee Religion', '').strip()
+        religion_name = row.get('Religion', '').strip()
         if religion_name:
             religion = ReligionMaster.objects.filter(religion__iexact=religion_name).first()
             if not religion:
@@ -366,43 +359,20 @@ class EmployeeResource(resources.ModelResource):
                 errors.append(f"Invalid boolean value for {field}: '{value}'")
 
         # 1️⃣2️⃣ Validate Gender
-        gender = row.get('Employee Gender')
+        gender = row.get('Gender')
         if gender and gender not in ['Male', 'Female', 'Other', 'M', 'F', 'O']:
             errors.append(f"Invalid Gender '{gender}'. Allowed: Male, Female, Other, M, F, O")
 
         # 1️⃣3️⃣ Validate Email
-        email = row.get('Employee Personal Email ID')
-        if email:
-            email = str(email).strip().lower()
-            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
-                errors.append(f"Invalid email format for Personal Email ID: '{email}'")
-            else:
-                # Check for duplicates in CustomUser
-                emp_code = str(row.get('Employee Code', '')).strip()
-                if CustomUser.objects.filter(email__iexact=email).exclude(username=emp_code).exists():
-                    errors.append(f"Personal Email '{email}' already exists for another user.")
-                elif email in self._seen_emails:
-                    errors.append(f"Duplicate Personal Email '{email}' found in the upload sheet.")
-                else:
-                    self._seen_emails.add(email)
-
-        compny_email = row.get('Employee Company Email ID')
-        if compny_email:
-            compny_email = str(compny_email).strip().lower()
-            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', compny_email):
-                errors.append(f"Invalid email format For Company Email IDS: '{compny_email}'")
-            else:
-                # Check for duplicates in CustomUser
-                emp_code = str(row.get('Employee Code', '')).strip()
-                if CustomUser.objects.filter(email__iexact=compny_email).exclude(username=emp_code).exists():
-                    errors.append(f"Company Email '{compny_email}' already exists for another user.")
-                elif compny_email in self._seen_emails:
-                    errors.append(f"Duplicate Company Email '{compny_email}' found in the upload sheet.")
-                else:
-                    self._seen_emails.add(compny_email)
+        email = row.get('Personal Email ID')
+        if email and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+            errors.append(f"Invalid email format for Personal Email ID: '{email}'")
+        compny_email= row.get('Company Email ID')
+        if compny_email and not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', compny_email):
+            errors.append(f"Invalid email format For Company Email IDS: '{compny_email}'")
         
         # 1️⃣4️⃣ Validate Marital Status
-        marital_status = row.get('Employee Marital Status')
+        marital_status = row.get('Marital Status')
         if marital_status and marital_status.lower() not in ['married', 'single', 'divorced', 'widow']:
             errors.append("Invalid Marital Status. Allowed: Married, Single, Divorced, Widow")
 
@@ -425,7 +395,7 @@ class EmployeeResource(resources.ModelResource):
         else:
             row['person_id'] = None
         #date validation
-        date_fields = ['Employee DOB(DD/MM/YYYY)', 'Employee Joining Date(DD/MM/YYYY)', 'Employee Confirmaton Date(DD/MM/YYYY)']
+        date_fields = ['Date of Birth(DD/MM/YYYY)*', 'Joining Date(DD/MM/YYYY)*', 'Confirmaton Date(DD/MM/YYYY)']
         for field in date_fields:
             date_value = row.get(field)
             if date_value:

@@ -3153,7 +3153,7 @@ class LatinEarlyoutEmailTemplateViewset(viewsets.ModelViewSet):
             'to_addresses': to_list
         })
     
-class LateinEarlyRequestNotificationViewset(viewsets.ReadOnlyModelViewSet):
+class LateinEarlyRequestNotificationViewset(viewsets.ModelViewSet):
     queryset =LateinEarlyRequestNotification.objects.all()
     serializer_class = LateinEarlyRequestNotificationSerializer   
     def get_queryset(self):

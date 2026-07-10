@@ -1253,12 +1253,6 @@ class ResignationTemplateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"template_type": f"{template_type} template already exists."
         })
         return attrs
-
-    def to_representation(self, instance):
-            rep = super( EmployeeResignationSerializer, self).to_representation(instance)
-            if instance.employee:  
-                rep['employee'] = instance.employee.emp_first_name
-            return rep
 class DocRequestEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocRequestEmailTemplate

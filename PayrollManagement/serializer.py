@@ -560,7 +560,7 @@ class LoanApprovalSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super(LoanApprovalSerializer, self).to_representation(instance)
         if instance.loan_request:
-            rep['loan_request'] =instance.loan_request.loan_type.loan_type 
+            rep['loan_request'] =instance.loan_request.document_number 
         if instance.employee_id:
             try:
                 emp = emp_master.objects.get(id=instance.employee_id)

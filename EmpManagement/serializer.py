@@ -376,7 +376,7 @@ class DocRequestSerializer(serializers.ModelSerializer):
         if instance.request_type:  
             rep['request_type'] = instance.request_type.type_name
         if instance.employee:  
-            rep['employee'] = instance.employee.emp_first_name
+            rep['employee'] = instance.employee.emp_code
         if instance.branch:
             rep['branch']=instance.branch.branch_name
         
@@ -687,7 +687,7 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super(GeneralRequestSerializer, self).to_representation(instance)
         if instance.employee:  
-            rep['employee'] = instance.employee.emp_first_name
+            rep['employee'] = instance.employee.emp_code
         if instance.request_type:  
             rep['request_type'] = instance.request_type.name
         if instance.branch:
@@ -889,16 +889,11 @@ class NotificationSettingsSerializer(serializers.ModelSerializer):
         def to_representation(self, instance):
             rep = super().to_representation(instance)
 
-            rep['branch'] = [
-                branch.branch_name
-                for branch in instance.branch.all()
-            ]
-
-            rep['notify_users'] = [
-                user.username
-                for user in instance.notify_users.all()
-            ]
-
+            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+            rep['notify_users'] = [user.username for user in instance.notify_users.all()]
+            rep['Department'] = [dept.dept_name for dept in instance.Department.all()]
+            rep['Designation'] = [desgntn.desgntn_job_title for desgntn in instance.Designation.all()]
+            rep['Category'] = [ctgry.ctgry_title for ctgry in instance.Category.all()]
             return rep
 class DocExpEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:

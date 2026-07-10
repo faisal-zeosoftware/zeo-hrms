@@ -143,6 +143,22 @@ class AnnouncementSerializer(serializers.ModelSerializer):
     class Meta:
         model = Announcement
         fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super( AnnouncementSerializer, self).to_representation(instance)
+        if instance.branches.exists():
+            rep['branches'] = [branches.branch_name for branches in instance.branches.all()]
+        if instance.specific_employees.exists():
+            rep['specific_employees'] = [emp.emp_code for emp in instance.specific_employees.all()]
+        if instance.department.exists():
+            rep['department']=[dept.dept_name for dept in instance.department.all()]
+        if instance.designation.exists():
+            rep['designation']=[designation.desgntn_job_title for designation in instance.designation.all()]
+        if instance.category.exists():
+            rep['category']=[cate.ctgry_title for cate in instance.category.all()]
+        
+        return rep
+    
 class AnnouncementViewSerializer(serializers.ModelSerializer):
     class Meta:
         model = AnnouncementView

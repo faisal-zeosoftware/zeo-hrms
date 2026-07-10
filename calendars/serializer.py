@@ -373,7 +373,7 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         rep = super().to_representation(instance)
 
         if instance.employee:
-            rep['employee'] = instance.employee.emp_first_name
+            rep['employee'] = instance.employee.emp_code
 
         if instance.leave_type:
             rep['leave_type'] = instance.leave_type.name

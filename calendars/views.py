@@ -3802,81 +3802,139 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def calendar_view(self, request):
         employee_id = request.query_params.get('employee_id')
+        branch_id = request.query_params.get('branch_id')
         start_date_str = request.query_params.get('start_date')
         end_date_str = request.query_params.get('end_date')
 
-        if not all([employee_id, start_date_str, end_date_str]):
-            return Response({"error": "employee_id, start_date, and end_date are required"}, status=400)
+        if not start_date_str or not end_date_str:
+            return Response(
+                {"error": "start_date and end_date are required"},
+                status=400
+            )
 
         try:
-            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
         except ValueError:
-            return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+            return Response(
+                {"error": "Invalid date format. Use YYYY-MM-DD"},
+                status=400
+            )
 
-        employee = get_object_or_404(emp_master, id=employee_id)
-        
-        # Get existing records
-        records = AttendanceCalendar.objects.filter(
-            employee=employee,
-            date__range=(start_date, end_date)
-        ).select_related('leave_type')
-        
-        record_map = {r.date: r for r in records}
-        
         from .utils import get_employee_weekend_days, get_employee_holidays
-        weekend_days = get_employee_weekend_days(employee)
-        holiday_dates = get_employee_holidays(employee, start_date, end_date)
 
-        calendar_data = []
-        curr_date = start_date
-        while curr_date <= end_date:
-            record = record_map.get(curr_date)
-            
-            if record:
-                status = record.status
-                leave_name = record.leave_type.name if record.leave_type else None
-                is_half_day = record.is_half_day
-                remarks = record.remarks
-            else:
-                # Determine status on the fly if no record exists
-                weekday = curr_date.strftime("%A")
-                if curr_date in holiday_dates:
-                    status = "Holiday"
-                elif weekday in weekend_days:
-                    status = "Weekend"
+        # ----------------------------------------
+        # Determine Employees
+        # ----------------------------------------
+
+        if employee_id:
+            employees = emp_master.objects.filter(id=employee_id)
+
+        elif branch_id:
+            employees = emp_master.objects.filter(
+                emp_branch_id_id=branch_id,
+                is_active=True
+            )
+
+        else:
+            employees = emp_master.objects.filter(
+                is_active=True
+            )
+
+        if not employees.exists():
+            return Response({"error": "No employees found"}, status=404)
+
+        response_data = []
+
+        for employee in employees:
+
+            records = AttendanceCalendar.objects.filter(
+                employee=employee,
+                date__range=(start_date, end_date)
+            ).select_related("leave_type")
+
+            record_map = {
+                r.date: r for r in records
+            }
+
+            weekend_days = get_employee_weekend_days(employee)
+            holiday_dates = get_employee_holidays(
+                employee,
+                start_date,
+                end_date
+            )
+
+            calendar_data = []
+
+            current_date = start_date
+
+            while current_date <= end_date:
+
+                record = record_map.get(current_date)
+
+                if record:
+
+                    status = record.status
+                    leave_name = (
+                        record.leave_type.name
+                        if record.leave_type
+                        else None
+                    )
+
+                    is_half_day = record.is_half_day
+                    remarks = record.remarks
+
                 else:
-                    status = "Present" # Default
-                
-                leave_name = None
-                is_half_day = False
-                remarks = "Auto-determined"
 
-            # Format for display
-            display_status = status
-            if status == "Leave" and leave_name:
-                display_status = f"Leave ({leave_name})"
-                if is_half_day:
-                    display_status += " (Half Day)"
-            
-            calendar_data.append({
-                "date": curr_date.strftime('%Y-%m-%d'),
-                "day": curr_date.strftime('%A'),
-                "status": status,
-                "display_status": display_status,
-                "leave_type": leave_name,
-                "is_half_day": is_half_day,
-                "remarks": remarks
+                    weekday = current_date.strftime("%A")
+
+                    if current_date in holiday_dates:
+                        status = "Holiday"
+
+                    elif weekday in weekend_days:
+                        status = "Weekend"
+
+                    else:
+                        status = "Present"
+
+                    leave_name = None
+                    is_half_day = False
+                    remarks = "Auto-determined"
+
+                display_status = status
+
+                if status == "Leave" and leave_name:
+                    display_status = f"Leave ({leave_name})"
+
+                    if is_half_day:
+                        display_status += " (Half Day)"
+
+                calendar_data.append({
+                    "date": current_date.strftime("%Y-%m-%d"),
+                    "day": current_date.strftime("%A"),
+                    "status": status,
+                    "display_status": display_status,
+                    "leave_type": leave_name,
+                    "is_half_day": is_half_day,
+                    "remarks": remarks,
+                })
+
+                current_date += timedelta(days=1)
+
+            response_data.append({
+                "employee_id": employee.id,
+                "employee_code": employee.emp_code,
+                "employee_name": f"{employee.emp_first_name} {employee.emp_last_name}",
+                "branch": employee.emp_branch_id.branch_name if employee.emp_branch_id else None,
+                "department": employee.emp_dept_id.dept_name if employee.emp_dept_id else None,
+                "calendar": calendar_data,
             })
-            curr_date += timedelta(days=1)
 
         return Response({
-            "employee_id": employee.id,
-            "employee_code": employee.emp_code,
-            "employee_name": f"{employee.emp_first_name} {employee.emp_last_name}",
             "start_date": start_date_str,
             "end_date": end_date_str,
-            "calendar": calendar_data
+            "total_employees": len(response_data),
+            "employees": response_data
         })
 
 class LateComingPolicyViewset(viewsets.ModelViewSet):

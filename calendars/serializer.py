@@ -1008,10 +1008,14 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
 class LvApprovalSerializer(serializers.ModelSerializer):
     created_at = serializers.DateField(read_only=True)
     delegation_details = serializers.SerializerMethodField()
+    request_details=serializers.SerializerMethodField()
 
     class Meta:
         model = LeaveApproval
         fields = '__all__'
+        
+    def get_request_details(self, obj):
+        return LeaveRequestSerializer(obj.leave_request).data
 
     def get_delegation_details(self, obj):
         return {

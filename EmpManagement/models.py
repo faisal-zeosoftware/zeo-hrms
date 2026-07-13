@@ -2581,7 +2581,7 @@ class EmployeeResignation(models.Model):
         approval_type = workflow.approval_type
 
         # =========================================================
-        # MINIMUM APPROVAL CHECK (ADDED)
+        # ✅ MINIMUM APPROVAL CHECK (ADDED)
         # =========================================================
         approved_count = self.resign_approvals.filter(
             status=ResignationApproval.APPROVED
@@ -2619,7 +2619,7 @@ class EmployeeResignation(models.Model):
 
 
         # =========================================================
-        # NO APPROVAL
+        # ✅ NO APPROVAL
         # =========================================================
         if approval_type == 'no_approval':
             self.status = 'Approved'
@@ -2652,7 +2652,7 @@ class EmployeeResignation(models.Model):
 
 
         # =========================================================
-        #  REPORTING MANAGER
+        # ✅ REPORTING MANAGER
         # =========================================================
         if approval_type == 'reporting_manager':
 
@@ -2687,15 +2687,17 @@ class EmployeeResignation(models.Model):
 
 
         # =========================================================
-        # MULTI APPROVAL 
+        # ✅ MULTI APPROVAL (MATCHED WITH GENERAL REQUEST)
         # =========================================================
 
         last_approved = self.resign_approvals.filter(
             status=ResignationApproval.APPROVED
         ).order_by('-level').first()
 
+        # ✅ FIXED (same logic as GeneralRequest)
         current_level = (last_approved.level + 1) if last_approved else 1
 
+        # ✅ IMPORTANT: prevent duplicate level creation (early exit)
         if self.resign_approvals.filter(level=current_level).exists():
             return
 
@@ -2722,6 +2724,7 @@ class EmployeeResignation(models.Model):
                             notification_type="resignation",
                             message=(f"Your ResignationRequest {self.termination_type}"
                                     f"(Document No: {self.document_number})waiting for your Approval."),
+                            template_type="resignation_created",
                             context={
                                 **get_employee_context(self.employee),
                                 'document_date': self.document_date,
@@ -2765,7 +2768,6 @@ class EmployeeResignation(models.Model):
                 notification_model=ResignationRequestNotification
             )
             return
-        
 class ResignationApprovalWorkflow(models.Model):
      APPROVAL_TYPE_CHOICES = [
         ('no_approval', 'No Approval'),
@@ -2856,6 +2858,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
     if not created:
         return
+
+    # ✅ FIX 1: Get workflow based on employee branch
     workflow = ResignationApprovalWorkflow.objects.filter(
        branch=instance.employee.emp_branch_id 
     ).first()
@@ -2867,12 +2871,17 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
     # ---------------- NO APPROVAL ----------------
     if approval_type == 'no_approval':
+
+        # ✅ Safe approver fallback
         approver = instance.created_by or getattr(instance.employee, 'emp_reporting_manager', None)
+
+        # ✅ Dynamic role (optional but better)
         if approver:
             role = getattr(approver, 'designation', None) or "Auto Approval"
         else:
             role = "System Auto Approval"
 
+        # ✅ Create approval (even if approver is None, if allowed)
         ResignationApproval.objects.create(
             resignation_request=instance,
             approver=approver,
@@ -2881,8 +2890,11 @@ def create_initial_approval(sender, instance, created, **kwargs):
             status=ResignationApproval.APPROVED
         )
 
+        # ✅ Always update status (no failure)
         instance.status = "Approved"
         instance.save(update_fields=["status"])
+
+        # ✅ Send notification safely
         send_notification_email(
             user=approver,  # can be None, your function should handle it
             employee=instance.employee,
@@ -2979,6 +2991,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             notification_model=ResignationRequestNotification
         )
         return
+        
     
 class EndOfService(models.Model):
     resignation = models.OneToOneField(EmployeeResignation, on_delete=models.CASCADE, related_name='eos')

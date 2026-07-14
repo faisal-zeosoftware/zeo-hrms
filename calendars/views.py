@@ -689,7 +689,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         )
 
         current_time = localtime(now()).time()
-        current_time = apply_check_in_policy(employee, current_time)
+        current_time,is_late = apply_check_in_policy(employee, current_time)
 
         if not attendance.check_in_time:
             attendance.check_in_time = current_time
@@ -712,9 +712,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         )
 
         attendance.save()
-        print(attendance.check_in_location)
-        attendance.save()
-        print(attendance.check_in_location)
+        # from calendars.utils import apply_late_early_penalties
+        # apply_late_early_penalties(attendance)
         return Response({
             "status": "Check-in successful",
             "face_verified": is_verified,
@@ -821,8 +820,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         except Attendance.DoesNotExist:
             return Response({"detail": "Attendance record not found for today. Please check in first."}, status=404)
 
+        # tenant_time = localtime(now()).time()
+        # tenant_time = apply_check_out_policy(employee, tenant_time)
         tenant_time = localtime(now()).time()
-        tenant_time = apply_check_out_policy(employee, tenant_time)
+        tenant_time, is_early = apply_check_out_policy(employee, tenant_time)
 
         attendance.check_out_time = tenant_time
         attendance.check_out_lat = lat
@@ -844,6 +845,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         attendance.calculate_total_hours()
         attendance.save()
+        from calendars.utils import apply_late_early_penalties
+        apply_late_early_penalties(attendance)
 
         return Response({
             "status": "Check-out recorded successfully",

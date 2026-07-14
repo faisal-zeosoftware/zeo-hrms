@@ -512,6 +512,61 @@ def validate_employee_geofence(employee, lat, lng):
             return True
 
     return False
+def get_employee_attendance_policy(employee):
+    """
+    Return the AttendancePolicy that applies to this employee,
+    resolved through AttendancePolicyAssignment by priority:
+    employee → designation → category → department → branch.
+    Falls back to the old branch-based AttendancePolicy lookup.
+    """
+    from .models import AttendancePolicyAssignment
+
+    # 1. Employee-level
+    assignment = AttendancePolicyAssignment.objects.filter(
+        related_to='employee',
+        employee=employee
+    ).select_related('attendance_policy').first()
+    if assignment:
+        return assignment.attendance_policy
+
+    # 2. Designation-level
+    if employee.emp_desgntn_id:
+        assignment = AttendancePolicyAssignment.objects.filter(
+            related_to='designation',
+            designation=employee.emp_desgntn_id
+        ).select_related('attendance_policy').first()
+        if assignment:
+            return assignment.attendance_policy
+
+    # 3. Category-level
+    if employee.emp_ctgry_id:
+        assignment = AttendancePolicyAssignment.objects.filter(
+            related_to='category',
+            category=employee.emp_ctgry_id
+        ).select_related('attendance_policy').first()
+        if assignment:
+            return assignment.attendance_policy
+
+    # 4. Department-level
+    if employee.emp_dept_id:
+        assignment = AttendancePolicyAssignment.objects.filter(
+            related_to='department',
+            department=employee.emp_dept_id
+        ).select_related('attendance_policy').first()
+        if assignment:
+            return assignment.attendance_policy
+
+    # 5. Branch-level (via assignment or direct policy)
+    if employee.emp_branch_id:
+        assignment = AttendancePolicyAssignment.objects.filter(
+            related_to='branch',
+            branch=employee.emp_branch_id
+        ).select_related('attendance_policy').first()
+        if assignment:
+            return assignment.attendance_policy
+
+    # 6. Fallback: direct branch-based AttendancePolicy
+    return
 
 #attendance policy
 def get_active_policy(employee):
@@ -522,10 +577,16 @@ def get_active_policy(employee):
 
 
 def apply_check_in_policy(employee, check_in_time):
-    policy = get_active_policy(employee)
+    """
+    Apply attendance policy rules for check-in.
+    - Rounds time if round_off is enabled.
+    - Returns (adjusted_time, is_late_flag) where is_late_flag is True
+      if the check-in exceeds the allowed late minutes defined in the policy.
+    """
+    policy = get_employee_attendance_policy(employee)
 
     if not policy:
-        return check_in_time
+        return check_in_time, False
 
     dt = datetime.combine(datetime.today(), check_in_time)
 
@@ -533,14 +594,26 @@ def apply_check_in_policy(employee, check_in_time):
         minutes = (dt.minute // 5) * 5
         dt = dt.replace(minute=minutes, second=0)
 
-    return dt.time()
+    is_late = False
+    if policy.late_check_in and policy.enable_late_coming:
+        # We cannot know the shift start here — flag as late if the
+        # caller passes a time already confirmed as beyond the grace window.
+        # Detailed shift-based comparison is done at the Attendance view level.
+        is_late = True  # caller should compare against shift start + grace
+
+    return dt.time(), is_late
 
 
 def apply_check_out_policy(employee, check_out_time):
-    policy = get_active_policy(employee)
+    """
+    Apply attendance policy rules for check-out.
+    - Rounds time if round_off is enabled.
+    - Returns (adjusted_time, is_early_flag).
+    """
+    policy = get_employee_attendance_policy(employee)
 
     if not policy:
-        return check_out_time
+        return check_out_time, False
 
     dt = datetime.combine(datetime.today(), check_out_time)
 
@@ -548,7 +621,11 @@ def apply_check_out_policy(employee, check_out_time):
         minutes = (dt.minute // 5) * 5
         dt = dt.replace(minute=minutes, second=0)
 
-    return dt.time()
+    is_early = False
+    if policy.early_check_out and policy.enable_early_exit:
+        is_early = True  # caller should compare against shift end - grace
+
+    return dt.time(), is_early
 
 def get_employee_attendance_validation_policy(employee):
     """

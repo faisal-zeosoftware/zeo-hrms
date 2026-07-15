@@ -560,7 +560,7 @@ class LoanApprovalSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super(LoanApprovalSerializer, self).to_representation(instance)
         if instance.loan_request:
-            rep['loan_request'] =instance.loan_request.document_number 
+            rep['loan_request'] =instance.loan_request.document_number
         if instance.employee_id:
             try:
                 emp = emp_master.objects.get(id=instance.employee_id)
@@ -571,6 +571,8 @@ class LoanApprovalSerializer(serializers.ModelSerializer):
             rep['document_number']= getattr(instance.loan_request,'document_number')
         if instance.deligate_to:
             rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
+        if instance.approver:
+            rep['approver'] = instance.approver.username
         return rep
     
     

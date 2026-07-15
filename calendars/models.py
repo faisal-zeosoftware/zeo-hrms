@@ -314,6 +314,7 @@ class assign_holiday(models.Model):
     branch         = models.ManyToManyField('OrganisationManager.brnch_mstr',  null=True, blank=True)
     department    = models.ManyToManyField('OrganisationManager.dept_master',  null=True, blank=True)
     category      = models.ManyToManyField('OrganisationManager.ctgry_master', null=True, blank=True)
+    designation    = models.ManyToManyField('OrganisationManager.desgntn_master', null=True, blank=True)
     employee       = models.ManyToManyField('EmpManagement.emp_master',  null=True, blank=True)
     holiday_model  = models.ForeignKey(holiday_calendar,on_delete=models.CASCADE)
     created_at     = models.DateTimeField(auto_now_add=True)

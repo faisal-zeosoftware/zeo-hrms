@@ -29,6 +29,12 @@ def accrue_leaves():
                 entitlements = leave_entitlement.objects.filter(accrual=True)
                 employees = emp_master.objects.all()
 
+                logger.info(
+                    f"Tenant: {tenant_schema_name} | "
+                    f"Employees: {employees.count()} | "
+                    f"Entitlements: {entitlements.count()}"
+                )
+
                 for employee in employees:
                     leave_type_entitlements = {}
 
@@ -55,13 +61,35 @@ def accrue_leaves():
                         )
 
                         # 🔹 Filters
-                        if entitlement.designations.exists() and employee.emp_desgntn_id not in entitlement.designations.all():
+
+                        if (
+                            entitlement.designations.exists()
+                            and not entitlement.designations.filter(
+                                pk=employee.emp_desgntn_id
+                            ).exists()
+                        ):
                             continue
-                        if entitlement.departments.exists() and employee.emp_dept_id not in entitlement.departments.all():
+
+                        if (
+                            entitlement.departments.exists()
+                            and not entitlement.departments.filter(
+                                pk=employee.emp_dept_id
+                            ).exists()
+                        ):
                             continue
-                        if entitlement.categories.exists() and employee.emp_ctgry_id not in entitlement.categories.all():
+
+                        if (
+                            entitlement.categories.exists()
+                            and not entitlement.categories.filter(
+                                pk=employee.emp_ctgry_id
+                            ).exists()
+                        ):
                             continue
-                        if entitlement.branches.exists() and employee.emp_branch_id not in entitlement.branches.all():
+
+                        if (
+                            entitlement.branches.exists()
+                            and employee.emp_branch_id not in entitlement.branches.all()
+                            ):
                             continue
 
                         if experience_months >= min_exp_months:
@@ -76,58 +104,101 @@ def accrue_leaves():
                         # =====================
                         # 📅 MONTHLY ACCRUAL
                         # =====================
-                        if ent.accrual_frequency == 'months':
+                        if ent.accrual_frequency == "months":
 
-                            last_day = (today.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                            last_day = (
+                                (today.replace(day=1) + timedelta(days=32))
+                                .replace(day=1)
+                                - timedelta(days=1)
+                            )
 
-                            if ent.accrual_day == '1st' and today.day == 1:
+                            if ent.accrual_day == "1st" and today.day == 14:
                                 accrue_today = True
 
-                            elif ent.accrual_day == 'last' and today == last_day:
+                            elif ent.accrual_day == "last" and today == last_day:
                                 accrue_today = True
 
-                            elif ent.accrual_day == 'joining_day':
+                            elif ent.accrual_day == "joining_day":
+
                                 if employee.emp_joined_date:
+
                                     joining_day = employee.emp_joined_date.day
                                     valid_day = min(joining_day, last_day.day)
 
                                     if today.day == valid_day:
+
                                         accrue_today = True
 
                                         # 🔥 PRORATION LOGIC
                                         if ent.prorate_accrual:
-                                            if (employee.emp_joined_date.year == today.year and
-                                                employee.emp_joined_date.month == today.month):
+
+                                            if (
+                                                employee.emp_joined_date.year == today.year
+                                                and employee.emp_joined_date.month == today.month
+                                            ):
 
                                                 total_days = last_day.day
-                                                worked_days = total_days - employee.emp_joined_date.day + 1
+                                                worked_days = (
+                                                    total_days
+                                                    - employee.emp_joined_date.day
+                                                    + 1
+                                                )
 
                                                 accrual_amount = (
-                                                    ent.accrual_rate * worked_days / total_days
+                                                    ent.accrual_rate
+                                                    * worked_days
+                                                    / total_days
                                                 )
 
                         # =====================
                         # 📅 DAILY ACCRUAL
                         # =====================
-                        elif ent.accrual_frequency == 'days':
+                        elif ent.accrual_frequency == "days":
                             accrue_today = True
 
                         # =====================
                         # 📅 YEARLY ACCRUAL
                         # =====================
-                        elif ent.accrual_frequency == 'years':
-                            if ent.accrual_month and today.month == month_name_to_number(ent.accrual_month) and today.day == 1:
+                        elif ent.accrual_frequency == "years":
+
+                            if (
+                                ent.accrual_month
+                                and today.month == month_name_to_number(ent.accrual_month)
+                                and today.day == 1
+                            ):
                                 accrue_today = True
+
+                        logger.info(
+                            f"Employee={employee.emp_code} | "
+                            f"Leave={leave_type.name} | "
+                            f"Frequency={ent.accrual_frequency} | "
+                            f"Day={ent.accrual_day} | "
+                            f"Accrue={accrue_today} | "
+                            f"Amount={accrual_amount}"
+                        )
 
                         # =====================
                         # 💾 SAVE
                         # =====================
                         if accrue_today and accrual_amount > 0:
 
+                            # Prevent duplicate accrual on the same date
+                            if leave_accrual_transaction.objects.filter(
+                                employee=employee,
+                                leave_type=leave_type,
+                                accrual_date=today,
+                            ).exists():
+
+                                logger.info(
+                                    f"{employee.emp_code} already accrued "
+                                    f"{leave_type.name} for {today}"
+                                )
+                                continue
+
                             leave_balance, _ = emp_leave_balance.objects.get_or_create(
                                 employee=employee,
                                 leave_type=leave_type,
-                                defaults={"balance": 0}
+                                defaults={"balance": 0},
                             )
 
                             leave_balance.balance += accrual_amount
@@ -141,8 +212,15 @@ def accrue_leaves():
                                 created_at=timezone.now(),
                             )
 
+                            logger.info(
+                                f"Credited {accrual_amount} "
+                                f"{leave_type.name} to {employee.emp_code}"
+                            )
+
         except Exception as e:
-            logger.error(f"Error in tenant {tenant_schema_name}: {str(e)}")
+            logger.exception(
+                f"Error in tenant {tenant_schema_name}: {str(e)}"
+            )
 
     return "Leave accrual completed"
 

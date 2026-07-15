@@ -332,10 +332,12 @@ class ApprovalSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
-        rep['general_request'] = instance.general_request.document_number
-        rep['approver'] = instance.approver.id if instance.approver else None
-        rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
-
+        if instance.general_request:
+            rep['general_request'] = instance.general_request.document_number
+        if instance.approver:
+            rep['approver'] = instance.approver.username
+        if instance.deligate_to:
+            rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
         return rep
 
 class LvRqstApprovalSerializer(serializers.ModelSerializer):
@@ -660,11 +662,26 @@ class EmailConfigurationSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailConfiguration
         fields = '__all__'
+    def validate(self, attrs):
+        if attrs.get("is_active"):
+            if not attrs.get("email_host_user"):
+                raise serializers.ValidationError({
+                    "email_host_user": "This field is required when the configuration is active."
+                })
+
+            if not attrs.get("email_host_password"):
+                raise serializers.ValidationError({
+                    "email_host_password": "This field is required when the configuration is active."
+                })
+
+        return attrs
+    
     def to_representation(self, instance):
         data = super().to_representation(instance)
         # Mask the password field
         data['email_host_password'] = '********' if instance.email_host_password else ''
         return data
+    
 class CommonWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = CommonWorkflow

@@ -214,10 +214,8 @@ def create_tenant_defaults(sender, tenant, **kwargs):
 
         # Default Categories
         default_categories = [
-            ("Permanent", "PERM"),
-            ("Contract", "CONT"),
-            ("Intern", "INT"),
-            ("Trainee", "TRN"),
+            ("Technical", "TECH"),
+            ("Non-Technical", "NON-TECH"),
         ]
 
         for title, code in default_categories:

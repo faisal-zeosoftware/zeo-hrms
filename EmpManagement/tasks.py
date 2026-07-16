@@ -54,7 +54,7 @@ def send_document_expiry_notifications_for_all_tenants():
 
                         if expiry_window_start <= doc.emp_doc_expiry_date <= expiry_window_end:
                             status = "expiring" if doc.emp_doc_expiry_date >= today else "expired"
-                            send_document_notification(doc, doc.emp_doc_expiry_date, status)
+                            send_document_notification(doc, doc.emp_doc_expiry_date, status, settings)
                             employee_docs.append((doc, status))
 
                     # ESS user notifications
@@ -69,7 +69,7 @@ def send_document_expiry_notifications_for_all_tenants():
         traceback.print_exc()
 
 
-def send_document_notification(document, expiry_date, status,settings):
+def send_document_notification(document, expiry_date, status, settings):
     try:
         employee = document.emp_id
 
@@ -100,8 +100,10 @@ def send_document_notification(document, expiry_date, status,settings):
             message=message,
             document_id=document
         )
+
         if settings.send_email:
-            send_template_email('Employee Notification', employee.emp_personal_email, context)
+            send_template_email('Employee Notification',employee.emp_personal_email, context)
+
 
     except Exception as e:
         print(f"[ERROR] Failed in send_document_notification: {e}")

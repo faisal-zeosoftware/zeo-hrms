@@ -909,6 +909,8 @@ def check_document_expiry_and_notify(document):
     if not branch:
         return
 
+    settings = None  
+
     try:
         settings = NotificationSettings.objects.get(branch=branch)
         days_before = settings.days_before_expiry
@@ -929,7 +931,7 @@ def check_document_expiry_and_notify(document):
         return  # No notification needed
 
     # 🔹 Notify Employee
-    send_document_notification(document, expiry_date, status,settings)
+    send_document_notification(document, expiry_date, status, settings)
 
     # 🔹 Notify ESS Users
     if ess_users:
@@ -943,6 +945,7 @@ def check_document_expiry_and_notify(document):
                 'documents': doc_message
             }
             send_template_email('ESS User Notification', ess_user.email, context)
+            
 #Document UDF
 class EmpDocuments_CustomField(models.Model):
     FIELD_TYPES = (   

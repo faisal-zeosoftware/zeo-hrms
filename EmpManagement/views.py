@@ -61,7 +61,8 @@ from rest_framework.exceptions import NotFound
 from calendars .serializer import EmployeeLeaveBalanceSerializer,LeaveTypeSerializer
 from calendars .models import leave_type, employee_leave_request
 from django.db.models import Q
-from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer,AdvanceSalaryRequestSerializer,AirTicketRequestSerializer
+from PayrollManagement .serializer import PayslipSerializer,LoanApplicationSerializer,AdvanceSalaryRequestSerializer,AirTicketRequestSerializer,EmployeeSalaryStructureSerializer
+from PayrollManagement .models import EmployeeSalaryStructure
 from .utils import calculate_settlement,send_notification_email
 import csv
 import io
@@ -389,6 +390,36 @@ class EmpViewSet(viewsets.ModelViewSet):
         document_requests = employee.document_requests.all()
         serializer = DocRequestSerializer(document_requests, many=True)
         return Response(serializer.data)
+    @action(detail=True, methods=['GET'])
+    def salary(self, request, pk=None):
+        from django.db.models import Sum
+        from decimal import Decimal
+        employee = self.get_object()
+
+        salary = EmployeeSalaryStructure.objects.filter(
+            employee=employee,
+            is_active=True
+        ).select_related("component")
+
+        serializer = EmployeeSalaryStructureSerializer(salary, many=True)
+
+        gross = salary.filter(
+            component__component_type="addition"
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+
+        deductions = salary.filter(
+            component__component_type="deduction"
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+
+        return Response({
+            "employee": employee.emp_code,
+            "employee_name": f"{employee.emp_first_name} {employee.emp_last_name}",
+            "gross_salary": gross,
+            "total_deductions": deductions,
+            "net_salary": gross - deductions,
+            "components": serializer.data
+        })
+    
     @action(detail=False, methods=['get'])
     def export_employee_data(self, request):
         excluded_fields = {'id', 'is_ess', 'created_at', 'created_by', 'updated_at', 'updated_by', 'emp_profile_pic'}

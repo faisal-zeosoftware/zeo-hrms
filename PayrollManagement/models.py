@@ -2428,3 +2428,54 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                 notification_model=AirticketNotification
                 )
             return
+
+class SalaryRevisionHistory(models.Model):
+    employee = models.ForeignKey(
+        'EmpManagement.emp_master', on_delete=models.CASCADE,
+        related_name='salary_revisions_history'
+    )
+    component = models.ForeignKey(
+        SalaryComponent, on_delete=models.CASCADE,
+        related_name='revision_history'
+    )
+    old_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    new_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    # Ties the revision to a payroll period, like "April2026" in your Attendance Class dropdown
+    effective_period = models.CharField(max_length=20, blank=True, null=True)
+
+    created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True)
+       
+    revised_on = models.DateTimeField(auto_now_add=True)
+    remarks = models.CharField(max_length=255, blank=True, null=True)
+
+    class Meta:
+        ordering = ['-revised_on']
+        indexes = [
+            models.Index(fields=['employee', 'revised_on']),
+            models.Index(fields=['component', 'revised_on']),
+        ]
+
+    def __str__(self):
+        return f"{self.employee} - {self.component.name}: {self.old_amount} -> {self.new_amount} on {self.revised_on.date()}"
+from django.db.models.signals import pre_save
+@receiver(pre_save, sender=EmployeeSalaryStructure)
+def track_salary_revision(sender, instance, **kwargs):
+    if not instance.pk:
+        return  # new record, nothing to compare against
+
+    try:
+        old_instance = EmployeeSalaryStructure.objects.get(pk=instance.pk)
+    except EmployeeSalaryStructure.DoesNotExist:
+        return
+
+    if old_instance.amount != instance.amount:
+        SalaryRevisionHistory.objects.create(
+            employee=instance.employee,
+            component=instance.component,
+            old_amount=old_instance.amount,
+            new_amount=instance.amount,
+            effective_period=getattr(instance, '_effective_period', None),
+            created_by=getattr(instance, '_created_by', None),
+            remarks=getattr(instance, '_remarks', ''),
+        )

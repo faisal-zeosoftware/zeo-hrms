@@ -1,12 +1,13 @@
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
-                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,AirticketNotification)
+                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,AirticketNotification,
+                     SalaryRevisionHistory)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
                          ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
-                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer,AirticketNotifySerializer
+                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer,AirticketNotifySerializer,SalaryRevisionHistorySerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -64,7 +65,32 @@ class SalaryComponentViewSet(viewsets.ModelViewSet):
 class EmployeeSalaryStructureViewSet(viewsets.ModelViewSet):
     queryset = EmployeeSalaryStructure.objects.all()
     serializer_class = EmployeeSalaryStructureSerializer
+class SalaryRevisionHistoryViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = SalaryRevisionHistory.objects.select_related('employee', 'component', 'created_by')
+    serializer_class = SalaryRevisionHistorySerializer
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+
+        from_date = params.get('from_date')   # e.g. 2026-04-01
+        to_date = params.get('to_date')       # e.g. 2026-04-30
+        employee_id = params.get('employee_id')
+        component_id = params.get('component_id')
+        effective_period = params.get('attendance_class')
+
+        if from_date:
+            qs = qs.filter(revised_on__date__gte=from_date)
+        if to_date:
+            qs = qs.filter(revised_on__date__lte=to_date)
+        if employee_id:
+            qs = qs.filter(employee_id=employee_id)
+        if component_id:
+            qs = qs.filter(component_id=component_id)
+        if effective_period:
+            qs = qs.filter(effective_period=effective_period)
+
+        return qs
 class PayslipViewSet(viewsets.ModelViewSet):
     queryset = Payslip.objects.all()
     serializer_class = PayslipSerializer

@@ -363,6 +363,12 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = leave_type
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(LeaveTypeSerializer, self).to_representation(instance)
+        if instance.branch:
+            rep['branch'] = instance.branch.branch_name
+        return rep
+
 
 class LeaveRequestSerializer(serializers.ModelSerializer):
     class Meta:

@@ -1366,10 +1366,24 @@ class OvertimePolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = OvertimePolicy
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+        rep['department'] = [dept.dept_name for dept in instance.department.all()]
+        rep['designation'] = [desg.desgntn_job_title for desg in instance.designation.all()]
+        rep['category'] = [cat.ctgry_title for cat in instance.category.all()]
+        return rep
 class OvertimeRuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = OvertimeRule
         fields = '__all__'
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if instance.policy:
+            rep['policy'] = instance.policy.name
+            return rep
+        
 class AttendancePolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendancePolicy

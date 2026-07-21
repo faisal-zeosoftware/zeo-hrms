@@ -56,7 +56,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.core.cache import cache
 import redis
 import json
-from calendars .serializer import AttendanceSerializer
+from calendars .serializer import AttendanceSerializer,LateinEarlyoutRequestSerializer
 from rest_framework.exceptions import NotFound
 from calendars .serializer import EmployeeLeaveBalanceSerializer,LeaveTypeSerializer
 from calendars .models import leave_type, employee_leave_request

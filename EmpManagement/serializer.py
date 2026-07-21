@@ -9,7 +9,7 @@ import datetime
 from OrganisationManager .models import AssetAllocation
 from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer,LateinEarlyoutRequestSerializer
 from calendars .models import holiday
-from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer,AirTicketRequestSerializer
+from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer,AirTicketRequestSerializer,EmployeeSalaryStructureSerializer
 from decimal import Decimal
 from calendar import month_name
 from django.utils import timezone
@@ -436,6 +436,7 @@ class EmpSerializer(serializers.ModelSerializer):
     projects = serializers.SerializerMethodField() 
     airticket_request      =  AirTicketRequestSerializer(many=True,read_only=True,source='airticket_requests')
     document_requests      = DocRequestSerializer(many=True, read_only=True)
+    emp_salary  = EmployeeSalaryStructureSerializer(many=True, read_only=True, source='salary_structures')
     payslip  = PayslipSerializer(many=True, read_only=True, source='payslips')
     emp_bank = EmpBankDetailsSerializer(many=True,read_only=True, source='bank_details')
     advance_salary_requests   =  AdvanceSalaryRequestSerializer(many=True, read_only=True)

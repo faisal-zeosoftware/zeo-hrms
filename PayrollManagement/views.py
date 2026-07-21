@@ -60,6 +60,16 @@ logger = logging.getLogger(__name__)
 class SalaryComponentViewSet(viewsets.ModelViewSet):
     queryset = SalaryComponent.objects.all()
     serializer_class = SalaryComponentSerializer
+    @action(detail=False, methods=['get'])
+    def fixed_components(self, request):
+        queryset = self.get_queryset().filter(component_value_type='fixed')
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    @action(detail=False, methods=['get'])
+    def variable_components(self, request):
+        queryset = self.get_queryset().filter(component_value_type='variable')
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 class EmployeeSalaryStructureViewSet(viewsets.ModelViewSet):

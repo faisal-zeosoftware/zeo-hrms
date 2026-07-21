@@ -361,6 +361,13 @@ class EmpViewSet(viewsets.ModelViewSet):
         resignation= employee.resignation_requests.filter(status='APPROVED'  ) # ✅ MUST match model choices
         serializer = EmployeeResignationSerializer(resignation, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['GET'])
+    def lateinearlyout_requests(self, request, pk=None):
+        employee = self.get_object()
+        requests = employee.lateinearlyout_requests.filter(status='APPROVED')
+        serializer = LateinEarlyoutRequestSerializer(requests, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['GET'])
     def my_profile(self, request):

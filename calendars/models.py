@@ -2807,7 +2807,7 @@ class LateinEarlyoutRequest(models.Model):
     )
     document_number  = models.CharField(max_length=50, unique=True, blank=True)
     date         = models.DateField(null=True, blank=True)
-    employee     = models.ForeignKey("EmpManagement.emp_master",on_delete=models.CASCADE)
+    employee     = models.ForeignKey("EmpManagement.emp_master",on_delete=models.CASCADE,  related_name='document_requests')
     request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
     branch       = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE, null=True, blank=True, related_name='lateinearlyoutreq')
     reason       = models.TextField(null=True, blank=True)

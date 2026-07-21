@@ -7,7 +7,7 @@ from django.core.validators import validate_email
 from django.contrib.contenttypes.models import ContentType
 import datetime
 from OrganisationManager .models import AssetAllocation
-from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer
+from calendars.serializer import WeekendCalendarSerailizer,HolidayCalandarSerializer,HolidaySerializer,EmployeeLeaveBalanceSerializer,LateinEarlyoutRequestSerializer
 from calendars .models import holiday
 from PayrollManagement .serializer import AdvanceSalaryRequestSerializer,LoanApplicationSerializer,PayslipSerializer,AirTicketRequestSerializer
 from decimal import Decimal
@@ -458,6 +458,7 @@ class EmpSerializer(serializers.ModelSerializer):
     holidays = serializers.SerializerMethodField()
     branch                 = serializers.SerializerMethodField()
     resignation_requests   =  EmployeeResignationSerializer(many=True, read_only=True, source='resignations')
+    lateinearlyout_request =  LateinEarlyoutRequestSerializer(many=True, read_only=True, source='lateinearlyout')
     
     
     

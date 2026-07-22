@@ -1427,8 +1427,7 @@ class PayslipLeaveSerializer(serializers.ModelSerializer):
 class SalaryRevisionHistorySerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source='employee.__str__', read_only=True)
     component_name = serializers.CharField(source='component.name', read_only=True)
-    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
 
     class Meta:
         model = SalaryRevisionHistory
-        fields = '__all__'
+        fields = ['id', 'employee', 'employee_name', 'component', 'component_name', 'revisions', 'date_updated']

@@ -10,6 +10,7 @@ from EmpManagement .models import RequestNotification
 # from calendars .models import LeaveApproval
 from django.db.models import Max 
 from django.db import transaction
+from django.db.models.signals import pre_save
 
 # Create your models here.
 
@@ -2449,20 +2450,31 @@ class SalaryRevisionHistory(models.Model):
     revised_on = models.DateTimeField(auto_now_add=True)
     remarks = models.CharField(max_length=255, blank=True, null=True)
 
+    revisions = models.JSONField(default=list, blank=True)
+    date_updated = models.DateTimeField(auto_now=True)
+
     class Meta:
-        ordering = ['-revised_on']
-        indexes = [
-            models.Index(fields=['employee', 'revised_on']),
-            models.Index(fields=['component', 'revised_on']),
-        ]
+        unique_together = ('employee', 'component')  # one row per employee+component
 
     def __str__(self):
-        return f"{self.employee} - {self.component.name}: {self.old_amount} -> {self.new_amount} on {self.revised_on.date()}"
-from django.db.models.signals import pre_save
+        return f"{self.employee} - {self.component.name} ({len(self.revisions)} revisions)"
+
+    def add_revision(self, old_amount, new_amount, revised_by=None, remarks='', effective_period=None):
+        self.revisions.append({
+            'old_amount': str(old_amount) if old_amount is not None else None,
+            'new_amount': str(new_amount) if new_amount is not None else None,
+            'revised_by': revised_by.get_full_name() if revised_by else None,
+            'revised_by_id': revised_by.id if revised_by else None,
+            'revised_on': timezone.now().isoformat(),
+            'effective_period': effective_period,
+            'remarks': remarks,
+        })
+        self.save(update_fields=['revisions', 'date_updated'])
+        
 @receiver(pre_save, sender=EmployeeSalaryStructure)
 def track_salary_revision(sender, instance, **kwargs):
     if not instance.pk:
-        return  # new record, nothing to compare against
+        return
 
     try:
         old_instance = EmployeeSalaryStructure.objects.get(pk=instance.pk)
@@ -2470,12 +2482,14 @@ def track_salary_revision(sender, instance, **kwargs):
         return
 
     if old_instance.amount != instance.amount:
-        SalaryRevisionHistory.objects.create(
+        history, _ = SalaryRevisionHistory.objects.get_or_create(
             employee=instance.employee,
             component=instance.component,
+        )
+        history.add_revision(
             old_amount=old_instance.amount,
             new_amount=instance.amount,
-            effective_period=getattr(instance, '_effective_period', None),
-            created_by=getattr(instance, '_created_by', None),
+            revised_by=getattr(instance, '_revised_by', None),
             remarks=getattr(instance, '_remarks', ''),
+            effective_period=getattr(instance, '_effective_period', None),
         )

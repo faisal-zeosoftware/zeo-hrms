@@ -76,31 +76,44 @@ class EmployeeSalaryStructureViewSet(viewsets.ModelViewSet):
     queryset = EmployeeSalaryStructure.objects.all()
     serializer_class = EmployeeSalaryStructureSerializer
 class SalaryRevisionHistoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = SalaryRevisionHistory.objects.select_related('employee', 'component', 'created_by')
+    queryset = SalaryRevisionHistory.objects.select_related('employee', 'component')
     serializer_class = SalaryRevisionHistorySerializer
 
     def get_queryset(self):
         qs = super().get_queryset()
-        params = self.request.query_params
-
-        from_date = params.get('from_date')   # e.g. 2026-04-01
-        to_date = params.get('to_date')       # e.g. 2026-04-30
-        employee_id = params.get('employee_id')
-        component_id = params.get('component_id')
-        effective_period = params.get('attendance_class')
-
-        if from_date:
-            qs = qs.filter(revised_on__date__gte=from_date)
-        if to_date:
-            qs = qs.filter(revised_on__date__lte=to_date)
+        employee_id = self.request.query_params.get('employee_id')
+        component_id = self.request.query_params.get('component_id')
         if employee_id:
             qs = qs.filter(employee_id=employee_id)
         if component_id:
             qs = qs.filter(component_id=component_id)
-        if effective_period:
-            qs = qs.filter(effective_period=effective_period)
-
         return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        from_date = request.query_params.get('from_date')
+        to_date = request.query_params.get('to_date')
+
+        data = self.get_serializer(queryset, many=True).data
+
+        if from_date or to_date:
+            for row in data:
+                row['revisions'] = [
+                    r for r in row['revisions']
+                    if self._in_range(r['revised_on'], from_date, to_date)
+                ]
+            data = [row for row in data if row['revisions']]  # drop rows with no matching revisions in range
+
+        return Response(data)
+
+    @staticmethod
+    def _in_range(revised_on, from_date, to_date):
+        d = revised_on[:10]  # 'YYYY-MM-DD'
+        if from_date and d < from_date:
+            return False
+        if to_date and d > to_date:
+            return False
+        return True
 class PayslipViewSet(viewsets.ModelViewSet):
     queryset = Payslip.objects.all()
     serializer_class = PayslipSerializer

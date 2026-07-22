@@ -18,6 +18,7 @@ class SalaryComponentSerializer(serializers.ModelSerializer):
         fields = '__all__'
 class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
     # For readable output
+    employee_id = serializers.IntegerField(source='employee.id', read_only=True)
     emp_code = serializers.SerializerMethodField(read_only=True)
     component_name = serializers.CharField(source='component.name', read_only=True)
     component_type = serializers.CharField(source='component.get_component_type_display', read_only=True)
@@ -33,7 +34,7 @@ class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
         model = EmployeeSalaryStructure
         # Include 'employee' and 'component' for input
         fields = [
-            'id', 'employee', 'emp_code',
+            'id', 'employee', 'emp_code','employee_id',
             'component', 'component_name', 'component_type','component_value_type',
             'payroll_category',
             'amount', 'is_active', 'date_created', 'date_updated','department','designation','emp_name'

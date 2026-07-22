@@ -7,7 +7,7 @@ from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,
                     )
 
 import calendar
-from EmpManagement .models import EmployeeBankDetail,emp_master
+from EmpManagement .models import EmployeeBankDetail,emp_master,EmailConfiguration
 from decimal import Decimal
 from UserManagement.models import CustomUser
 
@@ -318,6 +318,19 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             rep['branch'] =instance.branch.branch_name
         return rep
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         loan_type = data.get('loan_type')
         employee = data.get('employee')
 
@@ -701,6 +714,19 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
         return None
     
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         employee = data.get('employee')
 
         if not employee:
@@ -1135,6 +1161,19 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         return rep
 
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         employee = data.get('employee')
         branch = data.get('branch')
 

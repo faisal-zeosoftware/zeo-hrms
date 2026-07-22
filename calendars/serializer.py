@@ -11,7 +11,7 @@ from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,as
 )
 from OrganisationManager.serializer import BranchSerializer,CtgrySerializer,DeptSerializer
 from OrganisationManager.models import brnch_mstr,dept_master,ctgry_master
-from EmpManagement.models import emp_master
+from EmpManagement.models import emp_master,EmailConfiguration
 from rest_framework import serializers
 from django.utils import timezone
 from UserManagement .models import CustomUser
@@ -387,6 +387,19 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         return rep
 
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         leave_type = data.get('leave_type')
         employee = data.get('employee')
 
@@ -572,6 +585,19 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
 
         employee = data.get('employee')
 

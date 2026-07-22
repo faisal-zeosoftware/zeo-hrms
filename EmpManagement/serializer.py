@@ -385,6 +385,19 @@ class DocRequestSerializer(serializers.ModelSerializer):
         
         return rep
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         employee = data.get("employee")
         request_type = data.get("request_type")
 
@@ -714,6 +727,19 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
             rep['branch']=instance.branch.branch_name
         return rep
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         request_type = data.get("request_type")
         employee = data.get("employee")
 
@@ -1295,6 +1321,19 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
         model = EmployeeResignation
         fields = '__all__'
     def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         employee = data.get('employee')
 
         if not employee:

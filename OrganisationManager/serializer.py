@@ -8,6 +8,7 @@ from django.contrib.auth.models import Permission,Group
 from calendars .models import assign_holiday,holiday,holiday_calendar
 from django.utils import timezone
 from ProjectManagement .serializer import ProjectSerializer
+from EmpManagement .models import EmailConfiguration
 from django.db import models
 
 class CompanyPolicySerializer(serializers.ModelSerializer):
@@ -417,6 +418,19 @@ class AssetRequestSerializer(serializers.ModelSerializer):
         model = AssetRequest
         fields = '__all__'
     def validate(self, attrs):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
         asset_type = attrs.get('asset_type')
         requested_asset = attrs.get('requested_asset')
         employee = attrs.get('employee')

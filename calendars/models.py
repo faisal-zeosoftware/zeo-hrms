@@ -2407,6 +2407,22 @@ class EmployeeShiftSchedule(models.Model):
 
     def clean(self):
         from django.core.exceptions import ValidationError
+
+        if self.schedule_name:
+            schedule_name = self.schedule_name.strip()
+
+            qs = EmployeeShiftSchedule.objects.filter(
+                schedule_name__iexact=schedule_name
+            )
+
+            # Exclude current record while updating
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+
+            if qs.exists():
+                raise ValidationError({
+                    "schedule_name": "A schedule with this name already exists."
+                })
         if self.end_date and self.start_date > self.end_date:
             raise ValidationError({
                 "end_date": "End date must be greater than or equal to start date"

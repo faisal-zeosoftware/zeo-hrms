@@ -70,9 +70,9 @@ class PayrollRunSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
-        rep['branch_name'] = instance.branch.branch_name if instance.branch else None
-        rep['department_name'] = instance.department.dept_name if instance.department else None
-        rep['category_name'] = instance.category.ctgry_title if instance.category else None
+        rep['branch'] = instance.branch.branch_name if instance.branch else None
+        rep['department'] = instance.department.dept_name if instance.department else None
+        rep['category'] = instance.category.ctgry_title if instance.category else None
 
         return rep
 

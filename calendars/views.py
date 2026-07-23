@@ -591,6 +591,221 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         
         return Response({"detail": f"Barcode registered successfully for {employee.emp_code}"})
     @action(detail=False, methods=['post'])
+    def punch(self, request):
+ 
+        emp_id = request.data.get("employee")
+        barcode = request.data.get("barcode")
+ 
+        lat = request.data.get("lat") or request.data.get("check_in_lat") or request.data.get("check_out_lat")
+        lng = request.data.get("lng") or request.data.get("check_in_lng") or request.data.get("check_out_lng")
+        punch_location = request.data.get("location") or request.data.get("check_in_location") or request.data.get("check_out_location")
+ 
+        face_photo = face_utils.convert_base64_to_file(
+            request.FILES.get("face_photo") or request.data.get("face_photo"),
+            "face"
+        )
+ 
+        punch_image = face_utils.convert_base64_to_file(
+            request.FILES.get("punch_image")
+            or request.data.get("punch_image")
+            or request.FILES.get("check_in_image")
+            or request.data.get("check_in_image")
+            or request.FILES.get("check_out_image")
+            or request.data.get("check_out_image"),
+            "punch"
+        )
+ 
+        # ---------------------------------------------------------------
+        # 🔐 RESOLVE EMPLOYEE
+        # ---------------------------------------------------------------
+        employee = None
+        if barcode:
+            try:
+                employee = emp_master.objects.get(barcode_number=barcode)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Invalid barcode"}, status=400)
+        elif emp_id:
+            try:
+                employee = emp_master.objects.get(id=emp_id)
+            except emp_master.DoesNotExist:
+                return Response({"detail": "Employee not found"}, status=404)
+        else:
+            return Response({"detail": "Provide employee ID or barcode"}, status=400)
+ 
+        # ---------------------------------------------------------------
+        # 📋 RESOLVE ACTIVE POLICY
+        # ---------------------------------------------------------------
+        policy = get_employee_attendance_validation_policy(employee)
+ 
+        # ---------------------------------------------------------------
+        # 🔐 VALIDATE BARCODE VERIFICATION
+        # ---------------------------------------------------------------
+        if policy and policy.enable_barcode_verification:
+            if not barcode:
+                return Response({"detail": "Barcode verification is mandatory."}, status=400)
+            if emp_id and str(employee.id) != str(emp_id):
+                return Response({"detail": "Scanned barcode does not match employee ID"}, status=400)
+ 
+        # ---------------------------------------------------------------
+        # 🔐 AUTH & FACE RECOGNITION
+        # ---------------------------------------------------------------
+        auth_method = "manual"
+        is_verified = False
+ 
+        if barcode:
+            auth_method = "barcode"
+            is_verified = True
+ 
+        if policy and policy.enable_face_recognition:
+            if not face_photo:
+                return Response({"detail": "Face verification is mandatory."}, status=400)
+ 
+            current_encoding = face_utils.get_face_encoding(face_photo)
+            if not current_encoding:
+                return Response({"detail": "No face detected"}, status=400)
+ 
+            if not face_utils.verify_face(employee.face_encoding, current_encoding):
+                return Response({"detail": "Face does not match"}, status=400)
+ 
+            auth_method = "face"
+            is_verified = True
+        elif face_photo:
+            current_encoding = face_utils.get_face_encoding(face_photo)
+            if not current_encoding:
+                return Response({"detail": "No face detected"}, status=400)
+ 
+            if not face_utils.verify_face(employee.face_encoding, current_encoding):
+                return Response({"detail": "Face does not match"}, status=400)
+ 
+            auth_method = "face"
+            is_verified = True
+        elif emp_id and not barcode:
+            auth_method = "manual"
+            is_verified = True
+ 
+        # ---------------------------------------------------------------
+        # 📸 VALIDATE PHOTO CAPTURE
+        # ---------------------------------------------------------------
+        if policy and policy.enable_photo_capture:
+            if not punch_image:
+                return Response({"detail": "Punch photo capture is mandatory."}, status=400)
+ 
+        # ---------------------------------------------------------------
+        # 🌍 GEOFENCE
+        # ---------------------------------------------------------------
+        if policy and policy.enable_geofencing:
+            if not lat or not lng:
+                return Response({"detail": "Location coordinates are required for geofencing"}, status=400)
+            if not validate_employee_geofence(employee, lat, lng):
+                return Response({"detail": "Outside geofence"}, status=400)
+ 
+        # ---------------------------------------------------------------
+        # 🔁 DETERMINE PUNCH DIRECTION (IN / OUT) FROM TODAY'S LOG HISTORY
+        # ---------------------------------------------------------------
+        today = now().date()
+ 
+        attendance, _ = Attendance.objects.get_or_create(
+            employee=employee,
+            date=today,
+        )
+ 
+        last_log = (
+            AttendanceLog.objects
+            .filter(attendance=attendance)
+            .order_by('-created_at')
+            .first()
+        )
+ 
+        if last_log is None:
+            punch_type = "check_in"
+        elif last_log.log_type == "check_in":
+            punch_type = "check_out"
+        else:
+            punch_type = "check_in"
+ 
+        current_time = localtime(now()).time()
+ 
+        # ---------------------------------------------------------------
+        # ✅ APPLY THE PUNCH
+        # ---------------------------------------------------------------
+        if punch_type == "check_in":
+            resolved_time, is_late = apply_check_in_policy(employee, current_time)
+ 
+            # Only the FIRST check-in of the day sets the summary check-in time.
+            # Later IN punches (e.g. returning from a break) are recorded in
+            # AttendanceLog only, so "first check-in" stays accurate.
+            if not attendance.check_in_time:
+                attendance.check_in_time = resolved_time
+                attendance.check_in_lat = lat
+                attendance.check_in_lng = lng
+                attendance.check_in_location = punch_location
+                if punch_image:
+                    attendance.check_in_image = punch_image
+ 
+            AttendanceLog.objects.create(
+                attendance=attendance,
+                log_type='check_in',
+                lat=lat,
+                lng=lng,
+                location=punch_location,
+                is_face_verified=is_verified,
+                auth_method=auth_method,
+            )
+ 
+            attendance.save()
+ 
+            return Response({
+                "status": "Check-in successful",
+                "punch_type": "check_in",
+                "is_late": is_late if not attendance.check_in_time or attendance.check_in_time == resolved_time else None,
+                "face_verified": is_verified,
+                "check_in_time": str(attendance.check_in_time),
+                "location": punch_location,
+                "punch_image": request.build_absolute_uri(
+                    attendance.check_in_image.url
+                ) if attendance.check_in_image else None,
+            })
+ 
+        else:  # punch_type == "check_out"
+            resolved_time, is_early = apply_check_out_policy(employee, current_time)
+ 
+            # The LATEST check-out always overwrites the summary field.
+            attendance.check_out_time = resolved_time
+            attendance.check_out_lat = lat
+            attendance.check_out_lng = lng
+            attendance.check_out_location = punch_location
+            if punch_image:
+                attendance.check_out_image = punch_image
+ 
+            AttendanceLog.objects.create(
+                attendance=attendance,
+                log_type='check_out',
+                lat=lat,
+                lng=lng,
+                location=punch_location,
+                is_face_verified=is_verified,
+                auth_method=auth_method,
+            )
+ 
+            attendance.calculate_total_hours()
+            attendance.save()
+ 
+            from calendars.utils import apply_late_early_penalties
+            apply_late_early_penalties(attendance)
+ 
+            return Response({
+                "status": "Check-out recorded successfully",
+                "punch_type": "check_out",
+                "is_early": is_early,
+                "face_verified": is_verified,
+                "check_out_time": str(attendance.check_out_time),
+                "working_hours": str(attendance.total_hours) if attendance.total_hours else None,
+                "location": punch_location,
+                "punch_image": request.build_absolute_uri(
+                    attendance.check_out_image.url
+                ) if attendance.check_out_image else None,
+            }, status=200)
+    @action(detail=False, methods=['post'])
     def check_in(self, request):
 
         emp_id = request.data.get("employee")

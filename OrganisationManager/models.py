@@ -168,6 +168,8 @@ class DocumentNumbering(models.Model):
         ('document_request','Document Request'),
         ('resignation_request','Resignation Request'),
         ('lateinearlyout_request','LateinEarlyout Request'),
+        ('payslip','PaySlip'),
+
 
 
 

@@ -218,6 +218,50 @@ class PayslipComponentViewSet(viewsets.ModelViewSet):
 class PayrollRunViewSet(viewsets.ModelViewSet):
     queryset = PayrollRun.objects.all()
     serializer_class = PayrollRunSerializer
+    def perform_create(self, serializer):
+        with transaction.atomic():
+
+            employees = serializer.validated_data.get('employees')
+            branch = serializer.validated_data.get('branch')
+            document_number = serializer.validated_data.get('document_number')
+
+            # ✅ Branch check
+            if not branch:
+                # Try getting branch from selected employees
+                if employees and employees.exists():
+                    first_employee = employees.first()
+                    branch = first_employee.emp_branch_id or first_employee.work_location
+
+            if not branch:
+                raise ValidationError("Branch is required or employee branch is missing.")
+
+            try:
+                doc_config = DocumentNumbering.objects.get(
+                    branch_id=branch.id,
+                    type='payslip',
+                )
+            except DocumentNumbering.DoesNotExist:
+                raise NotFound(
+                    f"No document numbering configuration found for branch {branch} and payslip request."
+                )
+
+            current_date = timezone.now().date()
+
+            # ✅ Manual document validation
+            if document_number:
+                if doc_config.start_date and doc_config.end_date:
+                    if not (doc_config.start_date <= current_date <= doc_config.end_date):
+                        raise ValidationError(
+                            "Document number cannot be assigned outside the valid date range."
+                        )
+            else:
+                # ✅ Auto-generate document number
+                document_number = doc_config.get_next_number()
+
+            serializer.save(
+                document_number=document_number,
+                branch=branch
+            )
 
 class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
     queryset = EmployeeSalaryStructure.objects.all()

@@ -188,6 +188,7 @@ class PayrollRun(models.Model):
         (12, 'December'),
     ]
     
+    document_number = models.CharField(max_length=50, unique=True, null=True, blank=True)
     name = models.CharField(max_length=100, blank=True, help_text="Optional payroll run name")
     arabic_name = models.CharField(max_length=100, blank=True, help_text="arabic payroll run name")
     month = models.IntegerField(choices=MONTH_CHOICES, help_text="Month of the payroll period")

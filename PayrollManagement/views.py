@@ -238,7 +238,7 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch.id,
-                    type='payslip',
+                    type='payroll_run',
                 )
             except DocumentNumbering.DoesNotExist:
                 raise NotFound(

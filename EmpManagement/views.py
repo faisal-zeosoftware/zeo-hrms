@@ -405,7 +405,8 @@ class EmpViewSet(viewsets.ModelViewSet):
 
         salary = EmployeeSalaryStructure.objects.filter(
             employee=employee,
-            is_active=True
+            is_active=True,
+            component__component_value_type="fixed"   # <-- only fixed components now
         ).select_related("component")
 
         serializer = EmployeeSalaryStructureSerializer(salary, many=True)

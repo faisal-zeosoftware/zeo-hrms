@@ -6,6 +6,12 @@ class ProjectStageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectStage
         fields = '__all__'
+    def to_representation(self, instance):
+            rep = super( ProjectStageSerializer, self).to_representation(instance)
+            if instance.project:  
+                rep['project'] = instance.project.title
+            return rep
+    
 
 
 class TaskSerializer(serializers.ModelSerializer):

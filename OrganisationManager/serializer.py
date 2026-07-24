@@ -15,14 +15,41 @@ class CompanyPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyPolicy
         fields = '__all__'
+        read_only_fields = ['created_by']
+
+    def validate_title(self, value):
+        title = value.strip()
+
+        qs = CompanyPolicy.objects.filter(title__iexact=title)
+
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+
+        if qs.exists():
+            raise serializers.ValidationError(
+                "A company policy with this title already exists."
+            )
+
+        return title
+
+    def create(self, validated_data):
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            validated_data["created_by"] = request.user
+        return super().create(validated_data)
+    
     def to_representation(self, instance):
         rep = super(CompanyPolicySerializer, self).to_representation(instance)
-        if instance.branch:
-            rep['branch'] =instance.branch.branch_name
+        if instance.branch.exists():
+            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
         if instance.department:
             rep['department'] =instance.department.dept_name
         if instance.category:
             rep['category'] =instance.category.ctgry_title
+        if instance.designation:
+            rep['designation'] =instance.designation.desgntn_job_title
+        if instance.specific_users.exists():
+            rep['specific_users'] = [user.username for user in instance.specific_users.all()]
         return rep
 
 
@@ -670,6 +697,12 @@ class UserBranchAccessSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserBranchAccess
         fields = '__all__'
+    def to_representation(self, instance):
+            rep = super(UserBranchAccessSerializer, self).to_representation(instance)
+            # Show names in response, but IDs remain for POST
+            if instance.user:
+                rep['user']=instance.user.username
+            return rep
 class BranchGeoFenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = BranchGeoFence

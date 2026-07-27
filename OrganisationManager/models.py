@@ -258,7 +258,7 @@ class CompanyPolicy(models.Model):
     title           = models.CharField(max_length=200)
     description     = models.TextField()
     policy_file     = models.FileField(upload_to='policies/')
-    branch          = models.ForeignKey('brnch_mstr',on_delete=models.CASCADE, related_name='policies')
+    branch          = models.ManyToManyField(brnch_mstr, blank=True,related_name='policies')
     department      = models.ForeignKey('dept_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)
     category        = models.ForeignKey('ctgry_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)
     desigantion     = models.ForeignKey('desgntn_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)

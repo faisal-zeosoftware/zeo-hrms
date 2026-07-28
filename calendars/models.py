@@ -2515,13 +2515,13 @@ class Attendance(models.Model):
     date            = models.DateField()
     check_in_time   = models.TimeField(null=True, blank=True)
 
-    check_in_lat    = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    check_in_lng    = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    check_in_lat    = models.FloatField(null=True, blank=True)
+    check_in_lng    = models.FloatField(null=True, blank=True)
 
     check_out_time  = models.TimeField(null=True, blank=True)
     
-    check_out_lat   = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    check_out_lng   = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    check_out_lat   = models.FloatField(null=True, blank=True)
+    check_out_lng   = models.FloatField(null=True, blank=True)
     check_in_location = models.CharField(max_length=255, null=True, blank=True)
     check_out_location = models.CharField(max_length=255, null=True, blank=True)    
     total_hours     = models.DurationField(null=True, blank=True)

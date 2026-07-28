@@ -3999,24 +3999,6 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceCalendarSerializer
     filterset_fields = ['employee', 'date', 'status']
 
-    @action(detail=False, methods=['post'])
-    def sync_range(self, request):
-        from .utils import sync_attendance_calendar
-        employee_id = request.data.get('employee')
-        start_date_str = request.data.get('start_date')
-        end_date_str = request.data.get('end_date')
-
-        if not all([employee_id, start_date_str, end_date_str]):
-            return Response({"error": "Missing parameters"}, status=400)
-
-        try:
-            employee = emp_master.objects.get(id=employee_id)
-            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
-            sync_attendance_calendar(employee, start_date, end_date)
-            return Response({"message": "Calendar synced successfully"})
-        except Exception as e:
-            return Response({"error": str(e)}, status=400)
     @action(detail=False, methods=['get'])
     def calendar_view(self, request):
         employee_id = request.query_params.get('employee_id')
@@ -4040,6 +4022,7 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
             )
 
         from .utils import get_employee_weekend_days, get_employee_holidays
+        from .models import employee_leave_request
 
         # ----------------------------------------
         # Determine Employees
@@ -4047,17 +4030,13 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
 
         if employee_id:
             employees = emp_master.objects.filter(id=employee_id)
-
         elif branch_id:
             employees = emp_master.objects.filter(
                 emp_branch_id_id=branch_id,
                 is_active=True
             )
-
         else:
-            employees = emp_master.objects.filter(
-                is_active=True
-            )
+            employees = emp_master.objects.filter(is_active=True)
 
         if not employees.exists():
             return Response({"error": "No employees found"}, status=404)
@@ -4066,64 +4045,74 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
 
         for employee in employees:
 
-            records = AttendanceCalendar.objects.filter(
+            # Only pull MANUAL overrides from AttendanceCalendar —
+            # everything else is derived live from leave requests.
+            manual_records = AttendanceCalendar.objects.filter(
                 employee=employee,
-                date__range=(start_date, end_date)
+                date__range=(start_date, end_date),
+                is_manual=True
             ).select_related("leave_type")
+            manual_map = {r.date: r for r in manual_records}
 
-            record_map = {
-                r.date: r for r in records
-            }
+            # Approved leave requests overlapping the range, live from source of truth
+            leave_requests = employee_leave_request.objects.filter(
+                employee=employee,
+                status='approved',
+                start_date__lte=end_date,
+                end_date__gte=start_date
+            ).select_related('leave_type')
 
             weekend_days = get_employee_weekend_days(employee)
-            holiday_dates = get_employee_holidays(
-                employee,
-                start_date,
-                end_date
-            )
+            holiday_dates = get_employee_holidays(employee, start_date, end_date)
 
             calendar_data = []
-
             current_date = start_date
 
             while current_date <= end_date:
 
-                record = record_map.get(current_date)
+                manual = manual_map.get(current_date)
 
-                if record:
-
-                    status = record.status
-                    leave_name = (
-                        record.leave_type.name
-                        if record.leave_type
-                        else None
-                    )
-
-                    is_half_day = record.is_half_day
-                    remarks = record.remarks
+                if manual:
+                    # Respect manual override as-is
+                    status = manual.status
+                    leave_name = manual.leave_type.name if manual.leave_type else None
+                    is_half_day = manual.is_half_day
+                    remarks = manual.remarks
 
                 else:
-
                     weekday = current_date.strftime("%A")
 
-                    if current_date in holiday_dates:
-                        status = "Holiday"
+                    # find a leave request covering this date
+                    current_leave = next(
+                        (lr for lr in leave_requests
+                        if lr.start_date <= current_date <= lr.end_date),
+                        None
+                    )
 
+                    if current_leave:
+                        status = "Leave"
+                        leave_name = current_leave.leave_type.name if current_leave.leave_type else None
+                        is_half_day = current_leave.dis_half_day
+                        remarks = f"Leave approved: {leave_name}"
+                    elif current_date in holiday_dates:
+                        status = "Holiday"
+                        leave_name = None
+                        is_half_day = False
+                        remarks = "Auto-determined"
                     elif weekday in weekend_days:
                         status = "Weekend"
-
+                        leave_name = None
+                        is_half_day = False
+                        remarks = "Auto-determined"
                     else:
                         status = "Present"
-
-                    leave_name = None
-                    is_half_day = False
-                    remarks = "Auto-determined"
+                        leave_name = None
+                        is_half_day = False
+                        remarks = "Auto-determined"
 
                 display_status = status
-
                 if status == "Leave" and leave_name:
                     display_status = f"Leave ({leave_name})"
-
                     if is_half_day:
                         display_status += " (Half Day)"
 

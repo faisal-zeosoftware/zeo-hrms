@@ -681,28 +681,35 @@ class CompanyPolicyViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated:
-            if user.is_superuser:
-                return self.queryset
 
-            # Check if user is listed in `specific_users`
-            if self.queryset.filter(specific_users=user).exists():
-                return self.queryset.filter(specific_users=user)
+        if not user.is_authenticated:
+            return CompanyPolicy.objects.none()
 
-            # Get the employee's branch, department, and category if the user is an ESS user
-            if user.is_ess:
-                emp_branch = user.emp_master.emp_branch_id
-                emp_dept = user.emp_master.emp_dept_id
-                emp_category = user.emp_master.emp_ctgry_id
+        # Admin can see all policies
+        if user.is_superuser:
+            return CompanyPolicy.objects.all()
 
-                # Filter policies by matching the branch, department, and category
-                return self.queryset.filter(
-                    branch=emp_branch,
-                    department=emp_dept,
-                    category=emp_category
-                )
-        
+        # Specific users can see only assigned policies
+        specific_policies = CompanyPolicy.objects.filter(
+            specific_users__id=user.id
+        ).distinct()
+
+        if specific_policies.exists():
+            return specific_policies
+
+        # ESS users can see branch/department/category policies
+        if getattr(user, "is_ess", False):
+            emp = getattr(user, "emp_master", None)
+
+            if emp:
+                return CompanyPolicy.objects.filter(
+                    branch=emp.emp_branch,
+                    department=emp.emp_dept,
+                    category=emp.emp_ctgry
+                ).distinct()
+
         return CompanyPolicy.objects.none()
+    
     # def get_queryset(self):
     #     user = self.request.user
     #     if user.is_authenticated:

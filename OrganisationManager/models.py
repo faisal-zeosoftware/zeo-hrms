@@ -261,7 +261,7 @@ class CompanyPolicy(models.Model):
     branch          = models.ManyToManyField(brnch_mstr, blank=True,related_name='policies')
     department      = models.ForeignKey('dept_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)
     category        = models.ForeignKey('ctgry_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)
-    desigantion     = models.ForeignKey('desgntn_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)
+    designation     = models.ForeignKey('desgntn_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)
     # specific_employees = models.ManyToManyField(emp_master, blank=True)
     specific_users  = models.ManyToManyField('UserManagement.CustomUser', blank=True)
     created_at      = models.DateTimeField(auto_now_add=True)

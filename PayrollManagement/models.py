@@ -70,7 +70,7 @@ class SalaryComponent(models.Model):
 class SalaryStructure(models.Model):
     name = models.CharField(max_length=100, help_text="Name of the structure (e.g., Manager, Worker)")
     description = models.TextField(blank=True, null=True)
-    branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE, null=True, blank=True, related_name='salary_structures')
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',null=True, blank=True, related_name='salary_structures')
     components = models.ManyToManyField(SalaryComponent, related_name='salary_structures', help_text="Salary components included in this structure")
     employees = models.ManyToManyField('EmpManagement.emp_master', related_name='assigned_salary_structures', blank=True, help_text="Employees assigned to this structure")
     is_active = models.BooleanField(default=True)

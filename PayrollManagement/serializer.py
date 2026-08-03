@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,AirticketNotification,
-                    SalaryRevisionHistory
+                    SalaryRevisionHistory,SalaryStructure
                     
                     )
 
@@ -1471,3 +1471,7 @@ class SalaryRevisionHistorySerializer(serializers.ModelSerializer):
     class Meta:
         model = SalaryRevisionHistory
         fields = ['id', 'employee', 'employee_name', 'component', 'component_name', 'revisions', 'date_updated']
+class SalaryStructureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SalaryStructure
+        fields = '__all__'

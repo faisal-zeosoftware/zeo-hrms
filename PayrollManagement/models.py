@@ -66,10 +66,23 @@ class SalaryComponent(models.Model):
         ]
     def __str__(self):
         return f"{self.name} ({self.get_component_type_display()})"
+
+class SalaryStructure(models.Model):
+    name = models.CharField(max_length=100, help_text="Name of the structure (e.g., Manager, Worker)")
+    description = models.TextField(blank=True, null=True)
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE, null=True, blank=True, related_name='salary_structures')
+    components = models.ManyToManyField(SalaryComponent, related_name='salary_structures', help_text="Salary components included in this structure")
+    employees = models.ManyToManyField('EmpManagement.emp_master', related_name='assigned_salary_structures', blank=True, help_text="Employees assigned to this structure")
+    is_active = models.BooleanField(default=True)
+    date_created = models.DateTimeField(auto_now_add=True)
+    date_updated = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
 class EmployeeSalaryStructure(models.Model):
     employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE, related_name='salary_structures')
     component = models.ForeignKey(SalaryComponent, on_delete=models.CASCADE, related_name='employee_components')
-    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Amount for this component")
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, null=True, blank=True, help_text="Amount for this component")
     is_active = models.BooleanField(default=True, help_text="Is this component active for the employee?")
     date_created = models.DateTimeField(auto_now_add=True)
     date_updated = models.DateTimeField(auto_now=True)

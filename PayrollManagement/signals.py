@@ -1,6 +1,6 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import PayslipComponent, LoanRepayment, EmployeeSalaryStructure,SalaryComponent,AdvanceSalaryRequest
+from .models import PayslipComponent, LoanRepayment,SalaryStructure,EmployeeSalaryStructure,SalaryComponent,AdvanceSalaryRequest
 from calendars.models import Attendance,LeaveEncashmentTransaction
 from django.db.models import Q
 import logging
@@ -34,7 +34,24 @@ from simpleeval import SimpleEval, NameNotDefined, FunctionNotDefined
 from calendars .utils import get_employee_holidays,get_employee_weekend_days
 from .utils import get_ot_rate,evaluate_formula
 
-
+@receiver(m2m_changed, sender=SalaryStructure.employees.through)
+def generate_employee_salary_components(sender, instance, action, pk_set, **kwargs):
+    """
+    When employees are added to a SalaryStructure, automatically create
+    EmployeeSalaryStructure records for each component with amount 0.00
+    """
+    if action == "post_add":
+        # Get all components assigned to this structure
+        components = instance.components.all()
+        
+        for emp_id in pk_set:
+            for component in components:
+                # Create the individual records with amount 0.00
+                EmployeeSalaryStructure.objects.get_or_create(
+                    employee_id=emp_id,
+                    component=component,
+                    defaults={'amount': 0.00, 'is_active': True}
+                )
 @receiver(post_save, sender=SalaryComponent)
 def update_employee_salary_structure(sender, instance, created, **kwargs):
     # if not instance.is_fixed and instance.formula:

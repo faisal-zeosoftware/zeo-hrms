@@ -22,6 +22,7 @@ from .models import CustomUser
 from .serializers import UserListSerializer
 from django.core.exceptions import ValidationError
 from django.db.models import Q
+from EmpManagement .models import emp_master
 
 # from .permissions import CompanyPermission
 from django.http import Http404
@@ -385,4 +386,272 @@ class ChangePasswordView(APIView):
         return Response(
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
+        )
+
+def get_ess_employee(emp_code):
+    """
+    Search all tenant schemas and return the employee.
+    """
+
+    for tenant in company.objects.exclude(schema_name="public"):
+
+        try:
+            with schema_context(tenant.schema_name):
+
+                employee = (
+                    emp_master.objects
+                    .select_related("users")
+                    .filter(
+                        emp_code=emp_code,
+                        is_ess=True,
+                        is_active=True
+                    )
+                    .first()
+                )
+
+                if employee:
+                    return employee
+
+        except Exception:
+            continue
+
+    return None
+
+from django.core.mail import EmailMessage
+from .utils import generate_otp
+class ESSSendResetPasswordOTP(APIView):
+
+    def post(self, request):
+
+        emp_code = request.data.get("emp_code")
+
+        if not emp_code:
+            return Response(
+                {
+                    "error": "Employee Code is required"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        employee = get_ess_employee(emp_code)
+
+        if employee is None:
+            return Response(
+                {
+                    "error": "ESS Employee not found"
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not employee.users:
+            return Response(
+                {
+                    "error": "Employee login account not found"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = employee.users
+
+        email = employee.emp_company_email or employee.emp_personal_email
+
+        if not email:
+            return Response(
+                {
+                    "error": "Employee email not available"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = employee.users
+
+        otp = generate_otp()
+
+        user.otp = otp
+        user.otp_created_at = timezone.now()
+        user.is_2fa_verified = False
+        user.save()
+
+        subject = "Password Reset OTP"
+
+        message = (
+            f"Your OTP for resetting password is: {otp}"
+        )
+
+        EmailMessage(
+            subject,
+            message,
+            to=[email]
+        ).send()
+
+        return Response(
+            {
+                "message": "OTP sent successfully"
+            },
+            status=status.HTTP_200_OK
+        )
+
+class ESSVerifyResetOTP(APIView):
+
+    def post(self, request):
+        emp_code = request.data.get("emp_code")
+        otp = request.data.get("otp")
+
+        if not emp_code or not otp:
+            return Response(
+                {"error": "Employee Code and OTP are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        employee = get_ess_employee(emp_code)
+
+        if employee is None:
+            return Response(
+                {"error": "ESS Employee not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not employee.users:
+            return Response(
+                {"error": "User not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        user = employee.users
+
+        # Check OTP match
+        if str(user.otp) != str(otp):
+            return Response(
+                {"error": "Invalid OTP"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check expiry (valid for 10 minutes)
+        if (timezone.now() - user.otp_created_at).seconds > 600:
+            return Response(
+                {"error": "OTP expired"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Mark OTP as verified
+        user.is_2fa_verified = True
+        user.save()
+
+        return Response(
+            {"message": "OTP verified successfully"},
+            status=status.HTTP_200_OK
+        )
+
+class ESSResetPassword(APIView):
+
+    def post(self, request):
+        emp_code = request.data.get("emp_code")
+        new_password = request.data.get("new_password")
+
+        if not emp_code:
+            return Response(
+                {"error": "Employee Code is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not new_password:
+            return Response(
+                {"error": "New password is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        employee = get_ess_employee(emp_code)
+
+        if employee is None:
+            return Response(
+                {"error": "ESS Employee not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not employee.users:
+            return Response(
+                {"error": "User not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        user = employee.users
+
+        if not user.is_2fa_verified:
+            return Response(
+                {"error": "Please verify OTP first"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.set_password(new_password)
+
+        # Clear OTP after successful reset
+        user.otp = None
+        user.otp_created_at = None
+        user.is_2fa_verified = False
+        user.must_change_password = False
+        user.save()
+
+        return Response(
+            {"message": "Password reset successful"},
+            status=status.HTTP_200_OK
+        )
+class ESSChangePassword(APIView):
+    # permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        old_password = request.data.get("old_password")
+        new_password = request.data.get("new_password")
+
+        if not old_password:
+            return Response(
+                {"error": "Old password is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not new_password:
+            return Response(
+                {"error": "New password is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+
+        # Check old password
+        if not user.check_password(old_password):
+            return Response(
+                {"error": "Old password is incorrect"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Prevent same password
+        if old_password == new_password:
+            return Response(
+                {"error": "New password cannot be the same as the old password"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Optional: minimum length
+        if len(new_password) < 8:
+            return Response(
+                {"error": "Password must be at least 8 characters"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.set_password(new_password)
+        user.must_change_password = False
+
+        # Clear any OTP values
+        user.otp = None
+        user.otp_created_at = None
+        user.is_2fa_verified = False
+
+        user.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Password changed successfully."
+            },
+            status=status.HTTP_200_OK
         )

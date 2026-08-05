@@ -570,3 +570,14 @@ class ChangePasswordSerializer(serializers.Serializer):
 
         return value
     
+class ESSChangePasswordSerializer(serializers.Serializer):
+    emp_code = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)
+
+    def validate_new_password(self, value):
+        if len(value) < 8:
+            raise serializers.ValidationError(
+                "Password must be at least 8 characters."
+            )
+        return value
+    

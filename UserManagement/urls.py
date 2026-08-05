@@ -4,7 +4,8 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.views import TokenObtainPairView
 # from . import views
 from .views import (RegisterUserAPIView, CompanyViewSet, DomainViewset, TenantUserListView, CustomTokenObtainPairView, UserDetailView,NoEssUerListView,GroupPermTenantUserListView,
-                    ValidateCredentialsView,SendOTPView,VerifyOTPView,SendResetPasswordOTP,VerifyResetOTP,ResetPassword,ChangePasswordView)
+                    ValidateCredentialsView,SendOTPView,VerifyOTPView,SendResetPasswordOTP,VerifyResetOTP,ResetPassword,ChangePasswordView,ESSSendResetPasswordOTP,ESSVerifyResetOTP,
+                    ESSResetPassword,ESSChangePassword)
 from . import views
 router = DefaultRouter()
 
@@ -29,6 +30,10 @@ urlpatterns = [
     path("verify-reset-otp/", VerifyResetOTP.as_view(),name='verify-reset-otp/'),
     path("reset-password/", ResetPassword.as_view(),name='reset-password'),
     path("change-password/", ChangePasswordView.as_view(), name="change-password"),
+    path("ess-send-reset-otp/",ESSSendResetPasswordOTP.as_view(),name="ess-send-reset-otp",),
+    path("ess-verify-reset-otp/",ESSVerifyResetOTP.as_view(),name="ess-verify-reset-otp",),
+    path("ess-reset-password/",ESSResetPassword.as_view(),name="ess-reset-password",),
+    path("ess-change-password/",ESSChangePassword.as_view(),name="ess-change-password"),
 
 
 ]

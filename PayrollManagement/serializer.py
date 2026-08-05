@@ -234,10 +234,12 @@ class PayslipLeaveSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayslipLeave
         fields = ["leave_type", "leave_type_name", "days"]
+        
 class EmployeeBankSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeBankDetail
         fields = "__all__"
+
 class EmployeePayslipSerializer(serializers.ModelSerializer):
     emp_bank =  EmployeeBankSerializer(
         many=True,

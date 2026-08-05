@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 # from . import views
 from .views import (RegisterUserAPIView, CompanyViewSet, DomainViewset, TenantUserListView, CustomTokenObtainPairView, UserDetailView,NoEssUerListView,GroupPermTenantUserListView,
                     ValidateCredentialsView,SendOTPView,VerifyOTPView,SendResetPasswordOTP,VerifyResetOTP,ResetPassword,ChangePasswordView,ESSSendResetPasswordOTP,ESSVerifyResetOTP,
-                    ESSResetPassword,ESSChangePassword)
+                    ESSResetPassword)
 from . import views
 router = DefaultRouter()
 

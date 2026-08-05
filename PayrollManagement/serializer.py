@@ -307,7 +307,6 @@ class PayslipSerializer(serializers.ModelSerializer):
             )
             .aggregate(total=Sum("number_of_days"))
         )
-
         return total["total"] or 0
 
     

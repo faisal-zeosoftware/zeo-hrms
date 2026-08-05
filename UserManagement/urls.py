@@ -33,7 +33,6 @@ urlpatterns = [
     path("ess-send-reset-otp/",ESSSendResetPasswordOTP.as_view(),name="ess-send-reset-otp",),
     path("ess-verify-reset-otp/",ESSVerifyResetOTP.as_view(),name="ess-verify-reset-otp",),
     path("ess-reset-password/",ESSResetPassword.as_view(),name="ess-reset-password",),
-    path("ess-change-password/",ESSChangePassword.as_view(),name="ess-change-password"),
 
 
 ]

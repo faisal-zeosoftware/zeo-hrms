@@ -10,6 +10,8 @@ import calendar
 from EmpManagement .models import EmployeeBankDetail,emp_master,EmailConfiguration
 from decimal import Decimal
 from UserManagement.models import CustomUser
+from calendars .serializer import LeaveRequestSerializer,EmployeeLeaveBalanceSerializer,EmployeeOvertimeSerializer
+
 
 
 class SalaryComponentSerializer(serializers.ModelSerializer):
@@ -62,6 +64,100 @@ class EmpBulkuploadSalaryStructureSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeSalaryStructure
         fields = '__all__'
+
+class LoanApplicationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LoanApplication
+        fields = '__all__'
+    def to_representation(self, instance):
+        rep = super(LoanApplicationSerializer, self).to_representation(instance)
+        if instance.employee:
+            rep['employee'] =instance.employee.emp_code
+        if instance.loan_type:
+            rep['loan_type'] =instance.loan_type.loan_type
+        if instance.branch:
+            rep['branch'] =instance.branch.branch_name
+        return rep
+    def validate(self, data):
+        email_config = EmailConfiguration.objects.filter(is_active=True).first()
+        if not email_config:
+                raise serializers.ValidationError({
+                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+                })
+        if not email_config.email_host_user:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email username is not configured."
+                })
+        if not email_config.email_host_password:
+                raise serializers.ValidationError({
+                    "email_configuration": "Email password is not configured."
+                      })
+        loan_type = data.get('loan_type')
+        employee = data.get('employee')
+
+        # ---------------- BASIC CHECKS ----------------
+        if not loan_type:
+            raise serializers.ValidationError({
+                "loan_type": "Loan type is required."
+            })
+
+        if not employee:
+            raise serializers.ValidationError({
+                "employee": "Employee is required."
+            })
+
+        # ---------------- SAFE BRANCH ACCESS ----------------
+        branch = getattr(employee, "emp_branch_id", None)
+
+        if not branch:
+            raise serializers.ValidationError({
+                "employee": "Employee branch is not assigned."
+            })
+
+        # ---------------- GET WORKFLOW ----------------
+        workflow = LoanApprovalWorkflow.objects.filter(
+            loan_type=loan_type,
+            branch=branch
+        ).first()
+
+        # ✅ FIX 1: fallback if branch-based not found
+        if not workflow:
+            workflow = LoanApprovalWorkflow.objects.filter(
+                loan_type=loan_type
+            ).first()
+
+        if not workflow:
+            raise serializers.ValidationError({
+                "loan_type": "Approval workflow is not configured for this loan type."
+            })
+
+        approval_type = workflow.approval_type
+
+        # ---------------- GET FIRST LEVEL ----------------
+        first_level = workflow.loan_levels.order_by('level').first()
+
+        # ✅ FIX 2: only enforce level for multi approval
+        if approval_type == 'multi_approval' and not first_level:
+            raise serializers.ValidationError({
+                "loan_type": "Approval levels are not configured."
+            })
+
+        # ---------------- REPORTING MANAGER ----------------
+        if approval_type == 'reporting_manager':
+            if not getattr(employee, "emp_reporting_manager", None):
+                raise serializers.ValidationError({
+                    "employee": "This employee does not have a reporting manager assigned."
+                })
+
+        # ---------------- MULTI APPROVAL ----------------
+        if approval_type == 'multi_approval':
+            if not first_level.approver:
+                raise serializers.ValidationError({
+                    "loan_type": f"Approver is not configured for level {first_level.level}."
+                })
+
+        return data
+    
 
 class PayrollRunSerializer(serializers.ModelSerializer):
     class Meta:
@@ -138,6 +234,46 @@ class PayslipLeaveSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayslipLeave
         fields = ["leave_type", "leave_type_name", "days"]
+class EmployeeBankSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmployeeBankDetail
+        fields = "__all__"
+
+class EmployeePayslipSerializer(serializers.ModelSerializer):
+    emp_bank =  EmployeeBankSerializer(
+        many=True,
+        read_only=True,
+        source="bank_details"
+    )
+
+    loan_requests = LoanApplicationSerializer(
+        many=True,
+        read_only=True,
+        source="loan"
+    )
+
+    leave_requests = LeaveRequestSerializer(
+        many=True,
+        read_only=True,
+        source="employee_leave_request_set"
+    )
+
+    leave_balance = EmployeeLeaveBalanceSerializer(
+        many=True,
+        read_only=True,
+        source="emp_leave_balance_set"
+    )
+
+    overtime = EmployeeOvertimeSerializer(
+        many=True,
+        read_only=True,
+        source="employeeovertime_set"
+    )
+
+    class Meta:
+        model = emp_master
+        fields = "__all__"
+
 class PayslipSerializer(serializers.ModelSerializer):
     currency_details = serializers.SerializerMethodField()
     payroll_run = PayrollRunSerializer(read_only=True)
@@ -145,10 +281,38 @@ class PayslipSerializer(serializers.ModelSerializer):
     components = serializers.SerializerMethodField()
     currency_details = serializers.SerializerMethodField()
     leave_details = PayslipLeaveSerializer(many=True, read_only=True)
+    unpaid_leave_days = serializers.SerializerMethodField()
 
     class Meta:
         model = Payslip
         fields = '__all__'
+
+    def get_unpaid_leave_days(self, obj):
+        from calendars .models import employee_leave_request
+        from django.db.models import Sum
+        payroll = obj.payroll_run
+
+        if (
+            not payroll
+            or not payroll.attendance_start_date
+            or not payroll.attendance_end_date
+        ):
+            return 0
+
+        total = (
+            employee_leave_request.objects.filter(
+                employee_id=obj.employee_id,
+                status="approved",
+                leave_type__name__iexact="Unpaid Leave",   # <-- filter by name
+                start_date__lte=payroll.attendance_end_date,
+                end_date__gte=payroll.attendance_start_date,
+            )
+            .aggregate(total=Sum("number_of_days"))
+        )
+
+        return total["total"] or 0
+
+    
     def get_currency_details(self, obj):
         request = self.context.get("request")
         if request and hasattr(request, "tenant") and request.tenant.currency:
@@ -305,98 +469,98 @@ class LoanTypeSerializer(serializers.ModelSerializer):
         ]
         return rep
 
-class LoanApplicationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LoanApplication
-        fields = '__all__'
-    def to_representation(self, instance):
-        rep = super(LoanApplicationSerializer, self).to_representation(instance)
-        if instance.employee:
-            rep['employee'] =instance.employee.emp_code
-        if instance.loan_type:
-            rep['loan_type'] =instance.loan_type.loan_type
-        if instance.branch:
-            rep['branch'] =instance.branch.branch_name
-        return rep
-    def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
-        loan_type = data.get('loan_type')
-        employee = data.get('employee')
+# class LoanApplicationSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = LoanApplication
+#         fields = '__all__'
+#     def to_representation(self, instance):
+#         rep = super(LoanApplicationSerializer, self).to_representation(instance)
+#         if instance.employee:
+#             rep['employee'] =instance.employee.emp_code
+#         if instance.loan_type:
+#             rep['loan_type'] =instance.loan_type.loan_type
+#         if instance.branch:
+#             rep['branch'] =instance.branch.branch_name
+#         return rep
+#     def validate(self, data):
+#         email_config = EmailConfiguration.objects.filter(is_active=True).first()
+#         if not email_config:
+#                 raise serializers.ValidationError({
+#                     "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
+#                 })
+#         if not email_config.email_host_user:
+#                 raise serializers.ValidationError({
+#                     "email_configuration": "Email username is not configured."
+#                 })
+#         if not email_config.email_host_password:
+#                 raise serializers.ValidationError({
+#                     "email_configuration": "Email password is not configured."
+#                       })
+#         loan_type = data.get('loan_type')
+#         employee = data.get('employee')
 
-        # ---------------- BASIC CHECKS ----------------
-        if not loan_type:
-            raise serializers.ValidationError({
-                "loan_type": "Loan type is required."
-            })
+#         # ---------------- BASIC CHECKS ----------------
+#         if not loan_type:
+#             raise serializers.ValidationError({
+#                 "loan_type": "Loan type is required."
+#             })
 
-        if not employee:
-            raise serializers.ValidationError({
-                "employee": "Employee is required."
-            })
+#         if not employee:
+#             raise serializers.ValidationError({
+#                 "employee": "Employee is required."
+#             })
 
-        # ---------------- SAFE BRANCH ACCESS ----------------
-        branch = getattr(employee, "emp_branch_id", None)
+#         # ---------------- SAFE BRANCH ACCESS ----------------
+#         branch = getattr(employee, "emp_branch_id", None)
 
-        if not branch:
-            raise serializers.ValidationError({
-                "employee": "Employee branch is not assigned."
-            })
+#         if not branch:
+#             raise serializers.ValidationError({
+#                 "employee": "Employee branch is not assigned."
+#             })
 
-        # ---------------- GET WORKFLOW ----------------
-        workflow = LoanApprovalWorkflow.objects.filter(
-            loan_type=loan_type,
-            branch=branch
-        ).first()
+#         # ---------------- GET WORKFLOW ----------------
+#         workflow = LoanApprovalWorkflow.objects.filter(
+#             loan_type=loan_type,
+#             branch=branch
+#         ).first()
 
-        # ✅ FIX 1: fallback if branch-based not found
-        if not workflow:
-            workflow = LoanApprovalWorkflow.objects.filter(
-                loan_type=loan_type
-            ).first()
+#         # ✅ FIX 1: fallback if branch-based not found
+#         if not workflow:
+#             workflow = LoanApprovalWorkflow.objects.filter(
+#                 loan_type=loan_type
+#             ).first()
 
-        if not workflow:
-            raise serializers.ValidationError({
-                "loan_type": "Approval workflow is not configured for this loan type."
-            })
+#         if not workflow:
+#             raise serializers.ValidationError({
+#                 "loan_type": "Approval workflow is not configured for this loan type."
+#             })
 
-        approval_type = workflow.approval_type
+#         approval_type = workflow.approval_type
 
-        # ---------------- GET FIRST LEVEL ----------------
-        first_level = workflow.loan_levels.order_by('level').first()
+#         # ---------------- GET FIRST LEVEL ----------------
+#         first_level = workflow.loan_levels.order_by('level').first()
 
-        # ✅ FIX 2: only enforce level for multi approval
-        if approval_type == 'multi_approval' and not first_level:
-            raise serializers.ValidationError({
-                "loan_type": "Approval levels are not configured."
-            })
+#         # ✅ FIX 2: only enforce level for multi approval
+#         if approval_type == 'multi_approval' and not first_level:
+#             raise serializers.ValidationError({
+#                 "loan_type": "Approval levels are not configured."
+#             })
 
-        # ---------------- REPORTING MANAGER ----------------
-        if approval_type == 'reporting_manager':
-            if not getattr(employee, "emp_reporting_manager", None):
-                raise serializers.ValidationError({
-                    "employee": "This employee does not have a reporting manager assigned."
-                })
+#         # ---------------- REPORTING MANAGER ----------------
+#         if approval_type == 'reporting_manager':
+#             if not getattr(employee, "emp_reporting_manager", None):
+#                 raise serializers.ValidationError({
+#                     "employee": "This employee does not have a reporting manager assigned."
+#                 })
 
-        # ---------------- MULTI APPROVAL ----------------
-        if approval_type == 'multi_approval':
-            if not first_level.approver:
-                raise serializers.ValidationError({
-                    "loan_type": f"Approver is not configured for level {first_level.level}."
-                })
+#         # ---------------- MULTI APPROVAL ----------------
+#         if approval_type == 'multi_approval':
+#             if not first_level.approver:
+#                 raise serializers.ValidationError({
+#                     "loan_type": f"Approver is not configured for level {first_level.level}."
+#                 })
 
-        return data
+#         return data
 class LoanRepaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanRepayment

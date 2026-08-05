@@ -238,7 +238,6 @@ class EmployeeBankSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeBankDetail
         fields = "__all__"
-
 class EmployeePayslipSerializer(serializers.ModelSerializer):
     emp_bank =  EmployeeBankSerializer(
         many=True,
@@ -280,13 +279,12 @@ class PayslipSerializer(serializers.ModelSerializer):
     employee = serializers.StringRelatedField()
     components = serializers.SerializerMethodField()
     currency_details = serializers.SerializerMethodField()
-    leave_details = PayslipLeaveSerializer(many=True, read_only=True)
+    employee_details = EmployeePayslipSerializer(source="employee",read_only=True)
     unpaid_leave_days = serializers.SerializerMethodField()
 
     class Meta:
         model = Payslip
         fields = '__all__'
-
     def get_unpaid_leave_days(self, obj):
         from calendars .models import employee_leave_request
         from django.db.models import Sum

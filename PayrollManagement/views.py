@@ -17,6 +17,7 @@ from EmpManagement.models import emp_master
 from rest_framework.decorators import action
 from OrganisationManager.models import DocumentNumbering
 from django.core.exceptions import ValidationError
+from decimal import Decimal, InvalidOperation
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
@@ -268,131 +269,332 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 branch=branch
             )
 
+# class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
+#     queryset = EmployeeSalaryStructure.objects.all()
+#     serializer_class = EmpBulkuploadSalaryStructureSerializer
+#     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+#     def bulk_upload(self, request):
+#         if request.method == 'POST' and request.FILES.get('file'):
+#             excel_file = request.FILES['file']
+#             dataset = Dataset()
+#             file_name = excel_file.name.lower()
+
+#             try:
+#                 if file_name.endswith('.xlsx'):
+#                     dataset.load(excel_file.read(), format='xlsx')
+
+#                 elif file_name.endswith('.csv'):
+#                     dataset.load(
+#                         excel_file.read().decode('utf-8'),
+#                         format='csv'
+#                     )
+
+#                 else:
+#                     return Response(
+#                         {"error": "Invalid file format. Upload .xlsx or .csv only."},
+#                         status=400
+#                     )
+
+#                 resource = EmployeeSalaryStructureResource()
+#                 all_errors = []
+#                 valid_rows = []
+
+#                 with transaction.atomic():
+#                     for row_idx, row in enumerate(dataset.dict, start=2):
+#                         try:
+#                             resource.before_import_row(row, row_idx=row_idx)
+#                         except ValidationError as e:
+#                             all_errors.extend(
+#                                 [f"Row {row_idx}: {error}" for error in e.messages]
+#                             )
+
+#                 if all_errors:
+#                     return Response({"errors": all_errors}, status=400)
+
+#                 with transaction.atomic():
+#                     result = resource.import_data(
+#                         dataset,
+#                         dry_run=False,
+#                         raise_errors=True
+#                     )
+
+#                 return Response(
+#                     {"message": f"{result.total_rows} records created successfully"}
+#                 )
+
+#             except Exception as e:
+#                 return Response({"error": str(e)}, status=400)
+
+#         return Response({"error": "Please provide an Excel or CSV file."}, status=400)
+    
+#     @action(detail=False, methods=['get'])
+#     def download_default_excel_file(self, request):
+#         resource = EmployeeSalaryStructureResource()
+#         headers = [field.column_name for field in resource.fields.values()]
+#         wb = Workbook()
+
+#         # ======== Common Styles ========
+#         black_font = Font(color="000000", bold=True)
+#         blue_fill = PatternFill(start_color="1E90FF", end_color="1E90FF", fill_type="solid")
+#         yellow_fill = PatternFill(start_color="FFF8DC", end_color="FFF8DC", fill_type="solid")  # light cream/yellow
+#         border_style = Border(
+#             left=Side(style='thin'),
+#             right=Side(style='thin'),
+#             top=Side(style='thin'),
+#             bottom=Side(style='thin')
+#         )
+
+#         # Helper function to style header row
+#         def style_header_row(ws, max_cols=10):
+#             """Style header row with blue fill and black bold text across full width."""
+#             for col in range(1, max_cols + 1):
+#                 cell = ws.cell(row=1, column=col)
+#                 if not cell.value:
+#                     cell.value = ""
+#                 cell.fill = blue_fill
+#                 cell.font = black_font
+#                 cell.border = border_style
+#                 ws.column_dimensions[cell.column_letter].width = 25
+#             ws.freeze_panes = "A2"  # freeze header
+#         # ======================================================
+#         # Sheet 1: SalaryComponent
+#         # ======================================================
+#         ws1 = wb.active
+#         ws1.title = "Salary Component"
+#         for col_num, header in enumerate(headers, 1):
+#             ws1.cell(row=1, column=col_num, value=header)
+
+#         style_header_row(ws1, max_cols=len(headers))
+#          # ======================================================
+#         # Save response
+#         # ======================================================
+#         output = io.BytesIO()
+#         wb.save(output)
+#         output.seek(0)
+
+#         response = HttpResponse(
+#             output,
+#             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+#         )
+#         response['Content-Disposition'] = (
+#             'attachment; filename="SalaryComponent_BulkUpload_Template.xlsx"'
+#         )
+#         return response
+    
+#     @action(detail=False, methods=['get'])
+#     def download_default_csv_file(self, request):
+#         resource = EmployeeSalaryStructureResource()
+#         headers = [field.column_name for field in resource.fields.values()]
+        
+#         output = io.StringIO()
+#         writer = csv.writer(output)
+#         writer.writerow(headers)  # only headers, no data
+
+#         response = HttpResponse(output.getvalue(), content_type='text/csv')
+#         response['Content-Disposition'] = 'attachment; filename="Employee_SalaryComponent_Template.csv"'
+#         return response
 class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
     queryset = EmployeeSalaryStructure.objects.all()
     serializer_class = EmpBulkuploadSalaryStructureSerializer
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def bulk_upload(self, request):
-        if request.method == 'POST' and request.FILES.get('file'):
-            excel_file = request.FILES['file']
-            dataset = Dataset()
-            file_name = excel_file.name.lower()
-
-            try:
-                if file_name.endswith('.xlsx'):
-                    dataset.load(excel_file.read(), format='xlsx')
-
-                elif file_name.endswith('.csv'):
-                    dataset.load(
-                        excel_file.read().decode('utf-8'),
-                        format='csv'
-                    )
-
-                else:
-                    return Response(
-                        {"error": "Invalid file format. Upload .xlsx or .csv only."},
-                        status=400
-                    )
-
-                resource = EmployeeSalaryStructureResource()
-                all_errors = []
-                valid_rows = []
-
-                with transaction.atomic():
-                    for row_idx, row in enumerate(dataset.dict, start=2):
-                        try:
-                            resource.before_import_row(row, row_idx=row_idx)
-                        except ValidationError as e:
-                            all_errors.extend(
-                                [f"Row {row_idx}: {error}" for error in e.messages]
-                            )
-
-                if all_errors:
-                    return Response({"errors": all_errors}, status=400)
-
-                with transaction.atomic():
-                    result = resource.import_data(
-                        dataset,
-                        dry_run=False,
-                        raise_errors=True
-                    )
-
+        if request.method != 'POST' or not request.FILES.get('file'):
+            return Response({"error": "Please provide an Excel or CSV file."}, status=400)
+ 
+        excel_file = request.FILES['file']
+        file_name = excel_file.name.lower()
+        dataset = Dataset()
+ 
+        try:
+            if file_name.endswith('.xlsx'):
+                dataset.load(excel_file.read(), format='xlsx')
+            elif file_name.endswith('.csv'):
+                dataset.load(excel_file.read().decode('utf-8'), format='csv')
+            else:
                 return Response(
-                    {"message": f"{result.total_rows} records created successfully"}
+                    {"error": "Invalid file format. Upload .xlsx or .csv only."},
+                    status=400
                 )
-
-            except Exception as e:
-                return Response({"error": str(e)}, status=400)
-
-        return Response({"error": "Please provide an Excel or CSV file."}, status=400)
-    
+        except Exception as e:
+            return Response({"error": f"Could not read file: {str(e)}"}, status=400)
+ 
+        headers = [h.strip() if h else h for h in (dataset.headers or [])]
+        if not headers or headers[0] != 'Employee Code':
+            return Response(
+                {"error": "First column header must be exactly 'Employee Code'."},
+                status=400
+            )
+ 
+        component_columns = [h for h in headers[1:] if h]
+        if not component_columns:
+            return Response(
+                {"error": "No salary component columns found in the file."},
+                status=400
+            )
+ 
+        # Validate every column header maps to a real SalaryComponent
+        existing_components = {
+            c.name: c for c in SalaryComponent.objects.filter(name__in=component_columns)
+        }
+        unknown_components = [c for c in component_columns if c not in existing_components]
+        if unknown_components:
+            return Response(
+                {"error": f"Unknown salary component column(s): {', '.join(unknown_components)}"},
+                status=400
+            )
+ 
+        all_errors = []
+        valid_entries = []  # (employee, component_obj, amount)
+        seen_emp_codes = set()
+ 
+        for row_idx, row in enumerate(dataset.dict, start=2):
+            emp_code = str(row.get('Employee Code') or '').strip()
+            if not emp_code:
+                all_errors.append(f"Row {row_idx}: Employee Code cannot be empty")
+                continue
+ 
+            if emp_code in seen_emp_codes:
+                all_errors.append(f"Row {row_idx}: Duplicate Employee Code '{emp_code}' in file")
+            seen_emp_codes.add(emp_code)
+ 
+            employee = emp_master.objects.filter(emp_code=emp_code).first()
+            if not employee:
+                all_errors.append(
+                    f"Row {row_idx}: emp_master matching query does not exist for ID: {emp_code}"
+                )
+                continue
+ 
+            # Components actually assigned to this employee (i.e. an
+            # EmployeeSalaryStructure row already exists for them — created
+            # when they were added to a SalaryStructure via the m2m signal).
+            # A component NOT in this set cannot receive an amount here.
+            assigned_component_ids = set(
+                EmployeeSalaryStructure.objects.filter(employee=employee)
+                .values_list('component_id', flat=True)
+            )
+ 
+            row_has_component = False
+            for comp_name in component_columns:
+                raw_val = row.get(comp_name)
+                if raw_val is None:
+                    continue
+                val = str(raw_val).strip()
+                if val == '':
+                    continue  # blank cell = no amount entered for this component, skip
+ 
+                component_obj = existing_components[comp_name]
+ 
+                if component_obj.id not in assigned_component_ids:
+                    all_errors.append(
+                        f"Row {row_idx}: Salary component '{comp_name}' is not assigned "
+                        f"to employee {emp_code}"
+                    )
+                    continue
+ 
+                row_has_component = True
+                try:
+                    amount = Decimal(val)
+                except (InvalidOperation, ValueError, TypeError):
+                    all_errors.append(
+                        f"Row {row_idx}: Amount for '{comp_name}' must be a valid number"
+                    )
+                    continue
+ 
+                if amount < 0:
+                    all_errors.append(
+                        f"Row {row_idx}: Amount for '{comp_name}' must be at least 0.00"
+                    )
+                    continue
+ 
+                valid_entries.append((employee, component_obj, amount))
+ 
+            if not row_has_component:
+                all_errors.append(
+                    f"Row {row_idx}: No valid (assigned) salary component amounts provided for {emp_code}"
+                )
+ 
+        if all_errors:
+            return Response({"errors": all_errors}, status=400)
+ 
+        updated_count = 0
+        with transaction.atomic():
+            for employee, component, amount in valid_entries:
+                # These pairs were already confirmed to exist during
+                # validation (assigned_component_ids check above), so this
+                # is always an update, never a create.
+                rows = EmployeeSalaryStructure.objects.filter(
+                    employee=employee, component=component
+                ).update(amount=amount, is_active=True)
+                updated_count += rows
+ 
+        return Response({
+            "message": f"{updated_count} salary component amount(s) updated successfully"
+        })
+ 
+    # ------------------------------------------------------------------
+    # DOWNLOAD TEMPLATE - EXCEL
+    # ------------------------------------------------------------------
     @action(detail=False, methods=['get'])
     def download_default_excel_file(self, request):
-        resource = EmployeeSalaryStructureResource()
-        headers = [field.column_name for field in resource.fields.values()]
+        component_names = list(
+            SalaryComponent.objects.order_by('name').values_list('name', flat=True)
+        )
+        headers = ['Employee Code'] + component_names
+ 
         wb = Workbook()
-
-        # ======== Common Styles ========
+        ws = wb.active
+        ws.title = "Employee Salary Structure"
+ 
         black_font = Font(color="000000", bold=True)
         blue_fill = PatternFill(start_color="1E90FF", end_color="1E90FF", fill_type="solid")
-        yellow_fill = PatternFill(start_color="FFF8DC", end_color="FFF8DC", fill_type="solid")  # light cream/yellow
         border_style = Border(
             left=Side(style='thin'),
             right=Side(style='thin'),
             top=Side(style='thin'),
-            bottom=Side(style='thin')
+            bottom=Side(style='thin'),
         )
-
-        # Helper function to style header row
-        def style_header_row(ws, max_cols=10):
-            """Style header row with blue fill and black bold text across full width."""
-            for col in range(1, max_cols + 1):
-                cell = ws.cell(row=1, column=col)
-                if not cell.value:
-                    cell.value = ""
-                cell.fill = blue_fill
-                cell.font = black_font
-                cell.border = border_style
-                ws.column_dimensions[cell.column_letter].width = 25
-            ws.freeze_panes = "A2"  # freeze header
-        # ======================================================
-        # Sheet 1: SalaryComponent
-        # ======================================================
-        ws1 = wb.active
-        ws1.title = "Salary Component"
+ 
         for col_num, header in enumerate(headers, 1):
-            ws1.cell(row=1, column=col_num, value=header)
-
-        style_header_row(ws1, max_cols=len(headers))
-         # ======================================================
-        # Save response
-        # ======================================================
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.fill = blue_fill
+            cell.font = black_font
+            cell.border = border_style
+            ws.column_dimensions[cell.column_letter].width = 25
+ 
+        ws.freeze_panes = "A2"
+ 
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
-
+ 
         response = HttpResponse(
             output,
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
         response['Content-Disposition'] = (
-            'attachment; filename="SalaryComponent_BulkUpload_Template.xlsx"'
+            'attachment; filename="EmployeeSalaryStructure_BulkUpload_Template.xlsx"'
         )
         return response
-    
+ 
+    # ------------------------------------------------------------------
+    # DOWNLOAD TEMPLATE - CSV
+    # ------------------------------------------------------------------
     @action(detail=False, methods=['get'])
     def download_default_csv_file(self, request):
-        resource = EmployeeSalaryStructureResource()
-        headers = [field.column_name for field in resource.fields.values()]
-        
+        component_names = list(
+            SalaryComponent.objects.order_by('name').values_list('name', flat=True)
+        )
+        headers = ['Employee Code'] + component_names
+ 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(headers)  # only headers, no data
-
+        writer.writerow(headers)
+ 
         response = HttpResponse(output.getvalue(), content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="Employee_SalaryComponent_Template.csv"'
+        response['Content-Disposition'] = (
+            'attachment; filename="EmployeeSalaryStructure_BulkUpload_Template.csv"'
+        )
         return response
-
 class PayslipConfirmedViewSet(viewsets.ModelViewSet):
     queryset = Payslip.objects.all()
     serializer_class = PayslipConfirmedSerializer

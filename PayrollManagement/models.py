@@ -214,6 +214,7 @@ class PayrollRun(models.Model):
     department = models.ForeignKey('OrganisationManager.dept_master', on_delete=models.SET_NULL, null=True, blank=True)
     employees = models.ManyToManyField('EmpManagement.emp_master',blank=True,null=True)
     category = models.ForeignKey('OrganisationManager.ctgry_master', on_delete=models.SET_NULL, null=True, blank=True)
+    designation = models.ForeignKey('OrganisationManager.desgntn_master', on_delete=models.SET_NULL, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

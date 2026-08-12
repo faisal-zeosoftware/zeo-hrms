@@ -129,7 +129,41 @@ class EmpViewSet(viewsets.ModelViewSet):
             family_members = employee.emp_family.all()
             serializer = EmpFamSerializer(family_members, many=True)
             return Response(serializer.data)
-    
+        elif request.method == 'PUT':
+            family_member_id = request.data.get('id')
+
+            if not family_member_id:
+                return Response(
+                    {'error': 'Family member id is required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                family_member = employee.emp_family.get(
+                    pk=family_member_id
+                )
+            except EmpFam.DoesNotExist:
+                return Response(
+                    {'error': 'Family member not found for this employee.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            data = request.data.copy()
+            data['emp_id'] = employee.pk
+
+            serializer = EmpFamSerializer(
+                family_member,
+                data=data,
+                context={'request': request}
+            )
+
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_200_OK
+            )
     @action(detail=True, methods=['POST', 'GET'])
     def emp_qualification(self, request, pk=None):
         employee = self.get_object()

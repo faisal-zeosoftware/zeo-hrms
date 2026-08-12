@@ -256,7 +256,7 @@ class DocumentNumbering(models.Model):
 
 class CompanyPolicy(models.Model):
     title           = models.CharField(max_length=200)
-    description     = models.TextField()
+    description     = models.TextField(blank=True, null=True)
     policy_file     = models.FileField(upload_to='policies/')
     branch          = models.ManyToManyField(brnch_mstr, blank=True,related_name='policies')
     department      = models.ForeignKey('dept_master', on_delete=models.CASCADE, related_name='policies', blank=True, null=True)

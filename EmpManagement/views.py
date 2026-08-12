@@ -112,58 +112,262 @@ class EmpViewSet(viewsets.ModelViewSet):
     #         else:
     #             return emp_master.objects.all()  # Other users can access all employee information
     #     return emp_master.objects.none()
-    @action(detail=True, methods=['POST', 'GET'])
-    def emp_family(self, request, pk=None):
+    @action(
+        detail=True,
+        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        url_path=r'emp_family(?:/(?P<family_id>[^/.]+))?'
+    )
+    def emp_family(self, request, pk=None, family_id=None):
+
+        # =====================================================
+        # GET EMPLOYEE
+        # =====================================================
+
         employee = self.get_object()
 
-        if request.method == 'POST':
-    # Add the employee.pk to the request data
-            request.data['emp_id'] = employee.pk
+        # =====================================================
+        # GET
+        # =====================================================
 
-            serializer = EmpFamSerializer(data=request.data, context={'request': request})
-            serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        if request.method == 'GET':
 
-        elif request.method == 'GET':
-            family_members = employee.emp_family.all()
-            serializer = EmpFamSerializer(family_members, many=True)
-            return Response(serializer.data)
-        elif request.method == 'PUT':
-            family_member_id = request.data.get('id')
+            # ---------------------------------------------
+            # GET ALL FAMILY MEMBERS
+            #
+            # /Employee/15/emp_family/
+            # ---------------------------------------------
 
-            if not family_member_id:
-                return Response(
-                    {'error': 'Family member id is required.'},
-                    status=status.HTTP_400_BAD_REQUEST
+            if family_id is None:
+
+                family_members = employee.emp_family.all()
+
+                serializer = EmpFamSerializer(
+                    family_members,
+                    many=True,
+                    context={'request': request}
                 )
+
+                return Response(
+                    serializer.data,
+                    status=status.HTTP_200_OK
+                )
+
+            # ---------------------------------------------
+            # GET SINGLE FAMILY MEMBER
+            #
+            # /Employee/15/emp_family/5/
+            # ---------------------------------------------
 
             try:
                 family_member = employee.emp_family.get(
-                    pk=family_member_id
+                    pk=family_id
                 )
-            except EmpFam.DoesNotExist:
+
+            except emp_family.DoesNotExist:
                 return Response(
-                    {'error': 'Family member not found for this employee.'},
+                    {
+                        'error': 'Family member not found for this employee.'
+                    },
                     status=status.HTTP_404_NOT_FOUND
                 )
 
+            serializer = EmpFamSerializer(
+                family_member,
+                context={'request': request}
+            )
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_200_OK
+            )
+
+        # =====================================================
+        # POST - CREATE FAMILY MEMBER
+        # =====================================================
+
+        if request.method == 'POST':
+
+            # POST should not contain family ID
+            if family_id is not None:
+                return Response(
+                    {
+                        'error': 'POST is only allowed without family member ID.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             data = request.data.copy()
+
+            # Automatically assign employee
             data['emp_id'] = employee.pk
 
             serializer = EmpFamSerializer(
-                family_member,
                 data=data,
                 context={'request': request}
             )
 
             serializer.is_valid(raise_exception=True)
+
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        # =====================================================
+        # PUT / PATCH - UPDATE FAMILY MEMBER
+        # =====================================================
+
+        if request.method in ['PUT', 'PATCH']:
+
+            # Family ID must come from URL
+            if family_id is None:
+                return Response(
+                    {
+                        'error': 'Family member ID is required in the URL.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ---------------------------------------------
+            # Find family member belonging to this employee
+            # ---------------------------------------------
+
+            try:
+                family_member = employee.emp_family.get(
+                    pk=family_id
+                )
+
+            except emp_family.DoesNotExist:
+                return Response(
+                    {
+                        'error': 'Family member not found for this employee.'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # ---------------------------------------------
+            # Copy request data
+            # ---------------------------------------------
+
+            data = request.data.copy()
+
+            # Keep employee fixed
+            data['emp_id'] = employee.pk
+
+            # PUT = complete update
+            # PATCH = partial update
+            partial = request.method == 'PATCH'
+
+            serializer = EmpFamSerializer(
+                family_member,
+                data=data,
+                partial=partial,
+                context={'request': request}
+            )
+
+            serializer.is_valid(raise_exception=True)
+
             serializer.save()
 
             return Response(
                 serializer.data,
                 status=status.HTTP_200_OK
             )
+
+        # =====================================================
+        # DELETE
+        # =====================================================
+
+        if request.method == 'DELETE':
+
+            # Family ID must come from URL
+            if family_id is None:
+                return Response(
+                    {
+                        'error': 'Family member ID is required in the URL.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ---------------------------------------------
+            # Find family member belonging to this employee
+            # ---------------------------------------------
+
+            try:
+                family_member = employee.emp_family.get(
+                    pk=family_id
+                )
+
+            except emp_family.DoesNotExist:
+                return Response(
+                    {
+                        'error': 'Family member not found for this employee.'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            family_member.delete()
+
+            return Response(
+                {
+                    'message': 'Family member deleted successfully.'
+                },
+                status=status.HTTP_204_NO_CONTENT
+            )
+    # @action(detail=True, methods=['POST', 'GET'])
+    # def emp_family(self, request, pk=None):
+    #     employee = self.get_object()
+
+    #     if request.method == 'POST':
+    # # Add the employee.pk to the request data
+    #         request.data['emp_id'] = employee.pk
+
+    #         serializer = EmpFamSerializer(data=request.data, context={'request': request})
+    #         serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
+    #         serializer.save()
+    #         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    #     elif request.method == 'GET':
+    #         family_members = employee.emp_family.all()
+    #         serializer = EmpFamSerializer(family_members, many=True)
+    #         return Response(serializer.data)
+    #     elif request.method == 'PUT':
+    #         family_member_id = request.data.get('id')
+
+    #         if not family_member_id:
+    #             return Response(
+    #                 {'error': 'Family member id is required.'},
+    #                 status=status.HTTP_400_BAD_REQUEST
+    #             )
+
+    #         try:
+    #             family_member = employee.emp_family.get(
+    #                 pk=family_member_id
+    #             )
+    #         except EmpFam.DoesNotExist:
+    #             return Response(
+    #                 {'error': 'Family member not found for this employee.'},
+    #                 status=status.HTTP_404_NOT_FOUND
+    #             )
+
+    #         data = request.data.copy()
+    #         data['emp_id'] = employee.pk
+
+    #         serializer = EmpFamSerializer(
+    #             family_member,
+    #             data=data,
+    #             context={'request': request}
+    #         )
+
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
+
+    #         return Response(
+    #             serializer.data,
+    #             status=status.HTTP_200_OK
+    #         )
     @action(detail=True, methods=['POST', 'GET'])
     def emp_qualification(self, request, pk=None):
         employee = self.get_object()

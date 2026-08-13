@@ -28,6 +28,7 @@ class brnch_mstr(models.Model):
     br_branch_nmbr_2          = models.CharField(max_length=20,blank=True, null=True)
     br_branch_mail            = models.EmailField(blank=True, null=True)
     br_country                = models.ForeignKey("Core.cntry_mstr",on_delete=models.SET_DEFAULT, default="1", null=True) 
+    branch_address            = models.TextField(blank=True, null=True)
     br_created_at             = models.DateTimeField(auto_now_add=True)
     br_created_by             = models.ForeignKey('UserManagement.CustomUser', on_delete=models.CASCADE, null=True, related_name='%(class)s_created_by')
     br_updated_at             = models.DateTimeField(auto_now=True)

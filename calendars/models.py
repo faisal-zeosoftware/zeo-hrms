@@ -296,6 +296,7 @@ class holiday(models.Model):
     description = models.CharField(max_length=50,unique=True)
     start_date  = models.DateField()
     end_date    = models.DateField()
+    note        = models.CharField(max_length=50,blank=True,null=True)
     calendar    = models.ForeignKey(holiday_calendar,on_delete=models.CASCADE,null=True,related_name='holiday_list')
     restricted  = models.BooleanField(default=False)
     created_at  = models.DateTimeField(auto_now_add=True)

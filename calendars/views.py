@@ -425,30 +425,77 @@ class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
     queryset = EmployeeShiftSchedule.objects.all()
     serializer_class = EmployeeShiftScheduleSerializer
     # permission_classes = [EmployeeShiftSchedulePermission]
+    @action(detail=True, methods=['get'])
     def get_shift_for_day(self, request, *args, **kwargs):
         """
         Get shift for a given employee and date.
-        URL parameters should include employee_id and date (format: YYYY-MM-DD).
+        URL parameters:
+            employee = employee ID
+            date = YYYY-MM-DD
         """
+
         employee_id = request.query_params.get('employee')
         date_str = request.query_params.get('date')
-        
-        if employee_id and date_str:
-            try:
-                employee = emp_master.objects.get(id=employee_id)
-                date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date()
-                schedule = self.get_object()  # Assume the schedule is retrieved by URL ID
-                # Removed extra employee argument:
-                shift = schedule.get_shift_for_date(date)
-                
-                if shift:
-                    return Response({"shift": str(shift)}, status=status.HTTP_200_OK)
-                else:
-                    return Response({"error": "No shift found for the specified date"}, status=status.HTTP_404_NOT_FOUND)
-            except emp_master.DoesNotExist:
-                return Response({"error": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
-        return Response({"error": "Invalid parameters"}, status=status.HTTP_400_BAD_REQUEST)
-    
+
+        if not employee_id or not date_str:
+            return Response(
+                {"error": "employee and date are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            employee = emp_master.objects.get(id=employee_id)
+
+        except emp_master.DoesNotExist:
+            return Response(
+                {"error": "Employee not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            date = datetime.strptime(
+                date_str,
+                '%Y-%m-%d'
+            ).date()
+
+        except ValueError:
+            return Response(
+                {"error": "Invalid date format. Use YYYY-MM-DD"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        schedule = self.get_object()
+
+        shift = schedule.get_shift_for_date(
+            date,
+            employee=employee
+        )
+
+        if shift:
+            return Response(
+                {
+                    "employee": employee.emp_code,
+                    "date": date,
+                    "shift": str(shift),
+                    "offset": (
+                        schedule.employee_offsets.get(
+                            str(employee.id), 0
+                        )
+                        if schedule.employee_offsets
+                        else 0
+                    )
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {
+                "employee": employee.emp_code,
+                "date": date,
+                "shift": "No shift"
+            },
+            status=status.HTTP_200_OK
+        )
     @action(detail=False, methods=['get'])
     def get_shifts_for_year(self, request):
         schedule_id = request.query_params.get('schedule_id')
@@ -461,57 +508,92 @@ class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        schedule = get_object_or_404(EmployeeShiftSchedule, id=schedule_id)
+        schedule = get_object_or_404(
+            EmployeeShiftSchedule,
+            id=schedule_id
+        )
 
         try:
             year = int(year)
             month = int(month) if month else None
-        except ValueError:
+
+            if month and not 1 <= month <= 12:
+                raise ValueError
+
+        except (ValueError, TypeError):
             return Response(
                 {"error": "Invalid year or month"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Date range
+        # ---------------------------------------------------------
+        # DATE RANGE
+        # ---------------------------------------------------------
+
         if month:
             start_date = datetime(year, month, 1).date()
-            end_date = (
-                datetime(year, month + 1, 1) - timedelta(days=1)
-                if month < 12 else datetime(year, 12, 31).date()
-            )
+
+            if month == 12:
+                end_date = datetime(year, 12, 31).date()
+            else:
+                end_date = (
+                    datetime(year, month + 1, 1).date()
+                    - timedelta(days=1)
+                )
+
         else:
             start_date = datetime(year, 1, 1).date()
             end_date = datetime(year, 12, 31).date()
 
-        # ✅ CORRECT EMPLOYEE RESOLUTION
+        # ---------------------------------------------------------
+        # EMPLOYEES
+        # ---------------------------------------------------------
+
         employees = schedule.get_assigned_employees()
 
         if not employees.exists():
             return Response(
-                {"error": "No employees matched this shift schedule criteria"},
+                {
+                    "error": (
+                        "No employees matched this shift schedule criteria"
+                    )
+                },
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        # ---------------------------------------------------------
+        # DATES
+        # ---------------------------------------------------------
 
         all_dates = [
             start_date + timedelta(days=i)
             for i in range((end_date - start_date).days + 1)
         ]
 
+        # ---------------------------------------------------------
+        # EMPLOYEE-SPECIFIC SHIFT RESOLUTION
+        # ---------------------------------------------------------
+
         shifts_calendar = {}
 
-        # Pre-calc shifts once
-        shift_map = {
-            date: schedule.get_shift_for_date(date)
-            for date in all_dates
-        }
-
         for employee in employees:
+
             shifts_calendar[employee.emp_code] = {}
 
-            for date, shift in shift_map.items():
+            for date in all_dates:
+
+                shift = schedule.get_shift_for_date(
+                    date,
+                    employee=employee
+                )
+
                 shifts_calendar[employee.emp_code][
                     date.strftime("%d-%m-%Y")
                 ] = str(shift) if shift else "No shift"
+
+        # ---------------------------------------------------------
+        # RESPONSE
+        # ---------------------------------------------------------
 
         return Response(
             {
@@ -523,6 +605,104 @@ class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK
         )
+    # def get_shift_for_day(self, request, *args, **kwargs):
+    #     """
+    #     Get shift for a given employee and date.
+    #     URL parameters should include employee_id and date (format: YYYY-MM-DD).
+    #     """
+    #     employee_id = request.query_params.get('employee')
+    #     date_str = request.query_params.get('date')
+        
+    #     if employee_id and date_str:
+    #         try:
+    #             employee = emp_master.objects.get(id=employee_id)
+    #             date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date()
+    #             schedule = self.get_object()  # Assume the schedule is retrieved by URL ID
+    #             # Removed extra employee argument:
+    #             shift = schedule.get_shift_for_date(date)
+                
+    #             if shift:
+    #                 return Response({"shift": str(shift)}, status=status.HTTP_200_OK)
+    #             else:
+    #                 return Response({"error": "No shift found for the specified date"}, status=status.HTTP_404_NOT_FOUND)
+    #         except emp_master.DoesNotExist:
+    #             return Response({"error": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
+    #     return Response({"error": "Invalid parameters"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # @action(detail=False, methods=['get'])
+    # def get_shifts_for_year(self, request):
+    #     schedule_id = request.query_params.get('schedule_id')
+    #     year = request.query_params.get('year')
+    #     month = request.query_params.get('month')
+
+    #     if not schedule_id or not year:
+    #         return Response(
+    #             {"error": "schedule_id and year are required"},
+    #             status=status.HTTP_400_BAD_REQUEST
+    #         )
+
+    #     schedule = get_object_or_404(EmployeeShiftSchedule, id=schedule_id)
+
+    #     try:
+    #         year = int(year)
+    #         month = int(month) if month else None
+    #     except ValueError:
+    #         return Response(
+    #             {"error": "Invalid year or month"},
+    #             status=status.HTTP_400_BAD_REQUEST
+    #         )
+
+    #     # Date range
+    #     if month:
+    #         start_date = datetime(year, month, 1).date()
+    #         end_date = (
+    #             datetime(year, month + 1, 1) - timedelta(days=1)
+    #             if month < 12 else datetime(year, 12, 31).date()
+    #         )
+    #     else:
+    #         start_date = datetime(year, 1, 1).date()
+    #         end_date = datetime(year, 12, 31).date()
+
+    #     # ✅ CORRECT EMPLOYEE RESOLUTION
+    #     employees = schedule.get_assigned_employees()
+
+    #     if not employees.exists():
+    #         return Response(
+    #             {"error": "No employees matched this shift schedule criteria"},
+    #             status=status.HTTP_404_NOT_FOUND
+    #         )
+
+    #     all_dates = [
+    #         start_date + timedelta(days=i)
+    #         for i in range((end_date - start_date).days + 1)
+    #     ]
+
+    #     shifts_calendar = {}
+
+    #     # Pre-calc shifts once
+    #     shift_map = {
+    #         date: schedule.get_shift_for_date(date)
+    #         for date in all_dates
+    #     }
+
+    #     for employee in employees:
+    #         shifts_calendar[employee.emp_code] = {}
+
+    #         for date, shift in shift_map.items():
+    #             shifts_calendar[employee.emp_code][
+    #                 date.strftime("%d-%m-%Y")
+    #             ] = str(shift) if shift else "No shift"
+
+    #     return Response(
+    #         {
+    #             "schedule": schedule.schedule_name,
+    #             "year": year,
+    #             "month": month if month else "Full Year",
+    #             "total_employees": employees.count(),
+    #             "shifts": shifts_calendar
+    #         },
+    #         status=status.HTTP_200_OK
+    #     )
 class AttendancePolicyViewset(viewsets.ModelViewSet):
     queryset = AttendancePolicy.objects.all()
     serializer_class = AttendancePolicySerializer

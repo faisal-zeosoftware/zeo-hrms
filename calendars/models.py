@@ -2128,7 +2128,6 @@ class Shift(models.Model):
 
     def __str__(self):
         return f"{self.name}"
-
 class ShiftPattern(models.Model):
     """
     Defines a shift pattern (Zoho-style) with support for weekly and monthly rotation.
@@ -2180,6 +2179,7 @@ class ShiftPattern(models.Model):
     PATTERN_TYPES = (
         ("weekly",  "Weekly"),
         ("monthly", "Monthly"),
+        ("rotating", "Rotating"),
     )
 
     name          = models.CharField(max_length=100)
@@ -2194,7 +2194,20 @@ class ShiftPattern(models.Model):
         null=True,
         help_text="JSON config defining shift rules per week/month sequence (see model docstring)"
     )
-
+    # --- Rotating pattern fields (dynamic per company/team) -----------------
+    work_days = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Rotating only: number of consecutive working days in the cycle (e.g. 6). Set per pattern — varies by company."
+    )
+    off_days = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Rotating only: number of consecutive off days in the cycle (e.g. 1). Set per pattern — varies by company."
+    )
+    rotating_shift = models.ForeignKey(
+        Shift, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='pattern_rotating',
+        help_text="Rotating only: the shift applied on every working day of the cycle."
+    )
     # Fallback per-weekday shifts (used when pattern_config is empty)
     monday_shift    = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_monday')
     tuesday_shift   = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_tuesday')
@@ -2209,7 +2222,58 @@ class ShiftPattern(models.Model):
         'UserManagement.CustomUser', on_delete=models.SET_NULL, null=True,
         related_name='%(class)s_created_by'
     )
+    def clean(self):
+        from django.core.exceptions import ValidationError
 
+        if self.pattern_type == "rotating":
+            work_days, off_days, shift_sequence = self._get_rotating_config()
+
+            if not work_days or not shift_sequence:
+                raise ValidationError({
+                    "work_days": "Rotating patterns require work_days + rotating_shift "
+                                  "(or an equivalent 'rotating' block in pattern_config with "
+                                  "shift_id / shift_sequence)."
+                })
+
+            if len(shift_sequence) != work_days:
+                raise ValidationError({
+                    "pattern_config": f"shift_sequence must have exactly {work_days} entries "
+                                       f"(one per working day), got {len(shift_sequence)}."
+                })
+
+            if off_days is not None and off_days < 0:
+                raise ValidationError({"off_days": "off_days cannot be negative."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    # -------------------------------------------------------------------
+    def _get_rotating_config(self):
+        """
+        Resolve the effective rotating config for this pattern.
+        Returns (work_days, off_days, shift_sequence) where shift_sequence is
+        a list of shift ids, one per working-day position (length == work_days).
+        pattern_config['rotating'] overrides the dedicated model fields.
+        """
+        if self.pattern_config and self.pattern_config.get("rotating"):
+            cfg = self.pattern_config["rotating"]
+            work_days = int(cfg.get("work_days", 0)) or None
+            off_days  = int(cfg.get("off_days", 0)) if cfg.get("off_days") is not None else None
+
+            shift_sequence = cfg.get("shift_sequence")
+            if not shift_sequence:
+                single_id = cfg.get("shift_id")
+                shift_sequence = [single_id] * work_days if (single_id and work_days) else []
+
+            return work_days, off_days, shift_sequence
+
+        if self.work_days and self.rotating_shift_id:
+            return self.work_days, (self.off_days or 0), [self.rotating_shift_id] * self.work_days
+
+        return None, None, []
+
+    # -------------------------------------------------------------------
     def get_shift_for_date(self, target_date, start_date):
         """
         Resolve the applicable Shift for `target_date`, given the schedule's `start_date`.
@@ -2228,7 +2292,17 @@ class ShiftPattern(models.Model):
           4. Match the target weekday name to a rule.
           5. Return the Shift referenced by shift_id.
 
-        Falls back to get_shift_for_day() if no pattern_config is defined or no rule matches.
+        For 'rotating' pattern:
+          1. days_elapsed = (target_date - start_date).days
+          2. cycle_length = work_days + off_days   (both dynamic, set per pattern)
+          3. position = days_elapsed % cycle_length
+          4. If position < work_days -> working day, return shift_sequence[position].
+             Else                    -> day off, return None (no fallback).
+
+        Falls back to get_shift_for_day() for 'weekly'/'monthly' when no rule
+        matches, or when pattern_config is empty entirely. 'rotating' falls back
+        only if it's entirely unconfigured — an off-day result is intentional
+        and never overridden.
         """
         import calendar as cal
 
@@ -2236,6 +2310,28 @@ class ShiftPattern(models.Model):
             target_date = target_date.date()
         if isinstance(start_date, datetime):
             start_date = start_date.date()
+
+        # --- Rotating: checked first, independent of pattern_config presence ---
+        if self.pattern_type == "rotating":
+            work_days, off_days, shift_sequence = self._get_rotating_config()
+            if not work_days or not shift_sequence or len(shift_sequence) != work_days:
+                return self.get_shift_for_day(target_date.weekday())
+
+            cycle_length = work_days + (off_days or 0)
+            if cycle_length <= 0:
+                return self.get_shift_for_day(target_date.weekday())
+
+            days_elapsed = (target_date - start_date).days
+            position = days_elapsed % cycle_length
+
+            if position < work_days:
+                shift_id = shift_sequence[position]
+                try:
+                    return Shift.objects.get(id=shift_id)
+                except Shift.DoesNotExist:
+                    return None
+
+            return None  # deliberate day off, no fallback
 
         if not self.pattern_config:
             return self.get_shift_for_day(target_date.weekday())
@@ -2255,8 +2351,6 @@ class ShiftPattern(models.Model):
                 last_day = cal.monthrange(target_date.year, target_date.month)[1]
 
                 # --- Option 1: day_map  {day_number_str: shift_id} -----------
-                # Assigns a specific shift to every individual day of the month.
-                # Example: {"1": 2, "2": 3, "3": 2, ..., "31": 1}
                 day_map = seq_config.get("day_map")
                 if day_map:
                     shift_id = day_map.get(str(day_num))
@@ -2267,8 +2361,6 @@ class ShiftPattern(models.Model):
                             pass
 
                 # --- Option 2: rules  (date-range based) ---------------------
-                # Assigns shifts to ranges of days within the month.
-                # Example: {"from": "1", "to": "15", "shift_id": 1}
                 for rule in seq_config.get("rules", []):
                     from_str = str(rule.get("from", "1"))
                     to_str   = str(rule.get("to",   "last_day"))
@@ -2301,7 +2393,7 @@ class ShiftPattern(models.Model):
                             except Shift.DoesNotExist:
                                 pass
 
-        # Fallback: per-weekday FK fields
+        # Fallback: per-weekday FK fields (weekly/monthly only)
         return self.get_shift_for_day(target_date.weekday())
 
     def get_shift_for_day(self, weekday):
@@ -2319,7 +2411,6 @@ class ShiftPattern(models.Model):
 
     def __str__(self):
         return f"Shift Pattern: {self.name}"
-
 class EmployeeShiftSchedule(models.Model):
     """
     Assigns a ShiftPattern to a group of employees for a given date range.
@@ -2356,35 +2447,77 @@ class EmployeeShiftSchedule(models.Model):
         ShiftPattern, null=True, blank=True,
         on_delete=models.SET_NULL, related_name='schedules'
     )
-
+     # --- Per-employee rotation offset (for rotating patterns) ---------------
+    employee_offsets = models.JSONField(
+        default=dict,
+        blank=True,
+        null=True,
+        help_text=(
+            "Rotating patterns only, for load-balancing off-days across a team. "
+            "Keyed by employee id as a string: {\"<emp_id>\": <offset_days>}. "
+            "offset_days = how many days into the cycle that employee already is "
+            "at schedule start_date. E.g. Employee A offset=0 starts on cycle day 1; "
+            "Employee B offset=3 starts on cycle day 4."
+        )
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         'UserManagement.CustomUser', on_delete=models.SET_NULL, null=True
-    ) 
-
-    # -----------------------------------------------------------------------
+    )
     def get_assigned_employees(self):
         """Return a distinct queryset of all employees covered by this schedule."""
         from EmpManagement.models import emp_master
+
         qs = emp_master.objects.none()
 
+        # Direct employee assignment
         if self.employee.exists():
-            qs |= emp_master.objects.filter(id__in=self.employee.values_list('id', flat=True))
+            qs |= emp_master.objects.filter(
+                id__in=self.employee.values_list('id', flat=True)
+            )
+
+        # Employee-level rotation offsets also imply assignment
+        if self.employee_offsets:
+            employee_ids = [
+                int(emp_id)
+                for emp_id in self.employee_offsets.keys()
+                if str(emp_id).isdigit()
+            ]
+
+            if employee_ids:
+                qs |= emp_master.objects.filter(id__in=employee_ids)
+
+        # Category assignment
         if self.categories.exists():
-            qs |= emp_master.objects.filter(emp_ctgry_id__in=self.categories.all())
+            qs |= emp_master.objects.filter(
+                emp_ctgry_id__in=self.categories.all()
+            )
+
+        # Department assignment
         if self.departments.exists():
-            qs |= emp_master.objects.filter(emp_dept_id__in=self.departments.all())
+            qs |= emp_master.objects.filter(
+                emp_dept_id__in=self.departments.all()
+            )
+
+        # Branch assignment
         if self.branches.exists():
-            qs |= emp_master.objects.filter(emp_branch_id__in=self.branches.all())
+            qs |= emp_master.objects.filter(
+                emp_branch_id__in=self.branches.all()
+            )
+
+        # Designation assignment
         if self.designations.exists():
-            qs |= emp_master.objects.filter(emp_desgntn_id__in=self.designations.all())
+            qs |= emp_master.objects.filter(
+                emp_desgntn_id__in=self.designations.all()
+            )
 
         return qs.distinct()
-
-    def get_shift_for_date(self, date):
+    def get_shift_for_date(self, date, employee=None):
         """
         Delegates shift resolution to the linked ShiftPattern.
-        Passes this schedule's start_date as the rotation anchor.
+        Passes this schedule's start_date as the rotation anchor, shifted by the
+        given employee's offset (if any) — used to stagger 'rotating' patterns
+        across a team instead of everyone sharing the same off-day/shift-block.
         Returns None if no pattern is assigned or the date is out of range.
         """
         if isinstance(date, datetime):
@@ -2395,14 +2528,19 @@ class EmployeeShiftSchedule(models.Model):
         if end_date and isinstance(end_date, datetime):
             end_date = end_date.date()
 
-        # Enforce schedule date bounds
         if date < start_date:
             return None
         if end_date and date > end_date:
             return None
 
+        anchor_date = start_date
+        if employee is not None and self.employee_offsets:
+            offset = self.employee_offsets.get(str(employee.id))
+            if offset:
+                anchor_date = start_date - timedelta(days=int(offset))
+
         if self.shift_pattern:
-            return self.shift_pattern.get_shift_for_date(date, start_date)
+            return self.shift_pattern.get_shift_for_date(date, anchor_date)
 
         return None
 
@@ -2411,15 +2549,9 @@ class EmployeeShiftSchedule(models.Model):
 
         if self.schedule_name:
             schedule_name = self.schedule_name.strip()
-
-            qs = EmployeeShiftSchedule.objects.filter(
-                schedule_name__iexact=schedule_name
-            )
-
-            # Exclude current record while updating
+            qs = EmployeeShiftSchedule.objects.filter(schedule_name__iexact=schedule_name)
             if self.pk:
                 qs = qs.exclude(pk=self.pk)
-
             if qs.exists():
                 raise ValidationError({
                     "schedule_name": "A schedule with this name already exists."
@@ -2435,6 +2567,312 @@ class EmployeeShiftSchedule(models.Model):
 
     def __str__(self):
         return f"Shift Schedule: {self.schedule_name}"
+# class ShiftPattern(models.Model):
+#     """
+#     Defines a shift pattern (Zoho-style) with support for weekly and monthly rotation.
+
+#     Pattern Types:
+#       - 'weekly'  : Pattern repeats every N weeks. Each week in the cycle defines
+#                     per-day shift rules (Mon=Shift A, Tue=Shift B, etc.).
+#       - 'monthly' : Pattern repeats every N months. Each month in the cycle defines
+#                     date-range rules (Day 1-15 = Shift A, Day 16-Last = Shift B).
+
+#     `changes_every`:
+#       Number of weeks or months in one rotation cycle before it repeats.
+#       Example: changes_every=2 with weekly means Week 1 config, Week 2 config, then repeat.
+
+#     `pattern_config` (JSON):
+#       For 'monthly':
+#         {
+#           "months": [
+#             {
+#               "sequence": 1,
+#               "rules": [
+#                 {"from": "1",  "to": "15",       "shift_id": <Shift.id>},
+#                 {"from": "16", "to": "last_day", "shift_id": <Shift.id>}
+#               ]
+#             },
+#             {"sequence": 2, "rules": [...]}
+#           ]
+#         }
+
+#       For 'weekly':
+#         {
+#           "weeks": [
+#             {
+#               "sequence": 1,
+#               "rules": [
+#                 {"day": "Monday",    "shift_id": <Shift.id>},
+#                 {"day": "Tuesday",   "shift_id": <Shift.id>},
+#                 ...
+#               ]
+#             },
+#             {"sequence": 2, "rules": [...]}
+#           ]
+#         }
+
+#     If `pattern_config` is empty, falls back to the per-weekday FK fields
+#     (monday_shift, tuesday_shift, etc.) for simple fixed schedules.
+#     """
+
+#     PATTERN_TYPES = (
+#         ("weekly",  "Weekly"),
+#         ("monthly", "Monthly"),
+#     )
+
+#     name          = models.CharField(max_length=100)
+#     pattern_type  = models.CharField(max_length=20, choices=PATTERN_TYPES, default="weekly")
+#     changes_every = models.PositiveIntegerField(
+#         default=1,
+#         help_text="Number of weeks/months in one rotation cycle before it repeats"
+#     )
+#     pattern_config = JSONField(
+#         default=dict,
+#         blank=True,
+#         null=True,
+#         help_text="JSON config defining shift rules per week/month sequence (see model docstring)"
+#     )
+
+#     # Fallback per-weekday shifts (used when pattern_config is empty)
+#     monday_shift    = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_monday')
+#     tuesday_shift   = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_tuesday')
+#     wednesday_shift = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_wednesday')
+#     thursday_shift  = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_thursday')
+#     friday_shift    = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_friday')
+#     saturday_shift  = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_saturday')
+#     sunday_shift    = models.ForeignKey(Shift, on_delete=models.SET_NULL, null=True, blank=True, related_name='pattern_sunday')
+
+#     created_at = models.DateTimeField(auto_now_add=True)
+#     created_by = models.ForeignKey(
+#         'UserManagement.CustomUser', on_delete=models.SET_NULL, null=True,
+#         related_name='%(class)s_created_by'
+#     )
+
+#     def get_shift_for_date(self, target_date, start_date):
+#         """
+#         Resolve the applicable Shift for `target_date`, given the schedule's `start_date`.
+
+#         For 'monthly' pattern:
+#           1. Compute how many full months have elapsed since start_date.
+#           2. Determine the rotation sequence index: (months_elapsed % changes_every) + 1.
+#           3. Find the matching month config by sequence.
+#           4. Iterate rules; find which day-range the target day falls into.
+#           5. Return the Shift referenced by shift_id.
+
+#         For 'weekly' pattern:
+#           1. Compute how many full weeks have elapsed since start_date.
+#           2. Determine the rotation sequence index: (weeks_elapsed % changes_every) + 1.
+#           3. Find the matching week config by sequence.
+#           4. Match the target weekday name to a rule.
+#           5. Return the Shift referenced by shift_id.
+
+#         Falls back to get_shift_for_day() if no pattern_config is defined or no rule matches.
+#         """
+#         import calendar as cal
+
+#         if isinstance(target_date, datetime):
+#             target_date = target_date.date()
+#         if isinstance(start_date, datetime):
+#             start_date = start_date.date()
+
+#         if not self.pattern_config:
+#             return self.get_shift_for_day(target_date.weekday())
+
+#         if self.pattern_type == "monthly":
+#             months_elapsed = (
+#                 (target_date.year - start_date.year) * 12
+#                 + target_date.month - start_date.month
+#             )
+#             sequence_idx = (months_elapsed % self.changes_every) + 1
+#             months_config = self.pattern_config.get("months", [])
+#             seq_config = next(
+#                 (m for m in months_config if m.get("sequence") == sequence_idx), None
+#             )
+#             if seq_config:
+#                 day_num = target_date.day
+#                 last_day = cal.monthrange(target_date.year, target_date.month)[1]
+
+#                 # --- Option 1: day_map  {day_number_str: shift_id} -----------
+#                 # Assigns a specific shift to every individual day of the month.
+#                 # Example: {"1": 2, "2": 3, "3": 2, ..., "31": 1}
+#                 day_map = seq_config.get("day_map")
+#                 if day_map:
+#                     shift_id = day_map.get(str(day_num))
+#                     if shift_id:
+#                         try:
+#                             return Shift.objects.get(id=shift_id)
+#                         except Shift.DoesNotExist:
+#                             pass
+
+#                 # --- Option 2: rules  (date-range based) ---------------------
+#                 # Assigns shifts to ranges of days within the month.
+#                 # Example: {"from": "1", "to": "15", "shift_id": 1}
+#                 for rule in seq_config.get("rules", []):
+#                     from_str = str(rule.get("from", "1"))
+#                     to_str   = str(rule.get("to",   "last_day"))
+#                     from_val = int(from_str) if from_str.isdigit() else 1
+#                     to_val   = last_day if to_str.lower() in ("last_day", "last day") else int(to_str)
+#                     if from_val <= day_num <= to_val:
+#                         shift_id = rule.get("shift_id")
+#                         if shift_id:
+#                             try:
+#                                 return Shift.objects.get(id=shift_id)
+#                             except Shift.DoesNotExist:
+#                                 pass
+
+#         elif self.pattern_type == "weekly":
+#             days_elapsed  = (target_date - start_date).days
+#             weeks_elapsed = days_elapsed // 7
+#             sequence_idx  = (weeks_elapsed % self.changes_every) + 1
+#             weeks_config  = self.pattern_config.get("weeks", [])
+#             seq_config = next(
+#                 (w for w in weeks_config if w.get("sequence") == sequence_idx), None
+#             )
+#             if seq_config:
+#                 weekday_name = target_date.strftime("%A")
+#                 for rule in seq_config.get("rules", []):
+#                     if rule.get("day") == weekday_name:
+#                         shift_id = rule.get("shift_id")
+#                         if shift_id:
+#                             try:
+#                                 return Shift.objects.get(id=shift_id)
+#                             except Shift.DoesNotExist:
+#                                 pass
+
+#         # Fallback: per-weekday FK fields
+#         return self.get_shift_for_day(target_date.weekday())
+
+#     def get_shift_for_day(self, weekday):
+#         """Return the fallback shift for the given weekday (0=Monday, ..., 6=Sunday)."""
+#         shifts = {
+#             0: self.monday_shift,
+#             1: self.tuesday_shift,
+#             2: self.wednesday_shift,
+#             3: self.thursday_shift,
+#             4: self.friday_shift,
+#             5: self.saturday_shift,
+#             6: self.sunday_shift,
+#         }
+#         return shifts.get(weekday)
+
+#     def __str__(self):
+#         return f"Shift Pattern: {self.name}"
+
+# class EmployeeShiftSchedule(models.Model):
+#     """
+#     Assigns a ShiftPattern to a group of employees for a given date range.
+
+#     The actual shift resolution logic (weekly / monthly rotation) lives entirely
+#     inside the linked ShiftPattern.  This model is just the assignment record.
+
+#     Assignable by: individual employees, departments, branches, designations, categories.
+#     """
+
+#     schedule_name = models.CharField(max_length=100, null=True, blank=True)
+
+#     # --- Who gets this schedule -------------------------------------------
+#     employee     = models.ManyToManyField(
+#         'EmpManagement.emp_master', blank=True, related_name="shift_schedules"
+#     )
+#     departments  = models.ManyToManyField(
+#         'OrganisationManager.dept_master', blank=True, related_name="shift_schedules"
+#     )
+#     branches     = models.ManyToManyField(
+#         'OrganisationManager.brnch_mstr', blank=True, related_name="shift_schedules"
+#     )
+#     designations = models.ManyToManyField(
+#         'OrganisationManager.desgntn_master', blank=True, related_name="shift_schedules"
+#     )
+#     categories   = models.ManyToManyField(
+#         'OrganisationManager.ctgry_master', blank=True, related_name="shift_schedules"
+#     )
+
+#     # --- When & which pattern -----------------------------------------------
+#     start_date    = models.DateField(default=timezone.now, help_text="Date from which this schedule is active")
+#     end_date      = models.DateField(null=True, blank=True, help_text="Date until which this schedule is active (inclusive); leave blank for open-ended")
+#     shift_pattern = models.ForeignKey(
+#         ShiftPattern, null=True, blank=True,
+#         on_delete=models.SET_NULL, related_name='schedules'
+#     )
+
+#     created_at = models.DateTimeField(auto_now_add=True)
+#     created_by = models.ForeignKey(
+#         'UserManagement.CustomUser', on_delete=models.SET_NULL, null=True
+#     ) 
+
+#     # -----------------------------------------------------------------------
+#     def get_assigned_employees(self):
+#         """Return a distinct queryset of all employees covered by this schedule."""
+#         from EmpManagement.models import emp_master
+#         qs = emp_master.objects.none()
+
+#         if self.employee.exists():
+#             qs |= emp_master.objects.filter(id__in=self.employee.values_list('id', flat=True))
+#         if self.categories.exists():
+#             qs |= emp_master.objects.filter(emp_ctgry_id__in=self.categories.all())
+#         if self.departments.exists():
+#             qs |= emp_master.objects.filter(emp_dept_id__in=self.departments.all())
+#         if self.branches.exists():
+#             qs |= emp_master.objects.filter(emp_branch_id__in=self.branches.all())
+#         if self.designations.exists():
+#             qs |= emp_master.objects.filter(emp_desgntn_id__in=self.designations.all())
+
+#         return qs.distinct()
+
+#     def get_shift_for_date(self, date):
+#         """
+#         Delegates shift resolution to the linked ShiftPattern.
+#         Passes this schedule's start_date as the rotation anchor.
+#         Returns None if no pattern is assigned or the date is out of range.
+#         """
+#         if isinstance(date, datetime):
+#             date = date.date()
+
+#         start_date = self.start_date.date() if isinstance(self.start_date, datetime) else self.start_date
+#         end_date   = self.end_date
+#         if end_date and isinstance(end_date, datetime):
+#             end_date = end_date.date()
+
+#         # Enforce schedule date bounds
+#         if date < start_date:
+#             return None
+#         if end_date and date > end_date:
+#             return None
+
+#         if self.shift_pattern:
+#             return self.shift_pattern.get_shift_for_date(date, start_date)
+
+#         return None
+
+#     def clean(self):
+#         from django.core.exceptions import ValidationError
+
+#         if self.schedule_name:
+#             schedule_name = self.schedule_name.strip()
+
+#             qs = EmployeeShiftSchedule.objects.filter(
+#                 schedule_name__iexact=schedule_name
+#             )
+
+#             # Exclude current record while updating
+#             if self.pk:
+#                 qs = qs.exclude(pk=self.pk)
+
+#             if qs.exists():
+#                 raise ValidationError({
+#                     "schedule_name": "A schedule with this name already exists."
+#                 })
+#         if self.end_date and self.start_date > self.end_date:
+#             raise ValidationError({
+#                 "end_date": "End date must be greater than or equal to start date"
+#             })
+
+#     def save(self, *args, **kwargs):
+#         self.full_clean()
+#         super().save(*args, **kwargs)
+
+#     def __str__(self):
+#         return f"Shift Schedule: {self.schedule_name}"
 
 class ShiftOverride(models.Model):
     employee       = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE)

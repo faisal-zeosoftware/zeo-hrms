@@ -73,6 +73,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from Core .mixins import BranchAccessMixin
 from .utils import validate_employee_geofence,apply_check_in_policy,apply_check_out_policy
+import openpyxl
 # Create your views here.
 
 class WeekendDetailsViewset(viewsets.ModelViewSet):
@@ -4338,3 +4339,79 @@ class EmpAttendancePolicyViewset(viewsets.ModelViewSet):
 class AttendancePolicyAssignmentViewset(viewsets.ModelViewSet):
     queryset = AttendancePolicyAssignment.objects.all()
     serializer_class = AttendancePolicyAssignmentSerializer
+
+class ManualOvertimeUploadView(APIView):
+    def post(self, request, *args, **kwargs):
+        data = []
+        if 'file' in request.FILES:
+            file = request.FILES['file']
+            try:
+                wb = openpyxl.load_workbook(file)
+                sheet = wb.active
+                for row in sheet.iter_rows(min_row=2, values_only=True):
+                    if not row[0]:
+                        continue
+                    data.append({
+                        'emp_code': row[0],
+                        'date': row[1],
+                        'ot_type': row[2] or 'NORMAL',
+                        'slab': row[3] or 'OT',
+                        'hours': row[4],
+                    })
+            except Exception as e:
+                return Response({'error': f'Error reading excel file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            data = request.data if isinstance(request.data, list) else [request.data]
+
+        created_count = 0
+        updated_count = 0
+        errors = []
+
+        from EmpManagement.models import emp_master
+        from datetime import datetime
+        
+        for item in data:
+            emp_code = item.get('emp_code')
+            date_str = item.get('date')
+            ot_type = item.get('ot_type', 'NORMAL')
+            slab = item.get('slab', 'OT')
+            hours = item.get('hours')
+            
+            if not all([emp_code, date_str, hours]):
+                errors.append(f'Missing required fields for entry: {item}')
+                continue
+                
+            try:
+                employee = emp_master.objects.get(emp_code=emp_code)
+                if isinstance(date_str, datetime):
+                    date_val = date_str.date()
+                else:
+                    date_val = datetime.strptime(str(date_str).split('T')[0], '%Y-%m-%d').date()
+                
+                ot, created = EmployeeOvertime.objects.update_or_create(
+                    employee=employee,
+                    date=date_val,
+                    ot_type=ot_type,
+                    defaults={
+                        'slab': slab,
+                        'hours': hours,
+                        'source': 'MANUAL',
+                        'approved': True,
+                        'created_by': request.user if request.user.is_authenticated else None
+                    }
+                )
+                if created:
+                    created_count += 1
+                else:
+                    updated_count += 1
+            except emp_master.DoesNotExist:
+                errors.append(f'Employee not found with code: {emp_code}')
+            except Exception as e:
+                errors.append(f'Error processing entry {item}: {str(e)}')
+
+        return Response({
+            'message': 'Upload completed',
+            'created': created_count,
+            'updated': updated_count,
+            'errors': errors
+        }, status=status.HTTP_200_OK)

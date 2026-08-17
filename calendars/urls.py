@@ -6,7 +6,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
                     AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset,
-                    AttendanceValidationPolicyViewset,LateComingPolicyViewset,EarlyExitPolicyViewset,AttendancePolicyAssignmentViewset,EmpAttendancePolicyViewset
+                    AttendanceValidationPolicyViewset,LateComingPolicyViewset,EarlyExitPolicyViewset,AttendancePolicyAssignmentViewset,EmpAttendancePolicyViewset,ManualOvertimeUploadView
                     
                     )
 
@@ -92,6 +92,8 @@ urlpatterns = [
     path('api/employee-attendance-summary/', EmployeeAttendanceSummaryAPIView.as_view(), name='employee-attendance-summary'),
     path("api/test-monthwise-accrual/", MonthwiseAccrualSimulationView.as_view(), name="test-monthwise-accrual"),
     path('api/leave/reset-preview/', LeaveResetPreviewAPIView.as_view(), name='leave-reset-preview'),
+    path('api/manual-overtime-upload/', ManualOvertimeUploadView.as_view(), name='manual-overtime-upload'),
+
 
    
 

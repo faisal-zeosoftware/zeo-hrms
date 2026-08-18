@@ -1,7 +1,7 @@
 # resources.py
 from import_export import resources, fields
 from import_export.widgets import ForeignKeyWidget
-from .models import Attendance,EmployeeMachineMapping,EmployeeShiftSchedule,emp_leave_balance,leave_type
+from .models import Attendance,EmployeeMachineMapping,EmployeeShiftSchedule,emp_leave_balance,leave_type,EmployeeOvertime
 from EmpManagement.models import emp_master
 from django.core.exceptions import ValidationError
 from datetime import datetime, timedelta, time
@@ -281,3 +281,294 @@ class MonthlyAttendanceResource(resources.ModelResource):
 
         # Return super's import_data result for reporting
         return super().import_data(dataset, dry_run=dry_run, **kwargs)
+class EmployeeOvertimeResource(resources.ModelResource):
+
+    employee = fields.Field(
+        attribute='employee',
+        column_name='Employee Code',
+        widget=ForeignKeyWidget(
+            emp_master,
+            'emp_code'
+        )
+    )
+
+    date = fields.Field(
+        attribute='date',
+        column_name='Date'
+    )
+
+    ot_type = fields.Field(
+        attribute='ot_type',
+        column_name='OT Type'
+    )
+
+    slab = fields.Field(
+        attribute='slab',
+        column_name='Slab'
+    )
+
+    hours = fields.Field(
+        attribute='hours',
+        column_name='Hours'
+    )
+
+    class Meta:
+
+        model = EmployeeOvertime
+
+        fields = (
+            'employee',
+            'date',
+            'ot_type',
+            'slab',
+            'hours',
+        )
+
+        import_id_fields = (
+            'employee',
+            'date',
+            'ot_type',
+        )
+
+    # ==========================================================
+    # BEFORE IMPORT ROW
+    # ==========================================================
+
+    def before_import_row(self, row, **kwargs):
+
+        errors = []
+
+        emp_code = row.get('Employee Code')
+        date_value = row.get('Date')
+        ot_type = row.get('OT Type')
+        slab = row.get('Slab')
+        hours = row.get('Hours')
+
+        # ------------------------------------------------------
+        # Employee validation
+        # ------------------------------------------------------
+
+        if not emp_code:
+
+            errors.append(
+                "Employee Code is required."
+            )
+
+        elif not emp_master.objects.filter(
+            emp_code=emp_code
+        ).exists():
+
+            errors.append(
+                f"Employee with code "
+                f"'{emp_code}' does not exist."
+            )
+
+        # ------------------------------------------------------
+        # Date validation
+        # ------------------------------------------------------
+
+        if not date_value:
+
+            errors.append(
+                "Date is required."
+            )
+
+        # ------------------------------------------------------
+        # OT Type validation
+        # ------------------------------------------------------
+
+        valid_ot_types = {
+            choice[0]
+            for choice in EmployeeOvertime.OT_TYPE_CHOICES
+        }
+
+        if not ot_type:
+
+            errors.append(
+                "OT Type is required."
+            )
+
+        elif str(ot_type).upper() not in valid_ot_types:
+
+            errors.append(
+                f"Invalid OT Type '{ot_type}'. "
+                f"Allowed values: "
+                f"{', '.join(valid_ot_types)}"
+            )
+
+        # ------------------------------------------------------
+        # Slab validation
+        # ------------------------------------------------------
+
+        valid_slabs = {
+            choice[0]
+            for choice in EmployeeOvertime.SLAB_CHOICES
+        }
+
+        if not slab:
+
+            # Default to OT
+            row['Slab'] = 'OT'
+
+        elif str(slab).upper() not in valid_slabs:
+
+            errors.append(
+                f"Invalid Slab '{slab}'. "
+                f"Allowed values: "
+                f"{', '.join(valid_slabs)}"
+            )
+
+        # ------------------------------------------------------
+        # Hours validation
+        # ------------------------------------------------------
+
+        if hours in [None, '']:
+
+            errors.append(
+                "Hours is required."
+            )
+
+        else:
+
+            try:
+
+                hours_value = float(hours)
+
+                if hours_value <= 0:
+                    errors.append(
+                        "Hours must be greater than 0."
+                    )
+
+            except (ValueError, TypeError):
+
+                errors.append(
+                    "Hours must be a valid number."
+                )
+
+        # ------------------------------------------------------
+        # Raise all row errors
+        # ------------------------------------------------------
+
+        if errors:
+
+            raise ValidationError(errors)
+
+    # ==========================================================
+    # CUSTOM IMPORT ROW
+    # ==========================================================
+
+    def import_row(
+        self,
+        row,
+        instance_loader,
+        **kwargs
+    ):
+
+        emp_code = row.get('Employee Code')
+        date_value = row.get('Date')
+        ot_type = str(
+            row.get('OT Type')
+        ).strip().upper()
+
+        slab = row.get('Slab') or 'OT'
+
+        slab = str(
+            slab
+        ).strip().upper()
+
+        hours = row.get('Hours')
+
+        try:
+
+            # --------------------------------------------------
+            # Employee
+            # --------------------------------------------------
+
+            employee = emp_master.objects.get(
+                emp_code=emp_code
+            )
+
+            # --------------------------------------------------
+            # Date
+            # --------------------------------------------------
+
+            if hasattr(date_value, 'date'):
+
+                overtime_date = date_value.date()
+
+            else:
+
+                from datetime import datetime
+
+                try:
+
+                    overtime_date = datetime.strptime(
+                        str(date_value).strip(),
+                        '%Y-%m-%d'
+                    ).date()
+
+                except ValueError:
+
+                    overtime_date = datetime.strptime(
+                        str(date_value).strip(),
+                        '%d-%m-%Y'
+                    ).date()
+
+            # --------------------------------------------------
+            # Hours
+            # --------------------------------------------------
+
+            hours = float(hours)
+
+            # --------------------------------------------------
+            # Check existing overtime
+            # --------------------------------------------------
+
+            overtime = EmployeeOvertime.objects.filter(
+                employee=employee,
+                date=overtime_date,
+                ot_type=ot_type
+            ).first()
+
+            if overtime:
+
+                # ----------------------------------------------
+                # Update existing record
+                # ----------------------------------------------
+
+                overtime.slab = slab
+                overtime.hours = hours
+
+                # Manual bulk upload
+                overtime.source = 'MANUAL'
+
+                overtime.save()
+
+            else:
+
+                # ----------------------------------------------
+                # Create new record
+                # ----------------------------------------------
+
+                EmployeeOvertime.objects.create(
+                    employee=employee,
+                    date=overtime_date,
+                    ot_type=ot_type,
+                    slab=slab,
+                    hours=hours,
+                    approved=False,
+                    approved_by=None,
+                    source='MANUAL',
+                    created_by=self.user
+                    if hasattr(self, 'user')
+                    else None,
+                )
+
+        except Exception as e:
+
+            raise ValidationError(
+                f"Error processing row for "
+                f"Employee {emp_code}: {str(e)}"
+            )
+
+        return None

@@ -6,7 +6,7 @@ from .  views import (WeekendViewset,AssignWeekendViewset,HolidayViewset,Holiday
                     ShiftOverrideViewSet,LeaveResetPolicyviewset,LeaveCarryForwardTransactionviewset,LeaveEncashmentTransactionviewset,EmpOpeningsBlkupldViewSet,ApplyOpeningsAPIView,EmployeeRejoiningViewset,ImmediateRejectAPIView,EmployeeAttendanceSummaryAPIView,MonthwiseAccrualSimulationView,
                     LeaveResetPreviewAPIView,EmployeeOvertimeViewset,MonthlyAttendanceSummaryViewSet,BulkuploadAttendanceViewSet,LVEscalationRuleViewSet,CompensatoryLeaveRequestviewset,CompensatoryLeaveBalancetviewset,CompensatoryLeaveTransactionviewset,AttendanceRecheckViewSet,OvertimePolicyViewSet,OvertimeRuleViewSet,
                     AttendancePolicyViewset,LeavePayRuleViewset,LatinEarlyoutEmailTemplateViewset,LateinEarlyRequestNotificationViewset,LateinEarlyoutRequestViewset,LateinEarlyoutApprovalLevelViewset,LateinEarlyoutApprovalViewset,AttendanceCalendarViewSet,CompensatoryLeaveAllocationviewset,
-                    AttendanceValidationPolicyViewset,LateComingPolicyViewset,EarlyExitPolicyViewset,AttendancePolicyAssignmentViewset,EmpAttendancePolicyViewset,ManualOvertimeUploadView
+                    AttendanceValidationPolicyViewset,LateComingPolicyViewset,EarlyExitPolicyViewset,AttendancePolicyAssignmentViewset,EmpAttendancePolicyViewset,EmpBulkuploadOvertimeViewSet
                     
                     )
 
@@ -78,6 +78,7 @@ router.register(r'late-come-policy', LateComingPolicyViewset, basename='late-com
 router.register(r'early-going-policy', EarlyExitPolicyViewset, basename='early-going-policy')
 router.register(r'attendance-policy-assignment', AttendancePolicyAssignmentViewset, basename='attendance-policy-assignment')
 router.register(r'Emp-attendance-policy', EmpAttendancePolicyViewset, basename='emp-attendance-policy')
+router.register(r'Emp-bulkupload-overtime', EmpBulkuploadOvertimeViewSet, basename='Emp-bulkupload-overtime')
 
 
 
@@ -92,7 +93,6 @@ urlpatterns = [
     path('api/employee-attendance-summary/', EmployeeAttendanceSummaryAPIView.as_view(), name='employee-attendance-summary'),
     path("api/test-monthwise-accrual/", MonthwiseAccrualSimulationView.as_view(), name="test-monthwise-accrual"),
     path('api/leave/reset-preview/', LeaveResetPreviewAPIView.as_view(), name='leave-reset-preview'),
-    path('api/manual-overtime-upload/', ManualOvertimeUploadView.as_view(), name='manual-overtime-upload'),
 
 
    

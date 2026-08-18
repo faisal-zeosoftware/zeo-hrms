@@ -1447,3 +1447,8 @@ class AttendancePolicyAssignmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendancePolicyAssignment
         fields = '__all__'
+class EmpBulkuploadOvertimeSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(write_only=True)
+    class Meta:
+        model = EmployeeOvertime
+        fields = '__all__'

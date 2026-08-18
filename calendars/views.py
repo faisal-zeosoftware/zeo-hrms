@@ -13,7 +13,7 @@ from . serializer import (WeekendCalendarSerailizer,WeekendAssignSerializer,Holi
                          LeaveEncashmentTransactionSerializer,EmpOpeningsBlkupldSerializer,EmployeeRejoiningSerializer,EmployeeOvertimeSerializer,MonthlyAttendanceSummarySerializer,LVEscalationRuleSerializer,AttendanceRecheckSerializer,OvertimePolicySerializer,OvertimeRuleSerializer,
                          AttendanceLogSerializer,AttendancePolicySerializer,LeavePayRuleSerializer,
                          LatinEarlyoutEmailTemplateSerializer,LateinEarlyRequestNotificationSerializer,LateinEarlyoutRequestSerializer,LateinEarlyoutApprovalLevelSerializer, LateinEarlyoutApprovalSerializer,LVApprovalWorkflowSerializer,LatinEarlyApprovalWorkflowSerializer,AttendanceCalendarSerializer,CompensatoryLeaveAllocationSerializer,
-                         AttendanceValidationPolicySerializer,LateComingPolicySerializer,EarlyExitPolicySerializer,EmpAttendancePolicySerializer,AttendancePolicyAssignmentSerializer
+                         AttendanceValidationPolicySerializer,LateComingPolicySerializer,EarlyExitPolicySerializer,EmpAttendancePolicySerializer,AttendancePolicyAssignmentSerializer,EmpBulkuploadOvertimeSerializer
                          )
 from . import face_utils
 from rest_framework import viewsets,filters,status
@@ -73,7 +73,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from Core .mixins import BranchAccessMixin
 from .utils import validate_employee_geofence,apply_check_in_policy,apply_check_out_policy
-import openpyxl
 # Create your views here.
 
 class WeekendDetailsViewset(viewsets.ModelViewSet):
@@ -4339,79 +4338,284 @@ class EmpAttendancePolicyViewset(viewsets.ModelViewSet):
 class AttendancePolicyAssignmentViewset(viewsets.ModelViewSet):
     queryset = AttendancePolicyAssignment.objects.all()
     serializer_class = AttendancePolicyAssignmentSerializer
+class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
+    queryset = EmployeeOvertime.objects.all()
+    serializer_class = EmpBulkuploadOvertimeSerializer
 
-class ManualOvertimeUploadView(APIView):
-    def post(self, request, *args, **kwargs):
-        data = []
-        if 'file' in request.FILES:
-            file = request.FILES['file']
-            try:
-                wb = openpyxl.load_workbook(file)
-                sheet = wb.active
-                for row in sheet.iter_rows(min_row=2, values_only=True):
-                    if not row[0]:
-                        continue
-                    data.append({
-                        'emp_code': row[0],
-                        'date': row[1],
-                        'ot_type': row[2] or 'NORMAL',
-                        'slab': row[3] or 'OT',
-                        'hours': row[4],
-                    })
-            except Exception as e:
-                return Response({'error': f'Error reading excel file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            data = request.data if isinstance(request.data, list) else [request.data]
+    @action(detail=False, methods=['post'])
+    def bulk_upload(self, request):
 
-        created_count = 0
-        updated_count = 0
-        errors = []
+        if 'file' not in request.FILES:
 
-        from EmpManagement.models import emp_master
-        from datetime import datetime
-        
-        for item in data:
-            emp_code = item.get('emp_code')
-            date_str = item.get('date')
-            ot_type = item.get('ot_type', 'NORMAL')
-            slab = item.get('slab', 'OT')
-            hours = item.get('hours')
-            
-            if not all([emp_code, date_str, hours]):
-                errors.append(f'Missing required fields for entry: {item}')
-                continue
-                
-            try:
-                employee = emp_master.objects.get(emp_code=emp_code)
-                if isinstance(date_str, datetime):
-                    date_val = date_str.date()
-                else:
-                    date_val = datetime.strptime(str(date_str).split('T')[0], '%Y-%m-%d').date()
-                
-                ot, created = EmployeeOvertime.objects.update_or_create(
-                    employee=employee,
-                    date=date_val,
-                    ot_type=ot_type,
-                    defaults={
-                        'slab': slab,
-                        'hours': hours,
-                        'source': 'MANUAL',
-                        'approved': True,
-                        'created_by': request.user if request.user.is_authenticated else None
-                    }
+            return Response(
+                {
+                    "error": "Please provide a file."
+                },
+                status=400
+            )
+
+        upload_file = request.FILES['file']
+
+        file_name = upload_file.name.lower()
+
+        try:
+
+            # --------------------------------------------------
+            # Read Excel / CSV
+            # --------------------------------------------------
+
+            if file_name.endswith('.xlsx'):
+
+                dataset = XLSX().create_dataset(
+                    upload_file.read()
                 )
-                if created:
-                    created_count += 1
-                else:
-                    updated_count += 1
-            except emp_master.DoesNotExist:
-                errors.append(f'Employee not found with code: {emp_code}')
-            except Exception as e:
-                errors.append(f'Error processing entry {item}: {str(e)}')
 
-        return Response({
-            'message': 'Upload completed',
-            'created': created_count,
-            'updated': updated_count,
-            'errors': errors
-        }, status=status.HTTP_200_OK)
+            elif file_name.endswith('.csv'):
+
+                dataset = CSV().create_dataset(
+                    upload_file.read().decode('utf-8')
+                )
+
+            else:
+
+                return Response(
+                    {
+                        "error": (
+                            "Invalid file format. "
+                            "Only .xlsx and .csv "
+                            "are supported."
+                        )
+                    },
+                    status=400
+                )
+
+            # --------------------------------------------------
+            # Resource
+            # --------------------------------------------------
+
+            resource = EmployeeOvertimeResource(
+                user=request.user
+            )
+
+            all_errors = []
+
+            # --------------------------------------------------
+            # Import
+            # --------------------------------------------------
+
+            with transaction.atomic():
+
+                for row_idx, row in enumerate(
+                    dataset.dict,
+                    start=2
+                ):
+
+                    try:
+
+                        resource.before_import_row(
+                            row,
+                            row_idx=row_idx
+                        )
+
+                        resource.import_row(
+                            row,
+                            None
+                        )
+
+                    except ValidationError as e:
+
+                        all_errors.extend(
+                            [
+                                f"Row {row_idx}: {msg}"
+                                for msg in e.messages
+                            ]
+                        )
+
+            # --------------------------------------------------
+            # Errors
+            # --------------------------------------------------
+
+            if all_errors:
+
+                return Response(
+                    {
+                        "errors": all_errors
+                    },
+                    status=400
+                )
+
+            # --------------------------------------------------
+            # Success
+            # --------------------------------------------------
+
+            return Response(
+                {
+                    "message": (
+                        "Manual overtime records "
+                        "uploaded successfully."
+                    )
+                },
+                status=200
+            )
+
+        except Exception as e:
+
+            return Response(
+                {
+                    "error": str(e)
+                },
+                status=400
+            )
+    # ------------------------------------------------------------------
+    # DOWNLOAD TEMPLATE - EXCEL
+    # ------------------------------------------------------------------
+    @action(detail=False, methods=['get'])
+    def download_default_excel_file(self, request):
+
+        headers = [
+            'Employee Code',
+            'Date',
+            'OT Type',
+            'Slab',
+            'Hours',
+        ]
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Employee Overtime"
+
+        # -----------------------------
+        # Excel styles
+        # -----------------------------
+
+        black_font = Font(
+            color="000000",
+            bold=True
+        )
+
+        blue_fill = PatternFill(
+            start_color="1E90FF",
+            end_color="1E90FF",
+            fill_type="solid"
+        )
+
+        border_style = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin'),
+        )
+
+        # -----------------------------
+        # Headers
+        # -----------------------------
+
+        for col_num, header in enumerate(headers, 1):
+
+            cell = ws.cell(
+                row=1,
+                column=col_num,
+                value=header
+            )
+
+            cell.fill = blue_fill
+            cell.font = black_font
+            cell.border = border_style
+
+            ws.column_dimensions[
+                cell.column_letter
+            ].width = 25
+
+        # -----------------------------
+        # Example row
+        # -----------------------------
+
+        example_data = [
+            'EMP001',
+            '2026-08-18',
+            'NORMAL',
+            'OT',
+            2
+        ]
+
+        for col_num, value in enumerate(example_data, 1):
+
+            cell = ws.cell(
+                row=2,
+                column=col_num,
+                value=value
+            )
+
+            cell.border = border_style
+
+        # -----------------------------
+        # Freeze header
+        # -----------------------------
+
+        ws.freeze_panes = "A2"
+
+        # -----------------------------
+        # Generate response
+        # -----------------------------
+
+        output = io.BytesIO()
+
+        wb.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output,
+            content_type=(
+                'application/vnd.openxmlformats-officedocument.'
+                'spreadsheetml.sheet'
+            )
+        )
+
+        response['Content-Disposition'] = (
+            'attachment; '
+            'filename="EmployeeOvertime_BulkUpload_Template.xlsx"'
+        )
+
+        return response
+
+    # ------------------------------------------------------------------
+    # DOWNLOAD TEMPLATE - CSV
+    # ------------------------------------------------------------------
+    @action(detail=False, methods=['get'])
+    def download_default_csv_file(self, request):
+
+        headers = [
+            'Employee Code',
+            'Date',
+            'OT Type',
+            'Slab',
+            'Hours',
+        ]
+
+        output = io.StringIO()
+
+        writer = csv.writer(output)
+
+        # Header
+        writer.writerow(headers)
+
+        # Example row
+        writer.writerow([
+            'EMP001',
+            '2026-08-18',
+            'NORMAL',
+            'OT',
+            2
+        ])
+
+        response = HttpResponse(
+            output.getvalue(),
+            content_type='text/csv'
+        )
+
+        response['Content-Disposition'] = (
+            'attachment; '
+            'filename="EmployeeOvertime_BulkUpload_Template.csv"'
+        )
+
+        return response

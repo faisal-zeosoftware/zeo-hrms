@@ -27,7 +27,7 @@ from .permissions import( WeekendCalendarPermission, WeekendDetailPermission, As
                         )
 from rest_framework.parsers import MultiPartParser, FormParser
 from EmpManagement.models import emp_master
-from .resource import AttendanceResource,EmployeeOpenBalanceResource,MonthlyAttendanceResource
+from .resource import AttendanceResource,EmployeeOpenBalanceResource,MonthlyAttendanceResource,EmployeeOvertimeResource
 from django.http import HttpResponse,JsonResponse
 from tablib import Dataset
 from django.core.exceptions import ValidationError

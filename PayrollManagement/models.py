@@ -86,6 +86,17 @@ class EmployeeSalaryStructure(models.Model):
     is_active = models.BooleanField(default=True, help_text="Is this component active for the employee?")
     date_created = models.DateTimeField(auto_now_add=True)
     date_updated = models.DateTimeField(auto_now=True)
+    valid_from = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Month from which this amount becomes active"
+    )
+
+    valid_until = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Last month for which this amount is active"
+    )
 
     class Meta:
         unique_together = ('employee', 'component')  # Ensure no duplicate components for an employee

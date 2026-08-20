@@ -4342,26 +4342,28 @@ class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
     queryset = EmployeeOvertime.objects.all()
     serializer_class = EmpBulkuploadOvertimeSerializer
     parser_classes = (MultiPartParser, FormParser)
-    @action(detail=False, methods=['post'])
+
+    @action(detail=False, methods=['post'],parser_classes=[MultiPartParser, FormParser])
     def bulk_upload(self, request):
 
         if 'file' not in request.FILES:
+
             return Response(
                 {
-                    "success": False,
                     "error": "Please provide a file."
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=400
             )
 
         upload_file = request.FILES['file']
+
         file_name = upload_file.name.lower()
 
         try:
 
-            # =====================================================
-            # READ FILE
-            # =====================================================
+            # --------------------------------------------------
+            # Read Excel / CSV
+            # --------------------------------------------------
 
             if file_name.endswith('.xlsx'):
 
@@ -4372,338 +4374,99 @@ class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
             elif file_name.endswith('.csv'):
 
                 dataset = CSV().create_dataset(
-                    upload_file.read().decode('utf-8-sig')
+                    upload_file.read().decode('utf-8')
                 )
 
             else:
-                return Response(
-                    {
-                        "success": False,
-                        "error": "Only .xlsx and .csv files are supported."
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # =====================================================
-            # EMPTY FILE CHECK
-            # =====================================================
-
-            if not dataset.dict:
 
                 return Response(
                     {
-                        "success": False,
-                        "error": "The uploaded file is empty."
+                        "error": (
+                            "Invalid file format. "
+                            "Only .xlsx and .csv "
+                            "are supported."
+                        )
                     },
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=400
                 )
 
-            created_count = 0
-            updated_count = 0
-            errors = []
+            # --------------------------------------------------
+            # Resource
+            # --------------------------------------------------
 
-            # =====================================================
-            # PROCESS ROWS
-            # =====================================================
+            resource = EmployeeOvertimeResource(
+                user=request.user
+            )
+
+            all_errors = []
+
+            # --------------------------------------------------
+            # Import
+            # --------------------------------------------------
 
             with transaction.atomic():
 
-                for row_number, row in enumerate(
+                for row_idx, row in enumerate(
                     dataset.dict,
                     start=2
                 ):
 
-                    emp_code = str(
-                        row.get("Employee Code") or ""
-                    ).strip()
-
-                    leave_type_name = str(
-                        row.get("Leave Type") or ""
-                    ).strip()
-
-                    openings_value = row.get("Openings")
-
-                    # ---------------------------------------------
-                    # Employee validation
-                    # ---------------------------------------------
-
-                    if not emp_code:
-
-                        errors.append(
-                            f"Row {row_number}: Employee Code is empty."
-                        )
-
-                        continue
-
                     try:
 
-                        employee = emp_master.objects.get(
-                            emp_code=emp_code
+                        resource.before_import_row(
+                            row,
+                            row_idx=row_idx
                         )
 
-                    except emp_master.DoesNotExist:
-
-                        errors.append(
-                            f"Row {row_number}: "
-                            f"Employee '{emp_code}' does not exist."
+                        resource.import_row(
+                            row,
+                            None
                         )
 
-                        continue
+                    except ValidationError as e:
 
-                    # ---------------------------------------------
-                    # Leave type validation
-                    # ---------------------------------------------
-
-                    if not leave_type_name:
-
-                        errors.append(
-                            f"Row {row_number}: Leave Type is empty."
-                        )
-
-                        continue
-
-                    try:
-
-                        leave_type_obj = leave_type.objects.get(
-                            name=leave_type_name
-                        )
-
-                    except leave_type.DoesNotExist:
-
-                        errors.append(
-                            f"Row {row_number}: "
-                            f"Leave Type '{leave_type_name}' does not exist."
-                        )
-
-                        continue
-
-                    # ---------------------------------------------
-                    # Openings validation
-                    # ---------------------------------------------
-
-                    if openings_value in [None, ""]:
-
-                        errors.append(
-                            f"Row {row_number}: Openings is empty."
-                        )
-
-                        continue
-
-                    try:
-
-                        openings = float(openings_value)
-
-                    except (ValueError, TypeError):
-
-                        errors.append(
-                            f"Row {row_number}: "
-                            f"Invalid Openings value "
-                            f"'{openings_value}'."
-                        )
-
-                        continue
-
-                    # ---------------------------------------------
-                    # CREATE OR UPDATE
-                    # ---------------------------------------------
-
-                    balance_record, created = (
-                        emp_leave_balance.objects.get_or_create(
-                            employee=employee,
-                            leave_type=leave_type_obj,
-                            defaults={
-                                "openings": openings,
-                                "balance": openings,
-                            }
-                        )
-                    )
-
-                    if created:
-
-                        created_count += 1
-
-                    else:
-
-                        balance_record.openings = openings
-                        balance_record.balance = openings
-                        balance_record.save(
-                            update_fields=[
-                                "openings",
-                                "balance",
-                                "updated_at"
+                        all_errors.extend(
+                            [
+                                f"Row {row_idx}: {msg}"
+                                for msg in e.messages
                             ]
                         )
 
-                        updated_count += 1
+            # --------------------------------------------------
+            # Errors
+            # --------------------------------------------------
 
-            # =====================================================
-            # RETURN ERRORS
-            # =====================================================
-
-            if errors:
+            if all_errors:
 
                 return Response(
                     {
-                        "success": False,
-                        "message": "Bulk upload completed with errors.",
-                        "total_rows": len(dataset.dict),
-                        "created": created_count,
-                        "updated": updated_count,
-                        "failed": len(errors),
-                        "errors": errors,
+                        "errors": all_errors
                     },
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=400
                 )
 
-            # =====================================================
-            # SUCCESS
-            # =====================================================
+            # --------------------------------------------------
+            # Success
+            # --------------------------------------------------
 
             return Response(
                 {
-                    "success": True,
-                    "message": "Leave openings uploaded successfully.",
-                    "total_rows": len(dataset.dict),
-                    "created": created_count,
-                    "updated": updated_count,
-                    "failed": 0,
+                    "message": (
+                        "Manual overtime records "
+                        "uploaded successfully."
+                    )
                 },
-                status=status.HTTP_200_OK
+                status=200
             )
 
         except Exception as e:
 
             return Response(
                 {
-                    "success": False,
                     "error": str(e)
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=400
             )
-    # @action(detail=False, methods=['post'],parser_classes=[MultiPartParser, FormParser])
-    # def bulk_upload(self, request):
-
-    #     if 'file' not in request.FILES:
-
-    #         return Response(
-    #             {
-    #                 "error": "Please provide a file."
-    #             },
-    #             status=400
-    #         )
-
-    #     upload_file = request.FILES['file']
-
-    #     file_name = upload_file.name.lower()
-
-    #     try:
-
-    #         # --------------------------------------------------
-    #         # Read Excel / CSV
-    #         # --------------------------------------------------
-
-    #         if file_name.endswith('.xlsx'):
-
-    #             dataset = XLSX().create_dataset(
-    #                 upload_file.read()
-    #             )
-
-    #         elif file_name.endswith('.csv'):
-
-    #             dataset = CSV().create_dataset(
-    #                 upload_file.read().decode('utf-8')
-    #             )
-
-    #         else:
-
-    #             return Response(
-    #                 {
-    #                     "error": (
-    #                         "Invalid file format. "
-    #                         "Only .xlsx and .csv "
-    #                         "are supported."
-    #                     )
-    #                 },
-    #                 status=400
-    #             )
-
-    #         # --------------------------------------------------
-    #         # Resource
-    #         # --------------------------------------------------
-
-    #         resource = EmployeeOvertimeResource(
-    #             user=request.user
-    #         )
-
-    #         all_errors = []
-
-    #         # --------------------------------------------------
-    #         # Import
-    #         # --------------------------------------------------
-
-    #         with transaction.atomic():
-
-    #             for row_idx, row in enumerate(
-    #                 dataset.dict,
-    #                 start=2
-    #             ):
-
-    #                 try:
-
-    #                     resource.before_import_row(
-    #                         row,
-    #                         row_idx=row_idx
-    #                     )
-
-    #                     resource.import_row(
-    #                         row,
-    #                         None
-    #                     )
-
-    #                 except ValidationError as e:
-
-    #                     all_errors.extend(
-    #                         [
-    #                             f"Row {row_idx}: {msg}"
-    #                             for msg in e.messages
-    #                         ]
-    #                     )
-
-    #         # --------------------------------------------------
-    #         # Errors
-    #         # --------------------------------------------------
-
-    #         if all_errors:
-
-    #             return Response(
-    #                 {
-    #                     "errors": all_errors
-    #                 },
-    #                 status=400
-    #             )
-
-    #         # --------------------------------------------------
-    #         # Success
-    #         # --------------------------------------------------
-
-    #         return Response(
-    #             {
-    #                 "message": (
-    #                     "Manual overtime records "
-    #                     "uploaded successfully."
-    #                 )
-    #             },
-    #             status=200
-    #         )
-
-    #     except Exception as e:
-
-    #         return Response(
-    #             {
-    #                 "error": str(e)
-    #             },
-    #             status=400
-    #         )
     # ------------------------------------------------------------------
     # DOWNLOAD TEMPLATE - EXCEL
     # ------------------------------------------------------------------

@@ -4347,7 +4347,10 @@ class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
 
         if 'file' not in request.FILES:
             return Response(
-                {"error": "Please provide a file."},
+                {
+                    "success": False,
+                    "error": "Please provide a file."
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -4356,9 +4359,10 @@ class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
 
         try:
 
-            # -----------------------------------
-            # Read Excel / CSV
-            # -----------------------------------
+            # =====================================================
+            # READ FILE
+            # =====================================================
+
             if file_name.endswith('.xlsx'):
 
                 dataset = XLSX().create_dataset(
@@ -4374,30 +4378,34 @@ class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
             else:
                 return Response(
                     {
-                        "error": (
-                            "Invalid file format. "
-                            "Only .xlsx and .csv are supported."
-                        )
+                        "success": False,
+                        "error": "Only .xlsx and .csv files are supported."
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # -----------------------------------
-            # Check empty file
-            # -----------------------------------
+            # =====================================================
+            # EMPTY FILE CHECK
+            # =====================================================
+
             if not dataset.dict:
+
                 return Response(
-                    {"error": "Uploaded file is empty."},
+                    {
+                        "success": False,
+                        "error": "The uploaded file is empty."
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            errors = []
-            updated_count = 0
             created_count = 0
+            updated_count = 0
+            errors = []
 
-            # -----------------------------------
-            # Process all rows
-            # -----------------------------------
+            # =====================================================
+            # PROCESS ROWS
+            # =====================================================
+
             with transaction.atomic():
 
                 for row_number, row in enumerate(
@@ -4406,123 +4414,159 @@ class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
                 ):
 
                     emp_code = str(
-                        row.get('Employee Code') or ''
+                        row.get("Employee Code") or ""
                     ).strip()
 
                     leave_type_name = str(
-                        row.get('Leave Type') or ''
+                        row.get("Leave Type") or ""
                     ).strip()
 
-                    openings_value = row.get('Openings')
+                    openings_value = row.get("Openings")
 
-                    # -----------------------------
-                    # Validate Employee Code
-                    # -----------------------------
+                    # ---------------------------------------------
+                    # Employee validation
+                    # ---------------------------------------------
+
                     if not emp_code:
+
                         errors.append(
-                            f"Row {row_number}: Employee Code is required."
+                            f"Row {row_number}: Employee Code is empty."
                         )
+
                         continue
 
                     try:
+
                         employee = emp_master.objects.get(
                             emp_code=emp_code
                         )
+
                     except emp_master.DoesNotExist:
+
                         errors.append(
                             f"Row {row_number}: "
                             f"Employee '{emp_code}' does not exist."
                         )
+
                         continue
 
-                    # -----------------------------
-                    # Validate Leave Type
-                    # -----------------------------
+                    # ---------------------------------------------
+                    # Leave type validation
+                    # ---------------------------------------------
+
                     if not leave_type_name:
+
                         errors.append(
-                            f"Row {row_number}: Leave Type is required."
+                            f"Row {row_number}: Leave Type is empty."
                         )
+
                         continue
 
                     try:
+
                         leave_type_obj = leave_type.objects.get(
                             name=leave_type_name
                         )
+
                     except leave_type.DoesNotExist:
+
                         errors.append(
                             f"Row {row_number}: "
                             f"Leave Type '{leave_type_name}' does not exist."
                         )
+
                         continue
 
-                    # -----------------------------
-                    # Validate Openings
-                    # -----------------------------
-                    if openings_value in [None, '']:
+                    # ---------------------------------------------
+                    # Openings validation
+                    # ---------------------------------------------
+
+                    if openings_value in [None, ""]:
+
                         errors.append(
-                            f"Row {row_number}: Openings is required."
+                            f"Row {row_number}: Openings is empty."
                         )
+
                         continue
 
                     try:
+
                         openings = float(openings_value)
+
                     except (ValueError, TypeError):
+
                         errors.append(
                             f"Row {row_number}: "
-                            f"Invalid openings value '{openings_value}'."
+                            f"Invalid Openings value "
+                            f"'{openings_value}'."
                         )
+
                         continue
 
-                    # -----------------------------
-                    # Find existing balance
-                    # -----------------------------
-                    try:
-                        balance_record = emp_leave_balance.objects.get(
+                    # ---------------------------------------------
+                    # CREATE OR UPDATE
+                    # ---------------------------------------------
+
+                    balance_record, created = (
+                        emp_leave_balance.objects.get_or_create(
                             employee=employee,
-                            leave_type=leave_type_obj
+                            leave_type=leave_type_obj,
+                            defaults={
+                                "openings": openings,
+                                "balance": openings,
+                            }
                         )
+                    )
 
-                        # Update openings
+                    if created:
+
+                        created_count += 1
+
+                    else:
+
                         balance_record.openings = openings
-
-                        # If your model has apply_openings()
-                        balance_record.apply_openings()
-
-                        balance_record.save()
+                        balance_record.balance = openings
+                        balance_record.save(
+                            update_fields=[
+                                "openings",
+                                "balance",
+                                "updated_at"
+                            ]
+                        )
 
                         updated_count += 1
 
-                    except emp_leave_balance.DoesNotExist:
+            # =====================================================
+            # RETURN ERRORS
+            # =====================================================
 
-                        errors.append(
-                            f"Row {row_number}: "
-                            f"No leave balance exists for "
-                            f"Employee '{emp_code}' and "
-                            f"Leave Type '{leave_type_name}'."
-                        )
-
-            # -----------------------------------
-            # Return errors
-            # -----------------------------------
             if errors:
+
                 return Response(
                     {
                         "success": False,
                         "message": "Bulk upload completed with errors.",
+                        "total_rows": len(dataset.dict),
+                        "created": created_count,
                         "updated": updated_count,
-                        "errors": errors
+                        "failed": len(errors),
+                        "errors": errors,
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # -----------------------------------
-            # Success
-            # -----------------------------------
+            # =====================================================
+            # SUCCESS
+            # =====================================================
+
             return Response(
                 {
                     "success": True,
                     "message": "Leave openings uploaded successfully.",
-                    "updated": updated_count
+                    "total_rows": len(dataset.dict),
+                    "created": created_count,
+                    "updated": updated_count,
+                    "failed": 0,
                 },
                 status=status.HTTP_200_OK
             )

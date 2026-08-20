@@ -656,7 +656,7 @@ class emp_leave_balance(models.Model):
     employee       = models.ForeignKey('EmpManagement.emp_master',on_delete=models.CASCADE)
     leave_type     = models.ForeignKey('leave_type',on_delete=models.CASCADE)
     balance        = models.FloatField(null=True,blank=True)
-    openings       = models.IntegerField(null=True,blank=True)
+    openings       = models.FloatField(null=True,blank=True)
     updated_at     = models.DateTimeField(auto_now=True)  # Track last update
     created_at     = models.DateTimeField(auto_now_add=True)
     created_by     = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, related_name='%(class)s_created_by')

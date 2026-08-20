@@ -3611,6 +3611,10 @@ class EmployeeOvertime(models.Model):
         ('OT', 'Overtime'),
         ('EXT', 'Extended Overtime'),
     )
+    SOURCE_CHOICES = (
+        ('ATTENDANCE', 'Attendance-Based'),
+        ('MANUAL', 'Manual Entry'),
+    )
     employee = models.ForeignKey(
         'EmpManagement.emp_master',
         on_delete=models.CASCADE
@@ -3635,7 +3639,11 @@ class EmployeeOvertime(models.Model):
         on_delete=models.SET_NULL,
         related_name='approved_overtimes'
     )
-
+    source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default='ATTENDANCE'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         'UserManagement.CustomUser',

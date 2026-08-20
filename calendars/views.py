@@ -4341,8 +4341,9 @@ class AttendancePolicyAssignmentViewset(viewsets.ModelViewSet):
 class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
     queryset = EmployeeOvertime.objects.all()
     serializer_class = EmpBulkuploadOvertimeSerializer
+    parser_classes = (MultiPartParser, FormParser)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'],parser_classes=[MultiPartParser, FormParser])
     def bulk_upload(self, request):
 
         if 'file' not in request.FILES:

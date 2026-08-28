@@ -216,6 +216,64 @@ def get_formula_variables(employee, start_date=None, end_date=None):
             except Exception as e:
                 logger.error(f"Formula error for {comp.name} in get_formula_variables: {e}")
                 variables[comp.code] = Decimal("0.00")
+    ###
+    EmpLeaveBalance = apps.get_model(
+    'calendars',
+    'emp_leave_balance'
+    )
+
+    leave_balances = EmpLeaveBalance.objects.filter(
+        employee=employee
+    ).select_related('leave_type')
+
+    for lb in leave_balances:
+
+        balance = Decimal(
+            str(lb.balance or 0)
+        )
+
+        leave_type = lb.leave_type
+
+        # Get leave type code
+        leave_code = getattr(
+            leave_type,
+            'code',
+            None
+        )
+
+        # If your leave_type model uses leave_type field
+        if not leave_code:
+            leave_code = getattr(
+                leave_type,
+                'leave_type',
+                ''
+            )
+
+        # Make code safe for Python formula
+        safe_leave_code = str(leave_code).strip()
+
+        safe_leave_code = (
+            safe_leave_code
+            .replace('-', '_')
+            .replace(' ', '_')
+            .replace('/', '_')
+            .replace('.', '_')
+        )
+
+        # Example:
+        # AL-TRA -> al_tra
+        # Annual Leave -> annual_leave
+
+        safe_leave_code = safe_leave_code.lower()
+
+        variable_name = f'leave_balance_{safe_leave_code}'
+
+        variables[variable_name] = balance
+
+        logger.debug(
+            f"Leave balance variable created: "
+            f"{variable_name} = {balance}"
+        )
     return variables
 
 def daterange(start_date, end_date):

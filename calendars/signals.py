@@ -1,6 +1,6 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import (applicablity_critirea, emp_leave_balance, LvApprovalNotify,Attendance,employee_leave_request,leave_entitlement,
+from .models import (applicablity_critirea, emp_leave_balance,leave_type, LvApprovalNotify,Attendance,employee_leave_request,leave_entitlement,
                      LvCommonWorkflow,LeaveApproval,LeaveApprovalLevels)
 from EmpManagement.models import emp_master
 from django.db import models  # Ensure models import is included
@@ -9,11 +9,55 @@ from datetime import timedelta
 from datetime import date
 from dateutil.relativedelta import relativedelta
 from django.utils import timezone
+from .utils import get_or_create_applicable_leave_balance
 
 import logging
 
 logger = logging.getLogger(__name__)
+@receiver(post_save, sender=emp_master)
+def update_emp_leave_balance_on_employee_create(
+    sender,
+    instance,
+    created,
+    **kwargs
+):
 
+    if not created:
+        return
+
+    logger.info(
+        f"New employee created: {instance.emp_code}"
+    )
+
+    # ------------------------------------------
+    # Check every leave type
+    # ------------------------------------------
+
+    leave_types = leave_type.objects.all()
+
+    for leave_type_instance in leave_types:
+
+        leave_balance, created_balance = (
+            get_or_create_applicable_leave_balance(
+                employee=instance,
+                leave_type_instance=leave_type_instance
+            )
+        )
+
+        if leave_balance:
+
+            logger.info(
+                f"Leave balance "
+                f"{'created' if created_balance else 'already exists'} "
+                f"for employee "
+                f"{instance.emp_code}: "
+                f"{leave_type_instance.name}"
+            )
+
+    logger.info(
+        f"Leave balance update completed for "
+        f"employee {instance.emp_code}"
+    )
 @receiver(post_save, sender=applicablity_critirea)
 def update_emp_leave_balance(sender, instance, created, **kwargs):
     leave_type_instance = instance.leave_type

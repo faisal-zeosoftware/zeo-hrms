@@ -666,3 +666,287 @@ def get_employee_attendance_validation_policy(employee):
         is_active=True
     ).first()
     return policy
+
+from .models import (
+    emp_leave_balance,
+    leave_type,
+    applicablity_critirea,
+)
+
+
+def is_leave_type_applicable(employee, leave_type_instance):
+    """
+    Check whether a leave type is applicable to an employee
+    based on applicability criteria.
+
+    Empty criteria means there is no restriction.
+
+    Returns:
+        True  -> applicable
+        False -> not applicable
+    """
+
+    criteria_list = (
+        applicablity_critirea.objects
+        .filter(leave_type=leave_type_instance)
+        .prefetch_related(
+            'branch',
+            'department',
+            'designation',
+            'role'
+        )
+    )
+
+    # ------------------------------------------
+    # No criteria = applicable to everyone
+    # ------------------------------------------
+
+    if not criteria_list.exists():
+        return True
+
+    # ------------------------------------------
+    # Employee branch
+    # ------------------------------------------
+
+    employee_branch = employee.emp_branch_id
+
+    if employee_branch:
+        employee_branch_pk = (
+            employee_branch.pk
+            if hasattr(employee_branch, 'pk')
+            else employee_branch
+        )
+    else:
+        employee_branch_pk = None
+
+    # ------------------------------------------
+    # Employee department
+    # ------------------------------------------
+
+    employee_department = employee.emp_dept_id
+
+    if employee_department:
+        employee_department_pk = (
+            employee_department.pk
+            if hasattr(employee_department, 'pk')
+            else employee_department
+        )
+    else:
+        employee_department_pk = None
+
+    # ------------------------------------------
+    # Employee designation
+    # ------------------------------------------
+
+    employee_designation = employee.emp_desgntn_id
+
+    if employee_designation:
+        employee_designation_pk = (
+            employee_designation.pk
+            if hasattr(employee_designation, 'pk')
+            else employee_designation
+        )
+    else:
+        employee_designation_pk = None
+
+    # ------------------------------------------
+    # Employee role/category
+    # ------------------------------------------
+
+    employee_role = employee.emp_ctgry_id
+
+    if employee_role:
+        employee_role_pk = (
+            employee_role.pk
+            if hasattr(employee_role, 'pk')
+            else employee_role
+        )
+    else:
+        employee_role_pk = None
+
+    # ==========================================
+    # CHECK EACH CRITERIA
+    # ==========================================
+
+    for criteria in criteria_list:
+
+        # ======================================
+        # GENDER
+        # ======================================
+
+        if criteria.gender:
+
+            if criteria.gender == "B":
+
+                gender_match = True
+
+            else:
+
+                gender_match = (
+                    employee.emp_gender == criteria.gender
+                )
+
+            if not gender_match:
+                continue
+
+        # ======================================
+        # BRANCH
+        # ======================================
+
+        branches = criteria.branch.all()
+
+        if branches.exists():
+
+            if employee_branch_pk is None:
+                continue
+
+            if not branches.filter(
+                pk=employee_branch_pk
+            ).exists():
+                continue
+
+        # ======================================
+        # DEPARTMENT
+        # ======================================
+
+        departments = criteria.department.all()
+
+        if departments.exists():
+
+            if employee_department_pk is None:
+                continue
+
+            if not departments.filter(
+                pk=employee_department_pk
+            ).exists():
+                continue
+
+        # ======================================
+        # DESIGNATION
+        # ======================================
+
+        designations = criteria.designation.all()
+
+        if designations.exists():
+
+            if employee_designation_pk is None:
+                continue
+
+            if not designations.filter(
+                pk=employee_designation_pk
+            ).exists():
+                continue
+
+        # ======================================
+        # ROLE
+        # ======================================
+
+        roles = criteria.role.all()
+
+        if roles.exists():
+
+            if employee_role_pk is None:
+                continue
+
+            if not roles.filter(
+                pk=employee_role_pk
+            ).exists():
+                continue
+
+        # ======================================
+        # ALL CONDITIONS MATCH
+        # ======================================
+
+        return True
+
+    return False
+
+
+def get_or_create_applicable_leave_balance(
+    employee,
+    leave_type_instance
+):
+    """
+    Get existing leave balance.
+
+    If the employee is applicable but the balance
+    does not exist, create it.
+    """
+
+    # ------------------------------------------
+    # CHECK APPLICABILITY
+    # ------------------------------------------
+
+    applicable = is_leave_type_applicable(
+        employee,
+        leave_type_instance
+    )
+
+    if not applicable:
+        return None, False
+
+    # ------------------------------------------
+    # GET OR CREATE
+    # ------------------------------------------
+
+    leave_balance, created = (
+        emp_leave_balance.objects.get_or_create(
+            employee=employee,
+            leave_type=leave_type_instance,
+            defaults={
+                'balance': 0,
+                'openings': 0
+            }
+        )
+    )
+
+    return leave_balance, created
+
+
+
+
+def get_or_create_applicable_leave_balance(
+    employee,
+    leave_type_instance
+):
+    """
+    Get an existing leave balance.
+
+    If it does not exist but the leave is applicable,
+    create the leave balance.
+
+    Returns:
+        (leave_balance, created)
+
+    If leave is not applicable:
+        (None, False)
+    """
+
+    # ==========================================
+    # CHECK APPLICABILITY
+    # ==========================================
+
+    applicable = is_leave_type_applicable(
+        employee,
+        leave_type_instance
+    )
+
+    if not applicable:
+        return None, False
+
+    # ==========================================
+    # GET OR CREATE BALANCE
+    # ==========================================
+
+    leave_balance, created = (
+        emp_leave_balance.objects.get_or_create(
+            employee=employee,
+            leave_type=leave_type_instance,
+            defaults={
+                'balance': 0,
+                'openings': 0
+            }
+        )
+    )
+
+    return leave_balance, created

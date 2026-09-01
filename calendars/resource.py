@@ -166,7 +166,6 @@ class EmployeeOpenBalanceResource(resources.ModelResource):
 
         # Return None because we handled saving manually
         return None
-
 class MonthlyAttendanceResource(resources.ModelResource):
     class Meta:
         model = Attendance

@@ -73,6 +73,22 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from Core .mixins import BranchAccessMixin
 from .utils import validate_employee_geofence,apply_check_in_policy,apply_check_out_policy
+from decimal import Decimal
+
+from django.db import transaction
+from django.core.exceptions import ValidationError
+
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+# from tablib.formats import XLSX, CSV
+
+from .models import emp_leave_balance, leave_type
+from EmpManagement.models import emp_master
+
+from .utils import get_or_create_applicable_leave_balance
+
 # Create your views here.
 
 class WeekendDetailsViewset(viewsets.ModelViewSet):
@@ -3134,50 +3150,275 @@ class EmployeeYearlyCalendarViewset(viewsets.ModelViewSet):
 class EmpOpeningsBlkupldViewSet(viewsets.ModelViewSet):
     queryset = emp_leave_balance.objects.all()
     serializer_class = EmpOpeningsBlkupldSerializer
-    
+
     @action(detail=False, methods=['post'])
     def bulk_upload(self, request):
+
+        # ==========================================
+        # CHECK FILE
+        # ==========================================
+
         if 'file' not in request.FILES:
-            return Response({"error": "Please provide a file."}, status=400)
+
+            return Response(
+                {
+                    "error": "Please provide a file."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         upload_file = request.FILES['file']
         file_name = upload_file.name.lower()
 
         try:
+
+            # ==========================================
+            # READ EXCEL / CSV
+            # ==========================================
+
             if file_name.endswith('.xlsx'):
-                dataset = XLSX().create_dataset(upload_file.read())
+
+                dataset = XLSX().create_dataset(
+                    upload_file.read()
+                )
 
             elif file_name.endswith('.csv'):
+
                 dataset = CSV().create_dataset(
-                    upload_file.read().decode('utf-8')
+                    upload_file.read().decode('utf-8-sig')
                 )
 
             else:
+
                 return Response(
-                    {"error": "Invalid file format. Only .xlsx and .csv are supported."},
-                    status=400
+                    {
+                        "error": (
+                            "Invalid file format. "
+                            "Only .xlsx and .csv are supported."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
-            resource = EmployeeOpenBalanceResource()
-            all_errors = []
+            # ==========================================
+            # COUNTERS
+            # ==========================================
+
+            updated_count = 0
+            created_count = 0
+            not_applicable_count = 0
+
+            errors = []
+
+            # ==========================================
+            # TRANSACTION
+            # ==========================================
 
             with transaction.atomic():
-                for row_idx, row in enumerate(dataset.dict, start=2):
+
+                for row_idx, row in enumerate(
+                    dataset.dict,
+                    start=2
+                ):
+
                     try:
-                        resource.before_import_row(row, row_idx=row_idx)
-                        resource.import_row(row, None)
-                    except ValidationError as e:
-                        all_errors.extend(
-                            [f"Row {row_idx}: {msg}" for msg in e.messages]
+
+                        # ==================================
+                        # READ VALUES
+                        # ==================================
+
+                        emp_code = str(
+                            row.get('Employee Code') or ''
+                        ).strip()
+
+                        leave_type_name = str(
+                            row.get('Leave Type') or ''
+                        ).strip()
+
+                        openings_value = row.get('Openings')
+
+                        # ==================================
+                        # EMPLOYEE CODE
+                        # ==================================
+
+                        if not emp_code:
+
+                            raise ValidationError(
+                                "Employee Code is required."
+                            )
+
+                        try:
+
+                            employee = emp_master.objects.get(
+                                emp_code=emp_code
+                            )
+
+                        except emp_master.DoesNotExist:
+
+                            raise ValidationError(
+                                f"Employee with code "
+                                f"'{emp_code}' does not exist."
+                            )
+
+                        # ==================================
+                        # LEAVE TYPE
+                        # ==================================
+
+                        if not leave_type_name:
+
+                            raise ValidationError(
+                                "Leave Type is required."
+                            )
+
+                        try:
+
+                            leave_type_obj = (
+                                leave_type.objects.get(
+                                    name=leave_type_name
+                                )
+                            )
+
+                        except leave_type.DoesNotExist:
+
+                            raise ValidationError(
+                                f"Leave Type "
+                                f"'{leave_type_name}' does not exist."
+                            )
+
+                        except leave_type.MultipleObjectsReturned:
+
+                            raise ValidationError(
+                                f"Multiple Leave Types found "
+                                f"with name '{leave_type_name}'."
+                            )
+
+                        # ==================================
+                        # GET / CREATE BALANCE
+                        # ==================================
+
+                        leave_balance, created = (
+                            get_or_create_applicable_leave_balance(
+                                employee=employee,
+                                leave_type_instance=leave_type_obj
+                            )
                         )
 
-            if all_errors:
-                return Response({"errors": all_errors}, status=400)
+                        # ==================================
+                        # NOT APPLICABLE
+                        # ==================================
 
-            return Response({"message": "Records updated successfully."})
+                        if leave_balance is None:
+
+                            not_applicable_count += 1
+
+                            errors.append(
+                                f"Row {row_idx}: Leave type "
+                                f"'{leave_type_name}' is not "
+                                f"applicable for employee "
+                                f"'{emp_code}'."
+                            )
+
+                            continue
+
+                        # ==================================
+                        # COUNT CREATED RECORD
+                        # ==================================
+
+                        if created:
+                            created_count += 1
+
+                        else:
+                            updated_count += 1
+
+                        # ==================================
+                        # OPENINGS
+                        # ==================================
+
+                        if openings_value in [None, '']:
+
+                            openings = Decimal('0')
+
+                        else:
+
+                            try:
+
+                                openings = Decimal(
+                                    str(openings_value).strip()
+                                )
+
+                            except Exception:
+
+                                raise ValidationError(
+                                    f"Invalid Openings value "
+                                    f"'{openings_value}'."
+                                )
+
+                        # ==================================
+                        # APPLY OPENINGS
+                        # ==================================
+
+                        leave_balance.openings = float(
+                            openings
+                        )
+
+                        leave_balance.apply_openings()
+
+                    except ValidationError as e:
+
+                        errors.append(
+                            f"Row {row_idx}: {str(e)}"
+                        )
+
+                    except Exception as e:
+
+                        errors.append(
+                            f"Row {row_idx}: "
+                            f"Error processing employee "
+                            f"'{row.get('Employee Code')}': "
+                            f"{str(e)}"
+                        )
+
+            # ==========================================
+            # RESPONSE WITH ERRORS
+            # ==========================================
+
+            if errors:
+
+                return Response(
+                    {
+                        "message": (
+                            "Bulk upload completed with errors."
+                        ),
+                        "created": created_count,
+                        "updated": updated_count,
+                        "not_applicable": not_applicable_count,
+                        "errors": errors
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ==========================================
+            # SUCCESS
+            # ==========================================
+
+            return Response(
+                {
+                    "message": "Records updated successfully.",
+                    "created": created_count,
+                    "updated": updated_count,
+                    "not_applicable": not_applicable_count
+                },
+                status=status.HTTP_200_OK
+            )
 
         except Exception as e:
-            return Response({"error": str(e)}, status=400)
+
+            return Response(
+                {
+                    "error": str(e)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
     @action(detail=False, methods=['get'])
     def download_default_excel_file(self, request):
         resource =EmployeeOpenBalanceResource()

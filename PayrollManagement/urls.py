@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (SalaryComponentViewSet,EmployeeSalaryStructureViewSet,PayslipViewSet,PayrollRunViewSet,PayslipComponentViewSet,LoanTypeviewset,LoanApplicationviewset,LoanRepaymentviewset,LoanApprovalviewset,LoanApprovalLevelsviewset,
                     EmpBulkuploadSalaryStructureViewSet,PayslipConfirmedViewSet,SIFDataView,AdvanceSalaryRequestViewset,AdvanceSalaryApprovalViewSet,AdvanceCommonWorkflowViewSet,PayslipCommonWorkflowViewSet,PayslipApprovalViewSet,AirTicketPolicyViewSet,AirTicketAllocationViewSet,AirTicketRequestViewSet,
                     LoanEmailTemplateViewSet,LoanNotificationViewSet,AdvSalaryNotificationViewSet,AdvSalaryEmailTemplateViewSet,AirTicketRuleViewSet,LoanEscalationRuleViewSet,AdvSalaryEscalationRuleViewSet,AirticketWorkflowViewSet,AirticketApprovalViewSet,
-                    AirticketEmailTemplateViewSet,AirticketEscalationRuleViewSet,PayStructureViewSet,PayslipLeaveViewSet,AirticketNotificationsViewSet,SalaryRevisionHistoryViewSet,SalaryStructureViewSet
+                    AirticketEmailTemplateViewSet,AirticketEscalationRuleViewSet,PayStructureViewSet,PayslipLeaveViewSet,AirticketNotificationsViewSet,SalaryRevisionHistoryViewSet,SalaryStructureViewSet,CalculateLeaveEncashmentAPIView,BenefitLiabilityAPIView
                     
                     )
 
@@ -51,4 +51,13 @@ router.register(r'salary-structure', SalaryStructureViewSet,basename='salary-str
 urlpatterns = [
     path('api/', include(router.urls)),
     path('sif-data/', SIFDataView.as_view(), name='sif-data'),
+    path(
+    "benefit-liability-report/",
+    BenefitLiabilityAPIView.as_view(),
+    name="benefit-liability-report"),
+    path(
+        "calculate-leave-encashment/",
+        CalculateLeaveEncashmentAPIView.as_view(),
+        name="calculate-leave-encashment"
+    ),
 ]

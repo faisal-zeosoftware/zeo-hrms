@@ -11,6 +11,7 @@ from EmpManagement .models import EmployeeBankDetail,emp_master,EmailConfigurati
 from decimal import Decimal
 from UserManagement.models import CustomUser
 from calendars .serializer import LeaveRequestSerializer,EmployeeLeaveBalanceSerializer,EmployeeOvertimeSerializer
+from calendars .models import emp_leave_balance
 
 
 
@@ -218,157 +219,255 @@ class PayrollRunSerializer(serializers.ModelSerializer):
             )
 
         return data
+####NEW#####
 class PaySlipComponentSerializer(serializers.ModelSerializer):
-    component_name = serializers.CharField(source='component.name', read_only=True)
-    component_type = serializers.CharField(source='component.get_component_type_display', read_only=True)
+
+    component_name = serializers.CharField(
+        source='component.name',
+        read_only=True
+    )
+
+    component_type = serializers.CharField(
+        source='component.get_component_type_display',
+        read_only=True
+    )
+
+    component_code = serializers.CharField(
+        source='component.code',
+        read_only=True
+    )
+
+    show_in_payslip = serializers.BooleanField(
+        source='component.show_in_payslip',
+        read_only=True
+    )
 
     class Meta:
         model = PayslipComponent
-        fields = ['id', 'component_name', 'component_type', 'amount']
+        fields = [
+            'id',
+            'component_name',
+            'component_code',
+            'component_type',
+            'amount',
+            'show_in_payslip',
+        ]
+
+
+# ============================================================
+# PAYSLIP LEAVE SERIALIZER
+# ============================================================
 
 class PayslipLeaveSerializer(serializers.ModelSerializer):
+
     leave_type_name = serializers.CharField(
-        source="leave_type.leave_type", read_only=True
+        source="leave_type.leave_type",
+        read_only=True
     )
 
     class Meta:
         model = PayslipLeave
-        fields = ["leave_type", "leave_type_name", "days"]
-        
-class EmployeeBankSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmployeeBankDetail
-        fields = "__all__"
+        fields = [
+            "leave_type",
+            "leave_type_name",
+            "days",
+        ]
 
-class EmployeePayslipSerializer(serializers.ModelSerializer):
-    emp_bank =  EmployeeBankSerializer(
-        many=True,
-        read_only=True,
-        source="bank_details"
-    )
 
-    loan_requests = LoanApplicationSerializer(
-        many=True,
-        read_only=True,
-        source="loan"
-    )
+# ============================================================
+# LEAVE BALANCE SERIALIZER
+# ============================================================
 
-    leave_requests = LeaveRequestSerializer(
-        many=True,
-        read_only=True,
-        source="employee_leave_request_set"
-    )
+class PayrollLeaveBalanceSerializer(serializers.ModelSerializer):
 
-    leave_balance = EmployeeLeaveBalanceSerializer(
-        many=True,
-        read_only=True,
-        source="emp_leave_balance_set"
-    )
-
-    overtime = EmployeeOvertimeSerializer(
-        many=True,
-        read_only=True,
-        source="employeeovertime_set"
+    leave_type_name = serializers.CharField(
+        source='leave_type.leave_type',
+        read_only=True
     )
 
     class Meta:
-        model = emp_master
-        fields = "__all__"
+        model = emp_leave_balance
+        fields = [
+            'leave_type',
+            'leave_type_name',
+            'balance',
+            'openings',
+            'updated_at',
+        ]
+
+
+# ============================================================
+# NORMAL PAYSLIP SERIALIZER
+# ============================================================
 
 class PayslipSerializer(serializers.ModelSerializer):
+
     currency_details = serializers.SerializerMethodField()
-    payroll_run = PayrollRunSerializer(read_only=True)
+
+    payroll_run = PayrollRunSerializer(
+        read_only=True
+    )
+
     employee = serializers.StringRelatedField()
+
     components = serializers.SerializerMethodField()
-    currency_details = serializers.SerializerMethodField()
-    employee_details = EmployeePayslipSerializer(source="employee",read_only=True)
-    unpaid_leave_days = serializers.SerializerMethodField()
+
+    leave_details = PayslipLeaveSerializer(
+        many=True,
+        read_only=True
+    )
 
     class Meta:
         model = Payslip
         fields = '__all__'
-    def get_unpaid_leave_days(self, obj):
-        from calendars .models import employee_leave_request
-        from django.db.models import Sum
-        payroll = obj.payroll_run
+
+    # --------------------------------------------------------
+    # Currency
+    # --------------------------------------------------------
+
+    def get_currency_details(self, obj):
+
+        request = self.context.get("request")
 
         if (
-            not payroll
-            or not payroll.attendance_start_date
-            or not payroll.attendance_end_date
+            request
+            and hasattr(request, "tenant")
+            and request.tenant.currency
         ):
-            return 0
 
-        total = (
-            employee_leave_request.objects.filter(
-                employee_id=obj.employee_id,
-                status="approved",
-                leave_type__name__iexact="Unpaid Leave",   # <-- filter by name
-                start_date__lte=payroll.attendance_end_date,
-                end_date__gte=payroll.attendance_start_date,
-            )
-            .aggregate(total=Sum("number_of_days"))
-        )
-        return total["total"] or 0
-
-    
-    def get_currency_details(self, obj):
-        request = self.context.get("request")
-        if request and hasattr(request, "tenant") and request.tenant.currency:
             currency = request.tenant.currency
+
             return {
                 "currency_name": currency.currency_name,
                 "currency_code": currency.currency_code,
                 "symbol": currency.symbol
             }
+
         return None
+
+    # --------------------------------------------------------
+    # Components
+    # --------------------------------------------------------
+
     def get_components(self, obj):
-        # Fetch PayslipComponent data
-        payslip_components = PaySlipComponentSerializer(
-            obj.components.all(), many=True
+
+        # IMPORTANT:
+        # Normal payslip only shows components where
+        # show_in_payslip=True
+
+        payslip_components = (
+            obj.components
+            .filter(
+                component__show_in_payslip=True
+            )
+            .select_related('component')
+        )
+
+        payslip_components_data = PaySlipComponentSerializer(
+            payslip_components,
+            many=True
         ).data
 
-        # Fetch EmployeeSalaryStructure data
-        salary_structures = EmployeeSalaryStructureSerializer(
-            obj.employee.salary_structures.filter(is_active=True), many=True
-        ).data
+        # Only active salary structure components
+        # which are also visible in payslip
+        salary_structures = (
+            obj.employee.salary_structures
+            .filter(
+                is_active=True,
+                component__show_in_payslip=True
+            )
+            .select_related('component')
+        )
 
-        # Combine data into a single list
+        salary_structures_data = (
+            EmployeeSalaryStructureSerializer(
+                salary_structures,
+                many=True
+            ).data
+        )
+
         combined = []
-        component_names = set()
 
-        # Process PayslipComponent entries
-        for pc in payslip_components:
+        # Use component ID instead of component name
+        component_ids = set()
+
+        # ----------------------------------------------------
+        # PayslipComponent
+        # ----------------------------------------------------
+
+        for pc in payslip_components_data:
+
+            # We need component ID from actual object
+            # rather than relying on serialized name
+            pc_obj = next(
+                (
+                    item
+                    for item in payslip_components
+                    if item.id == pc['id']
+                ),
+                None
+            )
+
+            component_id = (
+                pc_obj.component.id
+                if pc_obj and pc_obj.component
+                else None
+            )
+
             combined.append({
                 'id': pc['id'],
+                'component_id': component_id,
                 'component_name': pc['component_name'],
+                'component_code': pc.get('component_code'),
                 'component_type': pc['component_type'],
                 'payslip_amount': pc['amount'],
                 'structure_amount': None,
-                'is_active': None,
+                'is_active': True,
                 'date_created': None,
                 'date_updated': None,
                 'employee': str(obj.employee),
-                'component': pc['component_name']
+                'component': pc['component_name'],
+                'show_in_payslip': True,
             })
-            component_names.add(pc['component_name'])
 
-        # Process EmployeeSalaryStructure entries
-        for ss in salary_structures:
-            if ss['component'] in component_names:
-                # Update existing component with structure data
-                for item in combined:
-                    if item['component_name'] == ss['component']:
-                        item['structure_amount'] = ss['amount']
-                        item['is_active'] = ss['is_active']
-                        item['date_created'] = ss['date_created']
-                        item['date_updated'] = ss['date_updated']
-                        break
+            if component_id:
+                component_ids.add(component_id)
+
+        # ----------------------------------------------------
+        # EmployeeSalaryStructure
+        # ----------------------------------------------------
+
+        for ss in salary_structures_data:
+
+            # Your EmployeeSalaryStructureSerializer currently
+            # returns component as a name.
+            #
+            # Therefore we keep the name matching here for
+            # compatibility with your existing serializer.
+
+            existing = next(
+                (
+                    item
+                    for item in combined
+                    if item['component_name'] == ss['component']
+                ),
+                None
+            )
+
+            if existing:
+
+                existing['structure_amount'] = ss['amount']
+                existing['is_active'] = ss['is_active']
+                existing['date_created'] = ss['date_created']
+                existing['date_updated'] = ss['date_updated']
+
             else:
-                # Add new component from salary structure
+
                 combined.append({
                     'id': ss['id'],
+                    'component_id': None,
                     'component_name': ss['component'],
+                    'component_code': None,
                     'component_type': ss['component_type'],
                     'payslip_amount': None,
                     'structure_amount': ss['amount'],
@@ -376,66 +475,139 @@ class PayslipSerializer(serializers.ModelSerializer):
                     'date_created': ss['date_created'],
                     'date_updated': ss['date_updated'],
                     'employee': ss['employee'],
-                    'component': ss['component']
+                    'component': ss['component'],
+                    'show_in_payslip': True,
                 })
-
+        for item in combined:
+                    payslip_amt = item.get('payslip_amount')
+                    structure_amt = item.get('structure_amount')
+        
+                    if payslip_amt is not None:
+                        item['amount'] = payslip_amt
+                    elif structure_amt is not None:
+                        item['amount'] = structure_amt
+                    else:
+                        item['amount'] = "0.00"
+        
+                # return combined
         return combined
 
+class PayslipApprovalSerializer(serializers.ModelSerializer):
+    request = PayslipSerializer(read_only=True)
+    class Meta:
+        model = PayslipApproval
+        fields = '__all__'
+# ============================================================
+# CONFIRMED PAYSLIP SERIALIZER
+# ============================================================
+
 class PayslipConfirmedSerializer(serializers.ModelSerializer):
-    payroll_run = PayrollRunSerializer(read_only=True)
+
+    payroll_run = PayrollRunSerializer(
+        read_only=True
+    )
+
     employee = serializers.StringRelatedField()
+
     components = serializers.SerializerMethodField()
+
+    leave_details = PayslipLeaveSerializer(
+        many=True,
+        read_only=True
+    )
 
     class Meta:
         model = Payslip
         fields = '__all__'
+
+    # --------------------------------------------------------
+    # Components
+    # --------------------------------------------------------
     def get_components(self, obj):
-        # Fetch PayslipComponent data
-        payslip_components = PaySlipComponentSerializer(
-            obj.components.all(), many=True
+
+        # Confirmed payslip also only shows
+        # show_in_payslip=True
+
+        payslip_components = (
+            obj.components
+            .filter(
+                component__show_in_payslip=True
+            )
+            .select_related('component')
+        )
+
+        payslip_components_data = PaySlipComponentSerializer(
+            payslip_components,
+            many=True
         ).data
 
-        # Fetch EmployeeSalaryStructure data
-        salary_structures = EmployeeSalaryStructureSerializer(
-            obj.employee.salary_structures.filter(is_active=True), many=True
-        ).data
+        salary_structures = (
+            obj.employee.salary_structures
+            .filter(
+                is_active=True,
+                component__show_in_payslip=True
+            )
+            .select_related('component')
+        )
 
-        # Combine data into a single list
+        salary_structures_data = (
+            EmployeeSalaryStructureSerializer(
+                salary_structures,
+                many=True
+            ).data
+        )
+
         combined = []
-        component_names = set()
 
-        # Process PayslipComponent entries
-        for pc in payslip_components:
+        # ----------------------------------------------------
+        # Payslip Components
+        # ----------------------------------------------------
+
+        for pc in payslip_components_data:
+
             combined.append({
                 'id': pc['id'],
                 'component_name': pc['component_name'],
+                'component_code': pc.get('component_code'),
                 'component_type': pc['component_type'],
                 'payslip_amount': pc['amount'],
                 'structure_amount': None,
-                'is_active': None,
+                'is_active': True,
                 'date_created': None,
                 'date_updated': None,
                 'employee': str(obj.employee),
-                'component': pc['component_name']
+                'component': pc['component_name'],
+                'show_in_payslip': True,
             })
-            component_names.add(pc['component_name'])
 
-        # Process EmployeeSalaryStructure entries
-        for ss in salary_structures:
-            if ss['component'] in component_names:
-                # Update existing component with structure data
-                for item in combined:
-                    if item['component_name'] == ss['component']:
-                        item['structure_amount'] = ss['amount']
-                        item['is_active'] = ss['is_active']
-                        item['date_created'] = ss['date_created']
-                        item['date_updated'] = ss['date_updated']
-                        break
+        # ----------------------------------------------------
+        # Salary Structure
+        # ----------------------------------------------------
+
+        for ss in salary_structures_data:
+
+            existing = next(
+                (
+                    item
+                    for item in combined
+                    if item['component_name'] == ss['component']
+                ),
+                None
+            )
+
+            if existing:
+
+                existing['structure_amount'] = ss['amount']
+                existing['is_active'] = ss['is_active']
+                existing['date_created'] = ss['date_created']
+                existing['date_updated'] = ss['date_updated']
+
             else:
-                # Add new component from salary structure
+
                 combined.append({
                     'id': ss['id'],
                     'component_name': ss['component'],
+                    'component_code': None,
                     'component_type': ss['component_type'],
                     'payslip_amount': None,
                     'structure_amount': ss['amount'],
@@ -443,10 +615,527 @@ class PayslipConfirmedSerializer(serializers.ModelSerializer):
                     'date_created': ss['date_created'],
                     'date_updated': ss['date_updated'],
                     'employee': ss['employee'],
-                    'component': ss['component']
+                    'component': ss['component'],
+                    'show_in_payslip': True,
                 })
 
+        # ----------------------------------------------------
+        # Merge into single "amount" field
+        # ----------------------------------------------------
+
+        for item in combined:
+            payslip_amt = item.get('payslip_amount')
+            structure_amt = item.get('structure_amount')
+
+            if payslip_amt is not None:
+                item['amount'] = payslip_amt
+            elif structure_amt is not None:
+                item['amount'] = structure_amt
+            else:
+                item['amount'] = "0.00"
+
         return combined
+    
+
+
+# ============================================================
+# DETAILED PAYROLL COMPONENT SERIALIZER
+#
+# This one intentionally DOES NOT filter show_in_payslip.
+# ============================================================
+
+class DetailedPayrollComponentSerializer(
+    serializers.ModelSerializer
+):
+
+    component_name = serializers.CharField(
+        source='component.name',
+        read_only=True
+    )
+
+    component_code = serializers.CharField(
+        source='component.code',
+        read_only=True
+    )
+
+    component_type = serializers.CharField(
+        source='component.get_component_type_display',
+        read_only=True
+    )
+
+    payroll_category = serializers.CharField(
+        source='component.payroll_category',
+        read_only=True
+    )
+
+    payroll_category_display = serializers.CharField(
+        source='component.get_payroll_category_display',
+        read_only=True
+    )
+
+    component_value_type = serializers.CharField(
+        source='component.component_value_type',
+        read_only=True
+    )
+
+    show_in_payslip = serializers.BooleanField(
+        source='component.show_in_payslip',
+        read_only=True
+    )
+
+    formula = serializers.CharField(
+        source='component.formula',
+        read_only=True
+    )
+
+    class Meta:
+        model = PayslipComponent
+
+        fields = [
+            'id',
+
+            'component_name',
+            'component_code',
+
+            'component_type',
+
+            'payroll_category',
+            'payroll_category_display',
+
+            'component_value_type',
+
+            'formula',
+
+            'amount',
+
+            'show_in_payslip',
+        ]
+
+
+# ============================================================
+# DETAILED PAYROLL REPORT SERIALIZER
+#
+# This returns ALL components.
+#
+# show_in_payslip=True
+# show_in_payslip=False
+#
+# Both are returned.
+# ============================================================
+
+class DetailedPayslipSerializer(
+    serializers.ModelSerializer
+):
+
+    payroll_run = PayrollRunSerializer(
+        read_only=True
+    )
+
+    employee_code = serializers.CharField(
+        source='employee.emp_code',
+        read_only=True
+    )
+
+    employee_name = serializers.SerializerMethodField()
+
+    employee_category = serializers.SerializerMethodField()
+
+    components = serializers.SerializerMethodField()
+
+    leave_balances = serializers.SerializerMethodField()
+
+    leave_details = PayslipLeaveSerializer(
+        many=True,
+        read_only=True
+    )
+
+    currency_details = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Payslip
+
+        fields = [
+            'id',
+
+            'payroll_run',
+
+            'employee',
+            'employee_code',
+            'employee_name',
+            'employee_category',
+
+            # Salary totals
+            'gross_salary',
+            'total_additions',
+            'total_deductions',
+            'net_salary',
+
+            # Attendance
+            'total_working_days',
+            'days_worked',
+            'pro_rata_adjustment',
+            'arrears',
+
+            # ALL salary components
+            'components',
+
+            # Leave
+            'leave_balances',
+            'leave_details',
+
+            # Status
+            'status',
+            'created_at',
+
+            # Currency
+            'currency_details',
+        ]
+
+    # --------------------------------------------------------
+    # Employee name
+    # --------------------------------------------------------
+
+    def get_employee_name(self, obj):
+
+        employee = obj.employee
+
+        first_name = (
+            employee.emp_first_name
+            or ''
+        )
+
+        last_name = (
+            employee.emp_last_name
+            or ''
+        )
+
+        return f"{first_name} {last_name}".strip()
+
+    # --------------------------------------------------------
+    # Employee category
+    # --------------------------------------------------------
+
+    def get_employee_category(self, obj):
+
+        employee = obj.employee
+
+        category = getattr(
+            employee,
+            'emp_ctgry_id',
+            None
+        )
+
+        if not category:
+            return None
+
+        try:
+            return category.ctgry_title
+        except AttributeError:
+            return str(category)
+
+    # --------------------------------------------------------
+    # ALL Components
+    # --------------------------------------------------------
+
+    def get_components(self, obj):
+
+        # IMPORTANT:
+        #
+        # NO show_in_payslip FILTER HERE.
+        #
+        # This API returns:
+        #
+        # Basic
+        # Housing
+        # Transport
+        # Gratuity
+        # Leave Salary
+        # Air Ticket
+        # etc.
+
+        components = (
+            obj.components
+            .select_related('component')
+            .all()
+        )
+
+        return DetailedPayrollComponentSerializer(
+            components,
+            many=True
+        ).data
+
+    # --------------------------------------------------------
+    # Leave balances
+    # --------------------------------------------------------
+
+    def get_leave_balances(self, obj):
+
+        balances = (
+            emp_leave_balance.objects
+            .filter(
+                employee=obj.employee
+            )
+            .select_related('leave_type')
+            .order_by('leave_type')
+        )
+
+        return PayrollLeaveBalanceSerializer(
+            balances,
+            many=True
+        ).data
+
+    # --------------------------------------------------------
+    # Currency
+    # --------------------------------------------------------
+
+    def get_currency_details(self, obj):
+
+        request = self.context.get("request")
+
+        if (
+            request
+            and hasattr(request, "tenant")
+            and request.tenant.currency
+        ):
+
+            currency = request.tenant.currency
+
+            return {
+                "currency_name": currency.currency_name,
+                "currency_code": currency.currency_code,
+                "symbol": currency.symbol
+            }
+
+        return None
+# class PaySlipComponentSerializer(serializers.ModelSerializer):
+#     component_name = serializers.CharField(source='component.name', read_only=True)
+#     component_type = serializers.CharField(source='component.get_component_type_display', read_only=True)
+
+#     class Meta:
+#         model = PayslipComponent
+#         fields = ['id', 'component_name', 'component_type', 'amount']
+
+# class PayslipLeaveSerializer(serializers.ModelSerializer):
+#     leave_type_name = serializers.CharField(
+#         source="leave_type.leave_type", read_only=True
+#     )
+
+#     class Meta:
+#         model = PayslipLeave
+#         fields = ["leave_type", "leave_type_name", "days"]
+        
+# class EmployeeBankSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = EmployeeBankDetail
+#         fields = "__all__"
+
+# class EmployeePayslipSerializer(serializers.ModelSerializer):
+#     emp_bank =  EmployeeBankSerializer(
+#         many=True,
+#         read_only=True,
+#         source="bank_details"
+#     )
+
+#     loan_requests = LoanApplicationSerializer(
+#         many=True,
+#         read_only=True,
+#         source="loan"
+#     )
+
+#     leave_requests = LeaveRequestSerializer(
+#         many=True,
+#         read_only=True,
+#         source="employee_leave_request_set"
+#     )
+
+#     leave_balance = EmployeeLeaveBalanceSerializer(
+#         many=True,
+#         read_only=True,
+#         source="emp_leave_balance_set"
+#     )
+
+#     overtime = EmployeeOvertimeSerializer(
+#         many=True,
+#         read_only=True,
+#         source="employeeovertime_set"
+#     )
+
+#     class Meta:
+#         model = emp_master
+#         fields = "__all__"
+
+# class PayslipSerializer(serializers.ModelSerializer):
+#     currency_details = serializers.SerializerMethodField()
+#     payroll_run = PayrollRunSerializer(read_only=True)
+#     employee = serializers.StringRelatedField()
+#     components = serializers.SerializerMethodField()
+#     currency_details = serializers.SerializerMethodField()
+#     employee_details = EmployeePayslipSerializer(source="employee",read_only=True)
+#     unpaid_leave_days = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = Payslip
+#         fields = '__all__'
+#     def get_unpaid_leave_days(self, obj):
+#         from calendars .models import employee_leave_request
+#         from django.db.models import Sum
+#         payroll = obj.payroll_run
+
+#         if (
+#             not payroll
+#             or not payroll.attendance_start_date
+#             or not payroll.attendance_end_date
+#         ):
+#             return 0
+
+#         total = (
+#             employee_leave_request.objects.filter(
+#                 employee_id=obj.employee_id,
+#                 status="approved",
+#                 leave_type__name__iexact="Unpaid Leave",   # <-- filter by name
+#                 start_date__lte=payroll.attendance_end_date,
+#                 end_date__gte=payroll.attendance_start_date,
+#             )
+#             .aggregate(total=Sum("number_of_days"))
+#         )
+#         return total["total"] or 0
+
+    
+#     def get_currency_details(self, obj):
+#         request = self.context.get("request")
+#         if request and hasattr(request, "tenant") and request.tenant.currency:
+#             currency = request.tenant.currency
+#             return {
+#                 "currency_name": currency.currency_name,
+#                 "currency_code": currency.currency_code,
+#                 "symbol": currency.symbol
+#             }
+#         return None
+#     def get_components(self, obj):
+#         # Fetch PayslipComponent data
+#         payslip_components = PaySlipComponentSerializer(
+#             obj.components.all(), many=True
+#         ).data
+
+#         # Fetch EmployeeSalaryStructure data
+#         salary_structures = EmployeeSalaryStructureSerializer(
+#             obj.employee.salary_structures.filter(is_active=True), many=True
+#         ).data
+
+#         # Combine data into a single list
+#         combined = []
+#         component_names = set()
+
+#         # Process PayslipComponent entries
+#         for pc in payslip_components:
+#             combined.append({
+#                 'id': pc['id'],
+#                 'component_name': pc['component_name'],
+#                 'component_type': pc['component_type'],
+#                 'payslip_amount': pc['amount'],
+#                 'structure_amount': None,
+#                 'is_active': None,
+#                 'date_created': None,
+#                 'date_updated': None,
+#                 'employee': str(obj.employee),
+#                 'component': pc['component_name']
+#             })
+#             component_names.add(pc['component_name'])
+
+#         # Process EmployeeSalaryStructure entries
+#         for ss in salary_structures:
+#             if ss['component'] in component_names:
+#                 # Update existing component with structure data
+#                 for item in combined:
+#                     if item['component_name'] == ss['component']:
+#                         item['structure_amount'] = ss['amount']
+#                         item['is_active'] = ss['is_active']
+#                         item['date_created'] = ss['date_created']
+#                         item['date_updated'] = ss['date_updated']
+#                         break
+#             else:
+#                 # Add new component from salary structure
+#                 combined.append({
+#                     'id': ss['id'],
+#                     'component_name': ss['component'],
+#                     'component_type': ss['component_type'],
+#                     'payslip_amount': None,
+#                     'structure_amount': ss['amount'],
+#                     'is_active': ss['is_active'],
+#                     'date_created': ss['date_created'],
+#                     'date_updated': ss['date_updated'],
+#                     'employee': ss['employee'],
+#                     'component': ss['component']
+#                 })
+
+#         return combined
+
+# class PayslipConfirmedSerializer(serializers.ModelSerializer):
+#     payroll_run = PayrollRunSerializer(read_only=True)
+#     employee = serializers.StringRelatedField()
+#     components = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = Payslip
+#         fields = '__all__'
+#     def get_components(self, obj):
+#         # Fetch PayslipComponent data
+#         payslip_components = PaySlipComponentSerializer(
+#             obj.components.all(), many=True
+#         ).data
+
+#         # Fetch EmployeeSalaryStructure data
+#         salary_structures = EmployeeSalaryStructureSerializer(
+#             obj.employee.salary_structures.filter(is_active=True), many=True
+#         ).data
+
+#         # Combine data into a single list
+#         combined = []
+#         component_names = set()
+
+#         # Process PayslipComponent entries
+#         for pc in payslip_components:
+#             combined.append({
+#                 'id': pc['id'],
+#                 'component_name': pc['component_name'],
+#                 'component_type': pc['component_type'],
+#                 'payslip_amount': pc['amount'],
+#                 'structure_amount': None,
+#                 'is_active': None,
+#                 'date_created': None,
+#                 'date_updated': None,
+#                 'employee': str(obj.employee),
+#                 'component': pc['component_name']
+#             })
+#             component_names.add(pc['component_name'])
+
+#         # Process EmployeeSalaryStructure entries
+#         for ss in salary_structures:
+#             if ss['component'] in component_names:
+#                 # Update existing component with structure data
+#                 for item in combined:
+#                     if item['component_name'] == ss['component']:
+#                         item['structure_amount'] = ss['amount']
+#                         item['is_active'] = ss['is_active']
+#                         item['date_created'] = ss['date_created']
+#                         item['date_updated'] = ss['date_updated']
+#                         break
+#             else:
+#                 # Add new component from salary structure
+#                 combined.append({
+#                     'id': ss['id'],
+#                     'component_name': ss['component'],
+#                     'component_type': ss['component_type'],
+#                     'payslip_amount': None,
+#                     'structure_amount': ss['amount'],
+#                     'is_active': ss['is_active'],
+#                     'date_created': ss['date_created'],
+#                     'date_updated': ss['date_updated'],
+#                     'employee': ss['employee'],
+#                     'component': ss['component']
+#                 })
+
+#         return combined
 class LoanTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanType
@@ -1626,6 +2315,57 @@ class PayslipLeaveSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayslipLeave
         fields = ["leave_type", "leave_type_name", "days"]
+
+class BenefitLiabilitySerializer(
+    serializers.Serializer
+):
+    employee_id = serializers.IntegerField()
+    employee_code = serializers.CharField()
+    employee_name = serializers.CharField()
+
+    joining_date = serializers.DateField()
+    as_of_date = serializers.DateField()
+
+    service_days = serializers.IntegerField()
+    years_of_service = serializers.DecimalField(
+        max_digits=8,
+        decimal_places=2
+    )
+
+    basic_salary = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=2
+    )
+
+    total_salary = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=2
+    )
+
+    gratuity_days = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=2
+    )
+
+    gratuity_amount = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=2
+    )
+    # Leave Salary
+    unused_annual_leave_days = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=2
+    )
+
+    leave_salary_accrued = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=2
+    )
+
+    
+    salary_components = serializers.DictField()
+
+    gratuity_bands = serializers.ListField()
 
 class SalaryRevisionHistorySerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source='employee.__str__', read_only=True)

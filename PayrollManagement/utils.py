@@ -394,3 +394,261 @@ def get_ot_rate(employee, ot_type):
 
     policy = qs.first()
     return policy.rate_multiplier if policy else Decimal('0.00')
+
+def get_unused_annual_leave_balance(employee, as_of_date):
+    from calendars .models import emp_leave_balance
+    from decimal import Decimal
+    from django.db.models import Sum
+    """
+    Returns the employee's unused annual leave balance.
+
+    Uses emp_leave_balance.balance for the leave type
+    whose leave_category is 'annual'.
+    """
+
+    balance = (
+        emp_leave_balance.objects
+        .filter(
+            employee=employee,
+            leave_type__leave_category="annual"
+        )
+        .aggregate(
+            total_balance=Sum("balance")
+        )
+    )
+
+    return Decimal(
+        str(balance["total_balance"] or 0)
+    )
+def get_employee_benefit_liability(employee, as_of_date):
+    """
+    Returns benefit liability details for one employee.
+
+    Includes:
+        - Gratuity liability
+        - Unused annual leave liability
+    """
+
+    result = {}
+
+    joining_date = employee.emp_joined_date
+
+    service_days = (
+        as_of_date - joining_date
+    ).days
+
+    years_of_service = (
+        Decimal(str(service_days))
+        / Decimal("365")
+    )
+
+    # --------------------------------
+    # Salary Components
+    # --------------------------------
+
+    salary_structures = (
+        EmployeeSalaryStructure.objects.filter(
+            employee=employee,
+            is_active=True
+        )
+        .select_related("component")
+    )
+
+    component_values = {}
+
+    total_salary = Decimal("0.00")
+    basic_salary = Decimal("0.00")
+
+    for structure in salary_structures:
+
+        amount = Decimal(
+            str(structure.amount or 0)
+        )
+
+        component_values[
+            structure.component.name
+        ] = amount
+
+        total_salary += amount
+
+        if (
+            structure.component.payroll_category
+            == "basic"
+        ):
+            basic_salary = amount
+
+    # --------------------------------
+    # Gratuity
+    # --------------------------------
+
+    gratuity_data = get_gratuity_variables(
+        employee=employee,
+        years_of_service=years_of_service,
+        gratuity_type="resignation",
+        basic_salary=basic_salary
+    )
+
+    # --------------------------------
+    # Gratuity Bands
+    # --------------------------------
+
+    from OrganisationManager.models import GratuityTable
+
+    gratuity_bands = []
+
+    rules = (
+        GratuityTable.objects.filter(
+            is_active=True
+        )
+        .order_by("minimum_value")
+    )
+
+    for rule in rules:
+
+        minimum = Decimal(
+            str(rule.minimum_value)
+        )
+
+        maximum = Decimal(
+            str(rule.maximum_value)
+        )
+
+        if years_of_service <= minimum:
+            continue
+
+        service_in_band = (
+            min(years_of_service, maximum)
+            - minimum
+        )
+
+        if service_in_band <= 0:
+            continue
+
+        gratuity_bands.append({
+            "from_year": minimum,
+            "to_year": maximum,
+            "service_years": service_in_band,
+            "days_per_year": rule.resignation_days
+        })
+
+    # --------------------------------
+    # Leave Salary Accrued
+    # --------------------------------
+
+    unused_annual_leave_days = (
+        get_unused_annual_leave_balance(
+            employee=employee,
+            as_of_date=as_of_date
+        )
+    )
+    # --------------------------------
+    # Dynamic Leave Salary Calculation
+    # --------------------------------
+    from .models import SalaryComponent, PayStructure
+
+    leave_component = SalaryComponent.objects.filter(
+        payroll_category='leave_encashment', 
+        branch=employee.emp_branch_id
+    ).first()
+
+    pay_structure = PayStructure.objects.filter(branch=employee.emp_branch_id).first()
+    fixed_days = Decimal(str(pay_structure.fixed_working_days)) if pay_structure and pay_structure.fixed_working_days else Decimal("30")
+    calendar_days = Decimal("30")  # Default to 30, could be updated based on calendar month
+
+    if leave_component and leave_component.formula:
+        variables = {
+            "basic_salary": basic_salary,
+            "total_salary": total_salary,
+            "encashment_days": unused_annual_leave_days,
+            "leave_balance": unused_annual_leave_days,
+            "fixed_days": fixed_days,
+            "calendar_days": calendar_days,
+        }
+        try:
+            leave_salary_accrued = evaluate_formula(
+                leave_component.formula, 
+                variables, 
+                employee, 
+                leave_component
+            )
+        except Exception as e:
+            logger.error(f"Error evaluating leave encashment formula: {e}")
+            leave_salary_accrued = unused_annual_leave_days * (basic_salary / Decimal("30"))
+    else:
+        ##
+        leave_salary_accrued = (
+            unused_annual_leave_days
+            * (
+                basic_salary
+                / Decimal("30")
+            )
+        )
+
+        leave_salary_accrued = (
+            leave_salary_accrued.quantize(
+                Decimal("0.01")
+            )
+        )
+
+    # --------------------------------
+    # Result
+    # --------------------------------
+
+    result.update({
+
+        "employee_id":
+            employee.id,
+
+        "employee_code":
+            employee.emp_code,
+
+        "employee_name":
+            f"{employee.emp_first_name} "
+            f"{employee.emp_last_name or ''}",
+
+        "joining_date":
+            joining_date,
+
+        "as_of_date":
+            as_of_date,
+
+        "service_days":
+            service_days,
+
+        "years_of_service":
+            years_of_service.quantize(
+                Decimal("0.01")
+            ),
+
+        "basic_salary":
+            basic_salary,
+
+        "total_salary":
+            total_salary,
+
+        "salary_components":
+            component_values,
+
+        # Gratuity
+        "gratuity_days":
+            gratuity_data[
+                "gratuity_days"
+            ],
+
+        "gratuity_amount":
+            gratuity_data[
+                "total_gratuity_liability"
+            ],
+
+        "gratuity_bands":
+            gratuity_bands,
+
+        # Leave Salary
+        "unused_annual_leave_days":
+            unused_annual_leave_days,
+
+        "leave_salary_accrued":
+            leave_salary_accrued,
+    })
+
+    return result

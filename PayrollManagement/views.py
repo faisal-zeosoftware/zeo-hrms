@@ -7,7 +7,8 @@ from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Pa
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
                          ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
-                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer,AirticketNotifySerializer,SalaryRevisionHistorySerializer,SalaryStructureSerializer
+                         AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer,AirticketNotifySerializer,SalaryRevisionHistorySerializer,SalaryStructureSerializer,BenefitLiabilitySerializer,
+                         DetailedPayslipSerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -24,7 +25,7 @@ from rest_framework.exceptions import NotFound
 from tablib import Dataset
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
-from .utils import generate_payslip_pdf,send_payslip_email
+from .utils import generate_payslip_pdf,get_employee_benefit_liability
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval)
 from .serializer import (SalaryComponentSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
@@ -76,6 +77,49 @@ class SalaryComponentViewSet(viewsets.ModelViewSet):
 class EmployeeSalaryStructureViewSet(viewsets.ModelViewSet):
     queryset = EmployeeSalaryStructure.objects.all()
     serializer_class = EmployeeSalaryStructureSerializer
+
+class BenefitLiabilityAPIView(APIView):
+
+    def get(self, request):
+
+        as_of_date = request.GET.get(
+            "as_of_date"
+        )
+
+        if not as_of_date:
+
+            as_of_date = datetime.today().date()
+
+        else:
+
+            as_of_date = datetime.strptime(
+                as_of_date,
+                "%Y-%m-%d"
+            ).date()
+
+        employees = emp_master.objects.filter(
+            is_active=True
+        )
+
+        results = []
+
+        for employee in employees:
+
+            results.append(
+                get_employee_benefit_liability(
+                    employee,
+                    as_of_date
+                )
+            )
+
+        serializer = (
+            BenefitLiabilitySerializer(
+                results,
+                many=True
+            )
+        )
+
+        return Response(serializer.data)
 
 class SalaryStructureViewSet(viewsets.ModelViewSet):
     queryset = SalaryStructure.objects.all()
@@ -268,7 +312,28 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 document_number=document_number,
                 branch=branch
             )
+    @action(detail=True,methods=['get'],url_path='detailed-payslips')
+    def detailed_payslips(self, request, pk=None):
+        # pk here IS the payroll_run id — no query param needed
+        payroll_run = self.get_object()
 
+        payslips = (
+            Payslip.objects
+            .filter(payroll_run=payroll_run)
+            .select_related('employee', 'payroll_run')
+            .prefetch_related(
+                'components__component',
+                'leave_details__leave_type',
+            )
+        )
+
+        serializer = DetailedPayslipSerializer(
+            payslips,
+            many=True,
+            context={'request': request}
+        )
+
+        return Response(serializer.data)
 # class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
 #     queryset = EmployeeSalaryStructure.objects.all()
 #     serializer_class = EmpBulkuploadSalaryStructureSerializer
@@ -1765,3 +1830,80 @@ class PayStructureViewSet(viewsets.ModelViewSet):
 class PayslipLeaveViewSet(viewsets.ModelViewSet):
     queryset = PayslipLeave.objects.all()
     serializer_class = PayslipLeaveSerializer
+class CalculateLeaveEncashmentAPIView(APIView):
+    def post(self, request):
+        employee_id = request.data.get('employee_id')
+        leave_type_id = request.data.get('leave_type_id')
+        encashment_days = request.data.get('encashment_days')
+
+        if not employee_id or not leave_type_id:
+            return Response({"error": "employee_id and leave_type_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            employee = emp_master.objects.get(id=employee_id)
+        except emp_master.DoesNotExist:
+            return Response({"error": "Employee not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from calendars.models import leave_type, emp_leave_balance
+        try:
+            leave_type_obj = leave_type.objects.get(id=leave_type_id)
+        except leave_type.DoesNotExist:
+            return Response({"error": "Leave type not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get balance
+        balance_obj = emp_leave_balance.objects.filter(employee=employee, leave_type=leave_type_obj).first()
+        available_balance = Decimal(str(balance_obj.balance)) if balance_obj and balance_obj.balance else Decimal("0.00")
+
+        if encashment_days is not None:
+            try:
+                encashment_days = Decimal(str(encashment_days))
+            except Exception:
+                return Response({"error": "Invalid value for encashment_days."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            encashment_days = available_balance
+
+        from .models import SalaryComponent, EmployeeSalaryStructure, PayStructure
+        from .utils import evaluate_formula
+        component = SalaryComponent.objects.filter(payroll_category='leave_encashment', branch=employee.emp_branch_id).first()
+
+        basic_struct = EmployeeSalaryStructure.objects.filter(
+            employee=employee,
+            component__payroll_category='basic',
+            is_active=True
+        ).first()
+        basic_salary = Decimal(str(basic_struct.amount)) if basic_struct and basic_struct.amount else Decimal("0.00")
+
+        all_structs = EmployeeSalaryStructure.objects.filter(employee=employee, is_active=True)
+        total_salary = sum(Decimal(str(s.amount)) for s in all_structs if s.amount)
+
+        pay_structure = PayStructure.objects.filter(branch=employee.emp_branch_id).first()
+        fixed_days = Decimal(str(pay_structure.fixed_working_days)) if pay_structure and pay_structure.fixed_working_days else Decimal("30.00")
+        calendar_days = Decimal("30.00")
+
+        if component and component.formula:
+            variables = {
+                "basic_salary": basic_salary,
+                "total_salary": total_salary,
+                "encashment_days": encashment_days,
+                "leave_balance": available_balance,
+                "fixed_days": fixed_days,
+                "calendar_days": calendar_days,
+            }
+            try:
+                encashment_amount = evaluate_formula(component.formula, variables, employee, component)
+            except Exception as e:
+                return Response({"error": f"Error evaluating formula: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            encashment_amount = (basic_salary / Decimal("30.00")) * encashment_days
+
+        return Response({
+            "employee_id": employee.id,
+            "employee_name": f"{employee.emp_first_name} {employee.emp_last_name or ''}",
+            "leave_type_id": leave_type_obj.id,
+            "leave_type_name": leave_type_obj.name,
+            "available_balance": available_balance,
+            "encashment_days": encashment_days,
+            "basic_salary": basic_salary,
+            "formula_used": component.formula if component else "basic_salary / 30 * encashment_days",
+            "encashment_amount": encashment_amount.quantize(Decimal("0.01"))
+        }, status=status.HTTP_200_OK)

@@ -10,7 +10,132 @@ from django_tenants.utils import connection
 from django.apps import apps
 from django.db.models import Q
 from simpleeval import SimpleEval, NameNotDefined, FunctionNotDefined
+from OrganisationManager.models import GratuityTable
 
+
+def get_gratuity_variables(
+    employee,
+    years_of_service,
+    gratuity_type="resignation",
+    basic_salary=Decimal("0.00")
+):
+    """
+    Returns gratuity-related variables for:
+    - Payroll monthly accrual
+    - EOS settlement
+
+    Uses GratuityTable dynamically.
+    """
+
+    years_of_service = Decimal(str(years_of_service))
+
+    daily_wage = (
+        basic_salary / Decimal("30")
+        if basic_salary
+        else Decimal("0.00")
+    )
+
+    # ------------------------------------------------
+    # CALCULATE TOTAL GRATUITY DAYS BAND-WISE
+    # ------------------------------------------------
+
+    gratuity_days = Decimal("0.00")
+
+    rules = GratuityTable.objects.filter(
+        is_active=True
+    ).order_by("minimum_value")
+
+    current_rule = None
+
+    for rule in rules:
+
+        rule_min = Decimal(str(rule.minimum_value))
+        rule_max = Decimal(str(rule.maximum_value))
+
+        # find current rule
+        if (
+            years_of_service >= rule_min
+            and years_of_service <= rule_max
+        ):
+            current_rule = rule
+
+        # no service in this band
+        if years_of_service <= rule_min:
+            continue
+
+        service_in_band = (
+            min(years_of_service, rule_max)
+            - rule_min
+        )
+
+        if service_in_band <= 0:
+            continue
+
+        if gratuity_type == "termination":
+            days_per_year = Decimal(
+                str(rule.termination_days)
+            )
+        else:
+            days_per_year = Decimal(
+                str(rule.resignation_days)
+            )
+
+        gratuity_days += (
+            service_in_band
+            * days_per_year
+        )
+
+    # ------------------------------------------------
+    # CURRENT BAND DAYS (for monthly accrual formula)
+    # ------------------------------------------------
+
+    per_year_days = Decimal("0.00")
+
+    if current_rule:
+
+        if gratuity_type == "termination":
+            per_year_days = Decimal(
+                str(current_rule.termination_days)
+            )
+        else:
+            per_year_days = Decimal(
+                str(current_rule.resignation_days)
+            )
+
+    # ------------------------------------------------
+    # MONTHLY GRATUITY ACCRUAL
+    # ------------------------------------------------
+
+    monthly_gratuity_accrual = (
+        daily_wage
+        * per_year_days
+    ) / Decimal("12")
+
+    # ------------------------------------------------
+    # EOS GRATUITY LIABILITY
+    # ------------------------------------------------
+
+    total_gratuity_liability = (
+        daily_wage
+        * gratuity_days
+    )
+
+    max_gratuity = (
+        basic_salary
+        * Decimal("24")
+    )
+
+    if total_gratuity_liability > max_gratuity:
+        total_gratuity_liability = max_gratuity
+
+    return {
+        "daily_wage": daily_wage,
+        "per_year_days": per_year_days,
+        "gratuity_days": gratuity_days,
+        "monthly_gratuity_accrual": monthly_gratuity_accrual,
+        "total_gratuity_liability": total_gratuity_liability,
+        "max_gratuity": max_gratuity,
+    }
 # Set up logging
 logger = logging.getLogger(__name__)
 

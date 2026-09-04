@@ -22,7 +22,7 @@ from OrganisationManager.models import brnch_mstr,ctgry_master,dept_master
 from EmpManagement.models import emp_master
 from django.db.models.signals import m2m_changed
 from django.dispatch import receiver
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save,post_delete
 import calendar
 from datetime import datetime, timedelta
 from django.db.models import Q
@@ -588,6 +588,17 @@ def update_leave_type_entitlement(sender, instance, created, **kwargs):
         leave_type.objects.filter(
             id=instance.leave_type_id
         ).update(is_entitlement=True)
+@receiver(post_delete, sender=leave_entitlement)
+def remove_leave_type_entitlement(sender, instance, **kwargs):
+    # Check whether another entitlement still exists
+    has_entitlement = leave_entitlement.objects.filter(
+        leave_type_id=instance.leave_type_id
+    ).exists()
+
+    if not has_entitlement:
+        leave_type.objects.filter(
+            id=instance.leave_type_id
+        ).update(is_entitlement=False)
 class LeavePayRule(models.Model):
     leave_type = models.ForeignKey(leave_type, on_delete=models.CASCADE, related_name="pay_rules", null=True)
     sequence = models.PositiveIntegerField(default=1, help_text="Order in which rule applies (e.g. 1 for First, 2 for Next)")

@@ -221,16 +221,16 @@ class PayrollRun(models.Model):
     attendance_start_date = models.DateField(blank=True,null=True,)
     attendance_end_date = models.DateField(blank=True,null=True,)
     payment_date = models.DateField(null=True, blank=True, help_text="When employees will be paid")
-    branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.SET_NULL, null=True, blank=True)
-    department = models.ForeignKey('OrganisationManager.dept_master', on_delete=models.SET_NULL, null=True, blank=True)
+    branch     = models.ManyToManyField('OrganisationManager.brnch_mstr',blank=True)
+    department = models.ManyToManyField('OrganisationManager.dept_master',blank=True)
     employees = models.ManyToManyField('EmpManagement.emp_master',blank=True,null=True)
-    category = models.ForeignKey('OrganisationManager.ctgry_master', on_delete=models.SET_NULL, null=True, blank=True)
-    designation = models.ForeignKey('OrganisationManager.desgntn_master', on_delete=models.SET_NULL, null=True, blank=True)
+    category = models.ManyToManyField('OrganisationManager.ctgry_master',blank=True)
+    designation = models.ManyToManyField('OrganisationManager.desgntn_master',blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     class Meta:
-        unique_together = ('month', 'year', 'branch', 'department', 'category')
+        unique_together = ('month', 'year')
         permissions = (
                 ("add_wps", "Can add wps"),
                 ("view_wps", "Can view wps"),

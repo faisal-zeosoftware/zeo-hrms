@@ -1176,8 +1176,8 @@ class LoanApproval(models.Model):
         branch=self.branch,
         title="Request Rejected",
         notification_type="loan",
-        message=(f"A LoanRequest {self.loan_type}"
-                f"(Document No: {self.document_number}) has been Rejected."),
+        message=(f"A LoanRequest {self.loan_request.loan_type}"
+                f"(Document No: {self.loan_request.document_number}) has been Rejected."),
         template_type="request_rejected",
         context={
             **get_employee_context(self.loan_request.employee),
@@ -1711,7 +1711,7 @@ class AdvanceSalaryApproval(models.Model):
         send_notification_email(
         user=self.request.created_by,
         employee=self.request.employee,
-        message=f"Your AdvanceSalaryRequest {self.document_number} has been Rejected.",
+        message=f"Your AdvanceSalaryRequest {self.request.document_number} has been Rejected.",
         template_type="request_rejected",
         context={
             **get_employee_context(self.request.employee),
@@ -2301,8 +2301,8 @@ class AirticketApproval(models.Model):
         send_notification_email(
             user=self.request.created_by,
             employee=self.request.employee,
-            message=(f"Your AirticketRequest {self.request_type}"
-                     f"(Document No: {self.document_number}) has been Rejected."
+            message=(f"Your AirticketRequest {self.request.request_type}"
+                     f"(Document No: {self.request.document_number}) has been Rejected."
                     ),
             template_type="request_rejected",
             context={

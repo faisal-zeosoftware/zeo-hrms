@@ -1676,8 +1676,8 @@ class Approval(models.Model):
 
                 notification_type="general",
 
-                message=(f"A GeneralRequest {self.request_type}"
-                        f"(Document No: {self.document_number}) has been Rejected."
+                message=(f"A GeneralRequest {self.general_request.request_type}"
+                        f"(Document No: {self.general_request.document_number}) has been Rejected."
                         ),
 
                 template_type="request_rejected",
@@ -1726,14 +1726,10 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         # ---------------- NO APPROVAL ----------------
         if approval_type == 'no_approval':
-            approver = instance.employee.users or instance.created_by
-            
-            if not approver:
-                raise Exception("Employee does not have a system user assigned.")
-
+            # approver = instance.employee.users or instance.created_by
             Approval.objects.create(
                 general_request=instance,
-                approver=approver,
+                # approver=approver,
                 role="Auto Approval",
                 level=1,
                 status=Approval.APPROVED
@@ -1756,7 +1752,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             #     notification_model=RequestNotification
             # )
             send_notification_email(
-                    user=approver,
+                    user=instance.created_by,
                     employee=instance.employee,
 
                     branch=instance.employee.emp_branch_id,
@@ -2296,8 +2292,8 @@ class DocumentApproval(models.Model):
         send_notification_email(
             user=self.document_request.created_by,
             employee=self.document_request.employee,
-            message=(f"Your DocumentRequest {self.request_type}"
-                     f"(Document No: {self.document_number}) has been Rejected."
+            message=(f"Your DocumentRequest {self.document_request.request_type}"
+                     f"(Document No: {self.document_request.document_number}) has been Rejected."
                     ),
             template_type="request_rejected",
             context={
@@ -2837,8 +2833,11 @@ class ResignationApproval(models.Model):
         send_notification_email(
                 user=self.created_by,
                 employee=self.resignation_request.employee,
-                message=(f"Your ResignationRequest {self.termination_type}"
-                 f"(Document No: {self.document_number}) has been Rejected."),
+                branch=self.resignation_request.branch,
+                title="Request Rejected",
+                notification_type="resignation",
+                message=(f"Your ResignationRequest {self.resignation_request}"
+                 f"(Document No: {self.resignation_request.document_number}) has been Rejected."),
                 template_type="resignation_rejected",
                 context={
                     **get_employee_context(self.resignation_request.employee),

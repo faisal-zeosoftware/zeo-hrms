@@ -685,8 +685,8 @@ class AssetApproval(models.Model):
         send_notification_email(
             user=self.asset_request.created_by,
             employee=self.asset_request.employee,
-            message=(f"Your AssetRequest {self.asset_type}"
-                    f"(Document No: {self.document_number}) has been Rejected."
+            message=(f"Your AssetRequest {self.asset_request.asset_type}"
+                    f"(Document No: {self.asset_request.document_number}) has been Rejected."
                     ),
             template_type='asset_rejected',
             context={       

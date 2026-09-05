@@ -2318,6 +2318,26 @@ class PayStructureSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayStructure
         fields = '__all__'
+        
+    def to_representation(self, instance):
+            rep = super().to_representation(instance)
+    
+            rep['branch'] = [
+                branch.branch_name
+                for branch in instance.branch.all()
+            ]
+    
+            rep['department'] = [
+                department.dept_name
+                for department in instance.department.all()
+            ]
+    
+            rep['category'] = [
+                category.ctgry_title
+                for category in instance.category.all()
+            ]
+    
+            return rep
 
 class PayslipLeaveSerializer(serializers.ModelSerializer):
     leave_type_name = serializers.CharField(

@@ -164,12 +164,24 @@ class PayrollRunSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayrollRun
         fields = '__all__'
+        
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
-        rep['branch'] = instance.branch.branch_name if instance.branch else None
-        rep['department'] = instance.department.dept_name if instance.department else None
-        rep['category'] = instance.category.ctgry_title if instance.category else None
+        rep['branch'] = [
+            branch.branch_name
+            for branch in instance.branch.all()
+        ]
+
+        rep['department'] = [
+            department.dept_name
+            for department in instance.department.all()
+        ]
+
+        rep['category'] = [
+            category.ctgry_title
+            for category in instance.category.all()
+        ]
 
         return rep
 

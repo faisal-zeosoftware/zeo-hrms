@@ -3500,7 +3500,7 @@ class LateinEarlyoutApproval(models.Model):
 
         send_notification_email(
             employee=request.employee,
-            message=f"Your LateinEarlyoutRequest {self.request_type} has been Rejected.",
+            message=f"Your LateinEarlyoutRequest {self.lateinearlyout_request.request_type} has been Rejected.",
             template_type="request_rejected",
             context={
                 **get_employee_context(request.employee),

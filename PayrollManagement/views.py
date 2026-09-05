@@ -2,13 +2,13 @@ from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
                      LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,AirticketNotification,
-                     SalaryRevisionHistory,SalaryStructure)
+                     SalaryRevisionHistory,SalaryStructure,LeaveEncashment)
 
 from .serializer import (SalaryComponentSerializer,EmpBulkuploadSalaryStructureSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
                          LoanApprovalSerializer,LoanApprovalLevelsSerializer,PayrollRunSerializer,PayslipConfirmedSerializer,SIFSerializer,AdvanceSalaryRequestSerializer,AdvanceSalaryApprovalSerializer,AdvanceCommonWorkflowSerializer,PayslipCommonWorkflowSerializer,PayslipApprovalSerializer,AirTicketPolicySerializer,AirTicketAllocationSerializer
                          ,AirTicketRequestSerializer,LoanEmailTemplateSerializer,LoanNotificationSerializer,AdvSalaryEmailTemplateSerializer,AdvSalaryNotificationSerializer,AirTicketRuleSerializer,AirticketEmailTemplateSerializer,AirticketEscalationRuleSerializer,AirticketWorkflowSerializer,AirtcketApprovalSerializer,LoanEscalationRuleSerializer,
                          AdvSalaryEscalationRuleSerializer,PayStructureSerializer,PayslipLeaveSerializer,AirticketApprovalWorkflowSerializer,AdvanceApprovalWorkflowSerializer,LoanApprovalWorkflowSerializer,PayslipApprovalWorkflowSerializer,AirticketNotifySerializer,SalaryRevisionHistorySerializer,SalaryStructureSerializer,BenefitLiabilitySerializer,
-                         DetailedPayslipSerializer
+                         DetailedPayslipSerializer,LeaveEncashmentSerializer
                          )
 
 from rest_framework import status,generics,viewsets,permissions
@@ -18,14 +18,14 @@ from EmpManagement.models import emp_master
 from rest_framework.decorators import action
 from OrganisationManager.models import DocumentNumbering
 from django.core.exceptions import ValidationError
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation,ROUND_HALF_UP
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
 from tablib import Dataset
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.db import transaction
-from .utils import generate_payslip_pdf,get_employee_benefit_liability
+from .utils import generate_payslip_pdf,get_employee_benefit_liability,evaluate_formula
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval)
 from .serializer import (SalaryComponentSerializer,EmployeeSalaryStructureSerializer,PayslipSerializer,PaySlipComponentSerializer,LoanTypeSerializer,LoanApplicationSerializer,LoanRepaymentSerializer,
@@ -51,6 +51,8 @@ from UserManagement.models import CustomUser
 from django.core.mail import send_mail
 from EmpManagement.utils import send_notification_email,get_employee_context
 from django.shortcuts import get_object_or_404, redirect
+from calendars .models import leave_type,emp_leave_balance
+
 
 
 
@@ -1907,3 +1909,336 @@ class CalculateLeaveEncashmentAPIView(APIView):
             "formula_used": component.formula if component else "basic_salary / 30 * encashment_days",
             "encashment_amount": encashment_amount.quantize(Decimal("0.01"))
         }, status=status.HTTP_200_OK)
+
+class LeaveEncashmentViewSet(viewsets.ModelViewSet):
+
+    serializer_class = LeaveEncashmentSerializer
+
+    def get_queryset(self):
+
+        return (
+            LeaveEncashment.objects
+            .select_related(
+                "employee",
+                "leave_type",
+                "approved_by",
+                "payroll_run",
+            )
+            .all()
+        )
+    def create(self, request, *args, **kwargs):
+
+        employee_id = request.data.get("employee")
+        leave_type_id = request.data.get("leave_type")
+        encashment_days = request.data.get("encashment_days")
+
+        # ---------------------------------------------
+        # Validate required fields
+        # ---------------------------------------------
+
+        if not employee_id:
+            return Response(
+                {"error": "employee is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not leave_type_id:
+            return Response(
+                {"error": "leave_type is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if encashment_days is None:
+            return Response(
+                {"error": "encashment_days is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ---------------------------------------------
+        # Get employee
+        # ---------------------------------------------
+
+        try:
+            employee = emp_master.objects.get(
+                id=employee_id
+            )
+        except emp_master.DoesNotExist:
+            return Response(
+                {"error": "Employee not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # ---------------------------------------------
+        # Get leave type
+        # ---------------------------------------------
+
+        try:
+            leave_type_obj = leave_type.objects.get(
+                id=leave_type_id
+            )
+        except leave_type.DoesNotExist:
+            return Response(
+                {"error": "Leave type not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # ---------------------------------------------
+        # Convert days
+        # ---------------------------------------------
+
+        try:
+            encashment_days = Decimal(
+                str(encashment_days)
+            )
+        except Exception:
+            return Response(
+                {"error": "Invalid encashment_days."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if encashment_days <= 0:
+            return Response(
+                {
+                    "error": (
+                        "Encashment days must be "
+                        "greater than zero."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ---------------------------------------------
+        # Get employee leave balance
+        # ---------------------------------------------
+
+        balance_obj = (
+            emp_leave_balance.objects
+            .filter(
+                employee=employee,
+                leave_type=leave_type_obj
+            )
+            .first()
+        )
+
+        available_balance = Decimal(
+            str(balance_obj.balance or 0)
+        ) if balance_obj else Decimal("0.00")
+
+        # ---------------------------------------------
+        # Check requested days against balance
+        # ---------------------------------------------
+
+        if encashment_days > available_balance:
+
+            return Response(
+                {
+                    "error": (
+                        f"Employee has only "
+                        f"{available_balance} days available."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ---------------------------------------------
+        # Get leave encashment salary component
+        # ---------------------------------------------
+
+        component = (
+            SalaryComponent.objects
+            .filter(
+                payroll_category="leave_encashment",
+                branch=employee.emp_branch_id,
+            )
+            .first()
+        )
+
+        if not component:
+
+            return Response(
+                {
+                    "error": (
+                        "Leave encashment salary component "
+                        "is not configured for this employee's branch."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not component.formula:
+
+            return Response(
+                {
+                    "error": (
+                        "Leave encashment salary component "
+                        "does not have a formula."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ---------------------------------------------
+        # Get basic salary
+        # ---------------------------------------------
+
+        basic_struct = (
+            EmployeeSalaryStructure.objects
+            .filter(
+                employee=employee,
+                component__payroll_category="basic",
+                is_active=True
+            )
+            .first()
+        )
+
+        basic_salary = (
+            Decimal(str(basic_struct.amount))
+            if basic_struct and basic_struct.amount
+            else Decimal("0.00")
+        )
+
+        # ---------------------------------------------
+        # Get total salary
+        # ---------------------------------------------
+
+        all_structs = (
+            EmployeeSalaryStructure.objects
+            .filter(
+                employee=employee,
+                is_active=True
+            )
+        )
+
+        total_salary = Decimal("0.00")
+
+        for structure in all_structs:
+
+            if structure.amount:
+                total_salary += Decimal(
+                    str(structure.amount)
+                )
+
+        # ---------------------------------------------
+        # Get PayStructure
+        # ---------------------------------------------
+
+        pay_structure = (
+            PayStructure.objects
+            .filter(
+                branch=employee.emp_branch_id
+            )
+            .first()
+        )
+
+        if pay_structure and pay_structure.fixed_working_days:
+
+            fixed_days = Decimal(
+                str(pay_structure.fixed_working_days)
+            )
+
+        else:
+
+            fixed_days = Decimal("30.00")
+
+        # ---------------------------------------------
+        # Calendar days
+        # ---------------------------------------------
+
+        calendar_days = Decimal("30.00")
+
+        # ---------------------------------------------
+        # Formula variables
+        # ---------------------------------------------
+
+        variables = {
+
+            "basic_salary": basic_salary,
+
+            "total_salary": total_salary,
+
+            "encashment_days": encashment_days,
+
+            "leave_balance": available_balance,
+
+            "fixed_days": fixed_days,
+
+            "calendar_days": calendar_days,
+        }
+
+        # ---------------------------------------------
+        # Evaluate formula
+        # ---------------------------------------------
+
+        try:
+
+            encashment_amount = evaluate_formula(
+                component.formula,
+                variables,
+                employee,
+                component
+            )
+
+        except Exception as exc:
+
+            return Response(
+                {
+                    "error": (
+                        f"Error evaluating formula: {str(exc)}"
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ---------------------------------------------
+        # Decimal conversion
+        # ---------------------------------------------
+
+        encashment_amount = Decimal(
+            str(encashment_amount)
+        ).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP
+        )
+
+        # ---------------------------------------------
+        # Create Leave Encashment
+        # ---------------------------------------------
+
+        encashment = LeaveEncashment.objects.create(
+
+            employee=employee,
+
+            leave_type=leave_type_obj,
+
+            leave_balance=available_balance,
+
+            encashment_days=encashment_days,
+
+            basic_salary=basic_salary,
+
+            total_salary=total_salary,
+
+            fixed_days=fixed_days,
+
+            calendar_days=calendar_days,
+
+            formula_used=component.formula,
+
+            encashment_amount=encashment_amount,
+
+            status="pending",
+
+            remarks=request.data.get(
+                "remarks",
+                ""
+            ),
+        )
+
+        serializer = self.get_serializer(
+            encashment
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED
+        )

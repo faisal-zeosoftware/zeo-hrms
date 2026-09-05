@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
                     LoanEmailTemplate,LoanNotification,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AirTicketRule,AirticketApproval,AirticketEmailTemplate,AirticketWorkflow,PayStructure,PayslipLeave,AirticketApprovalWorkflow,AdvanceApprovalWorkflow,LoanApprovalWorkflow,PayslipApprovalWorkflow,AirticketNotification,
-                    SalaryRevisionHistory,SalaryStructure
+                    SalaryRevisionHistory,SalaryStructure,LeaveEncashment
                     
                     )
 
@@ -2378,3 +2378,73 @@ class SalaryStructureSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalaryStructure
         fields = '__all__'
+
+class LeaveEncashmentSerializer(serializers.ModelSerializer):
+
+    employee_name = serializers.SerializerMethodField()
+    employee_code = serializers.SerializerMethodField()
+    leave_type_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LeaveEncashment
+        fields = [
+            "id",
+
+            "employee",
+            "employee_code",
+            "employee_name",
+
+            "leave_type",
+            "leave_type_name",
+
+            "leave_balance",
+            "encashment_days",
+
+            "basic_salary",
+            "total_salary",
+            "fixed_days",
+            "calendar_days",
+
+            "formula_used",
+            "encashment_amount",
+
+            "status",
+            "remarks",
+
+            "approved_by",
+            "approved_at",
+            "processed_at",
+
+            "payroll_run",
+
+            "created_at",
+            "updated_at",
+        ]
+
+        read_only_fields = [
+            "leave_balance",
+            "basic_salary",
+            "total_salary",
+            "fixed_days",
+            "calendar_days",
+            "formula_used",
+            "encashment_amount",
+            "approved_by",
+            "approved_at",
+            "processed_at",
+            "payroll_run",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_employee_name(self, obj):
+        return (
+            f"{obj.employee.emp_first_name} "
+            f"{obj.employee.emp_last_name or ''}"
+        ).strip()
+
+    def get_employee_code(self, obj):
+        return obj.employee.emp_code
+
+    def get_leave_type_name(self, obj):
+        return obj.leave_type.name

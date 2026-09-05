@@ -11,7 +11,8 @@ from EmpManagement .models import RequestNotification
 from django.db.models import Max 
 from django.db import transaction
 from django.db.models.signals import pre_save
-
+from django.conf import settings
+from decimal import Decimal
 # Create your models here.
 
     
@@ -2518,4 +2519,129 @@ def track_salary_revision(sender, instance, **kwargs):
             revised_by=getattr(instance, '_revised_by', None),
             remarks=getattr(instance, '_remarks', ''),
             effective_period=getattr(instance, '_effective_period', None),
+        )
+class LeaveEncashment(models.Model):
+
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("pending", "Pending Approval"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+        ("processed", "Processed"),
+        ("cancelled", "Cancelled"),
+    ]
+
+    employee = models.ForeignKey(
+        'EmpManagement.emp_master',
+        on_delete=models.PROTECT,
+        related_name="leave_encashments"
+    )
+
+    leave_type = models.ForeignKey(
+        "calendars.leave_type",
+        on_delete=models.PROTECT,
+        related_name="leave_encashments"
+    )
+
+    # Leave balance at the time of calculation/request
+    leave_balance = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    # Number of days employee wants to encash
+    encashment_days = models.DecimalField(
+        max_digits=10,
+        decimal_places=2
+    )
+
+    # Salary snapshot used for calculation
+    basic_salary = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    total_salary = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    fixed_days = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("30.00")
+    )
+
+    calendar_days = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("30.00")
+    )
+
+    # Formula snapshot
+    formula_used = models.TextField(
+        blank=True,
+        null=True
+    )
+
+    # Final calculated amount
+    encashment_amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="draft"
+    )
+
+    remarks = models.TextField(
+        blank=True,
+        null=True
+    )
+
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_leave_encashments"
+    )
+
+    approved_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    processed_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    # Optional payroll relationship
+    payroll_run = models.ForeignKey(
+        "PayrollManagement.PayrollRun",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="leave_encashments"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return (
+            f"{self.employee.emp_code} - "
+            f"{self.leave_type.name} - "
+            f"{self.encashment_days} days"
         )

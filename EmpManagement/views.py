@@ -112,6 +112,53 @@ class EmpViewSet(viewsets.ModelViewSet):
     #         else:
     #             return emp_master.objects.all()  # Other users can access all employee information
     #     return emp_master.objects.none()
+
+    def destroy(self, request, *args, **kwargs):
+        employee = self.get_object()
+
+        # Already inactive
+        if employee.is_active is False:
+            return Response(
+                {
+                    "message": f"Employee {employee.emp_code} is already inactive.",
+                    "is_active": False
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Deactivate employee
+        employee.is_active = False
+        employee.emp_status = False
+
+        # Store who deactivated the employee
+        if request.user.is_authenticated:
+            employee.updated_by = request.user
+
+        employee.save(
+            update_fields=[
+                "is_active",
+                "emp_status",
+                "updated_by",
+                "updated_at"
+            ]
+        )
+
+        # Deactivate linked login user
+        if employee.users:
+            employee.users.is_active = False
+            employee.users.save(update_fields=["is_active"])
+
+        return Response(
+            {
+                "message": f"Employee {employee.emp_code} deactivated successfully.",
+                "employee_id": employee.id,
+                "employee_code": employee.emp_code,
+                "is_active": False
+            },
+            status=status.HTTP_200_OK
+        )
+
+    
     @action(
         detail=True,
         methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],

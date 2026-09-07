@@ -2411,69 +2411,42 @@ class SalaryStructureSerializer(serializers.ModelSerializer):
         model = SalaryStructure
         fields = '__all__'
 
-class LeaveEncashmentSerializer(serializers.ModelSerializer):
 
+
+DEFAULT_ENCASHMENT_FORMULA = "basic_salary / fixed_days * encashment_days"
+class LeaveEncashmentSerializer(serializers.ModelSerializer):
     employee_name = serializers.SerializerMethodField()
     employee_code = serializers.SerializerMethodField()
     leave_type_name = serializers.SerializerMethodField()
+    formula = serializers.CharField(
+        write_only=True,
+        required=False,
+        default=DEFAULT_ENCASHMENT_FORMULA
+    )
 
     class Meta:
         model = LeaveEncashment
         fields = [
             "id",
-
-            "employee",
-            "employee_code",
-            "employee_name",
-
-            "leave_type",
-            "leave_type_name",
-
-            "leave_balance",
-            "encashment_days",
-
-            "basic_salary",
-            "total_salary",
-            "fixed_days",
-            "calendar_days",
-
-            "formula_used",
-            "encashment_amount",
-
-            "status",
-            "remarks",
-
-            "approved_by",
-            "approved_at",
-            "processed_at",
-
-            "payroll_run",
-
-            "created_at",
-            "updated_at",
+            "employee", "employee_code", "employee_name",
+            "leave_type", "leave_type_name",
+            "leave_balance", "encashment_days",
+            "basic_salary", "total_salary",
+            "fixed_days", "calendar_days",
+            "formula", "formula_used", "encashment_amount",
+            "status", "remarks",
+            "approved_by", "approved_at", "processed_at",
+            "payroll_run", "created_at", "updated_at",
         ]
-
         read_only_fields = [
-            "leave_balance",
-            "basic_salary",
-            "total_salary",
-            "fixed_days",
-            "calendar_days",
-            "formula_used",
-            "encashment_amount",
-            "approved_by",
-            "approved_at",
-            "processed_at",
-            "payroll_run",
-            "created_at",
-            "updated_at",
+            "leave_balance", "basic_salary", "total_salary",
+            "fixed_days", "calendar_days", "formula_used",
+            "encashment_amount", "approved_by", "approved_at",
+            "processed_at", "payroll_run", "created_at", "updated_at",
         ]
 
     def get_employee_name(self, obj):
-        return (
-            f"{obj.employee.emp_first_name} "
-            f"{obj.employee.emp_last_name or ''}"
-        ).strip()
+        return f"{obj.employee.emp_first_name} {obj.employee.emp_last_name or ''}".strip()
 
     def get_employee_code(self, obj):
         return obj.employee.emp_code

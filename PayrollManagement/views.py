@@ -52,6 +52,16 @@ from django.core.mail import send_mail
 from EmpManagement.utils import send_notification_email,get_employee_context
 from django.shortcuts import get_object_or_404, redirect
 from calendars .models import leave_type,emp_leave_balance
+from decimal import Decimal, InvalidOperation
+from django.db import transaction
+from rest_framework import status, viewsets
+from rest_framework.response import Response
+
+from EmpManagement.models import emp_master
+from calendars.models import leave_type, emp_leave_balance
+from PayrollManagement.models import EmployeeSalaryStructure, LeaveEncashment
+from PayrollManagement.utils import  evaluate_formula
+from PayrollManagement.signals import get_formula_variables
 
 
 
@@ -1920,335 +1930,201 @@ class CalculateLeaveEncashmentAPIView(APIView):
             "encashment_amount": encashment_amount.quantize(Decimal("0.01"))
         }, status=status.HTTP_200_OK)
 
-class LeaveEncashmentViewSet(viewsets.ModelViewSet):
 
+
+DEFAULT_ENCASHMENT_FORMULA = "basic_salary / fixed_days * encashment_days"
+class LeaveEncashmentViewSet(viewsets.ModelViewSet):
     serializer_class = LeaveEncashmentSerializer
 
     def get_queryset(self):
+        return LeaveEncashment.objects.select_related(
+            "employee",
+            "leave_type",
+            "approved_by",
+            "payroll_run",
+        ).order_by("-created_at")
 
-        return (
-            LeaveEncashment.objects
-            .select_related(
-                "employee",
-                "leave_type",
-                "approved_by",
-                "payroll_run",
-            )
-            .all()
-        )
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
+        employee = self._get_employee(request.data.get("employee"))
+        leave = self._get_leave_type(request.data.get("leave_type"))
 
-        employee_id = request.data.get("employee")
-        leave_type_id = request.data.get("leave_type")
-        encashment_days = request.data.get("encashment_days")
-
-        # ---------------------------------------------
-        # Validate required fields
-        # ---------------------------------------------
-
-        if not employee_id:
-            return Response(
-                {"error": "employee is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not leave_type_id:
-            return Response(
-                {"error": "leave_type is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if encashment_days is None:
-            return Response(
-                {"error": "encashment_days is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ---------------------------------------------
-        # Get employee
-        # ---------------------------------------------
-
-        try:
-            employee = emp_master.objects.get(
-                id=employee_id
-            )
-        except emp_master.DoesNotExist:
+        if not employee:
             return Response(
                 {"error": "Employee not found."},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
-        # ---------------------------------------------
-        # Get leave type
-        # ---------------------------------------------
-
-        try:
-            leave_type_obj = leave_type.objects.get(
-                id=leave_type_id
-            )
-        except leave_type.DoesNotExist:
+        if not leave:
             return Response(
                 {"error": "Leave type not found."},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
-        # ---------------------------------------------
-        # Convert days
-        # ---------------------------------------------
+        days = self._decimal(request.data.get("encashment_days"))
+        if days is None or days <= 0:
+            return Response(
+                {"error": "encashment_days must be greater than 0."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        balance = emp_leave_balance.objects.filter(
+            employee=employee,
+            leave_type=leave,
+        ).first()
+
+        if not balance:
+            return Response(
+                {"error": "Leave balance not found for this employee."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        leave_balance = Decimal(str(balance.balance or 0))
+
+        if leave_balance <= 0:
+            return Response(
+                {"error": "Employee has no available leave balance."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if days > leave_balance:
+            return Response(
+                {
+                    "error": "Encashment days cannot exceed available leave balance.",
+                    "leave_balance": str(leave_balance),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        formula = (
+            request.data.get("formula")
+            or DEFAULT_ENCASHMENT_FORMULA
+        ).strip()
+
+        variables = get_formula_variables(employee=employee)
+        variables["encashment_days"] = days
+        variables["leave_balance"] = leave_balance
 
         try:
-            encashment_days = Decimal(
-                str(encashment_days)
-            )
-        except Exception:
-            return Response(
-                {"error": "Invalid encashment_days."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if encashment_days <= 0:
-            return Response(
-                {
-                    "error": (
-                        "Encashment days must be "
-                        "greater than zero."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ---------------------------------------------
-        # Get employee leave balance
-        # ---------------------------------------------
-
-        balance_obj = (
-            emp_leave_balance.objects
-            .filter(
-                employee=employee,
-                leave_type=leave_type_obj
-            )
-            .first()
-        )
-
-        available_balance = Decimal(
-            str(balance_obj.balance or 0)
-        ) if balance_obj else Decimal("0.00")
-
-        # ---------------------------------------------
-        # Check requested days against balance
-        # ---------------------------------------------
-
-        if encashment_days > available_balance:
-
-            return Response(
-                {
-                    "error": (
-                        f"Employee has only "
-                        f"{available_balance} days available."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ---------------------------------------------
-        # Get leave encashment salary component
-        # ---------------------------------------------
-
-        component = (
-            SalaryComponent.objects
-            .filter(
-                payroll_category="leave_encashment",
-                branch=employee.emp_branch_id,
-            )
-            .first()
-        )
-
-        if not component:
-
-            return Response(
-                {
-                    "error": (
-                        "Leave encashment salary component "
-                        "is not configured for this employee's branch."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not component.formula:
-
-            return Response(
-                {
-                    "error": (
-                        "Leave encashment salary component "
-                        "does not have a formula."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ---------------------------------------------
-        # Get basic salary
-        # ---------------------------------------------
-
-        basic_struct = (
-            EmployeeSalaryStructure.objects
-            .filter(
-                employee=employee,
-                component__payroll_category="basic",
-                is_active=True
-            )
-            .first()
-        )
-
-        basic_salary = (
-            Decimal(str(basic_struct.amount))
-            if basic_struct and basic_struct.amount
-            else Decimal("0.00")
-        )
-
-        # ---------------------------------------------
-        # Get total salary
-        # ---------------------------------------------
-
-        all_structs = (
-            EmployeeSalaryStructure.objects
-            .filter(
-                employee=employee,
-                is_active=True
-            )
-        )
-
-        total_salary = Decimal("0.00")
-
-        for structure in all_structs:
-
-            if structure.amount:
-                total_salary += Decimal(
-                    str(structure.amount)
-                )
-
-        # ---------------------------------------------
-        # Get PayStructure
-        # ---------------------------------------------
-
-        pay_structure = (
-            PayStructure.objects
-            .filter(
-                branch=employee.emp_branch_id
-            )
-            .first()
-        )
-
-        if pay_structure and pay_structure.fixed_working_days:
-
-            fixed_days = Decimal(
-                str(pay_structure.fixed_working_days)
-            )
-
-        else:
-
-            fixed_days = Decimal("30.00")
-
-        # ---------------------------------------------
-        # Calendar days
-        # ---------------------------------------------
-
-        calendar_days = Decimal("30.00")
-
-        # ---------------------------------------------
-        # Formula variables
-        # ---------------------------------------------
-
-        variables = {
-
-            "basic_salary": basic_salary,
-
-            "total_salary": total_salary,
-
-            "encashment_days": encashment_days,
-
-            "leave_balance": available_balance,
-
-            "fixed_days": fixed_days,
-
-            "calendar_days": calendar_days,
-        }
-
-        # ---------------------------------------------
-        # Evaluate formula
-        # ---------------------------------------------
-
-        try:
-
-            encashment_amount = evaluate_formula(
-                component.formula,
+            amount = evaluate_formula(
+                formula,
                 variables,
                 employee,
-                component
+                None,
             )
-
         except Exception as exc:
-
             return Response(
                 {
-                    "error": (
-                        f"Error evaluating formula: {str(exc)}"
-                    )
+                    "error": "Unable to calculate leave encashment.",
+                    "details": str(exc),
+                    "formula": formula,
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ---------------------------------------------
-        # Decimal conversion
-        # ---------------------------------------------
-
-        encashment_amount = Decimal(
-            str(encashment_amount)
-        ).quantize(
-            Decimal("0.01"),
-            rounding=ROUND_HALF_UP
-        )
-
-        # ---------------------------------------------
-        # Create Leave Encashment
-        # ---------------------------------------------
+        salary = self._get_salary_values(employee, variables)
 
         encashment = LeaveEncashment.objects.create(
-
             employee=employee,
-
-            leave_type=leave_type_obj,
-
-            leave_balance=available_balance,
-
-            encashment_days=encashment_days,
-
-            basic_salary=basic_salary,
-
-            total_salary=total_salary,
-
-            fixed_days=fixed_days,
-
-            calendar_days=calendar_days,
-
-            formula_used=component.formula,
-
-            encashment_amount=encashment_amount,
-
+            leave_type=leave,
+            leave_balance=leave_balance,
+            encashment_days=days,
+            basic_salary=salary["basic_salary"],
+            total_salary=salary["total_salary"],
+            fixed_days=variables.get("fixed_days", Decimal("0.00")),
+            calendar_days=variables.get("calendar_days", Decimal("0.00")),
+            formula_used=formula,
+            encashment_amount=amount,
             status="pending",
-
-            remarks=request.data.get(
-                "remarks",
-                ""
-            ),
-        )
-
-        serializer = self.get_serializer(
-            encashment
+            remarks=request.data.get("remarks", ""),
         )
 
         return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED
+            self.get_serializer(encashment).data,
+            status=status.HTTP_201_CREATED,
         )
+
+    @staticmethod
+    def _get_employee(employee_id):
+        if not employee_id:
+            return None
+        try:
+            return emp_master.objects.get(id=employee_id)
+        except emp_master.DoesNotExist:
+            return None
+
+    @staticmethod
+    def _get_leave_type(leave_type_id):
+        if not leave_type_id:
+            return None
+        try:
+            return leave_type.objects.get(id=leave_type_id)
+        except leave_type.DoesNotExist:
+            return None
+
+    @staticmethod
+    def _decimal(value):
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _get_salary_values(employee, variables):
+        structures = EmployeeSalaryStructure.objects.filter(
+            employee=employee,
+            is_active=True,
+        )
+
+        total_salary = sum(
+            (Decimal(str(s.amount)) for s in structures if s.amount is not None),
+            Decimal("0.00"),
+        )
+
+        return {
+            "basic_salary": Decimal(
+                str(variables.get("basic_salary", "0.00"))
+            ),
+            "total_salary": total_salary,
+        }
+    @action(
+    detail=False,
+    methods=["get"],
+    url_path="formula-variables"
+    )
+    def formula_variables(self, request):
+
+        variables = [
+            "basic_salary",
+            "total_salary",
+            "fixed_days",
+            "calendar_days",
+            "encashment_days",
+        ]
+
+        leave_types = leave_type.objects.all()
+
+        for leave in leave_types:
+            leave_code = (
+                getattr(leave, "code", None)
+                or getattr(leave, "leave_type", None)
+                or leave.name
+            )
+
+            safe_code = (
+                str(leave_code)
+                .replace("-", "_")
+                .replace(" ", "_")
+                .replace("/", "_")
+                .replace(".", "_")
+                .lower()
+            )
+
+            variables.append(
+                f"leave_balance_{safe_code}"
+            )
+
+        return Response({
+            "variables": variables,
+            "default_formula": "basic_salary / fixed_days * encashment_days"
+        })

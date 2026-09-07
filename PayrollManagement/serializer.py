@@ -2336,6 +2336,10 @@ class PayStructureSerializer(serializers.ModelSerializer):
                 category.ctgry_title
                 for category in instance.category.all()
             ]
+            rep['designation'] =[
+                designation.desgntn_job_title 
+                for designation in instance.designation.all()
+            ]
     
             return rep
 

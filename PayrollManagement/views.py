@@ -284,17 +284,23 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                     first_employee = employees.first()
                     branch = first_employee.emp_branch_id or first_employee.work_location
 
+                    if branch:
+                        branch = [branch]
+
             if not branch:
                 raise ValidationError("Branch is required or employee branch is missing.")
 
+            # ✅ Use first branch for document numbering
+            first_branch = branch[0]
+
             try:
                 doc_config = DocumentNumbering.objects.get(
-                    branch_id=branch.id,
+                    branch_id=first_branch.id,
                     type='payroll_run',
                 )
             except DocumentNumbering.DoesNotExist:
                 raise NotFound(
-                    f"No document numbering configuration found for branch {branch} and payslip request."
+                    f"No document numbering configuration found for branch {first_branch} and payslip request."
                 )
 
             current_date = timezone.now().date()
@@ -310,10 +316,14 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 # ✅ Auto-generate document number
                 document_number = doc_config.get_next_number()
 
-            serializer.save(
-                document_number=document_number,
-                branch=branch
+            # ✅ Save payroll run
+            payroll_run = serializer.save(
+                document_number=document_number
             )
+
+            # ✅ Save ManyToMany branches
+            payroll_run.branch.set(branch)
+
     @action(detail=True,methods=['get'],url_path='detailed-payslips')
     def detailed_payslips(self, request, pk=None):
         # pk here IS the payroll_run id — no query param needed

@@ -199,13 +199,13 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         qs = emp_master.objects.filter(is_active=True)
 
         if branch:
-            qs = qs.filter(emp_branch_id=branch.id)
+            qs = qs.filter(emp_branch_id__in=branch)
 
         if department:
-            qs = qs.filter(emp_dept_id=department.id)
+            qs = qs.filter(emp_dept_id__in=department)
 
         if category:
-            qs = qs.filter(emp_ctgry_id=category.id)
+            qs = qs.filter(emp_ctgry_id__in=category)
 
         employee_ids.update(qs.values_list('id', flat=True))
 

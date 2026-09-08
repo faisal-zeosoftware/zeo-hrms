@@ -193,16 +193,11 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         # ---------------- COLLECT EMPLOYEES ----------------
 
         if employees:
-            # If employees are selected manually,
-            # check ONLY selected employees.
             employee_ids = set(
                 emp.id for emp in employees
             )
 
         else:
-            # If no employees are selected,
-            # get all active employees based on
-            # branch / department / category.
 
             qs = emp_master.objects.filter(
                 is_active=True
@@ -248,7 +243,6 @@ class PayrollRunSerializer(serializers.ModelSerializer):
             flat=True
         ).distinct()
 
-        # Convert queryset result to set
         duplicate_ids = set(duplicate_ids)
 
         # ---------------- REMOVE ALREADY PROCESSED ----------------

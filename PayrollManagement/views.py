@@ -299,13 +299,9 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
 
             if not branch:
                 raise ValidationError("Branch is required or employee branch is missing.")
-
-            # ✅ Use first branch for document numbering
-            first_branch = branch[0]
-
             try:
                 doc_config = DocumentNumbering.objects.get(
-                    branch_id=first_branch.id,
+                    branch_id=branch.id,
                     type='payroll_run',
                 )
             except DocumentNumbering.DoesNotExist:
@@ -327,12 +323,24 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 document_number = doc_config.get_next_number()
 
             # ✅ Save payroll run
-            payroll_run = serializer.save(
-                document_number=document_number
+            payroll = serializer.save(
+            document_number=document_number,
+            branch=branch
+        )
+
+        # ==========================================================
+        # ✅ SET ONLY ELIGIBLE EMPLOYEES
+        # ==========================================================
+
+        if hasattr(serializer, '_payroll_employee_ids'):
+            employees = emp_master.objects.filter(
+                id__in=serializer._payroll_employee_ids
             )
 
-            # ✅ Save ManyToMany branches
-            payroll_run.branch.set(branch)
+            payroll.employees.set(employees)
+
+
+
 
     @action(detail=True,methods=['get'],url_path='detailed-payslips')
     def detailed_payslips(self, request, pk=None):

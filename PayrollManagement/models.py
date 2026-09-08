@@ -221,7 +221,7 @@ class PayrollRun(models.Model):
     attendance_start_date = models.DateField(blank=True,null=True,)
     attendance_end_date = models.DateField(blank=True,null=True,)
     payment_date = models.DateField(null=True, blank=True, help_text="When employees will be paid")
-    branch     = models.ManyToManyField('OrganisationManager.brnch_mstr',null=True,blank=True)
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL,null=True,blank=True)
     department = models.ManyToManyField('OrganisationManager.dept_master',null=True,blank=True)
     employees = models.ManyToManyField('EmpManagement.emp_master',blank=True,null=True)
     category = models.ManyToManyField('OrganisationManager.ctgry_master',null=True,blank=True)
@@ -230,7 +230,6 @@ class PayrollRun(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     class Meta:
-        unique_together = ('month', 'year')
         permissions = (
                 ("add_wps", "Can add wps"),
                 ("view_wps", "Can view wps"),

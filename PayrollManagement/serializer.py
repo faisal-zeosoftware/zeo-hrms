@@ -191,53 +191,95 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         employees = data.get('employees', [])
 
         # ---------------- COLLECT EMPLOYEES ----------------
+
         if employees:
-            employee_ids = set(emp.id for emp in employees)
-        else:
-
-            qs = emp_master.objects.filter(is_active=True)
-
-            if branch:
-                qs = qs.filter(emp_branch_id=branch.id)
-
-            if department:
-                qs = qs.filter(emp_dept_id__in=department)
-
-            if category:
-                qs = qs.filter(emp_ctgry_id__in=category)
-
-            employee_ids = set(qs.values_list('id',flat=True))
-
-            # ---------------- CHECK DUPLICATES ----------------
-            existing_runs = PayrollRun.objects.filter(
-                month=month,
-                year=year,
-                employees__id__in=employee_ids
+            # If employees are selected manually,
+            # check ONLY selected employees.
+            employee_ids = set(
+                emp.id for emp in employees
             )
 
-            if self.instance:
-                existing_runs = existing_runs.exclude(pk=self.instance.pk)
+        else:
+            # If no employees are selected,
+            # get all active employees based on
+            # branch / department / category.
 
-            duplicate_ids = existing_runs.values_list('employees__id', flat=True).distinct()
-            remaining_employee_ids = (employee_ids - duplicate_ids)
+            qs = emp_master.objects.filter(
+                is_active=True
+            )
 
-            if not remaining_employee_ids:
+            if branch:
+                qs = qs.filter(
+                    emp_branch_id=branch.id
+                )
 
-                duplicate_emps = emp_master.objects.filter(
-                    id__in=duplicate_ids
-                ).values_list('emp_code', flat=True)
+            if department:
+                qs = qs.filter(
+                    emp_dept_id__in=department
+                )
 
-                raise serializers.ValidationError({
-                    "non_field_errors": [
-                        f"Payroll already exists for employees in "
-                        f"{month}/{year}: "
-                        f"{', '.join(duplicate_emps)}"
-                    ]
-                })
+            if category:
+                qs = qs.filter(
+                    emp_ctgry_id__in=category
+                )
 
-            # Store remaining employees for perform_create
-            self._payroll_employee_ids = remaining_employee_ids
-            return data
+            employee_ids = set(
+                qs.values_list(
+                    'id',
+                    flat=True
+                )
+            )
+
+        # ---------------- CHECK DUPLICATES ----------------
+
+        existing_runs = PayrollRun.objects.filter(
+            month=month,
+            year=year,
+            employees__id__in=employee_ids
+        )
+
+        if self.instance:
+            existing_runs = existing_runs.exclude(
+                pk=self.instance.pk
+            )
+
+        duplicate_ids = existing_runs.values_list(
+            'employees__id',
+            flat=True
+        ).distinct()
+
+        # Convert queryset result to set
+        duplicate_ids = set(duplicate_ids)
+
+        # ---------------- REMOVE ALREADY PROCESSED ----------------
+
+        remaining_employee_ids = (
+            employee_ids - duplicate_ids
+        )
+
+        # ---------------- IF ALL ARE ALREADY PROCESSED ----------------
+
+        if not remaining_employee_ids:
+
+            duplicate_emps = emp_master.objects.filter(
+                id__in=duplicate_ids
+            ).values_list(
+                'emp_code',
+                flat=True
+            )
+
+            raise serializers.ValidationError({
+                "non_field_errors": [
+                    f"Payroll already exists for employees in "
+                    f"{month}/{year}: "
+                    f"{', '.join(duplicate_emps)}"
+                ]
+            })
+
+        # Store remaining employees for perform_create
+        self._payroll_employee_ids = remaining_employee_ids
+
+        return data
 ####NEW#####
 ####NEW#####
 class PaySlipComponentSerializer(serializers.ModelSerializer):

@@ -290,15 +290,18 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
             # ✅ Branch check
             if not branch:
                 # Try getting branch from selected employees
-                if employees and employees.exists():
-                    first_employee = employees.first()
-                    branch = first_employee.emp_branch_id or first_employee.work_location
-
-                    if branch:
-                        branch = [branch]
+                if employees:
+                    first_employee = employees[0]
+                    branch = (
+                        first_employee.emp_branch_id
+                        or first_employee.work_location
+                    )
 
             if not branch:
-                raise ValidationError("Branch is required or employee branch is missing.")
+                raise ValidationError(
+                    "Branch is required or employee branch is missing."
+                )
+
             try:
                 doc_config = DocumentNumbering.objects.get(
                     branch_id=branch.id,
@@ -306,38 +309,37 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 )
             except DocumentNumbering.DoesNotExist:
                 raise NotFound(
-                    f"No document numbering configuration found for branch {first_branch} and payslip request."
+                    f"No document numbering configuration found for branch "
+                    f"{branch} and payslip request."
                 )
 
             current_date = timezone.now().date()
-
-            # ✅ Manual document validation
             if document_number:
                 if doc_config.start_date and doc_config.end_date:
-                    if not (doc_config.start_date <= current_date <= doc_config.end_date):
+                    if not (
+                        doc_config.start_date
+                        <= current_date
+                        <= doc_config.end_date
+                    ):
                         raise ValidationError(
-                            "Document number cannot be assigned outside the valid date range."
+                            "Document number cannot be assigned outside "
+                            "the valid date range."
                         )
             else:
                 # ✅ Auto-generate document number
                 document_number = doc_config.get_next_number()
 
-            # ✅ Save payroll run
             payroll = serializer.save(
-            document_number=document_number,
-            branch=branch
-        )
-
-        # ==========================================================
-        # ✅ SET ONLY ELIGIBLE EMPLOYEES
-        # ==========================================================
-
-        if hasattr(serializer, '_payroll_employee_ids'):
-            employees = emp_master.objects.filter(
-                id__in=serializer._payroll_employee_ids
+                document_number=document_number,
+                branch=branch
             )
 
-            payroll.employees.set(employees)
+            if hasattr(serializer, '_payroll_employee_ids'):
+                employees = emp_master.objects.filter(
+                    id__in=serializer._payroll_employee_ids
+                )
+
+                payroll.employees.set(employees)
 
 
 

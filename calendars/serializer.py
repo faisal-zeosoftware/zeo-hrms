@@ -1429,14 +1429,46 @@ class AttendanceValidationPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceValidationPolicy
         fields = '__all__'
+    def to_representation(self, instance):
+            rep = super().to_representation(instance)
+            if instance.branch:
+                rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+                rep['department'] = [dept.dept_name for dept in instance.department.all()]
+                rep['designation'] = [desg.desgntn_job_title for desg in instance.designation.all()]
+                rep['category'] = [cat.ctgry_title for cat in instance.category.all()]
+                rep['employee'] = [emp.emp_code for emp in instance.employee.all()]
+
+                return rep
 class LateComingPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = LateComingPolicy
         fields = '__all__'
+    def to_representation(self, instance):
+            rep = super().to_representation(instance)
+            if instance.attendance_policy:
+                rep['attendance_policy'] = instance.attendance_policy.name
+                rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+                rep['department'] = [dept.dept_name for dept in instance.department.all()]
+                rep['designation'] = [desg.desgntn_job_title for desg in instance.designation.all()]
+                rep['category'] = [cat.ctgry_title for cat in instance.category.all()]
+                rep['employee'] = [emp.emp_code for emp in instance.employee.all()]
+
+                return rep
 class EarlyExitPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = EarlyExitPolicy
         fields = '__all__'
+    def to_representation(self, instance):
+            rep = super().to_representation(instance)
+            if instance.attendance_policy:
+                rep['attendance_policy'] = instance.attendance_policy.name
+                rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+                rep['department'] = [dept.dept_name for dept in instance.department.all()]
+                rep['designation'] = [desg.desgntn_job_title for desg in instance.designation.all()]
+                rep['category'] = [cat.ctgry_title for cat in instance.category.all()]
+                rep['employee'] = [emp.emp_code for emp in instance.employee.all()]
+
+                return rep
 
 class EmpAttendancePolicySerializer(serializers.ModelSerializer):
     class Meta:

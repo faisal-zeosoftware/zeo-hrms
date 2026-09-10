@@ -282,64 +282,64 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
     serializer_class = PayrollRunSerializer
     def perform_create(self, serializer):
         with transaction.atomic():
-
+            branches = serializer.validated_data.pop('branch', None)
             employees = serializer.validated_data.get('employees')
-            branch = serializer.validated_data.get('branch')
-            document_number = serializer.validated_data.get('document_number')
-
-            # ✅ Branch check
-            if not branch:
-                # Try getting branch from selected employees
+ 
+            if not branches:
+                # Fall back to inferring a single branch from the selected employees,
+                # same as before — only used when no branch was explicitly picked.
                 if employees:
                     first_employee = employees[0]
-                    branch = (
-                        first_employee.emp_branch_id
-                        or first_employee.work_location
-                    )
-
-            if not branch:
+                    inferred = first_employee.emp_branch_id or first_employee.work_location
+                    branches = [inferred] if inferred else []
+ 
+            if not branches:
                 raise ValidationError(
-                    "Branch is required or employee branch is missing."
+                    "At least one branch is required, or employee branch info is missing."
                 )
-
-            try:
-                doc_config = DocumentNumbering.objects.get(
-                    branch_id=branch.id,
-                    type='payroll_run',
-                )
-            except DocumentNumbering.DoesNotExist:
-                raise NotFound(
-                    f"No document numbering configuration found for branch "
-                    f"{branch} and payslip request."
-                )
-
-            current_date = timezone.now().date()
-            if document_number:
-                if doc_config.start_date and doc_config.end_date:
-                    if not (
-                        doc_config.start_date
-                        <= current_date
-                        <= doc_config.end_date
-                    ):
-                        raise ValidationError(
-                            "Document number cannot be assigned outside "
-                            "the valid date range."
-                        )
-            else:
-                # ✅ Auto-generate document number
-                document_number = doc_config.get_next_number()
-
-            payroll = serializer.save(
-                document_number=document_number,
-                branch=branch
-            )
-
+ 
+            # Save the run itself first (without branch — it's handled via the
+            # through model below, not a plain .set()).
+            payroll = serializer.save()
+ 
             if hasattr(serializer, '_payroll_employee_ids'):
                 employees = emp_master.objects.filter(
                     id__in=serializer._payroll_employee_ids
                 )
-
                 payroll.employees.set(employees)
+ 
+            # One PayrollRunBranch per selected branch, each with its own number.
+            # If any branch's DocumentNumbering config is missing or exhausted,
+            # the whole run rolls back — you never end up with 3 of 4 branches numbered.
+            for branch in branches:
+                document_number = self._resolve_document_number(branch)
+                PayrollRunBranch.objects.create(
+                    payroll_run=payroll,
+                    branch=branch,
+                    document_number=document_number,
+                )
+ 
+    def _resolve_document_number(self, branch):
+        try:
+            doc_config = DocumentNumbering.objects.get(
+                branch_id=branch.id,
+                type='payroll_run',
+            )
+        except DocumentNumbering.DoesNotExist:
+            raise NotFound(
+                f"No document numbering configuration found for branch "
+                f"{branch} and payslip request."
+            )
+ 
+        current_date = timezone.now().date()
+        if doc_config.start_date and doc_config.end_date:
+            if not (doc_config.start_date <= current_date <= doc_config.end_date):
+                raise ValidationError(
+                    f"Document number cannot be generated for branch {branch} "
+                    f"outside the valid date range."
+                )
+ 
+        return doc_config.get_next_number()
 
 
 

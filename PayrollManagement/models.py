@@ -221,7 +221,7 @@ class PayrollRun(models.Model):
     attendance_start_date = models.DateField(blank=True,null=True,)
     attendance_end_date = models.DateField(blank=True,null=True,)
     payment_date = models.DateField(null=True, blank=True, help_text="When employees will be paid")
-    branch = models.ForeignKey('OrganisationManager.brnch_mstr',on_delete=models.SET_NULL,null=True,blank=True)
+    branch = models.ManyToManyField('OrganisationManager.brnch_mstr',through='PayrollRunBranch',related_name='payroll_runs',blank=True,)
     department = models.ManyToManyField('OrganisationManager.dept_master',null=True,blank=True)
     employees = models.ManyToManyField('EmpManagement.emp_master',blank=True,null=True)
     category = models.ManyToManyField('OrganisationManager.ctgry_master',null=True,blank=True)
@@ -263,7 +263,29 @@ class PayrollRun(models.Model):
     def __str__(self):
         return f"Payroll - {self.get_month_display()} {self.year} ({self.status})"
 
-
+class PayrollRunBranch(models.Model):
+    """
+    The join row for PayrollRun <-> brnch_mstr. Exists specifically to carry a
+    document_number per branch, since numbering sequences are branch-scoped
+    (see DocumentNumbering's unique_type_per_branch constraint) and a single
+    run can now touch several branches at once.
+    """
+    payroll_run = models.ForeignKey(
+        'PayrollRun', on_delete=models.CASCADE, related_name='branch_documents'
+    )
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr', on_delete=models.CASCADE)
+    document_number = models.CharField(max_length=50, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+ 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['payroll_run', 'branch'], name='unique_branch_per_payroll_run'
+            ),
+        ]
+ 
+    def __str__(self):
+        return f"{self.payroll_run_id} - {self.branch.branch_name} - {self.document_number}"
 class Payslip(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),

@@ -161,118 +161,96 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
     
 
 class PayrollRunSerializer(serializers.ModelSerializer):
+    from OrganisationManager .models import brnch_mstr
+    # `branch` is now M2M through PayrollRunBranch, which DRF makes read-only by
+    # default (it can't be written via a plain .set() because the through model
+    # has a required extra field: document_number). branch_ids is the write path;
+    # perform_create/bulk logic in the view turns each id into a PayrollRunBranch
+    # row with its own generated number.
+    branch_ids = serializers.PrimaryKeyRelatedField(
+        queryset=brnch_mstr.objects.all(),
+        many=True,
+        write_only=True,
+        source='branch',
+        required=False,
+    )
+ 
     class Meta:
         model = PayrollRun
         fields = '__all__'
-        
+ 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
-
-        rep['branch'] = instance.branch.branch_name if instance.branch else None
-
-        rep['department'] = [
-            department.dept_name
-            for department in instance.department.all()
+ 
+        rep['branch'] = [
+            {'id': b.id, 'name': b.branch_name}
+            for b in instance.branch.all()
         ]
-
-        rep['category'] = [
-            category.ctgry_title
-            for category in instance.category.all()
+        rep['document_numbers'] = [
+            {'branch': bd.branch.branch_name, 'document_number': bd.document_number}
+            for bd in instance.branch_documents.select_related('branch').all()
         ]
-
+ 
+        rep['department'] = [d.dept_name for d in instance.department.all()]
+        rep['category'] = [c.ctgry_title for c in instance.category.all()]
+ 
         return rep
-
+ 
     def validate(self, data):
         month = data.get('month')
         year = data.get('year')
-        branch = data.get('branch')
+        branches = data.get('branch')  # list of brnch_mstr instances, from branch_ids
         department = data.get('department')
         category = data.get('category')
         employees = data.get('employees', [])
-
+ 
         # ---------------- COLLECT EMPLOYEES ----------------
-
         if employees:
-            employee_ids = set(
-                emp.id for emp in employees
-            )
-
+            employee_ids = set(emp.id for emp in employees)
         else:
-
-            qs = emp_master.objects.filter(
-                is_active=True
-            )
-
-            if branch:
-                qs = qs.filter(
-                    emp_branch_id=branch.id
-                )
-
+            qs = emp_master.objects.filter(is_active=True)
+ 
+            if branches:
+                branch_ids = [b.id for b in branches]
+                qs = qs.filter(emp_branch_id__in=branch_ids)
+ 
             if department:
-                qs = qs.filter(
-                    emp_dept_id__in=department
-                )
-
+                qs = qs.filter(emp_dept_id__in=department)
+ 
             if category:
-                qs = qs.filter(
-                    emp_ctgry_id__in=category
-                )
-
-            employee_ids = set(
-                qs.values_list(
-                    'id',
-                    flat=True
-                )
-            )
-
+                qs = qs.filter(emp_ctgry_id__in=category)
+ 
+            employee_ids = set(qs.values_list('id', flat=True))
+ 
         # ---------------- CHECK DUPLICATES ----------------
-
         existing_runs = PayrollRun.objects.filter(
             month=month,
             year=year,
             employees__id__in=employee_ids
         )
-
+ 
         if self.instance:
-            existing_runs = existing_runs.exclude(
-                pk=self.instance.pk
-            )
-
-        duplicate_ids = existing_runs.values_list(
-            'employees__id',
-            flat=True
-        ).distinct()
-
-        duplicate_ids = set(duplicate_ids)
-
-        # ---------------- REMOVE ALREADY PROCESSED ----------------
-
-        remaining_employee_ids = (
-            employee_ids - duplicate_ids
+            existing_runs = existing_runs.exclude(pk=self.instance.pk)
+ 
+        duplicate_ids = set(
+            existing_runs.values_list('employees__id', flat=True).distinct()
         )
-
-        # ---------------- IF ALL ARE ALREADY PROCESSED ----------------
-
+ 
+        remaining_employee_ids = employee_ids - duplicate_ids
+ 
         if not remaining_employee_ids:
-
             duplicate_emps = emp_master.objects.filter(
                 id__in=duplicate_ids
-            ).values_list(
-                'emp_code',
-                flat=True
-            )
-
+            ).values_list('emp_code', flat=True)
+ 
             raise serializers.ValidationError({
                 "non_field_errors": [
                     f"Payroll already exists for employees in "
-                    f"{month}/{year}: "
-                    f"{', '.join(duplicate_emps)}"
+                    f"{month}/{year}: {', '.join(duplicate_emps)}"
                 ]
             })
-
-        # Store remaining employees for perform_create
+ 
         self._payroll_employee_ids = remaining_employee_ids
-
         return data
 ####NEW#####
 ####NEW#####

@@ -138,12 +138,10 @@ class PayStructure(models.Model):
         ('CUSTOM', 'Custom Cycle'),
     ]
 
-    branch = models.OneToOneField(
-        'OrganisationManager.brnch_mstr',
-        on_delete=models.CASCADE,
-        related_name='pay_structure'
-    )
-
+    branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',  null=True, blank=True, related_name='payroll_structures')
+    department   = models.ManyToManyField('OrganisationManager.dept_master',  null=True, blank=True, related_name='payroll_deptstructures')
+    category     = models.ManyToManyField('OrganisationManager.ctgry_master', null=True, blank=True, related_name='payroll_ctgrystructures')
+    designation  = models.ManyToManyField('OrganisationManager.desgntn_master', null=True, blank=True, related_name='payroll_desgntnstructures')
     # 1️⃣ Working week
     working_days = models.JSONField(
         default=list,

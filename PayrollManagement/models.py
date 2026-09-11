@@ -127,16 +127,22 @@ class PayStructure(models.Model):
         ('FIXED_DAYS', 'Fixed Days'),
     ]
 
+    OVERTIME_SOURCE_CHOICES = [
+        ('ATTENDANCE', 'Attendance-Based'),
+        ('MANUAL', 'Manual Entry'),
+        ('COMBINED', 'Combined'),
+    ]
 
     ATTENDANCE_CYCLE_CHOICES = [
         ('MONTH', 'Calendar Month'),
         ('CUSTOM', 'Custom Cycle'),
     ]
 
-    branch       = models.ManyToManyField('OrganisationManager.brnch_mstr',  null=True, blank=True, related_name='payroll_structures')
-    department   = models.ManyToManyField('OrganisationManager.dept_master',  null=True, blank=True, related_name='payroll_deptstructures')
-    category     = models.ManyToManyField('OrganisationManager.ctgry_master', null=True, blank=True, related_name='payroll_ctgrystructures')
-    designation  = models.ManyToManyField('OrganisationManager.desgntn_master', null=True, blank=True, related_name='payroll_desgntnstructures')
+    branch = models.OneToOneField(
+        'OrganisationManager.brnch_mstr',
+        on_delete=models.CASCADE,
+        related_name='pay_structure'
+    )
 
     # 1️⃣ Working week
     working_days = models.JSONField(
@@ -176,7 +182,11 @@ class PayStructure(models.Model):
         null=True,
         blank=True
     )
-
+    overtime_source = models.CharField(
+        max_length=20,
+        choices=OVERTIME_SOURCE_CHOICES,
+        default='ATTENDANCE'
+    )
     payroll_start_month = models.DateField()
     created_at = models.DateTimeField(auto_now_add=True)
 

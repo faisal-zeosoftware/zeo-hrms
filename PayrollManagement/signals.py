@@ -21,7 +21,7 @@ from decimal import Decimal
 from django.db.models import Count
 from django.core.exceptions import ValidationError
 from EmpManagement.models import emp_master
-
+import re
 from datetime import date
 import logging
 from django.db.models.signals import post_save
@@ -534,21 +534,24 @@ def update_employee_salary_structure(sender, instance, created, **kwargs):
             logger.info(f"Updated EmployeeSalaryStructure for {employee} with component {instance.name} - Amount: {amount}")
 
 def get_formula_variables(employee, start_date=None, end_date=None):
-    EmpLeaveBalance = apps.get_model('calendars','emp_leave_balance')
-
-    Attendance = apps.get_model('calendars', 'Attendance')
-    EmployeeOvertime = apps.get_model('calendars', 'EmployeeOvertime')
+    EmpLeaveBalance = apps.get_model("calendars", "emp_leave_balance")
+    Attendance = apps.get_model("calendars", "Attendance")
+    EmployeeOvertime = apps.get_model("calendars", "EmployeeOvertime")
     EmployeeSalaryStructure = apps.get_model(
-        'PayrollManagement',
-        'EmployeeSalaryStructure'
+        "PayrollManagement",
+        "EmployeeSalaryStructure"
     )
     AirTicketRequest = apps.get_model(
-        'PayrollManagement',
-        'AirTicketRequest'
+        "PayrollManagement",
+        "AirTicketRequest"
     )
     LeaveEncashmentTransaction = apps.get_model(
-        'calendars',
-        'LeaveEncashmentTransaction'
+        "calendars",
+        "LeaveEncashmentTransaction"
+    )
+    PayStructure = apps.get_model(
+        "PayrollManagement",
+        "PayStructure"
     )
 
     if not start_date or not end_date:
@@ -558,79 +561,77 @@ def get_formula_variables(employee, start_date=None, end_date=None):
             day=monthrange(today.year, today.month)[1]
         )
 
-    PayStructure = apps.get_model(
-        "PayrollManagement",
-        "PayStructure"
+    pay_structure = (
+        PayStructure.objects
+        .filter(branch=employee.emp_branch_id)
+        .first()
     )
 
-    pay_structure = PayStructure.objects.filter(
-        branch=employee.emp_branch_id
-    ).first()
+    fixed_days = (
+        pay_structure.fixed_working_days
+        if pay_structure
+        and pay_structure.fixed_working_days
+        else 30
+    )
 
     variables = {
-        'calendar_days': Decimal(
+        "calendar_days": Decimal(
             str((end_date - start_date).days + 1)
         ),
-        'fixed_days': Decimal(
-            str(
-                pay_structure.fixed_working_days
-                if pay_structure
-                and pay_structure.fixed_working_days
-                else '30.0'
-            )
-        ),
-        'standard_hours': Decimal('160.0'),
+        "fixed_days": Decimal(str(fixed_days)),
+        "standard_hours": Decimal("160.0"),
     }
 
-    # -----------------------------------------------------
+    # ========================================================
     # OVERTIME
-    # -----------------------------------------------------
+    # ========================================================
+
     ot_filter = {
-        'employee': employee,
-        'date__range': (start_date, end_date)
+        "employee": employee,
+        "date__range": (start_date, end_date),
     }
-    
-    if pay_structure:
-        if pay_structure.overtime_source == 'ATTENDANCE':
-            ot_filter['source'] = 'ATTENDANCE'
-        elif pay_structure.overtime_source == 'MANUAL':
-            ot_filter['source'] = 'MANUAL'
 
-    variables['ot_hours'] = (
-        EmployeeOvertime.objects.filter(**ot_filter).aggregate(
-            total_hours=Sum('hours')
-        )['total_hours']
-        or Decimal('0.00')
+    # overtime_source is optional because older PayStructure
+    # records/models may not contain this field.
+    overtime_source = getattr(
+        pay_structure,
+        "overtime_source",
+        None
     )
-    # variables['ot_hours'] = (
-    #     EmployeeOvertime.objects.filter(
-    #         employee=employee,
-    #         date__range=(start_date, end_date)
-    #     ).aggregate(
-    #         total_hours=Sum('hours')
-    #     )['total_hours']
-    #     or Decimal('0.00')
-    # )
 
-    # -----------------------------------------------------
+    if overtime_source in ("ATTENDANCE", "MANUAL"):
+        ot_filter["source"] = overtime_source
+
+    variables["ot_hours"] = (
+        EmployeeOvertime.objects
+        .filter(**ot_filter)
+        .aggregate(
+            total_hours=Sum("hours")
+        )["total_hours"]
+        or Decimal("0.00")
+    )
+
+    # ========================================================
     # AIR TICKET ENCASHMENT
-    # -----------------------------------------------------
+    # ========================================================
 
-    variables['air_ticket_encashment'] = (
-        AirTicketRequest.objects.filter(
+    variables["air_ticket_encashment"] = (
+        AirTicketRequest.objects
+        .filter(
             employee=employee,
-            request_type='ENCASHMENT',
-            status='APPROVED',
-            request_date__range=(start_date, end_date)
-        ).aggregate(
-            total_encashment=Sum('allocation__amount')
-        )['total_encashment']
-        or Decimal('0.00')
+            request_type="ENCASHMENT",
+            status="APPROVED",
+            request_date__range=(start_date, end_date),
+        )
+        .aggregate(
+            total_encashment=Sum("allocation__amount")
+        )["total_encashment"]
+        or Decimal("0.00")
     )
 
-    # -----------------------------------------------------
+    # ========================================================
     # WEEKEND / HOLIDAY DAYS
-    # -----------------------------------------------------
+    # ========================================================
 
     weekend_days = get_employee_weekend_days(employee)
     holiday_dates = get_employee_holidays(
@@ -641,6 +642,7 @@ def get_formula_variables(employee, start_date=None, end_date=None):
 
     weekend_ot_days = 0
     holiday_ot_days = 0
+    holiday_weekend_ot_days = 0
 
     for single_date in daterange(start_date, end_date):
 
@@ -660,11 +662,25 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         elif is_holiday and attended:
             holiday_ot_days += 1
 
-    variables['weekend_ot_days'] = Decimal(weekend_ot_days)
-    variables['holiday_ot_days'] = Decimal(holiday_ot_days)
-    variables['holiday_weekend_ot_days'] = Decimal(
+    holiday_weekend_ot_days = (
         weekend_ot_days + holiday_ot_days
     )
+
+    variables["weekend_ot_days"] = Decimal(
+        weekend_ot_days
+    )
+
+    variables["holiday_ot_days"] = Decimal(
+        holiday_ot_days
+    )
+
+    variables["holiday_weekend_ot_days"] = Decimal(
+        holiday_weekend_ot_days
+    )
+
+    # ========================================================
+    # WORKING DAYS
+    # ========================================================
 
     working_days = get_working_days(
         employee,
@@ -672,31 +688,33 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         end_date
     )
 
-    variables['working_days'] = float(working_days)
+    variables["working_days"] = Decimal(
+        str(working_days)
+    )
 
-    # -----------------------------------------------------
+    # ========================================================
     # EMPLOYEE VARIABLES
-    # -----------------------------------------------------
+    # ========================================================
 
-    variables['employee.grade'] = str(
-        getattr(employee, 'grade', '')
+    variables["employee.grade"] = str(
+        getattr(employee, "grade", "")
     )
 
-    variables['employee.employee_type'] = str(
-        getattr(employee, 'employee_type', '')
+    variables["employee.employee_type"] = str(
+        getattr(employee, "employee_type", "")
     )
 
-    variables['employee.emp_joined_date'] = (
-        employee.emp_joined_date.strftime('%Y-%m-%d')
-        if getattr(employee, 'emp_joined_date', None)
-        else ''
+    variables["employee.emp_joined_date"] = (
+        employee.emp_joined_date.strftime("%Y-%m-%d")
+        if getattr(employee, "emp_joined_date", None)
+        else ""
     )
 
-    # -----------------------------------------------------
+    # ========================================================
     # YEARS OF SERVICE
-    # -----------------------------------------------------
+    # ========================================================
 
-    years_of_service = Decimal('0.00')
+    years_of_service = Decimal("0.00")
 
     if employee.emp_joined_date:
 
@@ -705,143 +723,276 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         ).days
 
         if service_days > 0:
+
             years_of_service = (
                 Decimal(str(service_days))
-                / Decimal('365')
+                / Decimal("365")
             )
 
-    variables['years_of_service'] = years_of_service
+    variables["years_of_service"] = years_of_service
 
-    # -----------------------------------------------------
+    # ========================================================
     # LEAVE ENCASHMENT
-    # -----------------------------------------------------
+    # ========================================================
 
     encashment_amount = (
-        LeaveEncashmentTransaction.objects.filter(
+        LeaveEncashmentTransaction.objects
+        .filter(
             employee=employee,
             reset_date__range=(start_date, end_date)
-        ).aggregate(
-            total_encashment=Sum('encashment_amount')
-        )['total_encashment']
-        or Decimal('0.00')
-    )
-
-    variables['encashed_days'] = encashment_amount
-
-    # -----------------------------------------------------
-    # OVERTIME BREAKDOWN
-    # -----------------------------------------------------
-
-    # overtimes = EmployeeOvertime.objects.filter(
-    #     employee=employee,
-    #     date__range=(start_date, end_date),
-    # )
-    overtimes = EmployeeOvertime.objects.filter(**ot_filter)
-
-    variables['normal_ot_hours'] = (
-        overtimes.filter(
-            ot_type='NORMAL'
-        ).aggregate(
-            s=Sum('hours')
-        )['s']
-        or Decimal('0.00')
-    )
-
-    variables['weekend_ot_hours'] = (
-        overtimes.filter(
-            ot_type='WEEKEND'
-        ).aggregate(
-            s=Sum('hours')
-        )['s']
-        or Decimal('0.00')
-    )
-
-    variables['holiday_ot_hours'] = (
-        overtimes.filter(
-            ot_type='HOLIDAY'
-        ).aggregate(
-            s=Sum('hours')
-        )['s']
-        or Decimal('0.00')
-    )
-
-    variables['ot_normal_rate'] = get_ot_rate(
-        employee,
-        'NORMAL'
-    )
-
-    variables['ot_weekend_rate'] = get_ot_rate(
-        employee,
-        'WEEKEND'
-    )
-
-    variables['ot_holiday_rate'] = get_ot_rate(
-        employee,
-        'HOLIDAY'
-    )
-
-    # -----------------------------------------------------
-    # SALARY STRUCTURE
-    # -----------------------------------------------------
-
-    salary_structs = EmployeeSalaryStructure.objects.filter(
-        employee=employee,
-        is_active=True
-    )
-
-    # Fixed Components First
-    for sc in salary_structs:
-
-        if (
-            sc.component.component_value_type == 'fixed'
-            and sc.amount is not None
-        ):
-            variables[sc.component.code] = Decimal(
-                str(sc.amount)
-            )
-
-    # -----------------------------------------------------
-    # BASIC SALARY
-    # -----------------------------------------------------
-
-    basic_salary = Decimal('0.00')
-
-    basic_component = salary_structs.filter(
-        component__payroll_category='basic'
-    ).first()
-
-    if basic_component and basic_component.amount:
-        basic_salary = Decimal(
-            str(basic_component.amount)
         )
-
-    variables['basic_salary'] = basic_salary
-
-    # -----------------------------------------------------
-    # GRATUITY VARIABLES
-    # -----------------------------------------------------
-
-    gratuity_vars = get_gratuity_variables(
-        employee=employee,
-        years_of_service=years_of_service,
-        gratuity_type='resignation',
-        basic_salary=basic_salary
+        .aggregate(
+            total_encashment=Sum("encashment_amount")
+        )["total_encashment"]
+        or Decimal("0.00")
     )
 
-    variables.update(gratuity_vars)
+    variables["encashed_days"] = Decimal(
+        str(encashment_amount)
+    )
 
-    # -----------------------------------------------------
-    # FORMULA COMPONENTS
-    # -----------------------------------------------------
+    # ========================================================
+    # OVERTIME BREAKDOWN
+    # ========================================================
+
+    overtimes = EmployeeOvertime.objects.filter(
+        **ot_filter
+    )
+
+    variables["normal_ot_hours"] = (
+        overtimes
+        .filter(ot_type="NORMAL")
+        .aggregate(
+            s=Sum("hours")
+        )["s"]
+        or Decimal("0.00")
+    )
+
+    variables["weekend_ot_hours"] = (
+        overtimes
+        .filter(ot_type="WEEKEND")
+        .aggregate(
+            s=Sum("hours")
+        )["s"]
+        or Decimal("0.00")
+    )
+
+    variables["holiday_ot_hours"] = (
+        overtimes
+        .filter(ot_type="HOLIDAY")
+        .aggregate(
+            s=Sum("hours")
+        )["s"]
+        or Decimal("0.00")
+    )
+
+    variables["ot_normal_rate"] = get_ot_rate(
+        employee,
+        "NORMAL"
+    )
+
+    variables["ot_weekend_rate"] = get_ot_rate(
+        employee,
+        "WEEKEND"
+    )
+
+    variables["ot_holiday_rate"] = get_ot_rate(
+        employee,
+        "HOLIDAY"
+    )
+
+    # ========================================================
+    # SALARY STRUCTURE
+    # ========================================================
+
+    salary_structs = (
+        EmployeeSalaryStructure.objects
+        .filter(
+            employee=employee,
+            is_active=True
+        )
+        .select_related("component")
+    )
+
+    # ========================================================
+    # FIXED COMPONENTS
+    #
+    # Primary variable:
+    #     BAS
+    #
+    # Also create a safe name alias:
+    #     basic_salary
+    #
+    # Example:
+    #     Basic Salary -> BAS
+    # ========================================================
 
     for sc in salary_structs:
 
         comp = sc.component
 
         if (
-            comp.component_value_type != 'fixed'
+            comp.component_value_type == "fixed"
+            and sc.amount is not None
+        ):
+
+            value = Decimal(str(sc.amount))
+
+            # Primary formula variable = component code
+            if comp.code:
+                variables[comp.code] = value
+
+            # Human-readable component name alias
+            component_name = str(
+                comp.name or ""
+            ).strip()
+
+            if component_name:
+
+                safe_name = re.sub(
+                    r"[^a-zA-Z0-9_]",
+                    "_",
+                    component_name
+                )
+
+                safe_name = re.sub(
+                    r"_+",
+                    "_",
+                    safe_name
+                ).strip("_").lower()
+
+                if safe_name:
+                    variables[safe_name] = value
+
+    # ========================================================
+    # BASIC SALARY
+    # ========================================================
+
+    basic_salary = Decimal("0.00")
+
+    basic_component = salary_structs.filter(
+        component__payroll_category="basic"
+    ).first()
+
+    if basic_component and basic_component.amount is not None:
+
+        basic_salary = Decimal(
+            str(basic_component.amount)
+        )
+
+        if basic_component.component.code:
+
+            variables[
+                basic_component.component.code
+            ] = basic_salary
+
+    variables["basic_salary"] = basic_salary
+
+    # ========================================================
+    # LEAVE BALANCES
+    #
+    # Example:
+    # AL-UAE -> leave_balance_al_uae
+    # SL-UAE -> leave_balance_sl_uae
+    # ========================================================
+
+    leave_balances = (
+        EmpLeaveBalance.objects
+        .filter(employee=employee)
+        .select_related("leave_type")
+    )
+
+    for lb in leave_balances:
+
+        balance = Decimal(
+            str(lb.balance or "0.00")
+        )
+
+        leave_type = lb.leave_type
+
+        leave_code = getattr(
+            leave_type,
+            "code",
+            None
+        )
+
+        if not leave_code:
+
+            leave_code = getattr(
+                leave_type,
+                "leave_type",
+                ""
+            )
+
+        safe_leave_code = str(
+            leave_code or ""
+        ).strip()
+
+        safe_leave_code = re.sub(
+            r"[^a-zA-Z0-9_]",
+            "_",
+            safe_leave_code
+        )
+
+        safe_leave_code = re.sub(
+            r"_+",
+            "_",
+            safe_leave_code
+        ).strip("_").lower()
+
+        if not safe_leave_code:
+            continue
+
+        variable_name = (
+            f"leave_balance_{safe_leave_code}"
+        )
+
+        variables[variable_name] = balance
+
+        logger.debug(
+            f"Leave balance variable created: "
+            f"{variable_name} = {balance}"
+        )
+
+    # ========================================================
+    # GRATUITY VARIABLES
+    # ========================================================
+
+    gratuity_vars = get_gratuity_variables(
+        employee=employee,
+        years_of_service=years_of_service,
+        gratuity_type="resignation",
+        basic_salary=basic_salary
+    )
+
+    variables.update(gratuity_vars)
+
+    # ========================================================
+    # FORMULA COMPONENTS
+    #
+    # Evaluate these AFTER:
+    #   - fixed salary components
+    #   - leave balances
+    #   - gratuity variables
+    #
+    # Therefore formulas can use:
+    #   BAS
+    #   basic_salary
+    #   fixed_days
+    #   leave_balance_al_uae
+    #   years_of_service
+    #   etc.
+    # ========================================================
+
+    for sc in salary_structs:
+
+        comp = sc.component
+
+        if (
+            comp.component_value_type != "fixed"
             and comp.formula
         ):
+
             try:
 
                 value = evaluate_formula(
@@ -851,78 +1002,438 @@ def get_formula_variables(employee, start_date=None, end_date=None):
                     comp
                 )
 
-                variables[comp.code] = Decimal(
-                    str(value)
-                )
+                value = Decimal(str(value))
+
+                if comp.code:
+                    variables[comp.code] = value
+
+                # Also make the calculated component
+                # available using its safe name.
+                component_name = str(
+                    comp.name or ""
+                ).strip()
+
+                if component_name:
+
+                    safe_name = re.sub(
+                        r"[^a-zA-Z0-9_]",
+                        "_",
+                        component_name
+                    )
+
+                    safe_name = re.sub(
+                        r"_+",
+                        "_",
+                        safe_name
+                    ).strip("_").lower()
+
+                    if safe_name:
+                        variables[safe_name] = value
 
             except Exception as e:
 
                 logger.error(
                     f"Formula error for "
-                    f"{comp.name} : {e}"
+                    f"{comp.name} "
+                    f"(code={comp.code}): {e}"
                 )
 
-                variables[comp.code] = Decimal('0.00')
-        # ---------------------------------------------------------
+                if comp.code:
+                    variables[comp.code] = Decimal("0.00")
 
-    EmpLeaveBalance = apps.get_model(
-    'calendars',
-    'emp_leave_balance'
-    )
-
-    leave_balances = EmpLeaveBalance.objects.filter(
-        employee=employee
-    ).select_related('leave_type')
-
-    for lb in leave_balances:
-
-        balance = Decimal(
-            str(lb.balance or 0)
-        )
-
-        leave_type = lb.leave_type
-
-        # Get leave type code
-        leave_code = getattr(
-            leave_type,
-            'code',
-            None
-        )
-
-        # If your leave_type model uses leave_type field
-        if not leave_code:
-            leave_code = getattr(
-                leave_type,
-                'leave_type',
-                ''
-            )
-
-        # Make code safe for Python formula
-        safe_leave_code = str(leave_code).strip()
-
-        safe_leave_code = (
-            safe_leave_code
-            .replace('-', '_')
-            .replace(' ', '_')
-            .replace('/', '_')
-            .replace('.', '_')
-        )
-
-        # Example:
-        # AL-TRA -> al_tra
-        # Annual Leave -> annual_leave
-
-        safe_leave_code = safe_leave_code.lower()
-
-        variable_name = f'leave_balance_{safe_leave_code}'
-
-        variables[variable_name] = balance
-
-        logger.debug(
-            f"Leave balance variable created: "
-            f"{variable_name} = {balance}"
-        )
     return variables
+
+
+# def get_formula_variables(employee, start_date=None, end_date=None):
+#     EmpLeaveBalance = apps.get_model('calendars','emp_leave_balance')
+
+#     Attendance = apps.get_model('calendars', 'Attendance')
+#     EmployeeOvertime = apps.get_model('calendars', 'EmployeeOvertime')
+#     EmployeeSalaryStructure = apps.get_model(
+#         'PayrollManagement',
+#         'EmployeeSalaryStructure'
+#     )
+#     AirTicketRequest = apps.get_model(
+#         'PayrollManagement',
+#         'AirTicketRequest'
+#     )
+#     LeaveEncashmentTransaction = apps.get_model(
+#         'calendars',
+#         'LeaveEncashmentTransaction'
+#     )
+
+#     if not start_date or not end_date:
+#         today = datetime.today().date()
+#         start_date = today.replace(day=1)
+#         end_date = today.replace(
+#             day=monthrange(today.year, today.month)[1]
+#         )
+
+#     PayStructure = apps.get_model(
+#         "PayrollManagement",
+#         "PayStructure"
+#     )
+
+#     pay_structure = PayStructure.objects.filter(
+#         branch=employee.emp_branch_id
+#     ).first()
+
+#     variables = {
+#         'calendar_days': Decimal(
+#             str((end_date - start_date).days + 1)
+#         ),
+#         'fixed_days': Decimal(
+#             str(
+#                 pay_structure.fixed_working_days
+#                 if pay_structure
+#                 and pay_structure.fixed_working_days
+#                 else '30.0'
+#             )
+#         ),
+#         'standard_hours': Decimal('160.0'),
+#     }
+
+#     # -----------------------------------------------------
+#     # OVERTIME
+#     # -----------------------------------------------------
+#     ot_filter = {
+#         'employee': employee,
+#         'date__range': (start_date, end_date)
+#     }
+    
+#     if pay_structure:
+#         if pay_structure.overtime_source == 'ATTENDANCE':
+#             ot_filter['source'] = 'ATTENDANCE'
+#         elif pay_structure.overtime_source == 'MANUAL':
+#             ot_filter['source'] = 'MANUAL'
+
+#     variables['ot_hours'] = (
+#         EmployeeOvertime.objects.filter(**ot_filter).aggregate(
+#             total_hours=Sum('hours')
+#         )['total_hours']
+#         or Decimal('0.00')
+#     )
+#     # variables['ot_hours'] = (
+#     #     EmployeeOvertime.objects.filter(
+#     #         employee=employee,
+#     #         date__range=(start_date, end_date)
+#     #     ).aggregate(
+#     #         total_hours=Sum('hours')
+#     #     )['total_hours']
+#     #     or Decimal('0.00')
+#     # )
+
+#     # -----------------------------------------------------
+#     # AIR TICKET ENCASHMENT
+#     # -----------------------------------------------------
+
+#     variables['air_ticket_encashment'] = (
+#         AirTicketRequest.objects.filter(
+#             employee=employee,
+#             request_type='ENCASHMENT',
+#             status='APPROVED',
+#             request_date__range=(start_date, end_date)
+#         ).aggregate(
+#             total_encashment=Sum('allocation__amount')
+#         )['total_encashment']
+#         or Decimal('0.00')
+#     )
+
+#     # -----------------------------------------------------
+#     # WEEKEND / HOLIDAY DAYS
+#     # -----------------------------------------------------
+
+#     weekend_days = get_employee_weekend_days(employee)
+#     holiday_dates = get_employee_holidays(
+#         employee,
+#         start_date,
+#         end_date
+#     )
+
+#     weekend_ot_days = 0
+#     holiday_ot_days = 0
+
+#     for single_date in daterange(start_date, end_date):
+
+#         weekday = single_date.strftime("%A")
+
+#         is_weekend = weekday in weekend_days
+#         is_holiday = single_date in holiday_dates
+
+#         attended = Attendance.objects.filter(
+#             employee=employee,
+#             date=single_date
+#         ).exists()
+
+#         if is_weekend and attended:
+#             weekend_ot_days += 1
+
+#         elif is_holiday and attended:
+#             holiday_ot_days += 1
+
+#     variables['weekend_ot_days'] = Decimal(weekend_ot_days)
+#     variables['holiday_ot_days'] = Decimal(holiday_ot_days)
+#     variables['holiday_weekend_ot_days'] = Decimal(
+#         weekend_ot_days + holiday_ot_days
+#     )
+
+#     working_days = get_working_days(
+#         employee,
+#         start_date,
+#         end_date
+#     )
+
+#     variables['working_days'] = float(working_days)
+
+#     # -----------------------------------------------------
+#     # EMPLOYEE VARIABLES
+#     # -----------------------------------------------------
+
+#     variables['employee.grade'] = str(
+#         getattr(employee, 'grade', '')
+#     )
+
+#     variables['employee.employee_type'] = str(
+#         getattr(employee, 'employee_type', '')
+#     )
+
+#     variables['employee.emp_joined_date'] = (
+#         employee.emp_joined_date.strftime('%Y-%m-%d')
+#         if getattr(employee, 'emp_joined_date', None)
+#         else ''
+#     )
+
+#     # -----------------------------------------------------
+#     # YEARS OF SERVICE
+#     # -----------------------------------------------------
+
+#     years_of_service = Decimal('0.00')
+
+#     if employee.emp_joined_date:
+
+#         service_days = (
+#             end_date - employee.emp_joined_date
+#         ).days
+
+#         if service_days > 0:
+#             years_of_service = (
+#                 Decimal(str(service_days))
+#                 / Decimal('365')
+#             )
+
+#     variables['years_of_service'] = years_of_service
+
+#     # -----------------------------------------------------
+#     # LEAVE ENCASHMENT
+#     # -----------------------------------------------------
+
+#     encashment_amount = (
+#         LeaveEncashmentTransaction.objects.filter(
+#             employee=employee,
+#             reset_date__range=(start_date, end_date)
+#         ).aggregate(
+#             total_encashment=Sum('encashment_amount')
+#         )['total_encashment']
+#         or Decimal('0.00')
+#     )
+
+#     variables['encashed_days'] = encashment_amount
+
+#     # -----------------------------------------------------
+#     # OVERTIME BREAKDOWN
+#     # -----------------------------------------------------
+
+#     # overtimes = EmployeeOvertime.objects.filter(
+#     #     employee=employee,
+#     #     date__range=(start_date, end_date),
+#     # )
+#     overtimes = EmployeeOvertime.objects.filter(**ot_filter)
+
+#     variables['normal_ot_hours'] = (
+#         overtimes.filter(
+#             ot_type='NORMAL'
+#         ).aggregate(
+#             s=Sum('hours')
+#         )['s']
+#         or Decimal('0.00')
+#     )
+
+#     variables['weekend_ot_hours'] = (
+#         overtimes.filter(
+#             ot_type='WEEKEND'
+#         ).aggregate(
+#             s=Sum('hours')
+#         )['s']
+#         or Decimal('0.00')
+#     )
+
+#     variables['holiday_ot_hours'] = (
+#         overtimes.filter(
+#             ot_type='HOLIDAY'
+#         ).aggregate(
+#             s=Sum('hours')
+#         )['s']
+#         or Decimal('0.00')
+#     )
+
+#     variables['ot_normal_rate'] = get_ot_rate(
+#         employee,
+#         'NORMAL'
+#     )
+
+#     variables['ot_weekend_rate'] = get_ot_rate(
+#         employee,
+#         'WEEKEND'
+#     )
+
+#     variables['ot_holiday_rate'] = get_ot_rate(
+#         employee,
+#         'HOLIDAY'
+#     )
+
+#     # -----------------------------------------------------
+#     # SALARY STRUCTURE
+#     # -----------------------------------------------------
+
+#     salary_structs = EmployeeSalaryStructure.objects.filter(
+#         employee=employee,
+#         is_active=True
+#     )
+
+#     # Fixed Components First
+#     for sc in salary_structs:
+
+#         if (
+#             sc.component.component_value_type == 'fixed'
+#             and sc.amount is not None
+#         ):
+#             variables[sc.component.code] = Decimal(
+#                 str(sc.amount)
+#             )
+
+#     # -----------------------------------------------------
+#     # BASIC SALARY
+#     # -----------------------------------------------------
+
+#     basic_salary = Decimal('0.00')
+
+#     basic_component = salary_structs.filter(
+#         component__payroll_category='basic'
+#     ).first()
+
+#     if basic_component and basic_component.amount:
+#         basic_salary = Decimal(
+#             str(basic_component.amount)
+#         )
+
+#     variables['basic_salary'] = basic_salary
+
+#     # -----------------------------------------------------
+#     # GRATUITY VARIABLES
+#     # -----------------------------------------------------
+
+#     gratuity_vars = get_gratuity_variables(
+#         employee=employee,
+#         years_of_service=years_of_service,
+#         gratuity_type='resignation',
+#         basic_salary=basic_salary
+#     )
+
+#     variables.update(gratuity_vars)
+
+#     # -----------------------------------------------------
+#     # FORMULA COMPONENTS
+#     # -----------------------------------------------------
+
+#     for sc in salary_structs:
+
+#         comp = sc.component
+
+#         if (
+#             comp.component_value_type != 'fixed'
+#             and comp.formula
+#         ):
+#             try:
+
+#                 value = evaluate_formula(
+#                     comp.formula,
+#                     variables,
+#                     employee,
+#                     comp
+#                 )
+
+#                 variables[comp.code] = Decimal(
+#                     str(value)
+#                 )
+
+#             except Exception as e:
+
+#                 logger.error(
+#                     f"Formula error for "
+#                     f"{comp.name} : {e}"
+#                 )
+
+#                 variables[comp.code] = Decimal('0.00')
+#         # ---------------------------------------------------------
+
+#     EmpLeaveBalance = apps.get_model(
+#     'calendars',
+#     'emp_leave_balance'
+#     )
+
+#     leave_balances = EmpLeaveBalance.objects.filter(
+#         employee=employee
+#     ).select_related('leave_type')
+
+#     for lb in leave_balances:
+
+#         balance = Decimal(
+#             str(lb.balance or 0)
+#         )
+
+#         leave_type = lb.leave_type
+
+#         # Get leave type code
+#         leave_code = getattr(
+#             leave_type,
+#             'code',
+#             None
+#         )
+
+#         # If your leave_type model uses leave_type field
+#         if not leave_code:
+#             leave_code = getattr(
+#                 leave_type,
+#                 'leave_type',
+#                 ''
+#             )
+
+#         # Make code safe for Python formula
+#         safe_leave_code = str(leave_code).strip()
+
+#         safe_leave_code = (
+#             safe_leave_code
+#             .replace('-', '_')
+#             .replace(' ', '_')
+#             .replace('/', '_')
+#             .replace('.', '_')
+#         )
+
+#         # Example:
+#         # AL-TRA -> al_tra
+#         # Annual Leave -> annual_leave
+
+#         safe_leave_code = safe_leave_code.lower()
+
+#         variable_name = f'leave_balance_{safe_leave_code}'
+
+#         variables[variable_name] = balance
+
+#         logger.debug(
+#             f"Leave balance variable created: "
+#             f"{variable_name} = {balance}"
+#         )
+#     return variables
 
 def daterange(start_date, end_date):
     for n in range(int((end_date - start_date).days) + 1):

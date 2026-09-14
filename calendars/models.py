@@ -3010,7 +3010,7 @@ class Attendance(models.Model):
                 ("change_attendance_faceregister", "Can change attendance face register"),
                 ("import_attendance","Can import attendance"),
 
-                ("add_puch", "Can add attendance punch"),
+                ("add_punch", "Can add attendance punch"),
                 ("view_punch", "Can list attendance punch"),
                 ("export_punch", " Can export attendance punch"),
                 ("delete_punch", "Can delete attendance punch"),

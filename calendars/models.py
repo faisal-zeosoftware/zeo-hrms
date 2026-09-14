@@ -3009,6 +3009,13 @@ class Attendance(models.Model):
                 ("delete_attendance_faceregister", "Can delete attendance face register"),
                 ("change_attendance_faceregister", "Can change attendance face register"),
                 ("import_attendance","Can import attendance")
+
+                ("add_puch", "Can add attendance punch"),
+                ("view_punch", "Can list attendance punch"),
+                ("export_punch", " Can export attendance punch"),
+                ("delete_punch", "Can delete attendance punch"),
+                ("change_punch", "Can change attendance punch"),
+                ("import_punch","Can import attendance punch")
         )
     def __str__(self):
         return f"attendance {self.employee} on {self.date}"

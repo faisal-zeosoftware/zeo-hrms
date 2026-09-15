@@ -2869,7 +2869,7 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
         super(LvBalanceReportViewset, self).__init__(*args, **kwargs)
         self.lvbalance_standard_report_exists()
     def get_available_fields(self):
-        excluded_fields = {'id', 'created_by','created_at'}
+        excluded_fields = {'id', 'created_by','created_at','updated_at'}
         included_emp_master_fields = { 'emp_first_name', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id','emp_branch_id'}
         
         display_names = {

@@ -250,7 +250,7 @@ class LanguageMaster(models.Model):
 class Nationality(models.Model):
     N_name = models.CharField(max_length=200,null=True)
 
-    def str(self):
+    def __str__(self):
         return self.N_name
 
 class ReligionMaster(models.Model):

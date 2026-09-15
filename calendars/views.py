@@ -1706,6 +1706,15 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
             "status":"Status",
             "approved_by": "Approved Request",
             "applied_on":"Request Date",
+            "start_date":"Start Date",
+            "end_date": "End Date",
+            "document_number": "Document Number",
+            "dis_half_day": "Dis Half Day",
+            "half_day_period": "Half Day Period",
+            "number_of_days": "Number of Days",
+            "applied_days":"Applied Days",
+            "approved_days":"Approved Days",
+            "lv_document":"Leave Document"
            
         }
 
@@ -2293,7 +2302,7 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
         super(Lv_Approval_ReportViewset, self).__init__(*args, **kwargs)
         self.lv_apprvl_std_report_exists()
     def get_available_fields(self):
-        excluded_fields = {'id', 'created_by','created_at'}
+        excluded_fields = {'id', 'created_by','created_at','updated_at'}
         included_emp_master_fields = { 'emp_first_name', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id','emp_branch_id'}
         
         display_names = {

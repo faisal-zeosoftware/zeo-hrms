@@ -924,10 +924,12 @@ class ReportViewset(viewsets.ModelViewSet):
         display_names = {
             "emp_code": "Employee Code",
             "emp_first_name": "First Name",
+            "emp_middle_name": "Middle Name",
             "emp_last_name": "Last Name",
             "emp_gender": "Gender",
             "emp_date_of_birth": "Date of Birth",
             "emp_personal_email": "Email",
+            "emp_company_email":"Company Email",
             "emp_mobile_number_1": "Mobile Number",
             "emp_mobile_number_2": "Mobile Number2",
             "emp_country_id": "Country",
@@ -951,7 +953,22 @@ class ReportViewset(viewsets.ModelViewSet):
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
-            "emp_ctgry_id": "Category"
+            "emp_ctgry_id": "Category",
+            "emp_reporting_manager":"Reporting Manager",
+            "emp_joined_date":"Joined Date",
+            "emp_date_of_confirmation": "Confirmation Date",
+            "emp_nationality":"Nationality",
+            "emp_ot_applicable":"OT Applicable",
+            "emp_weekend_calendar":"Weekend Calendar",
+            "work_location": "Work Location",
+            "visa_location": "Visa Location",
+            "face_encoding": "Face Encoding",
+            "barcode_number":"Barcode Number",
+            "attendance_source":"Attendance Source",
+            "person_id":"Person ID",
+            "holiday_calendar":"Holiday Calendar"
+
+
         }
         
         emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name not in excluded_fields]
@@ -1944,6 +1961,7 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
             "emp_doc_issued_date": "Issued Date",
             "emp_doc_expiry_date": "Expiry Date",
             "is_active": "Active",
+            "document_type": "Document Type"
         }
         emp_master_fields = [field.name for field in emp_master._meta.get_fields() if isinstance(field, Field) and field.name in included_emp_master_fields]
         emp_document_fields = [field.name for field in Emp_Documents._meta.get_fields() if isinstance(field, Field) and field.name not in excluded_fields]
@@ -2930,6 +2948,9 @@ class GeneralReportViewset(viewsets.ModelViewSet):
             "total":"Total",
             "request_type": "Request Type",
             "approved": "Approved Request",
+            "document_number": "Document Number",
+            "request_document": "Request Document",
+            "is_processed": "Is processed",
             "created_at_date":"Request Date",
            
         }

@@ -1366,6 +1366,7 @@ class AssetReportViewset(viewsets.ModelViewSet):
             "purchase_date": "Purchase Date",
             "status": "Status",
             "condition": "Condition",
+            "serial_number":"Serial Number"
         }
         
         asset_fields = [field.name for field in Asset._meta.get_fields() if isinstance(field, Field) and field.name not in excluded_fields]
@@ -1646,7 +1647,8 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
             "asset":"Asset",
             "assigned_date":"Assigned Date",
             "returned_date":"returned_date",
-            "return_condition":"Return Condition"
+            "return_condition":"Return Condition",
+            "returned_date":"Returned Date"
 
 
            

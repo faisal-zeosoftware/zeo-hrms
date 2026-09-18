@@ -504,6 +504,10 @@ class EmpSerializer(serializers.ModelSerializer):
             rep['emp_relegion'] =instance.emp_relegion.religion
         if instance.emp_reporting_manager:
             rep['emp_reporting_manager'] =instance.emp_reporting_manager.username
+        if instance.work_location:
+                    rep['work_location'] =instance.work_location.branch_name
+        if instance.visa_location:
+            rep['visa_location'] =instance.visa_location.branch_name
         return rep
     def update(self, instance, validated_data):
         if 'is_active' not in validated_data:

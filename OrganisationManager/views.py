@@ -135,7 +135,7 @@ class DepartmentViewSet(viewsets.ModelViewSet):
                 value = row.get(field)
 
                 # Boolean conversion
-                if field == "dept_is_active":
+                if field == "Active":
                     value = bool(value)
 
                 row_data[field] = value

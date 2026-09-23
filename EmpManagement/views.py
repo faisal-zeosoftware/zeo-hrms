@@ -158,6 +158,7 @@ class EmpViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
 
+    
     @action(
         detail=True,
         methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
@@ -165,15 +166,24 @@ class EmpViewSet(viewsets.ModelViewSet):
     )
     def emp_family(self, request, pk=None, family_id=None):
 
+        # =====================================================
+        # GET EMPLOYEE
+        # =====================================================
+
         employee = self.get_object()
 
-        # --------------------------------------------------------
+        # =====================================================
         # GET
-        # --------------------------------------------------------
+        # =====================================================
 
         if request.method == 'GET':
 
-            # GET ALL
+            # ---------------------------------------------
+            # GET ALL FAMILY MEMBERS
+            #
+            # /Employee/15/emp_family/
+            # ---------------------------------------------
+
             if family_id is None:
 
                 family_members = employee.emp_family.all()
@@ -189,12 +199,18 @@ class EmpViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_200_OK
                 )
 
-            # GET SINGLE
+            # ---------------------------------------------
+            # GET SINGLE FAMILY MEMBER
+            #
+            # /Employee/15/emp_family/5/
+            # ---------------------------------------------
+
             try:
                 family_member = employee.emp_family.get(
                     pk=family_id
                 )
-            except employee.emp_family.model.DoesNotExist:
+
+            except emp_family.DoesNotExist:
                 return Response(
                     {
                         'error': 'Family member not found for this employee.'
@@ -212,24 +228,24 @@ class EmpViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
 
-        # --------------------------------------------------------
-        # POST
-        # --------------------------------------------------------
+        # =====================================================
+        # POST - CREATE FAMILY MEMBER
+        # =====================================================
 
         if request.method == 'POST':
 
+            # POST should not contain family ID
             if family_id is not None:
                 return Response(
                     {
-                        'error': (
-                            'POST is only allowed without '
-                            'family member ID.'
-                        )
+                        'error': 'POST is only allowed without family member ID.'
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
             data = request.data.copy()
+
+            # Automatically assign employee
             data['emp_id'] = employee.pk
 
             serializer = EmpFamSerializer(
@@ -238,6 +254,7 @@ class EmpViewSet(viewsets.ModelViewSet):
             )
 
             serializer.is_valid(raise_exception=True)
+
             serializer.save()
 
             return Response(
@@ -245,27 +262,31 @@ class EmpViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
 
-        # --------------------------------------------------------
-        # PUT / PATCH
-        # --------------------------------------------------------
+        # =====================================================
+        # PUT / PATCH - UPDATE FAMILY MEMBER
+        # =====================================================
 
         if request.method in ['PUT', 'PATCH']:
 
+            # Family ID must come from URL
             if family_id is None:
                 return Response(
                     {
-                        'error': (
-                            'Family member ID is required in the URL.'
-                        )
+                        'error': 'Family member ID is required in the URL.'
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
+
+            # ---------------------------------------------
+            # Find family member belonging to this employee
+            # ---------------------------------------------
 
             try:
                 family_member = employee.emp_family.get(
                     pk=family_id
                 )
-            except employee.emp_family.model.DoesNotExist:
+
+            except emp_family.DoesNotExist:
                 return Response(
                     {
                         'error': 'Family member not found for this employee.'
@@ -273,17 +294,28 @@ class EmpViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
+            # ---------------------------------------------
+            # Copy request data
+            # ---------------------------------------------
+
             data = request.data.copy()
+
+            # Keep employee fixed
             data['emp_id'] = employee.pk
+
+            # PUT = complete update
+            # PATCH = partial update
+            partial = request.method == 'PATCH'
 
             serializer = EmpFamSerializer(
                 family_member,
                 data=data,
-                partial=(request.method == 'PATCH'),
+                partial=partial,
                 context={'request': request}
             )
 
             serializer.is_valid(raise_exception=True)
+
             serializer.save()
 
             return Response(
@@ -291,27 +323,31 @@ class EmpViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK
             )
 
-        # --------------------------------------------------------
+        # =====================================================
         # DELETE
-        # --------------------------------------------------------
+        # =====================================================
 
         if request.method == 'DELETE':
 
+            # Family ID must come from URL
             if family_id is None:
                 return Response(
                     {
-                        'error': (
-                            'Family member ID is required in the URL.'
-                        )
+                        'error': 'Family member ID is required in the URL.'
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
+
+            # ---------------------------------------------
+            # Find family member belonging to this employee
+            # ---------------------------------------------
 
             try:
                 family_member = employee.emp_family.get(
                     pk=family_id
                 )
-            except employee.emp_family.model.DoesNotExist:
+
+            except emp_family.DoesNotExist:
                 return Response(
                     {
                         'error': 'Family member not found for this employee.'
@@ -322,1782 +358,117 @@ class EmpViewSet(viewsets.ModelViewSet):
             family_member.delete()
 
             return Response(
+                {
+                    'message': 'Family member deleted successfully.'
+                },
                 status=status.HTTP_204_NO_CONTENT
             )
-
-    # ============================================================
-    # QUALIFICATION
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_qualification(?:/(?P<qualification_id>[^/.]+))?'
-    )
-    def emp_qualification(
-        self,
-        request,
-        pk=None,
-        qualification_id=None
-    ):
-
-        employee = self.get_object()
-
-        # --------------------------------------------------------
-        # GET
-        # --------------------------------------------------------
-
-        if request.method == 'GET':
-
-            if qualification_id is None:
-
-                qualifications = employee.emp_qualification.all()
-
-                serializer = Emp_qf_Serializer(
-                    qualifications,
-                    many=True,
-                    context={'request': request}
-                )
-
-                return Response(
-                    serializer.data,
-                    status=status.HTTP_200_OK
-                )
-
-            try:
-                qualification = employee.emp_qualification.get(
-                    pk=qualification_id
-                )
-            except employee.emp_qualification.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Qualification not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = Emp_qf_Serializer(
-                qualification,
-                context={'request': request}
-            )
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # POST
-        # --------------------------------------------------------
-
-        if request.method == 'POST':
-
-            if qualification_id is not None:
-                return Response(
-                    {
-                        'error': (
-                            'POST is only allowed without '
-                            'qualification ID.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = Emp_qf_Serializer(
-                data=data,
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # --------------------------------------------------------
-        # PUT / PATCH
-        # --------------------------------------------------------
-
-        if request.method in ['PUT', 'PATCH']:
-
-            if qualification_id is None:
-                return Response(
-                    {
-                        'error': (
-                            'Qualification ID is required in the URL.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                qualification = employee.emp_qualification.get(
-                    pk=qualification_id
-                )
-            except employee.emp_qualification.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Qualification not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = Emp_qf_Serializer(
-                qualification,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # DELETE
-        # --------------------------------------------------------
-
-        if request.method == 'DELETE':
-
-            if qualification_id is None:
-                return Response(
-                    {
-                        'error': (
-                            'Qualification ID is required in the URL.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                qualification = employee.emp_qualification.get(
-                    pk=qualification_id
-                )
-            except employee.emp_qualification.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Qualification not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            qualification.delete()
-
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
-
-    # ============================================================
-    # JOB HISTORY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_job_history(?:/(?P<job_history_id>[^/.]+))?'
-    )
-    def emp_job_history(
-        self,
-        request,
-        pk=None,
-        job_history_id=None
-    ):
-
-        employee = self.get_object()
-
-        # --------------------------------------------------------
-        # GET
-        # --------------------------------------------------------
-
-        if request.method == 'GET':
-
-            if job_history_id is None:
-
-                job_histories = employee.emp_job_history.all()
-
-                serializer = EmpJobHistorySerializer(
-                    job_histories,
-                    many=True,
-                    context={'request': request}
-                )
-
-                return Response(
-                    serializer.data,
-                    status=status.HTTP_200_OK
-                )
-
-            try:
-                job_history = employee.emp_job_history.get(
-                    pk=job_history_id
-                )
-            except employee.emp_job_history.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Job history not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = EmpJobHistorySerializer(
-                job_history,
-                context={'request': request}
-            )
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # POST
-        # --------------------------------------------------------
-
-        if request.method == 'POST':
-
-            if job_history_id is not None:
-                return Response(
-                    {
-                        'error': (
-                            'POST is only allowed without '
-                            'job history ID.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpJobHistorySerializer(
-                data=data,
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # --------------------------------------------------------
-        # PUT / PATCH
-        # --------------------------------------------------------
-
-        if request.method in ['PUT', 'PATCH']:
-
-            if job_history_id is None:
-                return Response(
-                    {
-                        'error': (
-                            'Job history ID is required in the URL.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                job_history = employee.emp_job_history.get(
-                    pk=job_history_id
-                )
-            except employee.emp_job_history.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Job history not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpJobHistorySerializer(
-                job_history,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # DELETE
-        # --------------------------------------------------------
-
-        if request.method == 'DELETE':
-
-            if job_history_id is None:
-                return Response(
-                    {
-                        'error': (
-                            'Job history ID is required in the URL.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                job_history = employee.emp_job_history.get(
-                    pk=job_history_id
-                )
-            except employee.emp_job_history.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Job history not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            job_history.delete()
-
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
-
-    # ============================================================
-    # DOCUMENTS
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_documents(?:/(?P<document_id>[^/.]+))?'
-    )
-    def emp_documents(
-        self,
-        request,
-        pk=None,
-        document_id=None
-    ):
-
-        employee = self.get_object()
-
-        # --------------------------------------------------------
-        # GET
-        # --------------------------------------------------------
-
-        if request.method == 'GET':
-
-            if document_id is None:
-
-                documents = employee.emp_documents.all()
-
-                serializer = DocumentSerializer(
-                    documents,
-                    many=True,
-                    context={'request': request}
-                )
-
-                return Response(
-                    serializer.data,
-                    status=status.HTTP_200_OK
-                )
-
-            try:
-                document = employee.emp_documents.get(
-                    pk=document_id
-                )
-            except employee.emp_documents.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Document not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = DocumentSerializer(
-                document,
-                context={'request': request}
-            )
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # POST
-        # --------------------------------------------------------
-
-        if request.method == 'POST':
-
-            if document_id is not None:
-                return Response(
-                    {
-                        'error': (
-                            'POST is only allowed without document ID.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = DocumentSerializer(
-                data=data,
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # --------------------------------------------------------
-        # PUT / PATCH
-        # --------------------------------------------------------
-
-        if request.method in ['PUT', 'PATCH']:
-
-            if document_id is None:
-                return Response(
-                    {
-                        'error': 'Document ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                document = employee.emp_documents.get(
-                    pk=document_id
-                )
-            except employee.emp_documents.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Document not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = DocumentSerializer(
-                document,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # DELETE
-        # --------------------------------------------------------
-
-        if request.method == 'DELETE':
-
-            if document_id is None:
-                return Response(
-                    {
-                        'error': 'Document ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                document = employee.emp_documents.get(
-                    pk=document_id
-                )
-            except employee.emp_documents.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Document not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            document.delete()
-
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
-
-    # ============================================================
-    # MARKET SKILLS
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_market_skills(?:/(?P<skill_id>[^/.]+))?'
-    )
-    def emp_market_skills(
-        self,
-        request,
-        pk=None,
-        skill_id=None
-    ):
-
-        employee = self.get_object()
-
-        # GET
-        if request.method == 'GET':
-
-            if skill_id is None:
-
-                skills = employee.emp_market_skills.all()
-
-                serializer = EmpMarketSkillSerializer(
-                    skills,
-                    many=True,
-                    context={'request': request}
-                )
-
-                return Response(
-                    serializer.data,
-                    status=status.HTTP_200_OK
-                )
-
-            try:
-                skill = employee.emp_market_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_market_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Market skill not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = EmpMarketSkillSerializer(
-                skill,
-                context={'request': request}
-            )
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # POST
-        if request.method == 'POST':
-
-            if skill_id is not None:
-                return Response(
-                    {
-                        'error': (
-                            'POST is only allowed without skill ID.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpMarketSkillSerializer(
-                data=data,
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # PUT / PATCH
-        if request.method in ['PUT', 'PATCH']:
-
-            if skill_id is None:
-                return Response(
-                    {
-                        'error': 'Skill ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                skill = employee.emp_market_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_market_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Market skill not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpMarketSkillSerializer(
-                skill,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # DELETE
-        if request.method == 'DELETE':
-
-            if skill_id is None:
-                return Response(
-                    {
-                        'error': 'Skill ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                skill = employee.emp_market_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_market_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Market skill not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            skill.delete()
-
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
-
-    # ============================================================
-    # PROGRAM / LANGUAGE SKILLS
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_programlangskill(?:/(?P<skill_id>[^/.]+))?'
-    )
-    def emp_programlangskill(
-        self,
-        request,
-        pk=None,
-        skill_id=None
-    ):
-
-        employee = self.get_object()
-
-        # GET
-        if request.method == 'GET':
-
-            if skill_id is None:
-
-                skills = employee.emp_prgrm_skills.all()
-
-                serializer = EmpPrgrmSkillSerializer(
-                    skills,
-                    many=True,
-                    context={'request': request}
-                )
-
-                return Response(
-                    serializer.data,
-                    status=status.HTTP_200_OK
-                )
-
-            try:
-                skill = employee.emp_prgrm_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_prgrm_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Program/language skill '
-                            'not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = EmpPrgrmSkillSerializer(
-                skill,
-                context={'request': request}
-            )
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # POST
-        if request.method == 'POST':
-
-            if skill_id is not None:
-                return Response(
-                    {
-                        'error': (
-                            'POST is only allowed without skill ID.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpPrgrmSkillSerializer(
-                data=data,
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # PUT / PATCH
-        if request.method in ['PUT', 'PATCH']:
-
-            if skill_id is None:
-                return Response(
-                    {
-                        'error': 'Skill ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                skill = employee.emp_prgrm_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_prgrm_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Program/language skill '
-                            'not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpPrgrmSkillSerializer(
-                skill,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # DELETE
-        if request.method == 'DELETE':
-
-            if skill_id is None:
-                return Response(
-                    {
-                        'error': 'Skill ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                skill = employee.emp_prgrm_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_prgrm_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Program/language skill '
-                            'not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            skill.delete()
-
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
-
-    # ============================================================
-    # LANGUAGE SKILLS
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_languageskill(?:/(?P<skill_id>[^/.]+))?'
-    )
-    def emp_languageskill(
-        self,
-        request,
-        pk=None,
-        skill_id=None
-    ):
-
-        employee = self.get_object()
-
-        # GET
-        if request.method == 'GET':
-
-            if skill_id is None:
-
-                skills = employee.emp_lang_skills.all()
-
-                serializer = EmpLangSkillSerializer(
-                    skills,
-                    many=True,
-                    context={'request': request}
-                )
-
-                return Response(
-                    serializer.data,
-                    status=status.HTTP_200_OK
-                )
-
-            try:
-                skill = employee.emp_lang_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_lang_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Language skill not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = EmpLangSkillSerializer(
-                skill,
-                context={'request': request}
-            )
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # POST
-        if request.method == 'POST':
-
-            if skill_id is not None:
-                return Response(
-                    {
-                        'error': (
-                            'POST is only allowed without skill ID.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpLangSkillSerializer(
-                data=data,
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # PUT / PATCH
-        if request.method in ['PUT', 'PATCH']:
-
-            if skill_id is None:
-                return Response(
-                    {
-                        'error': 'Skill ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                skill = employee.emp_lang_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_lang_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Language skill not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = EmpLangSkillSerializer(
-                skill,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # DELETE
-        if request.method == 'DELETE':
-
-            if skill_id is None:
-                return Response(
-                    {
-                        'error': 'Skill ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                skill = employee.emp_lang_skills.get(
-                    pk=skill_id
-                )
-            except employee.emp_lang_skills.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Language skill not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            skill.delete()
-
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
-
-    # ============================================================
-    # ATTENDANCE - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def attendance(self, request, pk=None):
-
-        employee = self.get_object()
-
-        attendance = employee.get_attendance()
-
-        serializer = AttendanceSerializer(
-            attendance,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # LEAVE BALANCE - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def leave_balance(self, request, pk=None):
-
-        employee = self.get_object()
-
-        # Employee leave balance
-        leave_balance = employee.get_leave_balance()
-
-        # Pending leave requests
-        pending_leave_types = employee_leave_request.objects.filter(
-            employee=employee,
-            status="pending"
-        ).values_list(
-            "leave_type",
-            flat=True
-        )
-
-        # Leave types not currently pending
-        available_leave_types = leave_type.objects.exclude(
-            id__in=pending_leave_types
-        )
-
-        leave_balance_serializer = EmployeeLeaveBalanceSerializer(
-            leave_balance,
-            many=True,
-            context={'request': request}
-        )
-
-        leave_type_serializer = LeaveTypeSerializer(
-            available_leave_types,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            {
-                'leave_balance': leave_balance_serializer.data,
-                'available_leave_types': leave_type_serializer.data,
-            },
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # PAYSLIPS - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def emp_payslip(self, request, pk=None):
-
-        employee = self.get_object()
-
-        payslips = employee.payslips.filter(
-            status="Approved"
-        )
-
-        serializer = PayslipSerializer(
-            payslips,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # ASSETS - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def emp_asset(self, request, pk=None):
-
-        employee = self.get_object()
-
-        allocations = employee.allocations.all()
-
-        serializer = AssetAllocationSerializer(
-            allocations,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # ANNOUNCEMENTS - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def emp_announcement(self, request, pk=None):
-
-        employee = self.get_object()
-
-        announcements = employee.employee_announcements.all()
-
-        serializer = AnnouncementSerializer(
-            announcements,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # LOANS - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def emp_loan(self, request, pk=None):
-
-        employee = self.get_object()
-
-        loans = employee.loan.all()
-
-        serializer = LoanApplicationSerializer(
-            loans,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # ADVANCE SALARY - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def emp_adv_salary(self, request, pk=None):
-
-        employee = self.get_object()
-
-        advance_salary_requests = (
-            employee.advance_salary_requests.all()
-        )
-
-        serializer = AdvanceSalaryRequestSerializer(
-            advance_salary_requests,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # BANK DETAILS
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_bank_details(?:/(?P<bank_id>[^/.]+))?'
-    )
-    def emp_bank_details(
-        self,
-        request,
-        pk=None,
-        bank_id=None
-    ):
-
-        employee = self.get_object()
-
-        # --------------------------------------------------------
-        # GET
-        # --------------------------------------------------------
-
-        if request.method == 'GET':
-
-            if bank_id is None:
-
-                banks = employee.bank_details.all()
-
-                serializer = EmpBankDetailsSerializer(
-                    banks,
-                    many=True,
-                    context={'request': request}
-                )
-
-                return Response(
-                    serializer.data,
-                    status=status.HTTP_200_OK
-                )
-
-            try:
-                bank = employee.bank_details.get(
-                    pk=bank_id
-                )
-            except employee.bank_details.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Bank detail not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = EmpBankDetailsSerializer(
-                bank,
-                context={'request': request}
-            )
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # POST
-        # --------------------------------------------------------
-
-        if request.method == 'POST':
-
-            if bank_id is not None:
-                return Response(
-                    {
-                        'error': (
-                            'POST is only allowed without bank ID.'
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            data = request.data.copy()
-
-            # Automatically assign employee
-            data['employee'] = employee.pk
-
-            serializer = EmpBankDetailsSerializer(
-                data=data,
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # --------------------------------------------------------
-        # PUT / PATCH
-        # --------------------------------------------------------
-
-        if request.method in ['PUT', 'PATCH']:
-
-            if bank_id is None:
-                return Response(
-                    {
-                        'error': 'Bank ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                bank = employee.bank_details.get(
-                    pk=bank_id
-                )
-            except employee.bank_details.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Bank detail not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-
-            # Employee cannot be changed through this endpoint
-            data['employee'] = employee.pk
-
-            serializer = EmpBankDetailsSerializer(
-                bank,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_200_OK
-            )
-
-        # --------------------------------------------------------
-        # DELETE
-        # --------------------------------------------------------
-
-        if request.method == 'DELETE':
-
-            if bank_id is None:
-                return Response(
-                    {
-                        'error': 'Bank ID is required in the URL.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                bank = employee.bank_details.get(
-                    pk=bank_id
-                )
-            except employee.bank_details.model.DoesNotExist:
-                return Response(
-                    {
-                        'error': (
-                            'Bank detail not found for this employee.'
-                        )
-                    },
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            bank.delete()
-
-            return Response(
-                status=status.HTTP_204_NO_CONTENT
-            )
-
-    # ============================================================
-    # PROJECTS - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def emp_projects(self, request, pk=None):
-
-        employee = self.get_object()
-
-        projects = Project.objects.filter(
-            models.Q(managers=employee) |
-            models.Q(members=employee)
-        ).distinct()
-
-        serializer = ProjectSerializer(
-            projects,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-
-    # ============================================================
-    # RESIGNATION - READ ONLY
-    # ============================================================
-
-    @action(
-        detail=True,
-        methods=['GET']
-    )
-    def emp_resignation(self, request, pk=None):
-
-        employee = self.get_object()
-
-        resignation = employee.resignation_requests.filter(
-            status='APPROVED'
-        )
-
-        serializer = EmployeeResignationSerializer(
-            resignation,
-            many=True,
-            context={'request': request}
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_200_OK
-        )
-    # @action(
-    #     detail=True,
-    #     methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    #     url_path=r'emp_family(?:/(?P<family_id>[^/.]+))?'
-    # )
-    # def emp_family(self, request, pk=None, family_id=None):
-
-    #     # =====================================================
-    #     # GET EMPLOYEE
-    #     # =====================================================
-
-    #     employee = self.get_object()
-
-    #     # =====================================================
-    #     # GET
-    #     # =====================================================
-
-    #     if request.method == 'GET':
-
-    #         # ---------------------------------------------
-    #         # GET ALL FAMILY MEMBERS
-    #         #
-    #         # /Employee/15/emp_family/
-    #         # ---------------------------------------------
-
-    #         if family_id is None:
-
-    #             family_members = employee.emp_family.all()
-
-    #             serializer = EmpFamSerializer(
-    #                 family_members,
-    #                 many=True,
-    #                 context={'request': request}
-    #             )
-
-    #             return Response(
-    #                 serializer.data,
-    #                 status=status.HTTP_200_OK
-    #             )
-
-    #         # ---------------------------------------------
-    #         # GET SINGLE FAMILY MEMBER
-    #         #
-    #         # /Employee/15/emp_family/5/
-    #         # ---------------------------------------------
-
-    #         try:
-    #             family_member = employee.emp_family.get(
-    #                 pk=family_id
-    #             )
-
-    #         except emp_family.DoesNotExist:
-    #             return Response(
-    #                 {
-    #                     'error': 'Family member not found for this employee.'
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND
-    #             )
-
-    #         serializer = EmpFamSerializer(
-    #             family_member,
-    #             context={'request': request}
-    #         )
-
-    #         return Response(
-    #             serializer.data,
-    #             status=status.HTTP_200_OK
-    #         )
-
-    #     # =====================================================
-    #     # POST - CREATE FAMILY MEMBER
-    #     # =====================================================
-
-    #     if request.method == 'POST':
-
-    #         # POST should not contain family ID
-    #         if family_id is not None:
-    #             return Response(
-    #                 {
-    #                     'error': 'POST is only allowed without family member ID.'
-    #                 },
-    #                 status=status.HTTP_400_BAD_REQUEST
-    #             )
-
-    #         data = request.data.copy()
-
-    #         # Automatically assign employee
-    #         data['emp_id'] = employee.pk
-
-    #         serializer = EmpFamSerializer(
-    #             data=data,
-    #             context={'request': request}
-    #         )
-
-    #         serializer.is_valid(raise_exception=True)
-
-    #         serializer.save()
-
-    #         return Response(
-    #             serializer.data,
-    #             status=status.HTTP_201_CREATED
-    #         )
-
-    #     # =====================================================
-    #     # PUT / PATCH - UPDATE FAMILY MEMBER
-    #     # =====================================================
-
-    #     if request.method in ['PUT', 'PATCH']:
-
-    #         # Family ID must come from URL
-    #         if family_id is None:
-    #             return Response(
-    #                 {
-    #                     'error': 'Family member ID is required in the URL.'
-    #                 },
-    #                 status=status.HTTP_400_BAD_REQUEST
-    #             )
-
-    #         # ---------------------------------------------
-    #         # Find family member belonging to this employee
-    #         # ---------------------------------------------
-
-    #         try:
-    #             family_member = employee.emp_family.get(
-    #                 pk=family_id
-    #             )
-
-    #         except emp_family.DoesNotExist:
-    #             return Response(
-    #                 {
-    #                     'error': 'Family member not found for this employee.'
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND
-    #             )
-
-    #         # ---------------------------------------------
-    #         # Copy request data
-    #         # ---------------------------------------------
-
-    #         data = request.data.copy()
-
-    #         # Keep employee fixed
-    #         data['emp_id'] = employee.pk
-
-    #         # PUT = complete update
-    #         # PATCH = partial update
-    #         partial = request.method == 'PATCH'
-
-    #         serializer = EmpFamSerializer(
-    #             family_member,
-    #             data=data,
-    #             partial=partial,
-    #             context={'request': request}
-    #         )
-
-    #         serializer.is_valid(raise_exception=True)
-
-    #         serializer.save()
-
-    #         return Response(
-    #             serializer.data,
-    #             status=status.HTTP_200_OK
-    #         )
-
-    #     # =====================================================
-    #     # DELETE
-    #     # =====================================================
-
-    #     if request.method == 'DELETE':
-
-    #         # Family ID must come from URL
-    #         if family_id is None:
-    #             return Response(
-    #                 {
-    #                     'error': 'Family member ID is required in the URL.'
-    #                 },
-    #                 status=status.HTTP_400_BAD_REQUEST
-    #             )
-
-    #         # ---------------------------------------------
-    #         # Find family member belonging to this employee
-    #         # ---------------------------------------------
-
-    #         try:
-    #             family_member = employee.emp_family.get(
-    #                 pk=family_id
-    #             )
-
-    #         except emp_family.DoesNotExist:
-    #             return Response(
-    #                 {
-    #                     'error': 'Family member not found for this employee.'
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND
-    #             )
-
-    #         family_member.delete()
-
-    #         return Response(
-    #             {
-    #                 'message': 'Family member deleted successfully.'
-    #             },
-    #             status=status.HTTP_204_NO_CONTENT
-    #         )
-    # # @action(detail=True, methods=['POST', 'GET'])
-    # # def emp_family(self, request, pk=None):
-    # #     employee = self.get_object()
-
-    # #     if request.method == 'POST':
-    # # # Add the employee.pk to the request data
-    # #         request.data['emp_id'] = employee.pk
-
-    # #         serializer = EmpFamSerializer(data=request.data, context={'request': request})
-    # #         serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
-    # #         serializer.save()
-    # #         return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-    # #     elif request.method == 'GET':
-    # #         family_members = employee.emp_family.all()
-    # #         serializer = EmpFamSerializer(family_members, many=True)
-    # #         return Response(serializer.data)
-    # #     elif request.method == 'PUT':
-    # #         family_member_id = request.data.get('id')
-
-    # #         if not family_member_id:
-    # #             return Response(
-    # #                 {'error': 'Family member id is required.'},
-    # #                 status=status.HTTP_400_BAD_REQUEST
-    # #             )
-
-    # #         try:
-    # #             family_member = employee.emp_family.get(
-    # #                 pk=family_member_id
-    # #             )
-    # #         except EmpFam.DoesNotExist:
-    # #             return Response(
-    # #                 {'error': 'Family member not found for this employee.'},
-    # #                 status=status.HTTP_404_NOT_FOUND
-    # #             )
-
-    # #         data = request.data.copy()
-    # #         data['emp_id'] = employee.pk
-
-    # #         serializer = EmpFamSerializer(
-    # #             family_member,
-    # #             data=data,
-    # #             context={'request': request}
-    # #         )
-
-    # #         serializer.is_valid(raise_exception=True)
-    # #         serializer.save()
-
-    # #         return Response(
-    # #             serializer.data,
-    # #             status=status.HTTP_200_OK
-    # #         )
     # @action(detail=True, methods=['POST', 'GET'])
-    # def emp_qualification(self, request, pk=None):
+    # def emp_family(self, request, pk=None):
     #     employee = self.get_object()
-    #     if request.method == 'POST':
-    #     # Add the employee.pk to the request data
-    #         request.data['emp_id'] = employee.pk
 
-    #         serializer = Emp_qf_Serializer(data=request.data, context={'request': request})
-    #         serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
-    #         serializer.save()
-    #         return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-    #     elif request.method == 'GET':
-    #         family_members = employee.emp_qualification.all()
-    #         serializer = Emp_qf_Serializer(family_members, many=True)
-    #         return Response(serializer.data)
-
-    # @action(detail=True, methods=['POST', 'GET'])
-    # def emp_job_history(self, request, pk=None):
-    #     employee = self.get_object()
     #     if request.method == 'POST':
     # # Add the employee.pk to the request data
     #         request.data['emp_id'] = employee.pk
 
-    #         serializer = EmpJobHistorySerializer(data=request.data, context={'request': request})
+    #         serializer = EmpFamSerializer(data=request.data, context={'request': request})
     #         serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
     #         serializer.save()
     #         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     #     elif request.method == 'GET':
-    #         family_members = employee.emp_job_history.all()
-    #         serializer = EmpJobHistorySerializer(family_members, many=True)
+    #         family_members = employee.emp_family.all()
+    #         serializer = EmpFamSerializer(family_members, many=True)
     #         return Response(serializer.data)
-    
+    #     elif request.method == 'PUT':
+    #         family_member_id = request.data.get('id')
 
+    #         if not family_member_id:
+    #             return Response(
+    #                 {'error': 'Family member id is required.'},
+    #                 status=status.HTTP_400_BAD_REQUEST
+    #             )
 
+    #         try:
+    #             family_member = employee.emp_family.get(
+    #                 pk=family_member_id
+    #             )
+    #         except EmpFam.DoesNotExist:
+    #             return Response(
+    #                 {'error': 'Family member not found for this employee.'},
+    #                 status=status.HTTP_404_NOT_FOUND
+    #             )
 
-    @action(detail=True, methods=['POST', 'GET','DELETE'])
-    def emp_documents(self, request, pk=None):
+    #         data = request.data.copy()
+    #         data['emp_id'] = employee.pk
+
+    #         serializer = EmpFamSerializer(
+    #             family_member,
+    #             data=data,
+    #             context={'request': request}
+    #         )
+
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
+
+    #         return Response(
+    #             serializer.data,
+    #             status=status.HTTP_200_OK
+    #         )
+    @action(detail=True, methods=['POST', 'GET'])
+    def emp_qualification(self, request, pk=None):
         employee = self.get_object()
         if request.method == 'POST':
-    # Add the employee.pk to the request data
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
+        # Add the employee.pk to the request data
+            request.data['emp_id'] = employee.pk
 
-            serializer = DocumentSerializer(data=data, context={'request': request})
+            serializer = Emp_qf_Serializer(data=request.data, context={'request': request})
             serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         elif request.method == 'GET':
-            family_members = employee.emp_documents.all()
-            serializer = DocumentSerializer(family_members, many=True)
+            family_members = employee.emp_qualification.all()
+            serializer = Emp_qf_Serializer(family_members, many=True)
             return Response(serializer.data)
+
+    @action(detail=True, methods=['POST', 'GET'])
+    def emp_job_history(self, request, pk=None):
+        employee = self.get_object()
+        if request.method == 'POST':
+    # Add the employee.pk to the request data
+            request.data['emp_id'] = employee.pk
+
+            serializer = EmpJobHistorySerializer(data=request.data, context={'request': request})
+            serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        elif request.method == 'GET':
+            family_members = employee.emp_job_history.all()
+            serializer = EmpJobHistorySerializer(family_members, many=True)
+            return Response(serializer.data)
+    
+
+
+
+    # @action(detail=True, methods=['POST', 'GET','DELETE'])
+    # def emp_documents(self, request, pk=None):
+    #     employee = self.get_object()
+    #     if request.method == 'POST':
+    # # Add the employee.pk to the request data
+    #         data = request.data.copy()
+    #         data['emp_id'] = employee.pk
+
+    #         serializer = DocumentSerializer(data=data, context={'request': request})
+    #         serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
+    #         serializer.save()
+    #         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    #     elif request.method == 'GET':
+    #         family_members = employee.emp_documents.all()
+    #         serializer = DocumentSerializer(family_members, many=True)
+    #         return Response(serializer.data)
     
     # @action(detail=True, methods=['POST', 'GET'])
     @action(detail=True, methods=['POST', 'GET', 'DELETE'])
@@ -2241,22 +612,22 @@ class EmpViewSet(viewsets.ModelViewSet):
             payslip = employee.advance_salary_requests.all()
             serializer = AdvanceSalaryRequestSerializer(payslip, many=True)
             return Response(serializer.data)
-    @action(detail=True, methods=['POST', 'GET'])
-    def emp_bank_details(self, request, pk=None):
-        employee = self.get_object()
+    # @action(detail=True, methods=['POST', 'GET'])
+    # def emp_bank_details(self, request, pk=None):
+    #     employee = self.get_object()
 
-        if request.method == 'POST':
-            request.data['employee'] = employee.pk
+    #     if request.method == 'POST':
+    #         request.data['employee'] = employee.pk
 
-            serializer = EmpBankDetailsSerializer(data=request.data, context={'request': request})
-            serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+    #         serializer = EmpBankDetailsSerializer(data=request.data, context={'request': request})
+    #         serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
+    #         serializer.save()
+    #         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        elif request.method == 'GET':
-            emp_banks = employee.bank_details.all()
-            serializer = EmpBankDetailsSerializer(emp_banks, many=True)
-            return Response(serializer.data)
+    #     elif request.method == 'GET':
+    #         emp_banks = employee.bank_details.all()
+    #         serializer = EmpBankDetailsSerializer(emp_banks, many=True)
+    #         return Response(serializer.data)
     @action(detail=True, methods=['GET'])
     def emp_projects(self, request, pk=None):
         employee = self.get_object()

@@ -612,25 +612,102 @@ class EmpViewSet(viewsets.ModelViewSet):
 
 
 
-    # @action(detail=True, methods=['POST', 'GET','DELETE'])
-    # def emp_documents(self, request, pk=None):
-    #     employee = self.get_object()
-    #     if request.method == 'POST':
-    # # Add the employee.pk to the request data
-    #         data = request.data.copy()
-    #         data['emp_id'] = employee.pk
+    @action(
+    detail=True,
+    methods=['POST', 'GET', 'DELETE', 'PUT', 'PATCH'],
+    url_path=r'emp_documents(?:/(?P<document_id>[^/.]+))?'
+)
+    def emp_documents(self, request, pk=None, document_id=None):
+        employee = self.get_object()
 
-    #         serializer = DocumentSerializer(data=data, context={'request': request})
-    #         serializer.is_valid(raise_exception=True)  # Raise exception for invalid data
-    #         serializer.save()
-    #         return Response(serializer.data, status=status.HTTP_201_CREATED)
+        if request.method == 'POST':
+            # Add the employee.pk to the request data
+            data = request.data.copy()
+            data['emp_id'] = employee.pk
 
-    #     elif request.method == 'GET':
-    #         family_members = employee.emp_documents.all()
-    #         serializer = DocumentSerializer(family_members, many=True)
-    #         return Response(serializer.data)
-    
-    # @action(detail=True, methods=['POST', 'GET'])
+            serializer = DocumentSerializer(
+                data=data,
+                context={'request': request}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        elif request.method == 'GET':
+            if document_id:
+                try:
+                    document = employee.emp_documents.get(pk=document_id)
+                except Emp_Documents.DoesNotExist:
+                    return Response(
+                        {'error': 'Document not found.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                serializer = DocumentSerializer(
+                    document,
+                    context={'request': request}
+                )
+                return Response(serializer.data)
+
+            family_members = employee.emp_documents.all()
+            serializer = DocumentSerializer(family_members, many=True)
+            return Response(serializer.data)
+
+        elif request.method in ['PUT', 'PATCH']:
+            if not document_id:
+                return Response(
+                    {'error': 'Document ID is required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                document = employee.emp_documents.get(pk=document_id)
+            except Emp_Documents.DoesNotExist:
+                return Response(
+                    {'error': 'Document not found.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            data = request.data.copy()
+            data['emp_id'] = employee.pk
+
+            serializer = DocumentSerializer(
+                document,
+                data=data,
+                partial=(request.method == 'PATCH'),
+                context={'request': request}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(serializer.data)
+
+        elif request.method == 'DELETE':
+            if not document_id:
+                return Response(
+                    {'error': 'Document ID is required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                document = employee.emp_documents.get(pk=document_id)
+            except Emp_Documents.DoesNotExist:
+                return Response(
+                    {'error': 'Document not found.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            document.delete()
+
+            return Response(
+                {'message': 'Document deleted successfully.'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        
     @action(detail=True, methods=['POST', 'GET', 'DELETE'])
     def emp_market_skills(self, request, pk=None):
         employee = self.get_object()

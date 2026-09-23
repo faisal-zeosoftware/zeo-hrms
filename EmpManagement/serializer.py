@@ -170,7 +170,6 @@ class EmpDocuments_Udf_Serializer(serializers.ModelSerializer):
 class DocumentSerializer(serializers.ModelSerializer):
     emp_id = serializers.PrimaryKeyRelatedField(queryset=emp_master.objects.all(),required=False)
     doc_custom_fields=DOC_CustomFieldValueSerializer(many=True, read_only=True, source='custom_field_values')
-    document_type = serializers.SlugRelatedField(queryset=document_type.objects.all(),slug_field='type_name',required=False)
     created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
     updated_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
     class Meta:

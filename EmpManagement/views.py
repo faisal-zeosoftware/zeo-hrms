@@ -613,10 +613,10 @@ class EmpViewSet(viewsets.ModelViewSet):
 
 
     @action(
-    detail=True,
-    methods=['POST', 'GET', 'DELETE', 'PUT', 'PATCH'],
-    url_path=r'emp_documents(?:/(?P<document_id>[^/.]+))?'
-)
+        detail=True,
+        methods=['POST', 'GET', 'DELETE', 'PUT', 'PATCH'],
+        url_path=r'emp_documents(?:/(?P<document_id>[^/.]+))?'
+    )
     def emp_documents(self, request, pk=None, document_id=None):
         employee = self.get_object()
 
@@ -653,8 +653,14 @@ class EmpViewSet(viewsets.ModelViewSet):
                 )
                 return Response(serializer.data)
 
-            family_members = employee.emp_documents.all()
-            serializer = DocumentSerializer(family_members, many=True)
+            documents = employee.emp_documents.all()
+
+            serializer = DocumentSerializer(
+                documents,
+                many=True,
+                context={'request': request}
+            )
+
             return Response(serializer.data)
 
         elif request.method in ['PUT', 'PATCH']:

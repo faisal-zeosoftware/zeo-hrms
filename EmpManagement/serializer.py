@@ -169,13 +169,33 @@ class EmpDocuments_Udf_Serializer(serializers.ModelSerializer):
 
 class DocumentSerializer(serializers.ModelSerializer):
     emp_id = serializers.PrimaryKeyRelatedField(queryset=emp_master.objects.all(),required=False)
-    document_type = serializers.SlugRelatedField( queryset=document_type.objects.all(), slug_field='type_name', required=False, allow_null=True )
+    document_type = serializers.PrimaryKeyRelatedField(queryset=document_type.objects.all(),required=False,allow_null=True)
     doc_custom_fields=DOC_CustomFieldValueSerializer(many=True, read_only=True, source='custom_field_values')
     created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
     updated_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
     class Meta:
         model = Emp_Documents
         fields = '__all__' 
+
+    def to_internal_value(self, data):
+        data = data.copy()
+
+        if 'document_type' in data:
+            value = data.get('document_type')
+
+            if value not in ['', None]:
+                if isinstance(value, str) and not value.isdigit():
+                    document_type_obj = document_type.objects.filter(
+                        type_name=value
+                    ).first()
+
+                    if document_type_obj:
+                        data['document_type'] = document_type_obj.pk
+                else:
+                    data['document_type'] = int(value)
+
+        return super().to_internal_value(data)
+
         
     def get_fields(self):
         fields = super().get_fields()
@@ -187,8 +207,8 @@ class DocumentSerializer(serializers.ModelSerializer):
             rep['emp_id'] = f"{instance.emp_id.emp_first_name or ''} {instance.emp_id.emp_last_name or ''}".strip()
         # if instance.emp_id:  # Check if emp_state_id is not None
         #     rep['emp_id'] = instance.emp_id.emp_first_name + " " + instance.emp_id.emp_last_name
-        # if instance.document_type:
-        #     rep['document_type'] = instance.document_type.type_name
+        if instance.document_type:
+            rep['document_type'] = instance.document_type.type_name
         return rep
     def create(self, validated_data):
         # Remove any non-existent or invalid fields

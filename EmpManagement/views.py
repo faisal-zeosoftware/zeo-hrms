@@ -3577,43 +3577,236 @@ class EmpBankBulkuploadViewSet(viewsets.ModelViewSet):
     queryset = EmployeeBankDetail.objects.all()
     serializer_class = EmpBankBulkuploadSerializer
     parser_classes = (MultiPartParser, FormParser)
+
+    @action(detail=False, methods=['get'])
+    def download_demo_excel(self, request):
+
+        columns = [
+            "Employee Code",
+            "Bank Name",
+            "Branch Name",
+            "Account Number",
+            "Bank Name",
+            "Route Code",
+            "IBAN/Account",
+            "Active"
+        ]
+
+        df = pd.DataFrame(columns=columns)
+
+        buffer = io.BytesIO()
+
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            df.to_excel(
+                writer,
+                index=False,
+                sheet_name="Employee Bank Details"
+            )
+
+        buffer.seek(0)
+
+        response = HttpResponse(
+            buffer,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        response["Content-Disposition"] = (
+            'attachment; filename="emp_bank_details_sheet.xlsx"'
+        )
+
+        return response
+
+    @action(detail=False, methods=['get'])
+    def download_demo_csv(self, request):
+
+        columns = [
+             "Employee Code",
+             "Bank Name",
+             "Branch Name",
+             "Account Number",
+             "Bank Name",
+             "Route Code",
+             "IBAN/Account",
+             "Active"
+        ]
+
+        df = pd.DataFrame(columns=columns)
+
+        buffer = io.StringIO()
+
+        df.to_csv(buffer, index=False)
+
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type="text/csv"
+        )
+
+        response["Content-Disposition"] = (
+            'attachment; filename="emp_bank_details_sheet.csv"'
+        )
+
+        return response
+
+
+
     
-    @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    @action(
+        detail=False,
+        methods=['post'],
+        parser_classes=[MultiPartParser, FormParser]
+    )
     def bulk_upload(self, request):
-        if request.method == 'POST' and request.FILES.get('file'):
-            excel_file = request.FILES['file']
-            if excel_file.name.endswith('.xlsx'):
-                try:
-                    dataset = Dataset()
-                    dataset.load(excel_file.read(), format='xlsx')
-                    resource = EmpBankDetailsResource()
-                    all_errors = []
-                    valid_rows = []
-                    with transaction.atomic():
-                        for row_idx, row in enumerate(dataset.dict, start=2):
-                            row_errors = []
-                            try:
-                                resource.before_import_row(row, row_idx=row_idx)
-                            except ValidationError as e:
-                                row_errors.extend([f"Row {row_idx}: {error}" for error in e.messages])
-                            if row_errors:
-                                all_errors.extend(row_errors)
-                            else:
-                                valid_rows.append(row)
 
-                    if all_errors:
-                        return Response({"errors": all_errors}, status=400)
+        if 'file' not in request.FILES:
+            return Response(
+                {"error": "Please provide a file."},
+                status=400
+            )
 
-                    with transaction.atomic():
-                        result = resource.import_data(dataset, dry_run=False, raise_errors=True)
+        upload_file = request.FILES['file']
+        filename = upload_file.name.lower()
 
-                    return Response({"message": f"{result.total_rows} records created successfully"})
-                except Exception as e:
-                    return Response({"error": str(e)}, status=400)
+        all_errors = {
+            "sheet1_errors": []
+        }
+
+        try:
+
+            dataset = Dataset()
+            dataset.headers = []
+
+            # ======================================================
+            # XLS / XLSX
+            # ======================================================
+
+            if filename.endswith(('.xlsx', '.xls')):
+
+                workbook = load_workbook(
+                    upload_file,
+                    data_only=True
+                )
+
+                # Use the first sheet for Bank Details
+                if not workbook.sheetnames:
+                    return Response(
+                        {"error": "Bank Details sheet is missing"},
+                        status=400
+                    )
+
+                sheet1 = workbook[workbook.sheetnames[0]]
+
+                dataset.headers = [
+                    cell.value
+                    for cell in sheet1[1]
+                ]
+
+                for row in sheet1.iter_rows(min_row=2):
+                    dataset.append([
+                        cell.value
+                        for cell in row
+                    ])
+
+            # ======================================================
+            # CSV
+            # ======================================================
+
+            elif filename.endswith('.csv'):
+
+                file_data = upload_file.read().decode("utf-8")
+
+                csv_reader = csv.DictReader(
+                    io.StringIO(file_data)
+                )
+
+                headers = csv_reader.fieldnames
+
+                dataset.headers = headers
+
+                for row in csv_reader:
+
+                    dataset.append([
+                        row.get(column, '')
+                        for column in headers
+                    ])
+
             else:
-                return Response({"error": "Invalid file format. Only Excel files (.xlsx) are supported."}, status=400)
-        else:
-            return Response({"error": "Please provide an Excel file."}, status=400)
+
+                return Response(
+                    {
+                        "error": (
+                            "Invalid file format. "
+                            "Only .xlsx, .xls, .csv supported."
+                        )
+                    },
+                    status=400
+                )
+
+            bank_resource = EmpBankDetailsResource()
+
+            for row_idx, row in enumerate(
+                dataset.dict,
+                start=2
+            ):
+
+                try:
+
+                    bank_resource.before_import_row(
+                        row,
+                        row_idx=row_idx
+                    )
+
+                except ValidationError as e:
+
+                    if hasattr(e, 'messages'):
+
+                        for error in e.messages:
+
+                            all_errors["sheet1_errors"].append({
+                                "row": row_idx,
+                                "error": str(error)
+                            })
+
+                    else:
+
+                        all_errors["sheet1_errors"].append({
+                            "row": row_idx,
+                            "error": str(e)
+                        })
+
+            if all_errors["sheet1_errors"]:
+
+                return Response(
+                    {
+                        "errors": all_errors
+                    },
+                    status=400
+                )
+            with transaction.atomic():
+
+                bank_result = bank_resource.import_data(
+                    dataset,
+                    dry_run=False,
+                    raise_errors=True
+                )
+
+            return Response(
+                {
+                    "message": (
+                        f"{bank_result.total_rows} "
+                        f"Employee Bank Details records "
+                        f"created successfully."
+                    )
+                }
+            )
+
+        except Exception as e:
+
+            return Response(
+                {
+                    "error": str(e)
+                },
+                status=400
+            )
 class DocRequestTypeViewset(viewsets.ModelViewSet):
     queryset = DocRequestType.objects.all()
     serializer_class = DocRequestTypeSerializer

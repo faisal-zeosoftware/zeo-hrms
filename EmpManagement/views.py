@@ -3586,7 +3586,7 @@ class EmpBankBulkuploadViewSet(viewsets.ModelViewSet):
             "Bank Name",
             "Branch Name",
             "Account Number",
-            "Bank Name",
+            "Bank Address",
             "Route Code",
             "IBAN/Account",
             "Active"
@@ -3624,7 +3624,7 @@ class EmpBankBulkuploadViewSet(viewsets.ModelViewSet):
              "Bank Name",
              "Branch Name",
              "Account Number",
-             "Bank Name",
+             "Bank Address",
              "Route Code",
              "IBAN/Account",
              "Active"

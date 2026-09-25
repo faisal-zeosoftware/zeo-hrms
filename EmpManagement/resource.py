@@ -714,9 +714,10 @@ class EmpBankDetailsResource(resources.ModelResource):
     account_number     = fields.Field(attribute='account_number', column_name='Account Number')
     route_code         = fields.Field(attribute='route_code', column_name='Route Code')
     iban_number        = fields.Field(attribute='iban_number', column_name='IBAN/Account')
+    bank_address       = fields.Field(attribute='bank_address',column_name='Bank Address') 
     class Meta:
         model = EmployeeBankDetail
-        fields = ('employee', 'bank_name', 'branch_name','account_number','route_code','iban_number')
+        fields = ('employee', 'bank_name', 'branch_name','account_number','route_code','iban_number','bank_address')
         import_id_fields = ()
 
     def before_import_row(self, row, **kwargs):

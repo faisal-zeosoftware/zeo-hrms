@@ -487,7 +487,7 @@ def validate_employee_geofence(employee, lat, lng):
     ).filter(
         Q(employee__in=[employee]) | Q(branch=employee.emp_branch_id)
     ).distinct()
-
+    print("GEOFENCE LOCATIONS FOUND:", locations.count(), list(locations.values_list('id', 'location_name')))
     if not locations.exists():
         return True  # No restriction → allow
 
@@ -666,6 +666,114 @@ def get_employee_attendance_validation_policy(employee):
         is_active=True
     ).first()
     return policy
+def apply_late_early_penalties(attendance):
+    """
+    Evaluates the given Attendance record against LateComingPolicy and EarlyExitPolicy.
+    If violations reach the threshold for the evaluation period, deducts leaves.
+    """
+    from calendars.models import LateComingPolicy, EarlyExitPolicy, Attendance, employee_leave_request
+    from django.db.models import Q
+    from datetime import datetime, timedelta
+    
+    employee = attendance.employee
+    att_policy = get_active_policy(employee)
+    
+    if not att_policy or not attendance.shift:
+        return
+        
+    shift = attendance.shift
+    
+    # --- LATE COMING CHECK ---
+    late_policy = LateComingPolicy.objects.filter(enabled=True).filter(
+        Q(employee=employee) | Q(attendance_policy=att_policy)
+    ).first()
+    
+    if late_policy and attendance.check_in_time and shift.start_time:
+        grace_minutes = att_policy.late_check_in_minutes if att_policy.late_check_in else 0
+        expected_time = (datetime.combine(attendance.date, shift.start_time) + timedelta(minutes=grace_minutes)).time()
+        
+        if attendance.check_in_time > expected_time:
+            # Count violations in the current month
+            start_of_month = attendance.date.replace(day=1)
+            
+            month_attendances = Attendance.objects.filter(
+                employee=employee,
+                date__gte=start_of_month,
+                date__lte=attendance.date,
+                check_in_time__isnull=False
+            ).select_related('shift')
+            
+            late_count = 0
+            for att in month_attendances:
+                if att.shift and att.shift.start_time:
+                    att_expected = (datetime.combine(att.date, att.shift.start_time) + timedelta(minutes=grace_minutes)).time()
+                    if att.check_in_time > att_expected:
+                        late_count += 1
+                        
+            if late_count > 0 and late_count % late_policy.threshold_count == 0:
+                apply_penalty(employee, late_policy, attendance.date, f"Late Coming Penalty ({late_count} occurrences)")
+
+    # --- EARLY GOING CHECK ---
+    early_policy = EarlyExitPolicy.objects.filter(enabled=True).filter(
+        Q(employee=employee) | Q(attendance_policy=att_policy)
+    ).first()
+    
+    if early_policy and attendance.check_out_time and shift.end_time:
+        grace_minutes = att_policy.early_check_out_minutes if att_policy.early_check_out else 0
+        expected_time = (datetime.combine(attendance.date, shift.end_time) - timedelta(minutes=grace_minutes)).time()
+        
+        if attendance.check_out_time < expected_time:
+            start_of_month = attendance.date.replace(day=1)
+            
+            month_attendances = Attendance.objects.filter(
+                employee=employee,
+                date__gte=start_of_month,
+                date__lte=attendance.date,
+                check_out_time__isnull=False
+            ).select_related('shift')
+            
+            early_count = 0
+            for att in month_attendances:
+                if att.shift and att.shift.end_time:
+                    att_expected = (datetime.combine(att.date, att.shift.end_time) - timedelta(minutes=grace_minutes)).time()
+                    if att.check_out_time < att_expected:
+                        early_count += 1
+                        
+            if early_count > 0 and early_count % early_policy.threshold_count == 0:
+                apply_penalty(employee, early_policy, attendance.date, f"Early Exit Penalty ({early_count} occurrences)")
+
+
+def apply_penalty(employee, policy, date, reason):
+    """
+    Creates an auto-approved leave request to deduct leave balance as penalty.
+    """
+    from calendars.models import employee_leave_request
+    
+    leave_type = policy.deduct_from_leave_type
+    if not leave_type:
+        return
+        
+    days_to_deduct = float(policy.leave_days_to_deduct)
+    is_half_day = days_to_deduct <= 0.5
+    
+    # Avoid duplicating penalties for the exact same date and reason
+    if employee_leave_request.objects.filter(employee=employee, start_date=date, reason=reason).exists():
+        return
+    
+    employee_leave_request.objects.create(
+        employee=employee,
+        branch=employee.emp_branch_id,
+        leave_type=leave_type,
+        start_date=date,
+        end_date=date,
+        reason=reason,
+        status='approved',
+        dis_half_day=is_half_day,
+        half_day_period='first_half' if is_half_day else None,
+        number_of_days=days_to_deduct,
+        applied_days=days_to_deduct,
+        approved_days=days_to_deduct
+    )
 
 from .models import (
     emp_leave_balance,

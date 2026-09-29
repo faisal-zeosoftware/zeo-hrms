@@ -504,6 +504,24 @@ class AttendanceLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceLog
         fields = ['id', 'attendance', 'log_type', 'timestamp', 'lat', 'lng', 'location', 'is_face_verified', 'verification_photo','auth_method']
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+
+        request = self.context.get('request')
+
+        if instance.verification_photo:
+            image_url = instance.verification_photo.url
+
+            if request:
+                image_url = request.build_absolute_uri(
+                    image_url
+                )
+
+            rep['verification_photo'] = image_url
+        else:
+            rep['verification_photo'] = None
+
+        return rep
 class AttendanceSerializer(serializers.ModelSerializer):
     logs = AttendanceLogSerializer(many=True, read_only=True)
     class Meta:

@@ -791,9 +791,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         emp_id = request.data.get("employee")
         barcode = request.data.get("barcode")
+        lat = (
+        request.data.get("latitude")
+        or request.data.get("lat")
+        or request.data.get("check_in_lat")
+        or request.data.get("check_out_lat")
+    )
 
-        lat = request.data.get("lat") or request.data.get("check_in_lat") or request.data.get("check_out_lat")
-        lng = request.data.get("lng") or request.data.get("check_in_lng") or request.data.get("check_out_lng")
+        lng = (
+        request.data.get("longitude")
+        or request.data.get("lng")
+        or request.data.get("check_in_lng")
+        or request.data.get("check_out_lng")
+    )
+        # lat = request.data.get("lat") or request.data.get("check_in_lat") or request.data.get("check_out_lat")
+        # lng = request.data.get("lng") or request.data.get("check_in_lng") or request.data.get("check_out_lng")
         location = request.data.get("location") or request.data.get("check_in_location") or request.data.get("check_out_location")
 
         face_photo = face_utils.convert_base64_to_file(
@@ -801,11 +813,25 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             "face"
         )
 
+        # punch_image = face_utils.convert_base64_to_file(
+        #     request.FILES.get("punch_image") or request.data.get("punch_image") or request.FILES.get("check_in_image") or request.data.get("check_in_image") or request.FILES.get("check_out_image") or request.data.get("check_out_image"),
+        #     "punch"
+        # )
         punch_image = face_utils.convert_base64_to_file(
-            request.FILES.get("punch_image") or request.data.get("punch_image") or request.FILES.get("check_in_image") or request.data.get("check_in_image") or request.FILES.get("check_out_image") or request.data.get("check_out_image"),
-            "punch"
-        )
+        request.FILES.get("attendance_image")
+        or request.data.get("attendance_image")
 
+        or request.FILES.get("punch_image")
+        or request.data.get("punch_image")
+
+        or request.FILES.get("check_in_image")
+        or request.data.get("check_in_image")
+
+        or request.FILES.get("check_out_image")
+        or request.data.get("check_out_image"),
+
+        "punch"
+        )
         # 🔐 RESOLVE EMPLOYEE
         employee = None
         if barcode:
@@ -935,7 +961,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             lng=lng,
             location=location,
             is_face_verified=is_verified,
-            auth_method=auth_method
+            auth_method=auth_method,
+            verification_photo=punch_image,
         )
 
         if punch_type == 'check_out':

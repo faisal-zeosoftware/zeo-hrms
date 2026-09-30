@@ -499,6 +499,16 @@ class EmpSerializer(serializers.ModelSerializer):
     
     # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
     # updated_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+
+    def validate_person_id(self, value):
+        if value and len(value) != 14:
+            raise serializers.ValidationError(
+                "Person ID must be exactly 14 characters."
+            )
+        return value
+
+    
     class Meta:
         model = emp_master
         fields = '__all__' 

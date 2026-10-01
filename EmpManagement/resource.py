@@ -378,22 +378,29 @@ class EmployeeResource(resources.ModelResource):
 
         # 1️⃣5️⃣ Person ID Validation
         person_id = row.get('Person ID')
+
         if person_id:
             person_id = str(person_id).strip()
-            try:
-                if 'e' in person_id.lower():
-                    person_id = str(int(float(person_id)))
-            except Exception:
-                errors.append(f"Invalid Person ID format: '{person_id}'")
 
-            if not re.fullmatch(r'^\d{14}$', person_id):
-                errors.append(f"Invalid Person ID '{person_id}'. Must be exactly 14 digits.")
+            # Person ID must be exactly 14 characters
+            if len(person_id) != 14:
+                errors.append(
+                    f"Invalid Person ID '{person_id}'. "
+                    f"Must be exactly 14 characters."
+                )
+
+            # Allow letters, numbers and hyphen
+            elif not re.fullmatch(r'^[A-Za-z0-9-]{14}$', person_id):
+                errors.append(
+                    f"Invalid Person ID format: '{person_id}'"
+                )
+
             else:
                 row['person_id'] = person_id
-                # if emp_master.objects.filter(person_id=person_id).exists():
-                #     errors.append(f"Person ID '{person_id}' already exists. Must be unique.")
+
         else:
             row['person_id'] = None
+            
         #date validation
         date_fields = ['Date of Birth(DD/MM/YYYY)*', 'Joining Date(DD/MM/YYYY)*', 'Confirmaton Date(DD/MM/YYYY)']
         for field in date_fields:

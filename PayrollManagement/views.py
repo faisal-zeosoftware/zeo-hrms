@@ -297,6 +297,14 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 raise ValidationError(
                     "At least one branch is required, or employee branch info is missing."
                 )
+
+            #validation
+            for branch in branches: 
+                workflow = ( PayslipApprovalWorkflow.objects .filter( branch=branch).first() ) 
+                # No workflow configured 
+                if not workflow:
+                    raise ValidationError( f"No payroll approval level is configured for " f"branch {branch}." )
+                
  
             # Save the run itself first (without branch — it's handled via the
             # through model below, not a plain .set()).

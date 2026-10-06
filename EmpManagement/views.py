@@ -304,68 +304,99 @@ class EmpViewSet(viewsets.ModelViewSet):
     #             status=status.HTTP_200_OK
     #         )
     @action(
-        detail=True,
-        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-        url_path=r'emp_qualification(?:/(?P<qualification_id>[^/.]+))?',
-        serializer_class=Emp_qf_Serializer,   # <-- add this
-    )
-    def emp_qalification(self, request, pk=None, qualification_id=None):
+    detail=True,
+    methods=['POST', 'GET', 'DELETE', 'PUT', 'PATCH'],
+    url_path=r'emp_qualification(?:/(?P<qualification_id>[^/.]+))?'
+)
+    def emp_qualification(self, request, pk=None, qualification_id=None):
         employee = self.get_object()
 
-        # ---------- LIST / CREATE ----------
-        if qualification_id is None:
-            if request.method == 'GET':
-                qs = EmpQualification.objects.filter(emp_id=employee).order_by('id')
-                return Response(
-                    Emp_qf_Serializer(qs, many=True, context={'request': request}).data
-                )
-
-            if request.method == 'POST':
-                data = request.data.copy()
-                data.pop('emp_id', None)
-                serializer = Emp_qf_Serializer(data=data, context={'request': request})
-                serializer.is_valid(raise_exception=True)
-                obj = serializer.save(emp_id=employee)
-                return Response(
-                    Emp_qf_Serializer(obj, context={'request': request}).data,
-                    status=status.HTTP_201_CREATED,
-                )
-
-            return Response(
-                {'error': 'Employee Qualification ID is required in the URL.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # ---------- DETAIL ----------
         if request.method == 'POST':
-            return Response(
-                {'error': 'POST is only allowed without Employee Qualification ID.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        emp_qualification = get_object_or_404( EmpQualification, pk=qualification_id, emp_id=employee)
-
-        if request.method == 'GET':
-            return Response(
-                Emp_qf_Serializer(emp_qualification, context={'request': request}).data
-            )
-
-        if request.method in ('PUT', 'PATCH'):
+            # Add the employee.pk to the request data
             data = request.data.copy()
-            data.pop('emp_id', None)
-            serializer =Emp_qf_Serializer(
-                self.emp_qalification,
+            data['emp_id'] = employee.pk
+
+            serializer = Emp_qf_Serializer(
                 data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request},
+                context={'request': request}
             )
             serializer.is_valid(raise_exception=True)
-            obj = serializer.save(emp_qualification=employee)
-            return Response(Emp_qf_Serializer(obj, context={'request': request}).data)
+            serializer.save()
 
-        if request.method == 'DELETE':
-            emp_qualification.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        elif request.method == 'GET':
+            if qualification_id:
+                try:
+                    qualification = employee.emp_qualification.get(pk=qualification_id)
+                except Emp_Qualification.DoesNotExist:
+                    return Response(
+                        {'error': 'Qualification not found.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                serializer = Emp_qf_Serializer(
+                    qualification,
+                    context={'request': request}
+                )
+                return Response(serializer.data)
+
+            family_members = employee.emp_qualification.all()
+            serializer = Emp_qf_Serializer(family_members, many=True)
+            return Response(serializer.data)
+
+        elif request.method in ['PUT', 'PATCH']:
+            if not qualification_id:
+                return Response(
+                    {'error': 'Qualification ID is required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                qualification = employee.emp_qualification.get(pk=qualification_id)
+            except Emp_Qualification.DoesNotExist:
+                return Response(
+                    {'error': 'Qualification not found.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            data = request.data.copy()
+            data['emp_id'] = employee.pk
+
+            serializer = Emp_qf_Serializer(
+                qualification,
+                data=data,
+                partial=(request.method == 'PATCH'),
+                context={'request': request}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(serializer.data)
+
+        elif request.method == 'DELETE':
+            if not qualification_id:
+                return Response(
+                    {'error': 'Qualification ID is required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                qualification = employee.emp_qualification.get(pk=qualification_id)
+            except Emp_Qualification.DoesNotExist:
+                return Response(
+                    {'error': 'Qualification not found.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            qualification.delete()
+
+            return Response(
+                {'message': 'Qualification deleted successfully.'},
+                status=status.HTTP_204_NO_CONTENT)
 
             
     @action(

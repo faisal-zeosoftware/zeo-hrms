@@ -400,68 +400,103 @@ class EmpViewSet(viewsets.ModelViewSet):
 
             
     @action(
-            detail=True,
-            methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-            url_path=r'emp_job_history(?:/(?P<emp_job_history_id>[^/.]+))?',
-            serializer_class=EmpJobHistorySerializer,   # <-- add this
-        )
-    def emp_job_history(self, request, pk=None,emp_job_history_id=None):
-        employee = self.get_object()
-
-        # ---------- LIST / CREATE ----------
-        if emp_job_history_id is None:
-            if request.method == 'GET':
-                qs = EmpJobHistory.objects.filter(emp_id=employee).order_by('id')
-                return Response(
-                    EmpJobHistorySerializer(qs, many=True, context={'request': request}).data
-                )
+        detail=True,
+        methods=['POST', 'GET', 'DELETE', 'PUT', 'PATCH'],
+        url_path=r'emp_job_history(?:/(?P<job_history_id>[^/.]+))?'
+    )
+    def emp_job_history(self, request, pk=None, job_history_id=None):
+            employee = self.get_object()
 
             if request.method == 'POST':
+                # Add the employee.pk to the request data
                 data = request.data.copy()
-                data.pop('emp_id', None)
-                serializer = EmpJobHistorySerializer(data=data, context={'request': request})
+                data['emp_id'] = employee.pk
+
+                serializer = EmpJobHistorySerializer(
+                    data=data,
+                    context={'request': request}
+                )
                 serializer.is_valid(raise_exception=True)
-                obj = serializer.save(emp_id=employee)
+                serializer.save()
+
                 return Response(
-                    EmpJobHistorySerializer(obj, context={'request': request}).data,
-                    status=status.HTTP_201_CREATED,
+                    serializer.data,
+                    status=status.HTTP_201_CREATED
                 )
 
-            return Response(
-                {'error': 'JobHistory ID is required in the URL.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            elif request.method == 'GET':
+                if job_history_id:
+                    try:
+                        job_history = employee.emp_job_history.get(pk=job_history_id)
+                    except EmpJobHistory.DoesNotExist:
+                        return Response(
+                            {'error': 'Job history not found.'},
+                            status=status.HTTP_404_NOT_FOUND
+                        )
 
-        # ---------- DETAIL ----------
-        if request.method == 'POST':
-            return Response(
-                {'error': 'POST is only allowed without JobHistory ID.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+                    serializer = EmpJobHistorySerializer(
+                        job_history,
+                        context={'request': request}
+                    )
+                    return Response(serializer.data)
 
-        emp_job_history = get_object_or_404( EmpJobHistory, pk=emp_job_history_id, emp_id=employee)
+                family_members = employee.emp_job_history.all()
+                serializer = EmpJobHistorySerializer(
+                    family_members,
+                    many=True
+                )
+                return Response(serializer.data)
 
-        if request.method == 'GET':
-            return Response(
-                EmpJobHistorySerializer(emp_job_history, context={'request': request}).data
-            )
+            elif request.method in ['PUT', 'PATCH']:
+                if not job_history_id:
+                    return Response(
+                        {'error': 'Job History ID is required.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
-        if request.method in ('PUT', 'PATCH'):
-            data = request.data.copy()
-            data.pop('emp_id', None)
-            serializer =EmpJobHistorySerializer(
-                self.emp_qalification,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request},
-            )
-            serializer.is_valid(raise_exception=True)
-            obj = serializer.save(emp_qualification=employee)
-            return Response(Emp_qf_Serializer(obj, context={'request': request}).data)
+                try:
+                    job_history = employee.emp_job_history.get(pk=job_history_id)
+                except EmpJobHistory.DoesNotExist:
+                    return Response(
+                        {'error': 'Job history not found.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
-        if request.method == 'DELETE':
-            emp_job_history.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
+                data = request.data.copy()
+                data['emp_id'] = employee.pk
+
+                serializer = EmpJobHistorySerializer(
+                    job_history,
+                    data=data,
+                    partial=(request.method == 'PATCH'),
+                    context={'request': request}
+                )
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+
+                return Response(serializer.data)
+
+            elif request.method == 'DELETE':
+                if not job_history_id:
+                    return Response(
+                        {'error': 'Job History ID is required.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                try:
+                    job_history = employee.emp_job_history.get(pk=job_history_id)
+                except EmpJobHistory.DoesNotExist:
+                    return Response(
+                        {'error': 'Job history not found.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+                job_history.delete()
+
+                return Response(
+                    {'message': 'Job history deleted successfully.'},
+                    status=status.HTTP_204_NO_CONTENT
+                )
     
  
     @action(

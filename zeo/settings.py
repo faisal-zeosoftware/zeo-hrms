@@ -63,6 +63,13 @@ TENANT_APPS = [
     'calendars',
     'PayrollManagement',
     'ProjectManagement',
+    'PerformanceManagement',
+    'RecruitmentManagement',
+    'LearningManagement',
+    'DashboardManagement',
+    'AccessControl',
+    'DataTools',
+    'Chatter',
     'django.contrib.admin',
 
 ]
@@ -143,6 +150,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'UserManagement.middleware.SchemaMiddleware',  # Your custom schema middleware
     'UserManagement.middleware.TenantTimezoneMiddleware',  # Your timezone middleware
+    'Chatter.tracking.CurrentRequestMiddleware',  # change history: who made each change
 ]
 
 
@@ -189,8 +197,8 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',
-        'NAME': 'zeo', 
-        'USER': 'zeo_user', 
+        'NAME': 'hrms', 
+        'USER': 'postgres', 
         'PASSWORD': '1234',
         'HOST': '127.0.0.1', 
         'PORT': '5432',

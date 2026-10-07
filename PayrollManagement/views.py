@@ -297,14 +297,6 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 raise ValidationError(
                     "At least one branch is required, or employee branch info is missing."
                 )
-
-            #validation
-            for branch in branches: 
-                workflow = ( PayslipApprovalWorkflow.objects .filter( branch=branch).first() ) 
-                # No workflow configured 
-                if not workflow:
-                    raise ValidationError( f"No payroll approval level is configured for " f"branch {branch}." )
-                
  
             # Save the run itself first (without branch — it's handled via the
             # through model below, not a plain .set()).
@@ -1080,6 +1072,17 @@ class PayslipCommonWorkflowViewSet(viewsets.ModelViewSet):
     queryset = PayslipApprovalWorkflow.objects.all()
     serializer_class = PayslipApprovalWorkflowSerializer
 
+def _actionable(view, request, ids):
+    """Pending payslip approval steps among `ids` that this user may approve / reject (v1.7.0)."""
+    from AccessControl.access import ctx
+    from AccessControl.approvals import check
+    c = ctx(request)
+    view.action = 'approve'
+    qs = view.filter_queryset(view.get_queryset()).filter(id__in=ids, status='Pending')
+    ok = [a for a in qs if not check(request, view, a, c)]
+    return ok, len(ids) - len(ok)
+
+
 class PayslipApprovalViewSet(viewsets.ModelViewSet):
     queryset = PayslipApproval.objects.all()
     serializer_class = PayslipApprovalSerializer
@@ -1115,11 +1118,12 @@ class PayslipApprovalViewSet(viewsets.ModelViewSet):
         if not ids:
             raise ValidationError("approval_ids list is required.")
 
-        approvals = PayslipApproval.objects.filter(id__in=ids, status='Pending')
+        # v1.7.0: only steps this user may act on (approver / delegate / admin, not own payslip); count before approving
+        approvals, skipped = _actionable(self, request, ids)
         for approval in approvals:
             approval.approve(note=note)
 
-        return Response({'status': f"{approvals.count()} requests approved."}, status=status.HTTP_200_OK)
+        return Response({'status': f"{len(approvals)} requests approved." + (f" {skipped} skipped: not yours to approve." if skipped else '')}, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'])
     def bulk_reject(self, request):
@@ -1132,11 +1136,11 @@ class PayslipApprovalViewSet(viewsets.ModelViewSet):
         if not rejection_reason:
             raise ValidationError("rejection_reason is required.")
 
-        approvals = PayslipApproval.objects.filter(id__in=ids, status='Pending')
+        approvals, skipped = _actionable(self, request, ids)
         for approval in approvals:
             approval.reject(rejection_reason=rejection_reason, note=note)
 
-        return Response({'status': f"{approvals.count()} requests rejected."}, status=status.HTTP_200_OK)
+        return Response({'status': f"{len(approvals)} requests rejected." + (f" {skipped} skipped: not yours to reject." if skipped else '')}, status=status.HTTP_200_OK)
 
 class AdvanceSalaryRequestViewset(viewsets.ModelViewSet):
     queryset = AdvanceSalaryRequest.objects.all()

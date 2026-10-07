@@ -458,6 +458,9 @@ def send_payslip_email(payslip):
 
 def schedule_escalation(approval, level_rule):
     from .tasks import advance_salary_escalate_approval_task
+    # v1.7.0: common-workflow levels have no escalation fields (AttributeError when a loan reached level 2)
+    if level_rule is None or not hasattr(level_rule, 'escalate_after_days'):  # no escalation rule for this level
+        return
     """
     Schedule a Celery countdown task for automatic escalation.
     """
@@ -473,6 +476,9 @@ def schedule_escalation(approval, level_rule):
         print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
 def loan_schedule_escalation(approval, level_rule):
     from .tasks import loan_escalate_approval_task
+    # v1.7.0: common-workflow levels have no escalation fields (AttributeError when a loan reached level 2)
+    if level_rule is None or not hasattr(level_rule, 'escalate_after_days'):  # no escalation rule for this level
+        return
     """
     Schedule a Celery countdown task for automatic escalation.
     """
@@ -488,6 +494,9 @@ def loan_schedule_escalation(approval, level_rule):
         print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
 def airticket_schedule_escalation(approval, level_rule):
     from .tasks import airticket_escalate_approval_task
+    # v1.7.0: common-workflow levels have no escalation fields (AttributeError when a loan reached level 2)
+    if level_rule is None or not hasattr(level_rule, 'escalate_after_days'):  # no escalation rule for this level
+        return
     """
     Schedule a Celery countdown task for automatic escalation.
     """

@@ -1,3 +1,4 @@
+from zeo.report_files import report_file, report_rel  # v1.7.0: report files per company and report
 from django.shortcuts import render
 from django.conf import settings
 from datetime import date
@@ -225,7 +226,7 @@ class EmpViewSet(viewsets.ModelViewSet):
             serializer = EmpFamSerializer(
                 family_member,
                 data=data,
-                partial=(request.method == 'PATCH'),
+                partial=True,  # screens send only the edited fields
                 context={'request': request}
             )
             serializer.is_valid(raise_exception=True)
@@ -304,199 +305,134 @@ class EmpViewSet(viewsets.ModelViewSet):
     #             status=status.HTTP_200_OK
     #         )
     @action(
-    detail=True,
-    methods=['POST', 'GET', 'DELETE', 'PUT', 'PATCH'],
-    url_path=r'emp_qualification(?:/(?P<qualification_id>[^/.]+))?'
-)
-    def emp_qualification(self, request, pk=None, qualification_id=None):
+        detail=True,
+        methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        url_path=r'emp_qualification(?:/(?P<qualification_id>[^/.]+))?',
+        serializer_class=Emp_qf_Serializer,   # <-- add this
+    )
+    def emp_qalification(self, request, pk=None, qualification_id=None):
         employee = self.get_object()
 
+        # ---------- LIST / CREATE ----------
+        if qualification_id is None:
+            if request.method == 'GET':
+                qs = EmpQualification.objects.filter(emp_id=employee).order_by('id')
+                return Response(
+                    Emp_qf_Serializer(qs, many=True, context={'request': request}).data
+                )
+
+            if request.method == 'POST':
+                data = request.data.copy()
+                data.pop('emp_id', None)
+                serializer = Emp_qf_Serializer(data=data, context={'request': request})
+                serializer.is_valid(raise_exception=True)
+                obj = serializer.save(emp_id=employee)
+                return Response(
+                    Emp_qf_Serializer(obj, context={'request': request}).data,
+                    status=status.HTTP_201_CREATED,
+                )
+
+            return Response(
+                {'error': 'Employee Qualification ID is required in the URL.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ---------- DETAIL ----------
         if request.method == 'POST':
-            # Add the employee.pk to the request data
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
+            return Response(
+                {'error': 'POST is only allowed without Employee Qualification ID.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        emp_qualification = get_object_or_404( EmpQualification, pk=qualification_id, emp_id=employee)
+
+        if request.method == 'GET':
+            return Response(
+                Emp_qf_Serializer(emp_qualification, context={'request': request}).data
+            )
+
+        if request.method in ('PUT', 'PATCH'):
+            data = request.data.copy()
+            data.pop('emp_id', None)
+            # the record from the URL (not the view method); screens send only the edited fields
             serializer = Emp_qf_Serializer(
+                emp_qualification,
                 data=data,
-                context={'request': request}
+                partial=True,
+                context={'request': request},
             )
             serializer.is_valid(raise_exception=True)
-            serializer.save()
+            obj = serializer.save(emp_id=employee)
+            return Response(Emp_qf_Serializer(obj, context={'request': request}).data)
 
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        elif request.method == 'GET':
-            if qualification_id:
-                try:
-                    qualification = employee.emp_qualification.get(pk=qualification_id)
-                except Emp_Qualification.DoesNotExist:
-                    return Response(
-                        {'error': 'Qualification not found.'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-
-                serializer = Emp_qf_Serializer(
-                    qualification,
-                    context={'request': request}
-                )
-                return Response(serializer.data)
-
-            family_members = employee.emp_qualification.all()
-            serializer = Emp_qf_Serializer(family_members, many=True)
-            return Response(serializer.data)
-
-        elif request.method in ['PUT', 'PATCH']:
-            if not qualification_id:
-                return Response(
-                    {'error': 'Qualification ID is required.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                qualification = employee.emp_qualification.get(pk=qualification_id)
-            except Emp_Qualification.DoesNotExist:
-                return Response(
-                    {'error': 'Qualification not found.'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            data = request.data.copy()
-            data['emp_id'] = employee.pk
-
-            serializer = Emp_qf_Serializer(
-                qualification,
-                data=data,
-                partial=(request.method == 'PATCH'),
-                context={'request': request}
-            )
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-
-            return Response(serializer.data)
-
-        elif request.method == 'DELETE':
-            if not qualification_id:
-                return Response(
-                    {'error': 'Qualification ID is required.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                qualification = employee.emp_qualification.get(pk=qualification_id)
-            except Emp_Qualification.DoesNotExist:
-                return Response(
-                    {'error': 'Qualification not found.'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            qualification.delete()
-
-            return Response(
-                {'message': 'Qualification deleted successfully.'},
-                status=status.HTTP_204_NO_CONTENT)
+        if request.method == 'DELETE':
+            emp_qualification.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
             
     @action(
-        detail=True,
-        methods=['POST', 'GET', 'DELETE', 'PUT', 'PATCH'],
-        url_path=r'emp_job_history(?:/(?P<job_history_id>[^/.]+))?'
-    )
-    def emp_job_history(self, request, pk=None, job_history_id=None):
-            employee = self.get_object()
+            detail=True,
+            methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+            url_path=r'emp_job_history(?:/(?P<emp_job_history_id>[^/.]+))?',
+            serializer_class=EmpJobHistorySerializer,   # <-- add this
+        )
+    def emp_job_history(self, request, pk=None,emp_job_history_id=None):
+        employee = self.get_object()
+
+        # ---------- LIST / CREATE ----------
+        if emp_job_history_id is None:
+            if request.method == 'GET':
+                qs = EmpJobHistory.objects.filter(emp_id=employee).order_by('id')
+                return Response(
+                    EmpJobHistorySerializer(qs, many=True, context={'request': request}).data
+                )
 
             if request.method == 'POST':
-                # Add the employee.pk to the request data
                 data = request.data.copy()
-                data['emp_id'] = employee.pk
-
-                serializer = EmpJobHistorySerializer(
-                    data=data,
-                    context={'request': request}
-                )
+                data.pop('emp_id', None)
+                serializer = EmpJobHistorySerializer(data=data, context={'request': request})
                 serializer.is_valid(raise_exception=True)
-                serializer.save()
-
+                obj = serializer.save(emp_id=employee)
                 return Response(
-                    serializer.data,
-                    status=status.HTTP_201_CREATED
+                    EmpJobHistorySerializer(obj, context={'request': request}).data,
+                    status=status.HTTP_201_CREATED,
                 )
 
-            elif request.method == 'GET':
-                if job_history_id:
-                    try:
-                        job_history = employee.emp_job_history.get(pk=job_history_id)
-                    except EmpJobHistory.DoesNotExist:
-                        return Response(
-                            {'error': 'Job history not found.'},
-                            status=status.HTTP_404_NOT_FOUND
-                        )
+            return Response(
+                {'error': 'JobHistory ID is required in the URL.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-                    serializer = EmpJobHistorySerializer(
-                        job_history,
-                        context={'request': request}
-                    )
-                    return Response(serializer.data)
+        # ---------- DETAIL ----------
+        if request.method == 'POST':
+            return Response(
+                {'error': 'POST is only allowed without JobHistory ID.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-                family_members = employee.emp_job_history.all()
-                serializer = EmpJobHistorySerializer(
-                    family_members,
-                    many=True
-                )
-                return Response(serializer.data)
+        emp_job_history = get_object_or_404( EmpJobHistory, pk=emp_job_history_id, emp_id=employee)
 
-            elif request.method in ['PUT', 'PATCH']:
-                if not job_history_id:
-                    return Response(
-                        {'error': 'Job History ID is required.'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+        if request.method == 'GET':
+            return Response(
+                EmpJobHistorySerializer(emp_job_history, context={'request': request}).data
+            )
 
-                try:
-                    job_history = employee.emp_job_history.get(pk=job_history_id)
-                except EmpJobHistory.DoesNotExist:
-                    return Response(
-                        {'error': 'Job history not found.'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
+        if request.method in ('PUT', 'PATCH'):
+            data = request.data.copy()
+            data.pop('emp_id', None)
+            serializer = EmpJobHistorySerializer(
+                emp_job_history,
+                data=data,
+                partial=True,
+                context={'request': request},
+            )
+            serializer.is_valid(raise_exception=True)
+            obj = serializer.save(emp_id=employee)
+            return Response(EmpJobHistorySerializer(obj, context={'request': request}).data)
 
-                data = request.data.copy()
-                data['emp_id'] = employee.pk
-
-                serializer = EmpJobHistorySerializer(
-                    job_history,
-                    data=data,
-                    partial=(request.method == 'PATCH'),
-                    context={'request': request}
-                )
-                serializer.is_valid(raise_exception=True)
-                serializer.save()
-
-                return Response(serializer.data)
-
-            elif request.method == 'DELETE':
-                if not job_history_id:
-                    return Response(
-                        {'error': 'Job History ID is required.'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                try:
-                    job_history = employee.emp_job_history.get(pk=job_history_id)
-                except EmpJobHistory.DoesNotExist:
-                    return Response(
-                        {'error': 'Job history not found.'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-
-                job_history.delete()
-
-                return Response(
-                    {'message': 'Job history deleted successfully.'},
-                    status=status.HTTP_204_NO_CONTENT
-                )
+        if request.method == 'DELETE':
+            emp_job_history.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
     
  
     @action(
@@ -549,14 +485,14 @@ class EmpViewSet(viewsets.ModelViewSet):
         if request.method in ('PUT', 'PATCH'):
             data = request.data.copy()
             data.pop('emp_id', None)
-            serializer =DocumentSerializer(
-                self.emp_documents,
+            serializer = DocumentSerializer(
+                emp_documents,
                 data=data,
-                partial=(request.method == 'PATCH'),
+                partial=True,
                 context={'request': request},
             )
             serializer.is_valid(raise_exception=True)
-            obj = serializer.save(emp_documents=employee)
+            obj = serializer.save(emp_id=employee)
             return Response(DocumentSerializer(obj, context={'request': request}).data)
 
         if request.method == 'DELETE':
@@ -771,7 +707,7 @@ class EmpViewSet(viewsets.ModelViewSet):
             serializer = EmpBankDetailsSerializer(
                 bank,
                 data=data,
-                partial=(request.method == 'PATCH'),
+                partial=True,  # screens send only the edited fields
                 context={'request': request}
             )
             serializer.is_valid(raise_exception=True)
@@ -1173,12 +1109,12 @@ class ReportViewset(viewsets.ModelViewSet):
             employees = emp_master.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, employees)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')  # Use 'file_name' provided by the user
+            file_path = report_file(file_name, 'Report')  # Use 'file_name' provided by the user
 
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
-            Report.objects.create(file_name=file_name, report_data=file_name + '.json')
+            Report.objects.create(file_name=file_name, report_data=report_rel(file_name, 'Report'))
             return JsonResponse({
                 'status': 'success',
                 'file_path': file_path,
@@ -1202,7 +1138,7 @@ class ReportViewset(viewsets.ModelViewSet):
             employees = emp_master.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, employees)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'Report')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -1211,7 +1147,7 @@ class ReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             Report.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'Report')}
             )
 
             print("Standard report generated successfully.")
@@ -2153,7 +2089,7 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
             documents = Emp_Documents.objects.all()
 
             report_data = self.doc_report_data(fields_to_include, documents)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'Doc_Report')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -2162,7 +2098,7 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             Doc_Report.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'Doc_Report')}
             )
 
             print("Standard report generated successfully.")
@@ -2208,7 +2144,7 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
             if not report_data:
                 return JsonResponse({'status': 'error', 'message': 'No data to write into report'})
 
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'Doc_Report')
             try:
                 with open(file_path, 'w') as file:
                     json.dump(report_data, file, default=str)
@@ -2216,7 +2152,7 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
                 return JsonResponse({'status': 'error', 'message': f'Failed to write file: {str(e)}'})
 
             try:
-                Doc_Report.objects.create(file_name=file_name, report_data=file_name + '.json')
+                Doc_Report.objects.create(file_name=file_name, report_data=report_rel(file_name, 'Doc_Report'))
             except Exception as e:
                 return JsonResponse({'status': 'error', 'message': f'Failed to save report: {str(e)}'})
 
@@ -3157,12 +3093,12 @@ class GeneralReportViewset(viewsets.ModelViewSet):
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,generalreport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'GeneralRequestReport')
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
 
-            GeneralRequestReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            GeneralRequestReport.objects.create(file_name=file_name, report_data=report_rel(file_name, 'GeneralRequestReport'))
             return JsonResponse({'status': 'success', 'file_path': file_path,'selected_fields_data': fields_to_include,})
         return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
 
@@ -3181,7 +3117,7 @@ class GeneralReportViewset(viewsets.ModelViewSet):
             generalreport = GeneralRequest.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, generalreport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'GeneralRequestReport')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -3190,7 +3126,7 @@ class GeneralReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             GeneralRequestReport.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'GeneralRequestReport')}
             )
         except Exception as e:
             print(f"Error generating standard report: {str(e)}")

@@ -101,7 +101,7 @@ def send_document_notification(document, expiry_date, status, settings):
             document_id=document
         )
 
-        if settings.send_email:
+        if settings and settings.send_email:
             send_template_email('Employee Notification',employee.emp_personal_email, context)
 
 

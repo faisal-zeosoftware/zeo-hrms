@@ -28,6 +28,12 @@ urlpatterns = [
     path('calendars/',include('calendars.urls')),
     path('payroll/',include('PayrollManagement.urls')),
     path('project/',include('ProjectManagement.urls')),
+    path('performance/',include('PerformanceManagement.urls')),
+    path('recruitment/',include('RecruitmentManagement.urls')),
+    path('learning/',include('LearningManagement.urls')),
+    path('dashboard/',include('DashboardManagement.urls')),
+    path('tools/',include('DataTools.urls')),
+    path('chatter/', include('Chatter.urls')),
     
 
 

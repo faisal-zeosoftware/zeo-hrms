@@ -1,3 +1,4 @@
+from zeo.report_files import report_file, report_rel  # v1.7.0: report files per company and report
 from django.shortcuts import render
 from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,assign_holiday,WeekendDetail,leave_type,leave_entitlement,applicablity_critirea,emp_leave_balance,leave_accrual_transaction,leave_reset_transaction,employee_leave_request,Attendance,Shift,
                      EmployeeMachineMapping,LeaveReport,LeaveApprovalLevels,LeaveApproval,LvEmailTemplate,LvApprovalNotify,LvCommonWorkflow,LvRejectionReason,LeaveApprovalReport,
@@ -1733,12 +1734,12 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,leavereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'LeaveReport')
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
 
-            LeaveReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            LeaveReport.objects.create(file_name=file_name, report_data=report_rel(file_name, 'LeaveReport'))
             return JsonResponse({'status': 'success', 'file_path': file_path,'selected_fields_data': fields_to_include,})
         return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
 
@@ -1757,7 +1758,7 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
             leavereport = employee_leave_request.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, leavereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'LeaveReport')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -1766,7 +1767,7 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             LeaveReport.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'LeaveReport')}
             )
 
             print("Standard report generated successfully.")
@@ -2004,7 +2005,12 @@ class LvApprovalViewset(viewsets.ModelViewSet):
             'leave_request',
             'leave_request__employee',
             'approver'
-        ).filter(leave_request__isnull=False)
+        )
+        # v1.7.0: compensatory leave steps live here too; without them approve / reject returned 404
+        if getattr(self, 'action', None) == 'list':
+            queryset = queryset.filter(leave_request__isnull=False)
+        else:
+            queryset = queryset.filter(Q(leave_request__isnull=False) | Q(compensatory_request__isnull=False))
 
         user = self.request.user
 
@@ -2337,12 +2343,12 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,leavereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'LeaveApprovalReport')
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
 
-            LeaveApprovalReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            LeaveApprovalReport.objects.create(file_name=file_name, report_data=report_rel(file_name, 'LeaveApprovalReport'))
             return JsonResponse({'status': 'success', 'file_path': file_path,'selected_fields_data': fields_to_include,})
         return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
 
@@ -2361,7 +2367,7 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
             leavereport = LeaveApproval.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, leavereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'LeaveApprovalReport')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -2370,7 +2376,7 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             LeaveApprovalReport.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'LeaveApprovalReport')}
             )
 
             print("Standard report generated successfully.")
@@ -2632,12 +2638,12 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,attendancereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'AttendanceReport')
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
 
-            AttendanceReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            AttendanceReport.objects.create(file_name=file_name, report_data=report_rel(file_name, 'AttendanceReport'))
             return JsonResponse({'status': 'success', 'file_path': file_path,'selected_fields_data': fields_to_include,})
         return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
 
@@ -2656,7 +2662,7 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
             attendancereport = Attendance.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, attendancereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'AttendanceReport')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -2665,7 +2671,7 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             AttendanceReport.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'AttendanceReport')}
             )
 
             print("Standard report generated successfully.")
@@ -2901,12 +2907,12 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,attendancereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'lvBalanceReport')
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
 
-            lvBalanceReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            lvBalanceReport.objects.create(file_name=file_name, report_data=report_rel(file_name, 'lvBalanceReport'))
             return JsonResponse({'status': 'success', 'file_path': file_path,'selected_fields_data': fields_to_include,})
         return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
 
@@ -2925,7 +2931,7 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
             lvbalancereport = emp_leave_balance.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, lvbalancereport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'lvBalanceReport')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -2934,7 +2940,7 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             lvBalanceReport.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'lvBalanceReport')}
             )
 
             print("Standard report generated successfully.")

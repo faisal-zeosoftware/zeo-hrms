@@ -1,3 +1,5 @@
+from zeo.workflow_utils import replace_existing_workflows
+from EmpManagement.email_utils import warn_if_email_not_configured
 from rest_framework import serializers
 from .models import (weekend_calendar,assign_weekend,holiday_calendar,holiday,assign_holiday,WeekendDetail,leave_type,leave_entitlement,emp_leave_balance,leave_accrual_transaction,employee_leave_request,
                      applicablity_critirea,leave_reset_transaction,Attendance,Shift,ShiftPattern,EmployeeShiftSchedule,
@@ -383,6 +385,7 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 
         if instance.employee:
             rep['employee'] = instance.employee.emp_code
+            rep['employee_name'] = ' '.join(x for x in (instance.employee.emp_first_name, instance.employee.emp_last_name) if x)
 
         if instance.leave_type:
             rep['leave_type'] = instance.leave_type.name
@@ -390,19 +393,9 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         return rep
 
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         leave_type = data.get('leave_type')
         employee = data.get('employee')
 
@@ -606,19 +599,9 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
 
         employee = data.get('employee')
 
@@ -673,6 +656,8 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
         if instance.request_type:
             rep['request_type'] = instance.request_type
 
+        rep['branch_name'] = instance.branch.branch_name if instance.branch else None
+
         return rep
     
 
@@ -686,7 +671,7 @@ class LateinEarlyoutApprovalLevelSerializer(serializers.ModelSerializer):
         rep = super(LateinEarlyoutApprovalLevelSerializer, self).to_representation(instance)
         if instance.approver:  
             rep['approver'] = instance.approver.username
-            return rep
+        return rep
 
 
 class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
@@ -743,6 +728,7 @@ class LatinEarlyApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('levels', None) or validated_data.pop('lateinearlyout_levels', [])
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(LatinEarlyApprovalWorkflow, branches)  # latest configuration wins
         workflow = LatinEarlyApprovalWorkflow.objects.create(**validated_data)
 
         if branches:
@@ -1131,6 +1117,7 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('leave_levels', [])
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(LVApprovalWorkflow, branches, request_type=validated_data.get('request_type'))  # latest configuration wins
         workflow = LVApprovalWorkflow.objects.create(**validated_data)
 
         if branches:
@@ -1429,7 +1416,7 @@ class OvertimeRuleSerializer(serializers.ModelSerializer):
         rep = super().to_representation(instance)
         if instance.policy:
             rep['policy'] = instance.policy.name
-            return rep
+        return rep
         
 class AttendancePolicySerializer(serializers.ModelSerializer):
     class Meta:
@@ -1456,7 +1443,7 @@ class AttendanceValidationPolicySerializer(serializers.ModelSerializer):
                 rep['category'] = [cat.ctgry_title for cat in instance.category.all()]
                 rep['employee'] = [emp.emp_code for emp in instance.employee.all()]
 
-                return rep
+            return rep
 class LateComingPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = LateComingPolicy
@@ -1471,7 +1458,7 @@ class LateComingPolicySerializer(serializers.ModelSerializer):
                 rep['category'] = [cat.ctgry_title for cat in instance.category.all()]
                 rep['employee'] = [emp.emp_code for emp in instance.employee.all()]
 
-                return rep
+            return rep
 class EarlyExitPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = EarlyExitPolicy
@@ -1486,7 +1473,7 @@ class EarlyExitPolicySerializer(serializers.ModelSerializer):
                 rep['category'] = [cat.ctgry_title for cat in instance.category.all()]
                 rep['employee'] = [emp.emp_code for emp in instance.employee.all()]
 
-                return rep
+            return rep
 
 class EmpAttendancePolicySerializer(serializers.ModelSerializer):
     class Meta:

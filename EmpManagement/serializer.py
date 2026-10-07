@@ -1,3 +1,5 @@
+from zeo.workflow_utils import replace_existing_workflows
+from EmpManagement.email_utils import warn_if_email_not_configured
 
 from rest_framework import serializers
 from rest_framework.response import Response
@@ -406,19 +408,9 @@ class DocRequestSerializer(serializers.ModelSerializer):
         
         return rep
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         employee = data.get("employee")
         request_type = data.get("request_type")
 
@@ -762,19 +754,9 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
             rep['branch']=instance.branch.branch_name
         return rep
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         request_type = data.get("request_type")
         employee = data.get("employee")
 
@@ -878,6 +860,7 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('levels', [])
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(ApprovalWorkflow, branches, request_type=validated_data.get('request_type'))  # latest configuration wins
         workflow = ApprovalWorkflow.objects.create(**validated_data)
         workflow.branch.set(branches)
 
@@ -998,7 +981,7 @@ class DocRequestTypeSerializer(serializers.ModelSerializer):
         rep = super(DocRequestTypeSerializer, self).to_representation(instance)
         if instance.branch:
            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
-           return rep
+        return rep
 
 class DocApprovalSerializer(serializers.ModelSerializer):
     delegation_details = serializers.SerializerMethodField()
@@ -1067,6 +1050,7 @@ class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('document_levels', [])
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(DocumentApprovalWorkflow, branches, request_type=validated_data.get('request_type'))  # latest configuration wins
         workflow = DocumentApprovalWorkflow.objects.create(**validated_data)
         workflow.branch.set(branches)
 
@@ -1204,6 +1188,7 @@ class ResignationApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(ResignationApprovalWorkflow, branches)  # latest configuration wins
         workflow = ResignationApprovalWorkflow.objects.create(**validated_data)
 
         if branches:
@@ -1356,19 +1341,9 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
         model = EmployeeResignation
         fields = '__all__'
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         employee = data.get('employee')
 
         if not employee:
@@ -1468,7 +1443,7 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
         from PayrollManagement.models import EmployeeSalaryStructure,Payslip
         component = EmployeeSalaryStructure.objects.filter(
             employee=obj.resignation.employee,
-            component__is_gratuity=True,
+            component__payroll_category='basic',  # UAE gratuity is on basic salary (is_gratuity no longer exists)
             is_active=True
         ).order_by('-date_updated').first()
         return component.amount if component else Decimal('0.00')

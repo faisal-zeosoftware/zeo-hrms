@@ -4,6 +4,8 @@ from celery import shared_task
 @shared_task
 def asset_schedule_escalation(approval, level_rule):
     from .tasks import asset_escalate_approval_task
+    if level_rule is None:  # no escalation rule configured for this level
+        return
     """
     Schedule a Celery countdown task for automatic escalation.
     """

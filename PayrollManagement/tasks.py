@@ -213,7 +213,8 @@ def loan_escalate_approval_task(approval_id, schema_name):
 
             # Find escalation rule
             level_rule = LoanApprovalLevels.objects.filter(
-                loan_type=approval.loan_request.loan_type,
+                workflow__loan_type=approval.loan_request.loan_type,  # v1.7.0: was loan_type= (FieldError)
+                workflow__branch=approval.loan_request.employee.emp_branch_id,
                 level=approval.level
             ).first()
 

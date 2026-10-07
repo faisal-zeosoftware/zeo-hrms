@@ -160,14 +160,20 @@ class CompanySerializer(serializers.ModelSerializer):
         """
         try:
             with schema_context(obj.schema_name):
-                return list(
-                    brnch_mstr.objects.all()
-                    # .filter(br_is_active=True)
-                    .values(
-                        "id",
-                        "branch_name"
-                    )
-                )
+                qs = brnch_mstr.objects.all()
+                request = self.context.get('request')
+                user = getattr(request, 'user', None)
+                if user is not None and user.is_authenticated and not user.is_superuser:
+                    # only the branches this user may work in (User branch access / own branch)
+                    from tenant_users.tenants.models import UserTenantPermissions
+                    from OrganisationManager.models import UserBranchAccess
+                    from EmpManagement.models import emp_master
+                    if not UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists():
+                        ids = [i for i in UserBranchAccess.objects.filter(user=user).values_list('branch__id', flat=True) if i]
+                        if not ids:
+                            ids = list(emp_master.objects.filter(users=user).values_list('emp_branch_id', flat=True))
+                        qs = qs.filter(id__in=ids)
+                return list(qs.values("id", "branch_name"))
         except Exception:
             return []
     def get_states(self, obj):

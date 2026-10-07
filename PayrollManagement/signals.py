@@ -1461,6 +1461,19 @@ logger = logging.getLogger(__name__)
 
 
 
+
+def _ensure_deduction_component(SalaryComponent, category, name, code, branch):
+    """Return (creating if needed) the standard deduction component for loans / advance salary."""
+    comp = SalaryComponent.objects.filter(code=code, branch=branch).first() or SalaryComponent.objects.filter(name=name, branch=branch).first()
+    if comp:
+        if comp.payroll_category != category:
+            return None  # a different component already uses this code/name - leave it to HR
+        return comp
+    return SalaryComponent.objects.create(name=name, code=code, branch=branch, component_type='deduction',
+                                          payroll_category=category, component_value_type='variable',
+                                          description=f'Default {name} component', show_in_payslip=True)
+
+
 def process_payroll(
     instance,
     employees_qs,
@@ -1969,6 +1982,11 @@ def process_payroll(
                     .first()
                 )
 
+            # No component with this payroll category -> create the standard one instead of silently
+            # leaving the loan deduction out of the payslip
+            if not loan_component:
+                loan_component = _ensure_deduction_component(SalaryComponent, 'loan', 'Loan Deduction', 'LOAN', employee.emp_branch_id)
+
             if loan_component:
 
                 PayslipComponent.objects.update_or_create(
@@ -2060,6 +2078,11 @@ def process_payroll(
                 .first()
             )
 
+        # No component with this payroll category -> create the standard one instead of silently
+        # leaving the advance salary deduction out of the payslip
+        if not advance_component:
+            advance_component = _ensure_deduction_component(SalaryComponent, 'advance_salary', 'Advance Salary Deduction', 'ADV', employee.emp_branch_id)
+
         approved_advances = (
             AdvanceSalaryRequest.objects
             .filter(
@@ -2147,12 +2170,20 @@ def process_payroll(
 
                 continue
 
-            amount = Decimal(
-                str(
-                    allocation.amount
-                    or "0.00"
-                )
-            )
+            # pay what is left on the allocation (not the full allocation every time) and use it up,
+            # otherwise the same allocation could be encashed again in the next payroll
+            remaining = allocation.remaining_amount
+            already_paid = AirTicketRequest.objects.filter(
+                allocation=allocation, request_type="ENCASHMENT", status="PROCESSED"
+            ).exclude(pk=ticket.pk).exists()
+            if already_paid:
+                amount = Decimal("0.00")
+            else:
+                amount = Decimal(str((remaining if remaining and remaining > 0 else allocation.amount) or "0.00"))
+            if amount <= 0:
+                ticket.status = "PROCESSED"
+                ticket.save(update_fields=["status"])
+                continue
 
             PayslipComponent.objects.update_or_create(
                 payslip=payslip,
@@ -2161,6 +2192,9 @@ def process_payroll(
                     "amount": amount
                 }
             )
+
+            allocation.remaining_amount = Decimal("0.00")
+            allocation.save(update_fields=["remaining_amount"])
 
             ticket.status = "PROCESSED"
 

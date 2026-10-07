@@ -51,7 +51,7 @@ class TimeSheetSerializer(serializers.ModelSerializer):
             rep['task'] = instance.task.title
         if instance.employee:
             rep['employee'] = instance.employee.emp_code
-            return rep
+        return rep
 
 
 class ProjectSerializer(serializers.ModelSerializer):

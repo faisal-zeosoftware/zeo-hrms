@@ -1,3 +1,5 @@
+from zeo.workflow_utils import replace_existing_workflows
+from EmpManagement.email_utils import warn_if_email_not_configured
 from .models import (brnch_mstr,dept_master,desgntn_master,DocumentNumbering,
                      ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,
                      Announcement,AnnouncementView,AnnouncementComment,Asset,AssetAllocation,AssetType, AssetRequest,AssetCustomField,AssetReport,
@@ -223,7 +225,7 @@ class AssetTypeSerializer(serializers.ModelSerializer):
         rep = super(AssetTypeSerializer, self).to_representation(instance)
         if instance.branch:
            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
-           return rep
+        return rep
         
 class AssetSerializer(serializers.ModelSerializer):
     asset_custom_fields=AssetCustomFieldValueSerializer(many=True, read_only=True, source='custom_field_values')
@@ -283,6 +285,7 @@ class AssetApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('asset_levels', [])  # ✅ FIXED
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(AssetApprovalWorkflow, branches, asset_type=validated_data.get('asset_type'))  # latest configuration wins
         workflow = AssetApprovalWorkflow.objects.create(**validated_data)
 
         if branches:
@@ -445,19 +448,9 @@ class AssetRequestSerializer(serializers.ModelSerializer):
         model = AssetRequest
         fields = '__all__'
     def validate(self, attrs):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         asset_type = attrs.get('asset_type')
         requested_asset = attrs.get('requested_asset')
         employee = attrs.get('employee')

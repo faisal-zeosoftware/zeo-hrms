@@ -273,6 +273,20 @@ class Emp_CustomField(models.Model):
         ('date', 'DateField'),
         ('text', 'TextField'),
         ('checkbox', 'CheckboxField'),
+        # v1.7.0: more field types for the form designer (choices only, no table change)
+        ('textarea', 'Long text'),
+        ('integer', 'Whole number'),
+        ('decimal', 'Decimal number'),
+        ('currency', 'Amount'),
+        ('percent', 'Percentage'),
+        ('datetime', 'Date and time'),
+        ('time', 'Time'),
+        ('multiselect', 'Multi-select'),
+        ('email', 'E-mail'),
+        ('phone', 'Phone'),
+        ('url', 'Web link'),
+        ('rating', 'Rating 1-5'),
+        ('color', 'Colour'),
     )
     # emp_master = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name='custom_fields',null=True)
     emp_custom_field = models.CharField(unique=True,max_length=100)  # Field name provided by end user
@@ -431,6 +445,20 @@ class EmpFamily_CustomField(models.Model):
         ('date', 'DateField'),
         ('text', 'TextField'),
         ('checkbox', 'CheckboxField'),
+        # v1.7.0: more field types for the form designer (choices only, no table change)
+        ('textarea', 'Long text'),
+        ('integer', 'Whole number'),
+        ('decimal', 'Decimal number'),
+        ('currency', 'Amount'),
+        ('percent', 'Percentage'),
+        ('datetime', 'Date and time'),
+        ('time', 'Time'),
+        ('multiselect', 'Multi-select'),
+        ('email', 'E-mail'),
+        ('phone', 'Phone'),
+        ('url', 'Web link'),
+        ('rating', 'Rating 1-5'),
+        ('color', 'Colour'),
     )
     # emp_master = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name='custom_fields',null=True)
     emp_custom_field = models.CharField(unique=True,max_length=100,null=True)  # Field name provided by end user
@@ -575,6 +603,20 @@ class EmpJobHistory_CustomField(models.Model):
         ('date', 'DateField'),
         ('text', 'TextField'),
         ('checkbox', 'CheckboxField'),
+        # v1.7.0: more field types for the form designer (choices only, no table change)
+        ('textarea', 'Long text'),
+        ('integer', 'Whole number'),
+        ('decimal', 'Decimal number'),
+        ('currency', 'Amount'),
+        ('percent', 'Percentage'),
+        ('datetime', 'Date and time'),
+        ('time', 'Time'),
+        ('multiselect', 'Multi-select'),
+        ('email', 'E-mail'),
+        ('phone', 'Phone'),
+        ('url', 'Web link'),
+        ('rating', 'Rating 1-5'),
+        ('color', 'Colour'),
     )
     # emp_master = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name='custom_fields',null=True)
     emp_custom_field = models.CharField(unique=True,max_length=100,null=True)  # Field name provided by end user
@@ -715,6 +757,20 @@ class EmpQualification_CustomField(models.Model):
         ('date', 'DateField'),
         ('text', 'TextField'),
         ('checkbox', 'CheckboxField'),
+        # v1.7.0: more field types for the form designer (choices only, no table change)
+        ('textarea', 'Long text'),
+        ('integer', 'Whole number'),
+        ('decimal', 'Decimal number'),
+        ('currency', 'Amount'),
+        ('percent', 'Percentage'),
+        ('datetime', 'Date and time'),
+        ('time', 'Time'),
+        ('multiselect', 'Multi-select'),
+        ('email', 'E-mail'),
+        ('phone', 'Phone'),
+        ('url', 'Web link'),
+        ('rating', 'Rating 1-5'),
+        ('color', 'Colour'),
     )
     # emp_master = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name='custom_fields',null=True)
     emp_custom_field = models.CharField(unique=True,max_length=100,null=True)  # Field name provided by end user
@@ -911,11 +967,14 @@ def check_document_expiry_and_notify(document):
 
     settings = None  
 
-    try:
-        settings = NotificationSettings.objects.get(branch=branch)
+    # settings are kept per branch AND document type; .get(branch=...) raised MultipleObjectsReturned
+    # (HTTP 500 when saving a document) as soon as two document types had settings
+    settings = (NotificationSettings.objects.filter(branch=branch, document_type=document.document_type).first()
+                or NotificationSettings.objects.filter(branch=branch, document_type__isnull=True).first())
+    if settings:
         days_before = settings.days_before_expiry
         ess_users = settings.notify_users.all()
-    except NotificationSettings.DoesNotExist:
+    else:
         days_before = 7
         ess_users = []
 
@@ -954,6 +1013,20 @@ class EmpDocuments_CustomField(models.Model):
         ('date', 'DateField'),
         ('text', 'TextField'),
         ('checkbox', 'CheckboxField'),
+        # v1.7.0: more field types for the form designer (choices only, no table change)
+        ('textarea', 'Long text'),
+        ('integer', 'Whole number'),
+        ('decimal', 'Decimal number'),
+        ('currency', 'Amount'),
+        ('percent', 'Percentage'),
+        ('datetime', 'Date and time'),
+        ('time', 'Time'),
+        ('multiselect', 'Multi-select'),
+        ('email', 'E-mail'),
+        ('phone', 'Phone'),
+        ('url', 'Web link'),
+        ('rating', 'Rating 1-5'),
+        ('color', 'Colour'),
     )
     # emp_master = models.ForeignKey(emp_master, on_delete=models.CASCADE, related_name='custom_fields',null=True)
     emp_custom_field = models.CharField(unique=True,max_length=100,null=True)  # Field name provided by end user
@@ -1287,16 +1360,19 @@ class GeneralRequest(models.Model):
             return
 
         # ---------------- GET WORKFLOW ----------------
+        # v1.7.0: the employee's branch first (the first level is picked by branch too); creating a workflow
+        # passed the branch to a many-to-many field, which raised TypeError
         workflow = ApprovalWorkflow.objects.filter(
-            request_type=self.request_type,
-        ).first()
+            request_type=self.request_type, branch=self.employee.emp_branch_id,
+        ).first() or ApprovalWorkflow.objects.filter(request_type=self.request_type).first()
 
         if not workflow:
             workflow = ApprovalWorkflow.objects.create(
                 request_type=self.request_type,
-                branch=self.employee.emp_branch_id,
                 approval_type='no_approval'
             )
+            if self.employee.emp_branch_id:
+                workflow.branch.add(self.employee.emp_branch_id)
 
             ApprovalLevel.objects.create(
                 workflow=workflow,
@@ -1306,6 +1382,8 @@ class GeneralRequest(models.Model):
             )
 
         approval_type = workflow.approval_type
+        if self.request_type.use_common_workflow:   # v1.7.0: later levels come from the common workflow too
+            approval_type = 'multi_approval'
 
         # =========================================================
         # MINIMUM APPROVAL CHECK
@@ -1469,7 +1547,8 @@ class GeneralRequest(models.Model):
         if self.approvals.filter(level=current_level).exists():
             return
 
-        next_level = workflow.levels.filter(level=current_level).first()
+        next_level = (CommonWorkflow.objects.filter(level=current_level).first() if self.request_type.use_common_workflow
+                      else workflow.levels.filter(level=current_level).first())
 
         if next_level and next_level.approver:
 
@@ -1704,6 +1783,11 @@ def create_initial_approval(sender, instance, created, **kwargs):
         if instance.request_type.use_common_workflow:
             first_level = CommonWorkflow.objects.order_by('level').first()
             workflow = None
+            # the common workflow is a multi-level workflow; it used to fall through to "no approval"
+            if not first_level or not first_level.approver:
+                raise ValidationError(
+                    "Common approval workflow has no levels / approvers. Add them in Settings or switch the request type to its own workflow."
+                )
         else:
             workflow = ApprovalWorkflow.objects.filter(
                 request_type=instance.request_type,
@@ -1722,14 +1806,19 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     f"No Approval Level configured for '{instance.request_type.name}'."
                 )
                 
-        approval_type = workflow.approval_type if workflow else 'no_approval'
+        if workflow:
+            approval_type = workflow.approval_type
+        else:
+            approval_type = 'multi_approval' if instance.request_type.use_common_workflow else 'no_approval'
 
         # ---------------- NO APPROVAL ----------------
         if approval_type == 'no_approval':
-            # approver = instance.employee.users or instance.created_by
+            # Approval.approver is mandatory: record the requester (or a company admin) as the auto-approver
+            approver = (instance.created_by or getattr(instance.employee, 'users', None)
+                        or get_user_model().objects.filter(is_superuser=True).first())
             Approval.objects.create(
                 general_request=instance,
-                # approver=approver,
+                approver=approver,
                 role="Auto Approval",
                 level=1,
                 status=Approval.APPROVED
@@ -1784,7 +1873,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             manager = getattr(instance.employee, "emp_reporting_manager", None)
 
             if not manager:
-                raise Exception("Employee has no valid reporting manager.")
+                raise ValidationError("Employee has no reporting manager. Set it in Employee Master before raising this request.")
 
             Approval.objects.create(
                 general_request=instance,
@@ -2388,7 +2477,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         if approval_type == "reporting_manager":
             manager = getattr(instance.employee, "emp_reporting_manager", None)
             if not manager:
-                raise Exception("Employee has no valid reporting manager.")
+                raise ValidationError("Employee has no valid reporting manager.")
 
             DocumentApproval.objects.create(
                 document_request=instance,
@@ -2925,7 +3014,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         manager = instance.employee.emp_reporting_manager
 
         if not manager:
-            raise Exception("Employee has no reporting manager. Please set reporting manager.")
+            raise ValidationError("Employee has no reporting manager. Please set reporting manager.")
 
         ResignationApproval.objects.create(
             resignation_request=instance,
@@ -2965,7 +3054,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             return
 
         if not first_level.approver:
-            raise Exception(f"No approver set for level {first_level.level}")
+            raise ValidationError(f"No approver set for level {first_level.level}")
 
         ResignationApproval.objects.create(
             resignation_request=instance,

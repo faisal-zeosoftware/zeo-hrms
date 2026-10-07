@@ -622,7 +622,8 @@ def escalate_approval_task(approval_id, schema_name):
 
             # Find escalation rule
             level_rule = LeaveApprovalLevels.objects.filter(
-                request_type=approval.leave_request.leave_type,
+                workflow__request_type=approval.leave_request.leave_type,  # v1.7.0: was request_type= (FieldError)
+                workflow__branch=approval.leave_request.employee.emp_branch_id,
                 level=approval.level
             ).first()
 

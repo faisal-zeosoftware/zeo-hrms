@@ -283,6 +283,8 @@ def sync_attendance_calendar(employee, start_date, end_date):
         
 def schedule_escalation(approval, level_rule):
     from django.db import connection
+    if level_rule is None:  # no escalation rule configured for this level
+        return
     from .tasks import escalate_approval_task
     """
     Schedule a Celery countdown task for automatic escalation.

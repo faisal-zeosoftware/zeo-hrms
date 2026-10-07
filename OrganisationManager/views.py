@@ -1,3 +1,4 @@
+from zeo.report_files import report_file, report_rel  # v1.7.0: report files per company and report
 from django.shortcuts import render
 from rest_framework.response import Response
 from django.http import FileResponse, Http404
@@ -1398,12 +1399,12 @@ class AssetReportViewset(viewsets.ModelViewSet):
             assets = Asset.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, assets)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')  # Use 'file_name' provided by the user
+            file_path = report_file(file_name, 'AssetReport')  # Use 'file_name' provided by the user
 
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
-            AssetReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            AssetReport.objects.create(file_name=file_name, report_data=report_rel(file_name, 'AssetReport'))
             return JsonResponse({
                 'status': 'success',
                 'file_path': file_path,
@@ -1427,7 +1428,7 @@ class AssetReportViewset(viewsets.ModelViewSet):
             asset = Asset.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, asset)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'AssetReport')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -1436,7 +1437,7 @@ class AssetReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             AssetReport.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'AssetReport')}
             )
 
             print("Standard report generated successfully.")
@@ -1632,6 +1633,11 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
     queryset = AssetTransactionReport.objects.all()
     serializer_class = AssetTransactionReportSerializer
 
+    def list(self, request, *args, **kwargs):
+        # v1.7.0: the standard report was never created for this screen, so it always showed no rows
+        self.general_standard_report_exists()
+        return super().list(request, *args, **kwargs)
+
     def get_available_fields(self):
         excluded_fields = {'id'}
         included_emp_master_fields = { 'emp_first_name', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id','emp_branch_id'}
@@ -1682,12 +1688,12 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,generalreport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'AssetTransactionReport')
             with open(file_path, 'w') as file:
                 json.dump(report_data, file, default=str)  # Serialize dates to string format
 
 
-            AssetTransactionReport.objects.create(file_name=file_name, report_data=file_name + '.json')
+            AssetTransactionReport.objects.create(file_name=file_name, report_data=report_rel(file_name, 'AssetTransactionReport'))
             return JsonResponse({'status': 'success', 'file_path': file_path,'selected_fields_data': fields_to_include,})
         return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
 
@@ -1706,7 +1712,7 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
             generalreport = AssetAllocation.objects.all()
 
             report_data = self.generate_report_data(fields_to_include, generalreport)
-            file_path = os.path.join(settings.MEDIA_ROOT, file_name + '.json')
+            file_path = report_file(file_name, 'AssetTransactionReport')
 
             # Save report data to a file
             with open(file_path, 'w') as file:
@@ -1715,7 +1721,7 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
             # Update or create the standard report entry in the database
             AssetTransactionReport.objects.update_or_create(
                 file_name=file_name,
-                defaults={'report_data': file_name + '.json'}
+                defaults={'report_data': report_rel(file_name, 'AssetTransactionReport')}
             )
         except Exception as e:
             print(f"Error generating standard report: {str(e)}")

@@ -268,9 +268,19 @@ def calculate_progressive_gratuity(years_of_service, daily_wage, termination_typ
     total_gratuity_days = Decimal('0.00')
     remaining_years = Decimal(str(years_of_service))
 
-    rules = GratuityTable.objects.filter(
+    rules = list(GratuityTable.objects.filter(
         is_active=True
-    ).order_by('minimum_value')
+    ).order_by('minimum_value'))
+
+    if not rules:
+        # No gratuity table set up for the company: fall back to UAE Labour Law (Federal Decree-Law
+        # 33 of 2021, Art. 51) instead of silently paying zero - nothing below 1 year, 21 days' basic
+        # per year for the first 5 years, 30 days per year after that.
+        if remaining_years < 1:
+            return Decimal('0.00'), Decimal('0.00')
+        from types import SimpleNamespace
+        rules = [SimpleNamespace(minimum_value=0, maximum_value=5, resignation_days=21, termination_days=21),
+                 SimpleNamespace(minimum_value=5, maximum_value=None, resignation_days=30, termination_days=30)]
 
     for rule in rules:
         min_year = Decimal(rule.minimum_value)
@@ -339,7 +349,7 @@ def calculate_settlement(eos):
         # -------------------------------
         salary_component = EmployeeSalaryStructure.objects.filter(
             employee=employee,
-            component__is_gratuity=True,
+            component__payroll_category='basic',  # UAE gratuity is on basic salary (is_gratuity no longer exists)
             is_active=True
         ).order_by('-date_updated').first()
 
@@ -408,6 +418,8 @@ def calculate_settlement(eos):
 
 def schedule_escalation(approval, level_rule):
     from .tasks import escalate_approval_task
+    if level_rule is None:  # no escalation rule configured for this level
+        return
     """
     Schedule a Celery countdown task for automatic escalation.
     """

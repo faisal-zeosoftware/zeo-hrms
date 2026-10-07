@@ -25,7 +25,8 @@ def asset_escalate_approval_task(approval_id, schema_name):
 
             # Find escalation rule
             level_rule = AssetApprovalLevel.objects.filter(
-                asset_type=approval.asset_request.asset_type,
+                workflow__asset_type=approval.asset_request.asset_type,  # v1.7.0: was asset_type= (FieldError)
+                workflow__branch=approval.asset_request.employee.emp_branch_id,
                 level=approval.level
             ).first()
 

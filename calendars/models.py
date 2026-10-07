@@ -1783,12 +1783,10 @@ class LeaveApproval(models.Model):
                 if approved_days > (self.leave_request.applied_days or self.leave_request.number_of_days):
                     raise ValueError("Approved days cannot exceed requested days")
                 
+                # v1.7.0: only record the days; the leave is approved when the LAST level approves
+                # (this used to set the whole leave to 'approved' at the first level)
+                type(self.leave_request).objects.filter(pk=self.leave_request.pk).update(approved_days=approved_days)
                 self.leave_request.approved_days = approved_days
-                self.leave_request.status = (
-                    'approved' if approved_days == (self.leave_request.applied_days or self.leave_request.number_of_days)
-                    else 'approved'
-                )
-                self.leave_request.save()
         self.save()
 
         # Continue workflow
@@ -1817,8 +1815,8 @@ class LeaveApproval(models.Model):
 
             notification = LvApprovalNotify.objects.create(
                 recipient_user=self.leave_request.created_by,
-                message=(f"Your LeaveRequest {self.leave_type}"
-                        f"(Document No: {self.document_number}) has been Rejected."
+                message=(f"Your LeaveRequest {self.leave_request.leave_type}"
+                        f"(Document No: {self.leave_request.document_number}) has been Rejected."
                     ),
             )
             notification.send_email_notification('request_rejected', {
@@ -1840,8 +1838,8 @@ class LeaveApproval(models.Model):
             if self.leave_request.employee:
                 notification = LvApprovalNotify.objects.create(
                     recipient_employee=self.leave_request.employee,
-                    message=(f"Your LeaveRequest {self.leave_type}"
-                        f"(Document No: {self.document_number}) has been Rejected."
+                    message=(f"Your LeaveRequest {self.leave_request.leave_type}"
+                        f"(Document No: {self.leave_request.document_number}) has been Rejected."
                     ),
                 )
                 notification.send_email_notification('request_rejected', {
@@ -3533,7 +3531,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         ).first()
 
         if not workflow:
-            raise Exception("Approval workflow not configured for this branch.")
+            raise ValidationError("Approval workflow not configured for this branch.")
 
         approval_type = workflow.approval_type
 
@@ -3569,7 +3567,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             manager = instance.employee.emp_reporting_manager
 
             if not manager:
-                raise Exception("Employee has no reporting manager.")
+                raise ValidationError("Employee has no reporting manager.")
 
             LateinEarlyoutApproval.objects.create(
                 lateinearlyout_request=instance,
@@ -3597,7 +3595,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         first_level = workflow.lateinearlyout_levels.order_by('level').first()
 
         if not first_level:
-            raise Exception("Approval levels not configured.")
+            raise ValidationError("Approval levels not configured.")
 
         LateinEarlyoutApproval.objects.create(
             lateinearlyout_request=instance,

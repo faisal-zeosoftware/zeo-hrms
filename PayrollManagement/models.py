@@ -883,6 +883,8 @@ class  LoanApplication(models.Model):
                 approver=None
             )
         approval_type = workflow.approval_type
+        if self.loan_type.use_common_workflow:   # v1.7.0: the common workflow's levels decide
+            approval_type = "multi_approval"
 
         # ---------------- MINIMUM APPROVAL CHECK ----------------
         approved_count = self.approvals.filter(status=LoanApproval.APPROVED).count()
@@ -1261,7 +1263,8 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
                 approver=None
             )
 
-        approval_type = workflow.approval_type if workflow else "no_approval"
+        # v1.7.0: loan types on the common workflow go through its levels (they were auto-approved)
+        approval_type = workflow.approval_type if workflow else ("multi_approval" if first_level else "no_approval")
 
         # =========================================================
         # NO APPROVAL
@@ -1272,7 +1275,7 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
             approver = getattr(instance.employee, "users", None) or instance.created_by
 
             if not approver:
-                raise Exception("Employee does not have a system user assigned.")
+                raise ValidationError("Employee does not have a system user assigned.")
 
             LoanApproval.objects.create(
                 loan_request=instance,
@@ -1321,7 +1324,7 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
             manager = getattr(instance.employee, "emp_reporting_manager", None)
 
             if not manager:
-                raise Exception("Employee has no reporting manager.")
+                raise ValidationError("Employee has no reporting manager.")
 
             LoanApproval.objects.create(
                 loan_request=instance,
@@ -1543,7 +1546,7 @@ class AdvanceSalaryRequest(models.Model):
                 approver = next_level.approver
 
             if not approver:
-                raise Exception(f"No approver configured for level {next_level.level}")
+                raise ValidationError(f"No approver configured for level {next_level.level}")
 
             last_approval = self.approvals.order_by('-level', '-id').first()
 
@@ -1579,10 +1582,8 @@ class AdvanceSalaryRequest(models.Model):
                     and next_level.get_escalation_timedelta().total_seconds() > 0
                     and not getattr(new_approval, "escalated", False)
                 ):
-                    schedule_escalation(
-                        approval=new_approval,
-                        level=next_level
-                    )
+                    # v1.7.0: the function takes (approval, level_rule); 'level=' raised TypeError at level 2
+                    schedule_escalation(new_approval, next_level)
 
                 # ---------------- NOTIFICATION ----------------
                 send_notification_email(
@@ -1774,7 +1775,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         approver = instance.created_by or getattr(instance.employee, 'users', None)
 
         if not approver:
-            raise Exception("Employee has no system user.")
+            raise ValidationError("Employee has no system user.")
 
         AdvanceSalaryApproval.objects.create(
             request=instance,
@@ -1810,7 +1811,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         manager = instance.employee.emp_reporting_manager
 
         if not manager:
-            raise Exception("Employee has no reporting manager.")
+            raise ValidationError("Employee has no reporting manager.")
 
         AdvanceSalaryApproval.objects.create(
             request=instance,
@@ -1847,7 +1848,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
 
         # ✅ FIX 2: approver safety
         if not first_level.approver:
-            raise Exception(f"No approver configured for level {first_level.level}")
+            raise ValidationError(f"No approver configured for level {first_level.level}")
 
         AdvanceSalaryApproval.objects.create(
             request=instance,
@@ -2111,6 +2112,31 @@ class AirTicketRequest(models.Model):
                 )
                 return
 
+            # manager already approved -> this is the final approval (it used to create a new
+            # pending approval for the manager every time, so the request never got approved)
+            if self.approvals.filter(status=AirticketApproval.APPROVED).exists():
+                self.status = 'APPROVED'
+                self.approved_date = timezone.now()
+                self.save()
+                send_notification_email(
+                    user=self.created_by,
+                    employee=self.employee,
+                    message=(f"Your AirticketRequest {self.request_type}"
+                     f"(Document No: {self.document_number}) has been Approved By ReportingManager."
+                    ),
+                    template_type="request_approved",
+                    context={
+                        **get_employee_context(self.employee),
+                        'document_number': self.document_number,
+                        'request_type': self.request_type,
+                    },
+                    email_template_model=AirticketEmailTemplate,
+                    notification_model=AirticketNotification
+                )
+                return
+            if self.approvals.filter(status=AirticketApproval.PENDING).exists():
+                return
+
             # create approval for manager
             new_approval = AirticketApproval.objects.create(
                 request=self,
@@ -2178,7 +2204,7 @@ class AirTicketRequest(models.Model):
 
         # ---------------- SAFETY CHECK ----------------
         if not next_level.approver:
-            raise Exception(f"No approver configured for level {next_level.level}")
+            raise ValidationError(f"No approver configured for level {next_level.level}")
 
         # ---------------- NOTE CARRY ----------------
         last_approval = self.approvals.order_by('-level', '-id').first()
@@ -2369,7 +2395,7 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
             approver = instance.created_by
 
             if not approver:
-                raise Exception("Created_by user is missing.")
+                raise ValidationError("Created_by user is missing.")
 
             AirticketApproval.objects.create(
                 request=instance,
@@ -2411,7 +2437,7 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
             manager = getattr(instance.employee, "emp_reporting_manager", None)
 
             if not manager:
-                raise Exception("Employee has no reporting manager.")
+                raise ValidationError("Employee has no reporting manager.")
 
             approval = AirticketApproval.objects.create(
                 request=instance,
@@ -2449,10 +2475,10 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
             first_level = workflow.airticket_levels.order_by('level').first()
 
             if not first_level:
-                raise Exception("No approval levels configured.")
+                raise ValidationError("No approval levels configured.")
 
             if not first_level.approver:
-                raise Exception("First level approver is missing.")
+                raise ValidationError("First level approver is missing.")
 
             approval = AirticketApproval.objects.create(
                 request=instance,

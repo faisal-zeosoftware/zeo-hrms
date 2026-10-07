@@ -142,6 +142,9 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                 ("Air Ticket", "addition", "ATK", "air_ticket", "fixed", "", False, True, False, True),
                 ("Petty Cash", "addition", "PC", "other_allowance", "fixed", "", False, True, False, False),
                 ("Gratuity", "addition", "GTY", "gratuity", "variable", "(Basic Salary ÷ 30 × 21) ÷ 12", False, True, False, True),
+                # deductions used automatically by payroll for approved loans and salary advances
+                ("Loan Deduction", "deduction", "LOAN", "loan", "variable", "", True, True, False, False),
+                ("Advance Salary Deduction", "deduction", "ADV", "advance_salary", "variable", "", False, True, True, False),
                 ]
             for (
                 name,
@@ -283,6 +286,18 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
                     'end_date': timezone.now().date() + timedelta(days=365),
                 }
             )
+
+    # Default e-mail templates. They used to be created only from post_schema_sync, which can run
+    # before the first branch exists, so new companies had no templates at all.
+    try:
+        from django.db import connection
+        from UserManagement.signals import create_default_email_templates
+        tenant = getattr(connection, 'tenant', None)
+        if tenant is not None and getattr(tenant, 'schema_name', 'public') != 'public':
+            create_default_email_templates(sender=None, tenant=tenant)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('Default e-mail templates could not be created')
 
 @receiver(post_save, sender=AssetType)
 def create_workflow_and_default_level(sender, instance, created, **kwargs):

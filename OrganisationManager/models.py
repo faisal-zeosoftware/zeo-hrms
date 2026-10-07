@@ -734,7 +734,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         approver = instance.created_by or getattr(instance.employee, "users", None)
 
         if not approver:
-            raise Exception("No system user linked to employee.")
+            raise ValidationError("No system user linked to employee.")
 
         AssetApproval.objects.create(
             asset_request=instance,
@@ -779,7 +779,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         manager = getattr(instance.employee, 'emp_reporting_manager', None)
 
         if not manager:
-            raise Exception("Employee has no reporting manager.")
+            raise ValidationError("Employee has no reporting manager.")
 
         approval = AssetApproval.objects.create(
             asset_request=instance,
@@ -822,7 +822,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
     if approval_type == 'multi_approval':
 
         if not first_level:
-            raise Exception("Approval level not configured for workflow.")
+            raise ValidationError("Approval level not configured for workflow.")
 
         if first_level.approver:
 
@@ -876,6 +876,18 @@ class AssetAllocation(models.Model):
 
     def __str__(self):
         return f"{self.asset} allocated to {self.employee}"
+
+    def save(self, *args, **kwargs):
+        # A manual allocation used to leave the asset "available" (so it could be handed out twice)
+        if not self.returned_date:
+            open_alloc = AssetAllocation.objects.filter(asset=self.asset, returned_date__isnull=True).exclude(pk=self.pk)
+            if open_alloc.exists():
+                raise ValidationError(f"{self.asset} is already allocated to {open_alloc.first().employee}. Return it first.")
+        super().save(*args, **kwargs)
+        if not self.returned_date and self.asset.status != 'assigned':
+            self.asset.status = 'assigned'
+            self.asset.save(update_fields=['status'])
+
     def return_asset(self, condition, returned_date=None):
         if self.returned_date:
             raise ValueError("This asset has already been returned.")
@@ -976,13 +988,13 @@ class GratuityTable(models.Model):
     termination_days = models.PositiveIntegerField(help_text="Gratuity days for termination")
     is_active = models.BooleanField(default=True, help_text="Is this range active?")
 
-    class Meta:
-        constraints = [
-            models.CheckConstraint(
-                check=Q(minimum_value__lt=F('maximum_value')) | Q(maximum_value__isnull=True),
-                name='valid_range'
-            )
-        ]
+    # class Meta:
+    #     constraints = [
+    #         models.CheckConstraint(
+    #             check=Q(minimum_value__lt=F('maximum_value')) | Q(maximum_value__isnull=True),
+    #             name='valid_range'
+    #         )
+    #     ]
 
     def __str__(self):
         return f"{self.minimum_value} to {self.maximum_value} years - Resignation: {self.resignation_days}, Termination: {self.termination_days}"

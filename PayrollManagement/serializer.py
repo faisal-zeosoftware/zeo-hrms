@@ -1,3 +1,5 @@
+from zeo.workflow_utils import replace_existing_workflows
+from EmpManagement.email_utils import warn_if_email_not_configured
 from rest_framework import serializers
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayrollRun,Payslip,PayslipComponent,LoanType,LoanApplication,
                     LoanRepayment,LoanApprovalLevels,LoanApproval,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,PayslipApproval,PayslipCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
@@ -80,19 +82,9 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             rep['branch'] =instance.branch.branch_name
         return rep
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         loan_type = data.get('loan_type')
         employee = data.get('employee')
 
@@ -1324,6 +1316,7 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('loan_levels', [])
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(LoanApprovalWorkflow, branches, loan_type=validated_data.get('loan_type'))  # latest configuration wins
         workflow = LoanApprovalWorkflow.objects.create(**validated_data)
 
         if branches:
@@ -1353,18 +1346,12 @@ class LoanApprovalWorkflowSerializer(serializers.ModelSerializer):
         # ---------------- REPORTING MANAGER ----------------
         elif workflow.approval_type == 'reporting_manager':
 
-            reporting_manager = None
-
-            request = self.context.get('request')
-
-            if request and hasattr(request.user, 'employee'):
-                reporting_manager = request.user.employee.reporting_manager
-
+            # the approver is each applicant's own reporting manager, resolved when the loan is requested
             LoanApprovalLevels.objects.create(
                 workflow=workflow,
-                # level=1,
+                level=1,
                 role='Reporting Manager',
-                approver=reporting_manager
+                approver=None
             )
 
         return workflow
@@ -1601,19 +1588,9 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
         return None
     
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         employee = data.get('employee')
 
         if not employee:
@@ -1765,6 +1742,7 @@ class AdvanceApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('advance_levels', [])
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(AdvanceApprovalWorkflow, branches)  # latest configuration wins
         workflow = AdvanceApprovalWorkflow.objects.create(**validated_data)
 
         if branches:
@@ -1945,6 +1923,7 @@ class PayslipApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('payslip_levels', [])
 
         branches = validated_data.pop('branch', [])
+        replace_existing_workflows(PayslipApprovalWorkflow, branches)  # latest configuration wins
         workflow = PayslipApprovalWorkflow.objects.create(**validated_data)
 
         if branches:
@@ -2048,19 +2027,9 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         return rep
 
     def validate(self, data):
-        email_config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not email_config:
-                raise serializers.ValidationError({
-                    "email_configuration": "No active email configuration found. Please configure and activate an email configuration."
-                })
-        if not email_config.email_host_user:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email username is not configured."
-                })
-        if not email_config.email_host_password:
-                raise serializers.ValidationError({
-                    "email_configuration": "Email password is not configured."
-                      })
+        # Email is best-effort: the request is saved and the in-app notification is created even when
+        # Settings -> Email Configuration is missing or incomplete (it used to block every request).
+        warn_if_email_not_configured()
         employee = data.get('employee')
         branch = data.get('branch')
 
@@ -2174,14 +2143,19 @@ class AirticketApprovalWorkflowSerializer(serializers.ModelSerializer):
         rep = super(AirticketApprovalWorkflowSerializer, self).to_representation(instance)
         if instance.branch:
            rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
-           return rep
+        return rep
 
     def create(self, validated_data):
         levels_data = validated_data.pop('airticket_levels', [])   # ✅ FIX
         branches = validated_data.pop('branch', [])
 
+        replace_existing_workflows(AirticketApprovalWorkflow, branches)  # latest configuration wins
         workflow = AirticketApprovalWorkflow.objects.create(**validated_data)
         workflow.branch.set(branches)
+
+        # same as the other modules: single-level workflows get their level 1 row automatically
+        if not levels_data and workflow.approval_type in ('reporting_manager', 'no_approval'):
+            levels_data = [{'level': 1, 'role': 'Reporting Manager' if workflow.approval_type == 'reporting_manager' else 'Auto Level'}]
 
         for level_data in levels_data:
             AirticketWorkflow.objects.create(

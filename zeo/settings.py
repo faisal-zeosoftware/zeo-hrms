@@ -197,8 +197,8 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',
-        'NAME': 'hrms', 
-        'USER': 'postgres', 
+        'NAME': 'zeo', 
+        'USER': 'zeo_user', 
         'PASSWORD': '1234',
         'HOST': '127.0.0.1', 
         'PORT': '5432',

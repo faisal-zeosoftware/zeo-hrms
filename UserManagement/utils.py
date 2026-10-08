@@ -20,3 +20,18 @@ def is_otp_valid(user):
     if not user.otp_created_at:
         return False
     return timezone.now() <= user.otp_created_at + timedelta(minutes=5)
+
+from django.contrib.auth.models import Group, Permission
+from django_tenants.utils import schema_context
+from tenant_users.tenants.models import UserTenantPermissions
+
+
+def grant_admin_access(user, tenant):
+    """Make `user` a full admin of one company (tenant schema)."""
+    with schema_context(tenant.schema_name):
+        perm, _ = UserTenantPermissions.objects.get_or_create(profile=user)
+        perm.is_superuser = True
+        perm.is_staff = True
+        perm.save()
+        perm.groups.set(Group.objects.all())
+        perm.user_permissions.set(Permission.objects.all())

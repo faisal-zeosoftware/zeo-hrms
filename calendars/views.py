@@ -22,6 +22,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 
 from EmpManagement.models import emp_master
+from .permissions import ModelCodePermission  # v1.12.0
 from .permissions import( WeekendCalendarPermission, WeekendDetailPermission, AssignWeekendPermission, HolidayPermission, HolidayCalendarPermission, AssignHolidayPermission,LeaveTypePermission,LeaveEntitlementPermission,EmpLeaveBalancePermission,ApplicabilityCriteriaPermission,EmployeeLeaveRequestPermission,LvEmailTemplatePermission,
                             LvCommonWorkflowPermission,LvRejectionReasonPermission,LeaveApprovalLevelsPermission,EmployeeMachineMappingPermission,ShiftPermission,ShiftPatternPermission,AttendancePermission,CompensatoryLeaveRequestPermission,CompensatoryLeaveTransactionPermission,CompensatoryLeaveBalancePermission,CompensatoryLeaveRequestPermission,
                             LeaveReportPermission,LeaveApprovalReportPermission,AttendanceReportPermission,LvBalanceReportPermission,LeaveAccrualTransactionPermission,LeaveResetTransactionPermission,ShiftOverridePermission,WeekPatternAssignmentPermission,EmployeeShiftSchedulePermission,EmployeeYearlyCalendarPermission,
@@ -174,6 +175,14 @@ class LeaveTypeviewset(BranchAccessMixin,viewsets.ModelViewSet):
     serializer_class = LeaveTypeSerializer
     permission_classes = [LeaveTypePermission] 
 
+    def get_queryset(self):
+        # v1.10.0: a leave type without a branch is for every branch (the UAE setup adds them like that)
+        qs = super().get_queryset()
+        if not self.request.user.is_authenticated:
+            return qs
+        ids = set(qs.values_list('id', flat=True)) | set(leave_type.objects.filter(branch__isnull=True).values_list('id', flat=True))
+        return leave_type.objects.filter(id__in=ids).order_by('id')
+
 class LvEmailTemplateviewset(viewsets.ModelViewSet):
     queryset = LvEmailTemplate.objects.all()
     serializer_class = LvEmailTemplateSerializer
@@ -313,12 +322,16 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
     def get_queryset(self):
         # Filter queryset based on user access
         if self.request.user.is_ess:
-            # Return only requests related to the ESS user's employee record
-            return self.queryset.filter(employee__emp_code=self.request.user.username)
+            # Return only requests related to the ESS user's employee record (v1.13.0: through the login link –
+            # the username is not always the employee code, which made edit / delete answer 404) and their team's
+            user = self.request.user
+            return self.queryset.filter(Q(employee__users=user) | Q(employee__emp_code=user.username)
+                                        | Q(employee__emp_reporting_manager=user)).distinct()
         return super().get_queryset()  # Non-ESS users can access as per their permissions
     @action(detail=False, methods=['get'], url_path='approved-leaves')
     def approved_leaves(self, request):
-        approved_queryset = employee_leave_request.objects.filter(status='approved')
+        # v1.13.0: scoped like the list (own / team for employees, own branches for HR) – was company-wide
+        approved_queryset = self.filter_queryset(self.get_queryset()).filter(status='approved')
         serializer = self.get_serializer(approved_queryset, many=True)
         return Response(serializer.data)
     def perform_create(self, serializer):
@@ -347,6 +360,11 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
             else:
                 # Generate the document number automatically
                 document_number = doc_config.get_next_number()
+                # v1.10.0: branches that share a prefix produced the same number (save failed); take the next free one
+                tries = 0
+                while employee_leave_request.objects.filter(document_number=document_number).exists() and tries < 500:
+                    document_number = doc_config.get_next_number()
+                    tries += 1
 
             serializer.save(document_number=document_number)
             
@@ -434,14 +452,16 @@ class ShiftOverrideViewSet(viewsets.ModelViewSet):
 class OvertimePolicyViewSet(viewsets.ModelViewSet):
     queryset = OvertimePolicy.objects.all()
     serializer_class = OvertimePolicySerializer
+    permission_classes = [ModelCodePermission]   # v1.12.0: was open to anybody
 class OvertimeRuleViewSet(viewsets.ModelViewSet):
     queryset = OvertimeRule.objects.all()
     serializer_class = OvertimeRuleSerializer
+    permission_classes = [ModelCodePermission]   # v1.12.0: was open to anybody
 
 class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
     queryset = EmployeeShiftSchedule.objects.all()
     serializer_class = EmployeeShiftScheduleSerializer
-    # permission_classes = [EmployeeShiftSchedulePermission]
+    permission_classes = [EmployeeShiftSchedulePermission]   # v1.12.0: was commented out (open to anybody)
     @action(detail=True, methods=['get'])
     def get_shift_for_day(self, request, *args, **kwargs):
         """
@@ -726,6 +746,45 @@ class AttendancePolicyViewset(viewsets.ModelViewSet):
 class AttendanceValidationPolicyViewset(viewsets.ModelViewSet):
     queryset = AttendanceValidationPolicy.objects.all()
     serializer_class = AttendanceValidationPolicySerializer
+def _v112_punch_denied(request, employee):
+    """v1.12.0: login required; an employee may punch only for themselves. HR (attendance rights for the
+    employee's branch) or a company admin may punch for others – before, anybody could punch for any id."""
+    user = getattr(request, 'user', None)
+    if not user or not user.is_authenticated:
+        return Response({"detail": "Please log in."}, status=401)
+    try:
+        from AccessControl.access import ctx
+        x = ctx(request)
+    except Exception:
+        return None
+    if x.admin or (x.emp and x.emp.id == employee.id):
+        return None
+    if x.codes & {'add_attendance', 'change_attendance', 'add_punch', 'change_punch', 'add_attendance_manual'}:
+        if x.branches is None or employee.emp_branch_id_id in set(x.branches):
+            return None
+        return Response({"detail": "You can only punch for employees of your own branches."}, status=403)
+    return Response({"detail": "You can only punch for yourself."}, status=403)
+
+
+def _v112_record_punch(request, employee, kind, auth_method, lat=None, lng=None, location=''):
+    """v1.12.0: every punch from these screens is also stored in AttendancePlus with its source
+    (web / mobile / biometric / qr) and IP, and the daily result is recalculated."""
+    try:
+        from django.apps import apps
+        if not apps.is_installed('AttendancePlus'):
+            return
+        from AttendancePlus.engine import add_punch
+        from AttendancePlus.services import client_ip
+        src = str(request.data.get('source') or '').lower()
+        if src not in ('web', 'mobile', 'biometric', 'qr'):
+            src = {'face': 'biometric', 'barcode': 'qr'}.get(auth_method, 'web')
+        add_punch(employee, None, kind, src, ip=client_ip(request), lat=lat or None, lng=lng or None,
+                  location=location or '', verified_by=auth_method or 'login', user_id=request.user.id, check=False)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('AttendancePlus punch not recorded', exc_info=True)
+
+
 class AttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
@@ -754,6 +813,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             employee = emp_master.objects.get(id=emp_id)
         except emp_master.DoesNotExist:
             return Response({"detail": "Employee not found"}, status=404)
+        denied = _v112_punch_denied(request, employee)  # v1.12.0: own face, or HR
+        if denied:
+            return denied
         
         encoding = face_utils.get_face_encoding(face_photo)
         
@@ -778,6 +840,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             employee = emp_master.objects.get(id=emp_id)
         except emp_master.DoesNotExist:
             return Response({"detail": "Employee not found"}, status=404)
+        denied = _v112_punch_denied(request, employee)  # v1.12.0
+        if not denied and getattr(getattr(request, '_zeo_ctx', None), 'emp', None) is not None \
+                and request._zeo_ctx.emp.id == employee.id and not request._zeo_ctx.admin:
+            denied = Response({"detail": "Badges are registered by HR."}, status=403)
+        if denied:
+            return denied
             
         # Check if barcode is already assigned to someone else
         if emp_master.objects.filter(barcode_number=barcode).exclude(id=emp_id).exists():
@@ -847,6 +915,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Employee not found"}, status=404)
         else:
             return Response({"detail": "Provide employee ID or barcode"}, status=400)
+        denied = _v112_punch_denied(request, employee)  # v1.12.0
+        if denied:
+            return denied
 
         # Determine if Check-In or Check-Out based on log history
         last_log = AttendanceLog.objects.filter(
@@ -916,7 +987,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if punch_type == 'check_in':
             attendance, _ = Attendance.objects.get_or_create(
                 employee=employee,
-                date=now().date()
+                date=localtime(now()).date()
             )
         else:
             attendance = Attendance.objects.filter(
@@ -926,13 +997,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if not attendance:
                 attendance, _ = Attendance.objects.get_or_create(
                     employee=employee,
-                    date=now().date()
+                    date=localtime(now()).date()
                 )
 
         tenant_time = localtime(now()).time()
+        is_late = is_early = False  # v1.12.0: compared with the shift and returned
 
         if punch_type == 'check_in':
-            tenant_time, is_late = apply_check_in_policy(employee, tenant_time)
+            tenant_time, is_late = apply_check_in_policy(employee, tenant_time, attendance.shift, attendance.date)
 
             if not attendance.check_in_time:
                 attendance.check_in_time = tenant_time
@@ -946,7 +1018,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 attendance.check_in_image = punch_image
 
         else: # check_out
-            tenant_time,is_early = apply_check_out_policy(employee, tenant_time)
+            tenant_time,is_early = apply_check_out_policy(employee, tenant_time, attendance.shift, attendance.date, attendance.check_in_time)
             attendance.check_out_time = tenant_time
             attendance.check_out_lat = lat
             attendance.check_out_lng = lng
@@ -970,6 +1042,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             attendance.calculate_total_hours()
 
         attendance.save()
+        _v112_record_punch(request, employee, 'in' if punch_type == 'check_in' else 'out', auth_method, lat, lng, location)
         
         from calendars.utils import apply_late_early_penalties
         apply_late_early_penalties(attendance)
@@ -986,7 +1059,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             "face_verified": is_verified,
             "location": location,
             "working_hours": str(attendance.total_hours) if attendance.total_hours else None,
-            "punch_image": image_url
+            "punch_image": image_url,
+            "is_late": is_late,
+            "is_early": is_early,
         }, status=200)
     @action(detail=False, methods=['post'])
     def check_in(self, request):
@@ -1022,6 +1097,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Employee not found"}, status=404)
         else:
             return Response({"detail": "Provide employee ID or barcode"}, status=400)
+        denied = _v112_punch_denied(request, employee)  # v1.12.0
+        if denied:
+            return denied
 
         # 📋 RESOLVE ACTIVE POLICY
         policy = get_employee_attendance_validation_policy(employee)
@@ -1083,11 +1161,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         attendance, _ = Attendance.objects.get_or_create(
             employee=employee,
-            date=now().date()
+            date=localtime(now()).date()
         )
 
         current_time = localtime(now()).time()
-        current_time,is_late = apply_check_in_policy(employee, current_time)
+        current_time,is_late = apply_check_in_policy(employee, current_time, attendance.shift, attendance.date)
 
         if not attendance.check_in_time:
             attendance.check_in_time = current_time
@@ -1110,10 +1188,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         )
 
         attendance.save()
+        _v112_record_punch(request, employee, 'in', auth_method, lat, lng, check_in_location)
         # from calendars.utils import apply_late_early_penalties
         # apply_late_early_penalties(attendance)
         return Response({
             "status": "Check-in successful",
+            "is_late": is_late,
             "face_verified": is_verified,
             "check_in_location": attendance.check_in_location,
             "check_in_image": request.build_absolute_uri(
@@ -1154,6 +1234,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Employee not found"}, status=404)
         else:
             return Response({"detail": "Provide employee ID or barcode"}, status=400)
+        denied = _v112_punch_denied(request, employee)  # v1.12.0
+        if denied:
+            return denied
 
         # 📋 RESOLVE ACTIVE POLICY
         policy = get_employee_attendance_validation_policy(employee)
@@ -1213,15 +1296,17 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if not validate_employee_geofence(employee, lat, lng):
                 return Response({"detail": "Outside geofence"}, status=400)
 
-        try:
-            attendance = Attendance.objects.get(employee=employee, date=now().date())
-        except Attendance.DoesNotExist:
+        # v1.12.0: a night shift checks out after midnight – use today's row, else yesterday's open row
+        _today = localtime(now()).date()
+        attendance = Attendance.objects.filter(employee=employee, date=_today).first() or Attendance.objects.filter(
+            employee=employee, date=_today - timedelta(days=1), check_in_time__isnull=False, check_out_time__isnull=True).first()
+        if attendance is None:
             return Response({"detail": "Attendance record not found for today. Please check in first."}, status=404)
 
         # tenant_time = localtime(now()).time()
         # tenant_time = apply_check_out_policy(employee, tenant_time)
         tenant_time = localtime(now()).time()
-        tenant_time, is_early = apply_check_out_policy(employee, tenant_time)
+        tenant_time, is_early = apply_check_out_policy(employee, tenant_time, attendance.shift, attendance.date, attendance.check_in_time)
 
         attendance.check_out_time = tenant_time
         attendance.check_out_lat = lat
@@ -1243,11 +1328,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         attendance.calculate_total_hours()
         attendance.save()
+        _v112_record_punch(request, employee, 'out', auth_method, lat, lng, check_out_location)
         from calendars.utils import apply_late_early_penalties
         apply_late_early_penalties(attendance)
 
         return Response({
             "status": "Check-out recorded successfully",
+            "is_early": is_early,
                 "working_hours": str(attendance.total_hours) if attendance.total_hours else None,
                 "check_out_location": attendance.check_out_location,
                 "check_out_image": request.build_absolute_uri(
@@ -2051,7 +2138,9 @@ class LvApprovalViewset(viewsets.ModelViewSet):
         approval = self.get_object()
 
         # ✅ SECURITY CHECK
-        if not request.user.is_superuser and approval.approver != request.user:
+        # v1.10.0: the person it was delegated to may approve too
+        delegate_ok = bool(approval.is_deligate and approval.deligate_to_id == request.user.pk)
+        if not request.user.is_superuser and approval.approver != request.user and not delegate_ok:
             return Response(
                 {"error": "You are not allowed to approve this request."},
                 status=status.HTTP_403_FORBIDDEN
@@ -2088,7 +2177,8 @@ class LvApprovalViewset(viewsets.ModelViewSet):
         approval = self.get_object()
 
         # ✅ SECURITY CHECK
-        if not request.user.is_superuser and approval.approver != request.user:
+        delegate_ok = bool(approval.is_deligate and approval.deligate_to_id == request.user.pk)
+        if not request.user.is_superuser and approval.approver != request.user and not delegate_ok:
             return Response(
                 {"error": "You are not allowed to reject this request."},
                 status=status.HTTP_403_FORBIDDEN
@@ -3096,10 +3186,12 @@ class CompensatoryLeaveAllocationviewset(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        comp_leave_type = leave_type.objects.filter(
-            branch=allocation.employee.emp_branch_id,
-            is_compensatory=True
-        ).first()
+        # v1.11.0: rights check (there was none), a compensatory type for every branch counts, ledger line, days from the allocation
+        from Chatter.views import has_code
+        if not has_code(request, 'change_compensatoryleaveallocation', 'add_emp_leave_balance', 'change_emp_leave_balance'):
+            return Response({"error": "You may not allocate compensatory leave."}, status=status.HTTP_403_FORBIDDEN)
+        from LeavePolicy.compoff import comp_type, credit
+        comp_leave_type = comp_type(allocation.employee)
 
         if not comp_leave_type:
             return Response(
@@ -3108,15 +3200,12 @@ class CompensatoryLeaveAllocationviewset(viewsets.ModelViewSet):
             )
 
         with transaction.atomic():
-
-            balance, created = emp_leave_balance.objects.get_or_create(
-                employee=allocation.employee,
-                leave_type=comp_leave_type,
-                defaults={'balance': 0}
-            )
-
-            balance.balance += allocation.credited_days
-            balance.save()
+            days = float(request.data.get('credited_days') or allocation.credited_days or 0)
+            if days <= 0:
+                return Response({"error": "Days to credit must be more than 0."}, status=status.HTTP_400_BAD_REQUEST)
+            allocation.credited_days = days
+            credit(allocation.employee, days, ref=allocation, user_id=request.user.pk,
+                   note=f'Compensatory off: {allocation.reason}'[:255])
 
             allocation.attendances.update(
                 is_compensated=True
@@ -3588,9 +3677,10 @@ class ImmediateRejectAPIView(APIView):
         if not approval:
             return Response({'error': 'No approved leave request found for this document number.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # # Optional: Check if user has permission to immediately reject
-        # if not request.user.has_perm('yourapp.immediate_reject_leave'):
-        #     raise PermissionDenied('You do not have permission to immediately reject leave requests.')
+        # v1.10.0: only users with the leave cancellation right (or company admins) may cancel an approved leave
+        from Chatter.views import has_code
+        if not has_code(request, 'add_lv_cancellation', 'delete_lv_cancellation'):
+            return Response({'error': 'You may not cancel approved leave.'}, status=status.HTTP_403_FORBIDDEN)
 
         # Perform rejection
         approval.status = LeaveApproval.REJECTED
@@ -4211,29 +4301,45 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def generate(self, request):
+        """Attendance per employee and day.
+        v1.7.2: uses start_date / end_date when given (the report screen sends them; before, they were ignored
+        and the current month was always shown), leaves out days after today and before the joining date,
+        lists only active employees and also honours ?branch_id=[..] from the URL."""
+        import re as _re
+        from django.utils.dateparse import parse_date as _pd
 
-        year = int(request.data.get("year", date.today().year))
-
-        month_input = request.data.get("month", date.today().month)
-        month = get_month_number(month_input)
-
-        if not month:
-            return Response(
-                {"error": "Invalid month. Use month name or number."},
-                status=400
-            )
-
-        start_date = date(year, month, 1)
-        end_date = start_date + relativedelta(months=1) - relativedelta(days=1)
+        sd = _pd(str(request.data.get("start_date") or ""))
+        ed = _pd(str(request.data.get("end_date") or ""))
+        if sd or ed:
+            if not (sd and ed):
+                return Response({"error": "Give both start_date and end_date (YYYY-MM-DD)."}, status=400)
+            if ed < sd:
+                return Response({"error": "The end date is before the start date."}, status=400)
+            if (ed - sd).days > 92:
+                return Response({"error": "Choose at most 3 months."}, status=400)
+            start_date, end_date = sd, ed
+            year, month = sd.year, sd.month
+        else:
+            year = int(request.data.get("year", date.today().year))
+            month_input = request.data.get("month", date.today().month)
+            month = get_month_number(month_input)
+            if not month:
+                return Response(
+                    {"error": "Invalid month. Use month name or number."},
+                    status=400
+                )
+            start_date = date(year, month, 1)
+            end_date = start_date + relativedelta(months=1) - relativedelta(days=1)
+        full_month = (start_date.day == 1 and end_date == start_date + relativedelta(months=1) - relativedelta(days=1))
 
         # 🔹 Multiple-selection filters
         employee_ids    = request.data.get("employee_ids", [])
-        branch_ids      = request.data.get("branch_ids", [])
+        branch_ids      = request.data.get("branch_ids", []) or [int(x) for x in _re.findall(r"\d+", request.query_params.get("branch_id", "") or "")]
         department_ids  = request.data.get("department_ids", [])
         category_ids    = request.data.get("category_ids", [])
         designation_ids = request.data.get("designation_ids", [])
 
-        employees = emp_master.objects.all()
+        employees = emp_master.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_dept_id', 'emp_ctgry_id', 'emp_desgntn_id')
 
         if employee_ids:
             employees = employees.filter(id__in=employee_ids)
@@ -4250,38 +4356,57 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
         if designation_ids:
             employees = employees.filter(emp_desgntn_id__in=designation_ids)
 
+        today = date.today()
         result = []
 
         for employee in employees:
-            summary_data = get_attendance_summary(employee, start_date, end_date)
+            first = max(start_date, employee.emp_joined_date) if employee.emp_joined_date else start_date
+            last = min(end_date, today)
+            if first > last:
+                continue
+            summary_data = get_attendance_summary(employee, first, last)
 
             if not summary_data:
                 continue
 
             serializer = AttendanceSummarySerializer(summary_data)
+            days = serializer.data["summary"]
+            present = sum(1 for d in days if d.get("status") == "Present")
+            absent = sum(1 for d in days if d.get("status") == "Absent")
+            on_leave = sum(1 for d in days if d.get("status") == "On Leave")
+            name = " ".join(x for x in [employee.emp_first_name, employee.emp_last_name] if x)
 
-            summary_obj, _ = MonthlyAttendanceSummary.objects.update_or_create(
-                employee=employee,
-                month=month,
-                year=year,
-                defaults={
-                    "summary_data": serializer.data["summary"],
-                    "total_present": serializer.data["total_present"],
-                    "total_absent": serializer.data["total_absent"],
-                }
-            )
+            if full_month and first == start_date and last == end_date:
+                # a complete month in the past: kept as the month's summary (as before)
+                summary_obj, _ = MonthlyAttendanceSummary.objects.update_or_create(
+                    employee=employee,
+                    month=month,
+                    year=year,
+                    defaults={
+                        "summary_data": days,
+                        "total_present": present,
+                        "total_absent": absent,
+                    }
+                )
+                attendance = MonthlyAttendanceSummarySerializer(summary_obj).data
+            else:
+                attendance = {"employee": employee.id, "employee_name": employee.emp_first_name, "month": month, "year": year,
+                              "summary_data": days, "total_present": present, "total_absent": absent}
+            attendance["total_on_leave"] = on_leave
 
             result.append({
                 "employee_id": employee.id,
                 "employee_code": employee.emp_code,
-                "employee_name": f"{employee.emp_first_name} {employee.emp_last_name}",
+                "employee_name": name,
                 "branch": employee.emp_branch_id.branch_name if employee.emp_branch_id else None,
                 "department": employee.emp_dept_id.dept_name if employee.emp_dept_id else None,
                 "category": employee.emp_ctgry_id.ctgry_title if employee.emp_ctgry_id else None,
                 "designation": employee.emp_desgntn_id.desgntn_job_title if employee.emp_desgntn_id else None,
                 "month": calendar.month_name[month],
                 "year": year,
-                "attendance": MonthlyAttendanceSummarySerializer(summary_obj).data
+                "start_date": first,
+                "end_date": last,
+                "attendance": attendance
             })
 
         return Response(result)

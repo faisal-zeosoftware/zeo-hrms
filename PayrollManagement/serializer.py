@@ -21,6 +21,21 @@ class SalaryComponentSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalaryComponent
         fields = '__all__'
+
+    def validate(self, attrs):
+        # v1.11.0: a formula with an error was saved and then silently paid as 0 – check it before saving
+        import re
+        from .formula import problems
+        data = {**({f: getattr(self.instance, f) for f in ('code', 'name', 'formula', 'component_value_type')} if self.instance else {}), **attrs}
+        code = (data.get('code') or '').strip()
+        if 'code' in attrs and code and not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', code) and (not self.instance or self.instance.code != code):
+            raise serializers.ValidationError({'code': 'Use letters, digits and _ only, starting with a letter (e.g. HRA, OT_1) – the code is used in formulas.'})
+        formula = (data.get('formula') or '').strip()
+        if data.get('component_value_type') == 'variable' and formula and ('formula' in attrs or 'component_value_type' in attrs):
+            errs = problems(formula, own_code=code or None, own_name=data.get('name'))
+            if errs:
+                raise serializers.ValidationError({'formula': errs})
+        return attrs
 class EmployeeSalaryStructureSerializer(serializers.ModelSerializer):
     # For readable output
     employee_id = serializers.IntegerField(source='employee.id', read_only=True)

@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/fields/screens/', v.FieldScreensView.as_view(), name='chatter-field-screens'),
     path('api/fields/', v.FieldsView.as_view(), name='chatter-fields'),
     path('api/values/', v.ValuesView.as_view(), name='chatter-values'),
+    path('api/values/check/', v.ValuesCheckView.as_view(), name='chatter-values-check'),
     path('api/layout/dashboard/', v.DashboardLayoutView.as_view(), name='chatter-dashboard-layout'),
     path('api/layout/list/', v.ListLayoutView.as_view(), name='chatter-list-layout'),
     path('api/orgchart/', v.OrgChartView.as_view(), name='chatter-orgchart'),

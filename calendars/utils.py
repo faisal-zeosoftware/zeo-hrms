@@ -201,9 +201,56 @@ def get_attendance_summary(employee, start_date, end_date):
         "total_present": total_present,
         "total_absent": total_absent
     }
+def _attplus_day(employee, day):
+    """v1.12.0: the AttendancePlus daily result (None when the app is not installed / not calculated)."""
+    try:
+        from django.apps import apps
+        if not apps.is_installed('AttendancePlus'):
+            return None
+        from AttendancePlus.models import AttendanceDay
+        return AttendanceDay.objects.filter(employee_id=employee.id, date=day).first()
+    except Exception:
+        return None
+
+
+def _absent_marking_on(employee):
+    """v1.12.0: is a working day without any punch marked Absent for this employee?
+    AttendancePlus rule "Mark absent if no punch" (+ exemptions) when installed, otherwise
+    settings.ZEO_MARK_ABSENT_WITHOUT_PUNCH (default True)."""
+    try:
+        from AttendancePlus.engine import rule_for, _absence_exempt
+        return not _absence_exempt(employee, rule_for(employee))
+    except Exception:
+        from django.conf import settings
+        return bool(getattr(settings, 'ZEO_MARK_ABSENT_WITHOUT_PUNCH', True))
+
+
+def _shift_off_day(employee, day):
+    """v1.12.0: off day from the shift planner (rotations) when installed."""
+    try:
+        from ShiftPlanner.resolver import off_day
+        return bool(off_day(employee, day))
+    except Exception:
+        return False
+
+
+def _local_today():
+    try:
+        from AttendancePlus.engine import today
+        return today()
+    except Exception:
+        return timezone.localdate()
+
+
 def sync_attendance_calendar(employee, start_date, end_date):
     """
     Synchronize the AttendanceCalendar for an employee within a date range.
+
+    v1.12.0: a past working day (not leave / holiday / weekend / shift off day) without any punch is
+    marked Absent with unpaid_fraction 1 (payroll days_worked = days − unpaid fractions), instead of
+    Present. Switch: AttendancePlus rule "Mark absent if no punch" with exemptions (manual-attendance
+    employees, categories, employees) or settings.ZEO_MARK_ABSENT_WITHOUT_PUNCH. Today and future
+    days keep the old behaviour (Present). AttendancePlus half days → Present, half day, unpaid 0.5.
     """
     from .models import AttendanceCalendar, Attendance, employee_leave_request
     
@@ -213,7 +260,8 @@ def sync_attendance_calendar(employee, start_date, end_date):
     # Fetch existing attendances and leaves for bulk check
     attendances = set(Attendance.objects.filter(
         employee=employee, 
-        date__range=(start_date, end_date)
+        date__range=(start_date, end_date),
+        check_in_time__isnull=False,
     ).values_list('date', flat=True))
     
     leaves = employee_leave_request.objects.filter(
@@ -222,11 +270,15 @@ def sync_attendance_calendar(employee, start_date, end_date):
         start_date__lte=end_date,
         end_date__gte=start_date
     ).select_related('leave_type')
+    today = _local_today()
+    mark_absent = None
 
     for day in daterange(start_date, end_date):
         # Skip if manual override exists
         entry = AttendanceCalendar.objects.filter(employee=employee, date=day).first()
         if entry and entry.is_manual:
+            continue
+        if getattr(employee, 'emp_joined_date', None) and day < employee.emp_joined_date:
             continue
             
         weekday = day.strftime("%A")
@@ -235,6 +287,7 @@ def sync_attendance_calendar(employee, start_date, end_date):
         is_half_day = False
         half_day_period = None
         unpaid_fraction = 0.0
+        remarks = "Auto-synced"
         
         # 1. Check Leaves (priority)
         current_leave = None
@@ -259,14 +312,40 @@ def sync_attendance_calendar(employee, start_date, end_date):
         elif day in holiday_dates:
             status = "Holiday"
             unpaid_fraction = 0.0
-        elif weekday in weekend_days:
+        elif weekday in weekend_days or _shift_off_day(employee, day):
             status = "Weekend"
             unpaid_fraction = 0.0
         else:
-            # If the day is neither a leave day nor a weekend/holiday,
-            # it should automatically be marked as present.
-            status = "Present"
-            unpaid_fraction = 0.0
+            apd = _attplus_day(employee, day)
+            apd_status = apd.status if apd else None
+            if apd_status == 'weekly_off':
+                status = "Weekend"
+            elif apd_status == 'holiday':
+                status = "Holiday"
+            elif apd_status == 'absent':
+                status, unpaid_fraction, remarks = "Absent", 1.0, "Absent (attendance rules)"
+            elif apd_status == 'half_day':
+                status, is_half_day, remarks = "Present", True, "Half day (attendance rules)"
+                try:
+                    from AttendancePlus.engine import rule_for
+                    unpaid_fraction = float(rule_for(employee).half_day_unpaid_fraction)
+                except Exception:
+                    unpaid_fraction = 0.5
+            elif apd_status in ('present', 'missing_punch') or day in attendances:
+                status = "Present"
+                if apd_status == 'missing_punch':
+                    remarks = "Missing punch – correction needed"
+            elif day < today:
+                if mark_absent is None:
+                    mark_absent = _absent_marking_on(employee)
+                if mark_absent:
+                    status, unpaid_fraction, remarks = "Absent", 1.0, "No punch"
+                else:
+                    status, remarks = "Present", "Present without punch (exempt)"
+            else:
+                # today / future: unchanged behaviour (expected present)
+                status = "Present"
+            unpaid_fraction = unpaid_fraction or 0.0
 
         AttendanceCalendar.objects.update_or_create(
             employee=employee,
@@ -277,7 +356,7 @@ def sync_attendance_calendar(employee, start_date, end_date):
                 'is_half_day': is_half_day,
                 'half_day_period': half_day_period,
                 'unpaid_fraction': unpaid_fraction,
-                'remarks': "Auto-synced"
+                'remarks': remarks
             }
         )
         
@@ -347,10 +426,30 @@ from decimal import Decimal
 from django.db.models import Q
 from calendars.models import EmployeeOvertime, OvertimePolicy
 def calculate_employee_overtime(attendance):
+    """
+    v1.12.0: the ONE path that writes attendance overtime (calendars.Attendance.save calls only this).
+
+    * With AttendancePlus installed the daily result engine does it (shift / rule thresholds, break
+      deducted, weekly / monthly thresholds, rate per rule, approval kept).
+    * Otherwise: one EmployeeOvertime row per employee / day / OT type (the table allows only one –
+      the old code created a second "EXT" row and failed). OT = hours worked − break − shift hours
+      (weekend / holiday: all hours), limited by the DAILY slabs of a matching OvertimePolicy when it
+      has rules; without a policy all extra hours count (as before). Approval is kept unless the hours
+      went up. Manual OT rows are never touched.
+    """
+    try:
+        from django.apps import apps
+        if apps.is_installed('AttendancePlus'):
+            from AttendancePlus.engine import recompute_from_attendance
+            return recompute_from_attendance(attendance)
+    except ImportError:
+        pass
 
     employee = attendance.employee
+    rows = EmployeeOvertime.objects.filter(employee=employee, date=attendance.date).exclude(source='MANUAL')
 
     if not employee.emp_ot_applicable or not attendance.total_hours:
+        rows.delete()
         return
 
     worked = attendance.total_hours
@@ -368,7 +467,13 @@ def calculate_employee_overtime(attendance):
 
     else:
         ot_type = 'NORMAL'
+        if not attendance.shift:
+            rows.delete()
+            return
         base_duration = attendance.get_shift_duration()
+        brk = attendance.shift.break_duration or timedelta(0)
+        worked = worked - brk            # unpaid break is not work
+        base_duration = base_duration - brk
 
     # -------------------------
     # Fetch Policy
@@ -386,48 +491,40 @@ def calculate_employee_overtime(attendance):
         .first()
     )
 
-    if not policy:
-        return
-
-    rules = policy.rules.filter(
-        rule_type='DAILY',
-        is_active=True
-    )
-
-    # Clear previous OT
-    EmployeeOvertime.objects.filter(
-        employee=employee,
-        date=attendance.date,
-        ot_type=ot_type
-    ).delete()
-
     remaining = worked - base_duration
-    if remaining <= timedelta(0):
+    total = timedelta(0)
+    slab = 'OT'
+    rules = list(policy.rules.filter(rule_type='DAILY', is_active=True)) if policy else []
+    if rules:
+        for rule in rules:
+            if remaining <= timedelta(0):
+                break
+            part = min(remaining, rule.threshold_hours)
+            total += part
+            if rule.is_extended:
+                slab = 'EXT'
+            remaining -= part
+    else:
+        total = max(remaining, timedelta(0))
+
+    rows.exclude(ot_type=ot_type).delete()
+    if total <= timedelta(0):
+        rows.filter(ot_type=ot_type).delete()
         return
+    hours = (Decimal(total.total_seconds()) / Decimal(3600)).quantize(Decimal("0.01"))
+    row = rows.filter(ot_type=ot_type).first()
+    if row is None:
+        if EmployeeOvertime.objects.filter(employee=employee, date=attendance.date, ot_type=ot_type).exists():
+            return   # a manual OT row exists for this day / type
+        EmployeeOvertime.objects.create(employee=employee, date=attendance.date, ot_type=ot_type, slab=slab,
+                                        hours=hours, approved=False, created_by=attendance.created_by)
+        return
+    if row.hours != hours or row.slab != slab:
+        if hours > row.hours:
+            row.approved = False
+        row.hours, row.slab = hours, slab
+        row.save(update_fields=['hours', 'slab', 'approved'])
 
-    # -------------------------
-    # Apply Slabs
-    # -------------------------
-    for rule in rules:
-        if remaining <= timedelta(0):
-            break
-
-        slab_duration = min(remaining, rule.threshold_hours)
-
-        hours = (
-            Decimal(slab_duration.total_seconds()) / Decimal(3600)
-        ).quantize(Decimal("0.01"))
-
-        EmployeeOvertime.objects.create(
-            employee=employee,
-            date=attendance.date,
-            ot_type=ot_type,
-            slab='EXT' if rule.is_extended else 'OT',
-            hours=hours,
-            approved=False
-        )
-
-        remaining -= slab_duration
 
 
 import math
@@ -578,54 +675,67 @@ def get_active_policy(employee):
     ).first()
 
 
-def apply_check_in_policy(employee, check_in_time):
+def _shift_window(day, shift, check_in_time=None):
+    """v1.12.0: shift start / end datetimes for a day (end on the next day for cross-midnight shifts)."""
+    from datetime import date as _d
+    day = day or _d.today()
+    start = datetime.combine(day, shift.start_time)
+    end = datetime.combine(day, shift.end_time)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
+def apply_check_in_policy(employee, check_in_time, shift=None, day=None):
     """
     Apply attendance policy rules for check-in.
     - Rounds time if round_off is enabled.
-    - Returns (adjusted_time, is_late_flag) where is_late_flag is True
-      if the check-in exceeds the allowed late minutes defined in the policy.
+    - Returns (adjusted_time, is_late). v1.12.0: is_late compares with the shift start + the late
+      check-in minutes of the policy (before, it was True for every check-in whenever the policy had
+      late rules on, without looking at the shift).
     """
+    from datetime import date as _d
     policy = get_employee_attendance_policy(employee)
 
-    if not policy:
-        return check_in_time, False
+    dt = datetime.combine(day or _d.today(), check_in_time)
 
-    dt = datetime.combine(datetime.today(), check_in_time)
-
-    if policy.round_off:
+    if policy and policy.round_off:
         minutes = (dt.minute // 5) * 5
         dt = dt.replace(minute=minutes, second=0)
 
     is_late = False
-    if policy.late_check_in and policy.enable_late_coming:
-        # We cannot know the shift start here — flag as late if the
-        # caller passes a time already confirmed as beyond the grace window.
-        # Detailed shift-based comparison is done at the Attendance view level.
-        is_late = True  # caller should compare against shift start + grace
+    if shift is not None and getattr(shift, 'start_time', None) and getattr(shift, 'end_time', None):
+        grace = policy.late_check_in_minutes if (policy and policy.late_check_in) else 0
+        start, _ = _shift_window(dt.date(), shift)
+        is_late = dt > start + timedelta(minutes=grace)
 
     return dt.time(), is_late
 
 
-def apply_check_out_policy(employee, check_out_time):
+def apply_check_out_policy(employee, check_out_time, shift=None, day=None, check_in_time=None):
     """
     Apply attendance policy rules for check-out.
     - Rounds time if round_off is enabled.
-    - Returns (adjusted_time, is_early_flag).
+    - Returns (adjusted_time, is_early). v1.12.0: compares with the shift end − early check-out
+      minutes, with the end on the next day for a cross-midnight shift.
     """
+    from datetime import date as _d
     policy = get_employee_attendance_policy(employee)
 
-    if not policy:
-        return check_out_time, False
+    base = day or _d.today()
+    dt = datetime.combine(base, check_out_time)
+    if check_in_time and check_out_time < check_in_time:
+        dt += timedelta(days=1)       # out after midnight belongs to the shift start day
 
-    dt = datetime.combine(datetime.today(), check_out_time)
-
-    if policy.round_off:
+    if policy and policy.round_off:
         minutes = (dt.minute // 5) * 5
         dt = dt.replace(minute=minutes, second=0)
 
     is_early = False
-    if policy.early_check_out and policy.enable_early_exit:
-        is_early = True  # caller should compare against shift end - grace
+    if shift is not None and getattr(shift, 'start_time', None) and getattr(shift, 'end_time', None):
+        grace = policy.early_check_out_minutes if (policy and policy.early_check_out) else 0
+        _, end = _shift_window(base, shift)
+        is_early = dt < end - timedelta(minutes=grace)
 
     return dt.time(), is_early
 
@@ -633,129 +743,145 @@ def get_employee_attendance_validation_policy(employee):
     """
     Retrieves the active AttendanceValidationPolicy for the employee
     based on priority: employee > category > department > branch > company.
+    v1.12.0: the most specific one wins (before, each step overwrote the previous one, so only
+    the company-wide policy was ever used).
     """
     from .models import AttendanceValidationPolicy
-    # Employee
-    policy = AttendanceValidationPolicy.objects.filter(
-        employee=employee,
-        is_active=True
-    ).first()
-
-    # Category
-    policy = AttendanceValidationPolicy.objects.filter(
-        category=employee.emp_ctgry_id,
-        is_active=True
-    ).first()
-
-    # Department
-    policy = AttendanceValidationPolicy.objects.filter(
-        department=employee.emp_dept_id,
-        is_active=True
-    ).first()
-
-    # Branch
-    policy = AttendanceValidationPolicy.objects.filter(
-        branch=employee.emp_branch_id,
-        is_active=True
-    ).first()
+    qs = AttendanceValidationPolicy.objects.filter(is_active=True)
+    for field, value in (('employee', employee), ('designation', employee.emp_desgntn_id),
+                         ('category', employee.emp_ctgry_id), ('department', employee.emp_dept_id),
+                         ('branch', employee.emp_branch_id)):
+        if value:
+            policy = qs.filter(**{field: value}).first()
+            if policy:
+                return policy
 
     # Company
-    policy = AttendanceValidationPolicy.objects.filter(
+    return qs.filter(
         employee__isnull=True,
+        designation__isnull=True,
         category__isnull=True,
         department__isnull=True,
         branch__isnull=True,
-        is_active=True
     ).first()
-    return policy
+
+
+def _penalty_policy(model, employee, att_policy):
+    qs = model.objects.filter(enabled=True)
+    for field, value in (('employee', employee), ('designation', employee.emp_desgntn_id),
+                         ('category', employee.emp_ctgry_id), ('department', employee.emp_dept_id),
+                         ('branch', employee.emp_branch_id)):
+        if value:
+            p = qs.filter(**{field: value}).first()
+            if p:
+                return p
+    if att_policy:
+        return qs.filter(attendance_policy=att_policy).first()
+    return None
+
+
+def _violation_days(employee, start, end, kind, grace_minutes):
+    """v1.12.0: dates late (kind='late') / early in [start, end]. AttendancePlus daily results when
+    installed (corrections that waive the penalty are skipped), else the Attendance rows vs shift."""
+    from calendars.models import Attendance
+    try:
+        from django.apps import apps
+        if apps.is_installed('AttendancePlus'):
+            from AttendancePlus.models import AttendanceDay
+            flt = {'is_late': True} if kind == 'late' else {'is_early': True}
+            return set(AttendanceDay.objects.filter(employee_id=employee.id, date__range=(start, end),
+                                                    penalty_waived=False, **flt).values_list('date', flat=True))
+    except ImportError:
+        pass
+    days = set()
+    for att in Attendance.objects.filter(employee=employee, date__range=(start, end)).select_related('shift'):
+        sh = att.shift
+        if not (sh and sh.start_time and sh.end_time):
+            continue
+        s, e = _shift_window(att.date, sh)
+        if kind == 'late' and att.check_in_time:
+            if datetime.combine(att.date, att.check_in_time) > s + timedelta(minutes=grace_minutes):
+                days.add(att.date)
+        elif kind == 'early' and att.check_out_time and att.check_in_time:
+            out = datetime.combine(att.date, att.check_out_time)
+            if att.check_out_time < att.check_in_time:
+                out += timedelta(days=1)
+            if out < e - timedelta(minutes=grace_minutes):
+                days.add(att.date)
+    return days
+
+
 def apply_late_early_penalties(attendance):
     """
     Evaluates the given Attendance record against LateComingPolicy and EarlyExitPolicy.
     If violations reach the threshold for the evaluation period, deducts leaves.
+
+    v1.12.0: uses the real fields (late_occurrence_limit / occurrence_limit – the old code read
+    threshold_count and failed with AttributeError on every check-out when a policy matched),
+    compares date-times (cross-midnight shifts), finds the policy by employee / designation /
+    category / department / branch, and skips days whose penalty was waived by a correction.
     """
-    from calendars.models import LateComingPolicy, EarlyExitPolicy, Attendance, employee_leave_request
-    from django.db.models import Q
-    from datetime import datetime, timedelta
-    
+    from calendars.models import LateComingPolicy, EarlyExitPolicy
+
     employee = attendance.employee
     att_policy = get_active_policy(employee)
-    
-    if not att_policy or not attendance.shift:
-        return
-        
-    shift = attendance.shift
-    
-    # --- LATE COMING CHECK ---
-    late_policy = LateComingPolicy.objects.filter(enabled=True).filter(
-        Q(employee=employee) | Q(attendance_policy=att_policy)
-    ).first()
-    
-    if late_policy and attendance.check_in_time and shift.start_time:
-        grace_minutes = att_policy.late_check_in_minutes if att_policy.late_check_in else 0
-        expected_time = (datetime.combine(attendance.date, shift.start_time) + timedelta(minutes=grace_minutes)).time()
-        
-        if attendance.check_in_time > expected_time:
-            # Count violations in the current month
-            start_of_month = attendance.date.replace(day=1)
-            
-            month_attendances = Attendance.objects.filter(
-                employee=employee,
-                date__gte=start_of_month,
-                date__lte=attendance.date,
-                check_in_time__isnull=False
-            ).select_related('shift')
-            
-            late_count = 0
-            for att in month_attendances:
-                if att.shift and att.shift.start_time:
-                    att_expected = (datetime.combine(att.date, att.shift.start_time) + timedelta(minutes=grace_minutes)).time()
-                    if att.check_in_time > att_expected:
-                        late_count += 1
-                        
-            if late_count > 0 and late_count % late_policy.threshold_count == 0:
-                apply_penalty(employee, late_policy, attendance.date, f"Late Coming Penalty ({late_count} occurrences)")
+    day = attendance.date
+    start_of_month = day.replace(day=1)
 
-    # --- EARLY GOING CHECK ---
-    early_policy = EarlyExitPolicy.objects.filter(enabled=True).filter(
-        Q(employee=employee) | Q(attendance_policy=att_policy)
-    ).first()
-    
-    if early_policy and attendance.check_out_time and shift.end_time:
-        grace_minutes = att_policy.early_check_out_minutes if att_policy.early_check_out else 0
-        expected_time = (datetime.combine(attendance.date, shift.end_time) - timedelta(minutes=grace_minutes)).time()
-        
-        if attendance.check_out_time < expected_time:
-            start_of_month = attendance.date.replace(day=1)
-            
-            month_attendances = Attendance.objects.filter(
-                employee=employee,
-                date__gte=start_of_month,
-                date__lte=attendance.date,
-                check_out_time__isnull=False
-            ).select_related('shift')
-            
-            early_count = 0
-            for att in month_attendances:
-                if att.shift and att.shift.end_time:
-                    att_expected = (datetime.combine(att.date, att.shift.end_time) - timedelta(minutes=grace_minutes)).time()
-                    if att.check_out_time < att_expected:
-                        early_count += 1
-                        
-            if early_count > 0 and early_count % early_policy.threshold_count == 0:
-                apply_penalty(employee, early_policy, attendance.date, f"Early Exit Penalty ({early_count} occurrences)")
+    for kind, model, limit_field in (('late', LateComingPolicy, 'late_occurrence_limit'),
+                                     ('early', EarlyExitPolicy, 'occurrence_limit')):
+        policy = _penalty_policy(model, employee, att_policy)
+        if not policy:
+            continue
+        base = att_policy or policy.attendance_policy
+        if kind == 'late':
+            grace = base.late_check_in_minutes if (base and base.late_check_in) else 0
+        else:
+            grace = base.early_check_out_minutes if (base and base.early_check_out) else 0
+        start = start_of_month if getattr(policy, 'reset_monthly', True) else day.replace(month=1, day=1)
+        days = _violation_days(employee, start, day, kind, grace)
+        if day not in days:
+            continue
+        limit = getattr(policy, limit_field, 0) or 0
+        count = len(days)
+        if limit and count % limit == 0:
+            label = 'Late Coming' if kind == 'late' else 'Early Exit'
+            apply_penalty(employee, policy, day, f"{label} Penalty ({count} occurrences)", kind=kind)
 
 
-def apply_penalty(employee, policy, date, reason):
+def apply_penalty(employee, policy, date, reason, kind='late'):
     """
     Creates an auto-approved leave request to deduct leave balance as penalty.
+    v1.12.0: the leave type comes from the employee attendance policy (late / early "deduct from
+    leave type"); LateComingPolicy / EarlyExitPolicy have no such field (the old code failed).
+    Without a leave type the penalty days are recorded on the AttendancePlus daily result
+    (payroll variable late_penalty_days) instead.
     """
     from calendars.models import employee_leave_request
-    
-    leave_type = policy.deduct_from_leave_type
+
+    leave_type = getattr(policy, 'deduct_from_leave_type', None)
     if not leave_type:
+        emp_policy = get_employee_attendance_policy(employee)
+        if emp_policy:
+            leave_type = getattr(emp_policy, f'{kind}_deduct_from_leave_type', None)
+    days_to_deduct = float(policy.leave_days_to_deduct or 0)
+    if getattr(policy, 'penalty_type', '') == 'full_day':
+        days_to_deduct = max(days_to_deduct, 1.0)
+    if not days_to_deduct:
         return
-        
-    days_to_deduct = float(policy.leave_days_to_deduct)
+    if not leave_type:
+        try:
+            from AttendancePlus.models import AttendanceDay
+            d = AttendanceDay.objects.filter(employee_id=employee.id, date=date).first()
+            if d:
+                d.flags = dict(d.flags or {}, **{f'{kind}_penalty': days_to_deduct, 'penalty_reason': reason})
+                if kind == 'late':
+                    d.flags['late_penalty'] = days_to_deduct
+                d.save(update_fields=['flags'])
+        except Exception:
+            pass
+        return
+
     is_half_day = days_to_deduct <= 0.5
     
     # Avoid duplicating penalties for the exact same date and reason

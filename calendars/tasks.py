@@ -27,6 +27,11 @@ def accrue_leaves():
             with schema_context(tenant_schema_name):
 
                 entitlements = leave_entitlement.objects.filter(accrual=True)
+                try:   # v1.10.0: leave types under a leave policy are accrued by LeavePolicy.engine.run_accrual
+                    from LeavePolicy.engine import managed_type_ids
+                    entitlements = entitlements.exclude(leave_type_id__in=managed_type_ids())
+                except ImportError:
+                    pass
                 employees = emp_master.objects.all()
 
                 logger.info(
@@ -92,8 +97,11 @@ def accrue_leaves():
                             ):
                             continue
 
-                        if experience_months >= min_exp_months:
-                            leave_type_entitlements[entitlement.leave_type] = entitlement
+                        if experience_months >= min_exp_months:   # v1.10.0: keep the most specific (highest experience) entitlement
+                            cur = leave_type_entitlements.get(entitlement.leave_type)
+                            cur_min = (cur.min_experience * 12 if cur and cur.effective_after_unit == "years" else (cur.min_experience if cur else -1))
+                            if cur is None or min_exp_months >= cur_min:
+                                leave_type_entitlements[entitlement.leave_type] = entitlement
 
                     # 🔥 Process accrual
                     for leave_type, ent in leave_type_entitlements.items():
@@ -112,7 +120,7 @@ def accrue_leaves():
                                 - timedelta(days=1)
                             )
 
-                            if ent.accrual_day == "1st" and today.day == 14:
+                            if ent.accrual_day == "1st" and today.day == 1:   # v1.10.0: was day 14
                                 accrue_today = True
 
                             elif ent.accrual_day == "last" and today == last_day:
@@ -201,7 +209,7 @@ def accrue_leaves():
                                 defaults={"balance": 0},
                             )
 
-                            leave_balance.balance += accrual_amount
+                            leave_balance.balance = (leave_balance.balance or 0) + accrual_amount   # v1.10.0: empty balance
                             leave_balance.save()
 
                             leave_accrual_transaction.objects.create(
@@ -244,6 +252,11 @@ def reset_leave_balances():
                 logger.info(f"Processing leave reset for tenant: {tenant_schema_name}")
 
                 entitlements = leave_entitlement.objects.all().order_by("leave_type", "min_experience")
+                try:   # v1.10.0: leave types under a leave policy have their own leave-year end
+                    from LeavePolicy.engine import managed_type_ids
+                    entitlements = entitlements.exclude(leave_type_id__in=managed_type_ids())
+                except ImportError:
+                    pass
                 employees = emp_master.objects.all()
 
                 if not employees.exists():
@@ -306,10 +319,13 @@ def reset_leave_balances():
                     for leave_type, data in leave_type_entitlements.items():
                         best_entitlement = data["entitlement"]
                         
-                        try:
-                            reset = LeaveResetPolicy.objects.get(leave_entitlement=best_entitlement, reset=True)
-                        except LeaveResetPolicy.DoesNotExist:
+                        # v1.10.0: a reset policy may be linked to the entitlement or only to the leave type
+                        reset = (LeaveResetPolicy.objects.filter(leave_entitlement=best_entitlement, reset=True).first()
+                                 or LeaveResetPolicy.objects.filter(leave_type=leave_type, leave_entitlement__isnull=True, reset=True).first())
+                        if reset is None:
                             continue
+                        if reset.frequency not in ('years', 'months'):
+                            continue   # 'days' would reset every day
 
                         reset_month = month_name_to_number(reset.month)
                         reset_day = 1 if reset.day == '1st' else calendar.monthrange(today.year, today.month)[1]
@@ -339,7 +355,9 @@ def reset_leave_balances():
                                 calculated_cf_amount = (initial_balance * reset.cf_value / 100)
                                 carry_forward_amount = min(calculated_cf_amount, reset.cf_max_limit if reset.cf_max_limit else calculated_cf_amount)
                             else:
-                                carry_forward_amount = min(initial_balance, reset.cf_value)
+                                carry_forward_amount = min(initial_balance, reset.cf_value or 0)
+                                if reset.cf_max_limit:   # v1.10.0: the maximum applies to units too
+                                    carry_forward_amount = min(carry_forward_amount, reset.cf_max_limit)
 
                             carry_forward_amount = max(carry_forward_amount, 0)  # Ensure no negative values
 
@@ -351,7 +369,9 @@ def reset_leave_balances():
                             if reset.encashment_unit_or_percentage == 'percentage':
                                 encashment_amount = min((remaining_balance * reset.encashment_value / 100), reset.encashment_max_limit or remaining_balance)
                             else:
-                                encashment_amount = min(remaining_balance, reset.encashment_value)
+                                encashment_amount = min(remaining_balance, reset.encashment_value or 0)
+                                if reset.encashment_max_limit:   # v1.10.0
+                                    encashment_amount = min(encashment_amount, reset.encashment_max_limit)
 
                             encashment_amount = max(encashment_amount, 0)  # Ensure no negative values
                         else:
@@ -385,6 +405,8 @@ def reset_leave_balances():
 
                         opening_balance_amount = float(reset.opening_balance or 0)
                         final_balance = float(carry_forward_amount) + opening_balance_amount
+                        if initial_balance < 0:   # v1.10.0: leave taken in advance is recovered from the new year
+                            final_balance += float(initial_balance)
 
                         # **Apply Leave Reset (Update Balance)**
                         leave_balance.balance = final_balance
@@ -561,17 +583,23 @@ def deduct_expired_carry_forward_leaves():
                     expires_in = policy.cf_expires_in_value
 
                     # Determine expiry date based on policy settings
+                    if not expires_in:
+                        continue
                     if time_unit == 'days':
                         expiry_threshold = today - timedelta(days=expires_in)
-                    elif time_unit == 'months':
-                        expiry_threshold = today.replace(month=today.month - expires_in) if today.month > expires_in else today.replace(year=today.year - 1, month=(12 - expires_in + today.month))
+                    elif time_unit == 'months':   # v1.10.0: relativedelta (the old arithmetic failed for 12+ months and on the 31st)
+                        expiry_threshold = today - relativedelta(months=expires_in)
                     elif time_unit == 'years':
-                        expiry_threshold = today.replace(year=today.year - expires_in)
+                        expiry_threshold = today - relativedelta(years=expires_in)
                     else:
                         continue  
 
-                    # Fetch expired carry-forward transactions
+                    # Fetch expired carry-forward transactions – v1.10.0: only of this policy's leave type
+                    lt_id = policy.leave_type_id or (policy.leave_entitlement.leave_type_id if policy.leave_entitlement_id else None)
+                    if not lt_id:
+                        continue
                     expired_transactions = LeaveCarryForwardTransaction.objects.filter(
+                        leave_type_id=lt_id,
                         reset_date__lte=expiry_threshold,
                         final_carry_forward__gt=0
                     )
@@ -590,7 +618,7 @@ def deduct_expired_carry_forward_leaves():
 
                                 # Deduct expired carry-forward leave from employee leave balance
                                 deduction = min(emp_balance.balance, leave_transaction.final_carry_forward)
-                                emp_balance.balance -= deduction
+                                emp_balance.balance = float(emp_balance.balance - max(deduction, 0))
                                 emp_balance.save()
 
                                 # Set carry-forward amount to 0 since it has expired

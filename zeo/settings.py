@@ -20,17 +20,54 @@ import os
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+# v1.13.1: server-specific values and secrets come from the environment or from a `.env` file next to manage.py
+# (see .env.example). Nothing secret is kept in this file.
+def _load_env_file(path):
+    try:
+        with open(path, encoding='utf-8') as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                k, v = line.split('=', 1)
+                k, v = k.strip(), v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in '"\'':
+                    v = v[1:-1]
+                os.environ.setdefault(k, v)
+    except FileNotFoundError:
+        pass
+
+
+_load_env_file(BASE_DIR / '.env')
+
+
+def env(name, default=''):
+    return os.environ.get(name, default)
+
+
+def env_bool(name, default=False):
+    v = os.environ.get(name)
+    return default if v is None else v.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def env_list(name, default=()):
+    v = os.environ.get(name)
+    return [x.strip() for x in v.split(',') if x.strip()] if v else list(default)
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-bu8sj-dd80ca20luk_(bo_tho55@wtmlpy^9k9gun$!f8&z4)&'
+if not SECRET_KEY:
+    raise RuntimeError('Set ZEO_SECRET_KEY in the environment or in .env (see .env.example).')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = ['80.65.208.178', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
 
 SHARED_APPS = [
     'django_tenants',
@@ -69,7 +106,18 @@ TENANT_APPS = [
     'DashboardManagement',
     'AccessControl',
     'DataTools',
+    'LeavePolicy',
+    'HRActions',
+    'ExpenseManagement',
+    'ProjectControl',
+    'LearningPlus',
     'Chatter',
+    'OrgStructure',      # v1.12.0 organisation structure (locations, divisions, sections, cost centres, grades, positions…)
+    'ShiftPlanner',      # v1.12.0 shift planner (rosters, requests, open shifts, availability)
+    'AttendancePlus',    # v1.12.0 attendance rules, methods, devices, corrections
+    'AssetPlus',         # v1.12.0 asset life cycle
+    'EmployeeProfile',   # v1.13.0 employee master extras (UAE identity, emergency contacts, employment / probation, code numbering)
+    'SelfService',       # v1.13.0 employee self service (change requests, HR letters, complaints, field policy)
     'django.contrib.admin',
 
 ]
@@ -116,12 +164,7 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:4200",  # Angular app running locally
-    "http://80.65.208.178:4200",  # Example for your frontend URL
-#    "http://80.65.208.178",  # Your server IP if accessing directly
-
-]
+CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
 
 CORS_ALLOW_HEADERS = [
     'content-type',
@@ -158,12 +201,14 @@ SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/1',  # Change as needed
+        'LOCATION': env('ZEO_REDIS_CACHE_URL', 'redis://127.0.0.1:6379/1'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         }
     }
 }
+if env('ZEO_REDIS_CACHE_URL') == 'locmem':   # v1.13.1: no Redis (small / test servers) – cache in memory
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
 
 ROOT_URLCONF = 'zeo.urls'
 
@@ -204,6 +249,7 @@ DATABASES = {
         'PORT': '5432',
     }
 }
+
 
 
 
@@ -286,8 +332,8 @@ SHOW_PUBLIC_IF_NO_TENANT_FOUND = True
 # Celery settings
 #redis automatic  -redis-server --service-install redis.windows.conf --loglevel verbose
 #redis-server --service-start
-CELERY_BROKER_URL = 'redis://localhost:6379/0'  # Or your Redis server URL
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_BROKER_URL = env('ZEO_CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = env('ZEO_CELERY_RESULT_BACKEND', CELERY_BROKER_URL)
 # Set this to ensure retries during startup
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
@@ -317,6 +363,28 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'calendars.tasks.deduct_expired_carry_forward_leaves',
         'schedule': crontab(hour=12, minute=00),  # Runs daily at midnight
     },
+    # v1.11.0: leave policies – leave-year end and monthly accrual on the 1st, compensatory off expiry daily
+    'leave-policy-daily-jobs': {
+        'task': 'LeavePolicy.tasks.leave_daily_jobs',
+        'schedule': crontab(hour=1, minute=10),
+    },
+    # v1.11.0: leave approval escalation (it was set up per level but never ran)
+    'leave-approval-escalations': {
+        'task': 'LeavePolicy.tasks.leave_escalations',
+        'schedule': crontab(minute='*/15'),
+    },
+    # v1.11.0: training certificate expiry alerts and nomination reminders
+    'learning-certificate-expiry-alerts': {'task': 'LearningPlus.tasks.certificate_expiry_alerts', 'schedule': crontab(hour=7, minute=5)},
+    'learning-nomination-escalations': {'task': 'LearningPlus.tasks.nomination_escalations', 'schedule': crontab(hour=8, minute=5)},
+    # v1.12.0
+    'shift-reminders-daily': {'task': 'ShiftPlanner.tasks.shift_reminders', 'schedule': crontab(hour=14, minute=5)},
+    'attendance-plus-nightly': {'task': 'AttendancePlus.tasks.attendance_nightly', 'schedule': crontab(hour=2, minute=15)},
+    'attendance-plus-missing-punch': {'task': 'AttendancePlus.tasks.missing_punch_check', 'schedule': crontab(minute=20)},
+    'asset-daily-reminders': {'task': 'AssetPlus.tasks.asset_daily_reminders', 'schedule': crontab(hour=7, minute=20)},
+    'orgstructure-policy-reminders': {'task': 'OrgStructure.tasks.remind_unacknowledged_policies', 'schedule': crontab(hour=7, minute=10)},
+    # v1.13.0
+    'employeeprofile-probation-reminders': {'task': 'EmployeeProfile.tasks.probation_reminders', 'schedule': crontab(hour=7, minute=25)},
+    'ess-escalate-complaints': {'task': 'SelfService.tasks.escalate_complaints', 'schedule': crontab(hour=6, minute=15)},
 }
 # CELERY_BEAT_SCHEDULE_FILENAME = 'celerybeat-schedule'  # Save Celery Beat schedule state
 
@@ -324,10 +392,13 @@ CELERY_IMPORTS = ('EmpManagement.tasks',)
 
 
 #default email settings
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'subinasunil23@gmail.com'
-EMAIL_HOST_PASSWORD = 'fiwu iety juqs jqny'
+# Fallback sender (each company can also set its own mail server under Settings → E-mail configuration).
+EMAIL_HOST = env('ZEO_EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(env('ZEO_EMAIL_PORT', '587'))
+EMAIL_USE_TLS = env_bool('ZEO_EMAIL_USE_TLS', True)
+EMAIL_HOST_USER = env('ZEO_EMAIL_USER')
+EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD')
+DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
+# without a mail account, e-mails are written to the log instead of failing
+EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
 

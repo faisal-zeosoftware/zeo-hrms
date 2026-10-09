@@ -18,6 +18,17 @@ from django.utils import timezone
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+def _lp_approver(level, employee, default):
+    """v1.11.0: approver for a level by role (Leave policies → Approvers), with a fallback instead of auto-approval."""
+    try:
+        from LeavePolicy.approvers import resolve
+        return resolve(level, employee)[0]
+    except Exception:
+        logger.exception('approver lookup failed')
+        return default
+
 from OrganisationManager.models import brnch_mstr,ctgry_master,dept_master
 from EmpManagement.models import emp_master
 from django.db.models.signals import m2m_changed
@@ -611,7 +622,7 @@ class LeavePayRule(models.Model):
         ordering = ['sequence']
 
     def __str__(self):
-        return f"{self.entitlement.leave_type.name} - Seq: {self.sequence} - {self.days} Days at {self.pay_percentage}%"
+        return f"{self.leave_type.name if self.leave_type_id else 'Leave'} - Seq: {self.sequence} - {self.days} Days at {self.pay_percentage}%"
 
 class LeaveResetPolicy(models.Model):
     TIME_UNIT_CHOICES = [
@@ -994,7 +1005,7 @@ class CompensatoryLeaveRequest(models.Model):
         super().save(*args, **kwargs)
 
         # Proceed only if the request is approved and status has changed to approved
-        if self.status == 'Approved' and old_status != 'Approved':
+        if (self.status or '').lower() == 'approved' and (old_status or '').lower() != 'approved':   # v1.11.0: choices are lower case
             # Wrap balance updates and transaction creation in an atomic transaction
             with transaction.atomic():
                 # Fetch or create a compensatory leave balance record for the employee
@@ -1003,6 +1014,11 @@ class CompensatoryLeaveRequest(models.Model):
                 if self.request_type == 'work_request':
                     # Add 1 day to balance for approved work requests
                     leave_balance.balance += 1
+                    try:   # v1.11.0: also to the compensatory leave type, which leave requests use
+                        from LeavePolicy.compoff import credit
+                        credit(self.employee, 1, ref=self, note=f'Compensatory off for work on {self.work_date:%d/%m/%Y}')
+                    except Exception:
+                        logger.exception('compensatory credit failed')
                     # Log the addition transaction
                     CompensatoryLeaveTransaction.objects.create(
                         employee=self.employee,
@@ -1030,7 +1046,7 @@ class CompensatoryLeaveRequest(models.Model):
 
     def move_to_next_level(self):
         if self.approvals.filter(status=LeaveApproval.REJECTED).exists():
-            self.status = 'Rejected'
+            self.status = 'rejected'
             self.save()
 
             # Notify creator about rejection
@@ -1062,7 +1078,6 @@ class CompensatoryLeaveRequest(models.Model):
             LeaveApproval.objects.create(
                 compensatory_request=self,
                 approver=next_level.approver,
-                role=next_level.role,
                 level=next_level.level,
                 status=LeaveApproval.PENDING,
                 note=last_approval.note if last_approval else None
@@ -1088,7 +1103,7 @@ class CompensatoryLeaveRequest(models.Model):
             })
         else:
             # Final approval reached, mark as approved and notify creator
-            self.status = 'Approved'
+            self.status = 'approved'
             self.save()
 
             notification = LvApprovalNotify.objects.create(
@@ -1130,7 +1145,6 @@ def create_initial_approval_for_compensatory_leave(sender, instance, created, **
             LeaveApproval.objects.create(
                 compensatory_request=instance,
                 approver=first_level.approver,
-                role=first_level.role,
                 level=first_level.level,
                 status=LeaveApproval.PENDING
             )
@@ -1228,8 +1242,19 @@ class employee_leave_request(models.Model):
             raise ValidationError("Half-day leave should be on the same day.")
         # Calculate number of leave days
         leave_days_requested = self.calculate_leave_days()
+        # v1.10.0: leave policy / UAE rules (overlap, gender, service, probation, notice, limits, documents, balance incl. pending)
+        managed = False
+        try:
+            from LeavePolicy import engine as lp_engine
+            managed = lp_engine.line_for(self.employee, self.leave_type_id) is not None
+            prev = type(self).objects.filter(pk=self.pk).values('start_date', 'end_date', 'leave_type_id', 'dis_half_day').first() if self.pk else None
+            changed = prev is None or (prev['start_date'], prev['end_date'], prev['leave_type_id'], prev['dis_half_day']) != (self.start_date, self.end_date, self.leave_type_id, self.dis_half_day)
+            if changed and self.status == 'pending':
+                lp_engine.validate_request(self)
+        except ImportError:
+            pass
         #
-        if self.leave_type.type == 'unpaid':
+        if self.leave_type.type == 'unpaid' or managed:
             return
         # Fetch or create leave balance for the employee
         leave_balance, created = emp_leave_balance.objects.get_or_create(
@@ -1238,7 +1263,7 @@ class employee_leave_request(models.Model):
         )
 
         # Check if leave type does not allow negative balance and employee has insufficient balance
-        if not self.leave_type.negative and leave_balance.balance < leave_days_requested:
+        if not self.leave_type.negative and (leave_balance.balance or 0) < leave_days_requested:
             raise ValidationError("Insufficient leave balance for this leave type.")
         
 
@@ -1248,6 +1273,9 @@ class employee_leave_request(models.Model):
         # If applied_days not set, initialize with requested number_of_days
         if not self.applied_days or self.applied_days == 0:
             self.applied_days = self.number_of_days
+        # v1.7.2: an approved leave without a partial approval counts all applied days (reports showed 0)
+        if self.status == 'approved' and not self.approved_days:
+            self.approved_days = self.applied_days or self.number_of_days
         self.clean()
         # Check if the status changed to "approved"
         previous_instance = type(self).objects.filter(pk=self.pk).first()
@@ -1274,6 +1302,14 @@ class employee_leave_request(models.Model):
         # NEW: read the separated fields
         include_weekend = self.leave_type.include_weekend
         include_holiday = self.leave_type.include_holiday
+        # v1.10.0: the employee's leave policy decides calendar or working days
+        try:
+            from LeavePolicy.engine import count_mode
+            mode = count_mode(self)
+            if mode:
+                include_weekend = include_holiday = (mode == 'calendar')
+        except ImportError:
+            pass
 
         # Weekend Calendar
         assigned_weekend = get_employee_weekend_calendar(self.employee)
@@ -1341,7 +1377,7 @@ class employee_leave_request(models.Model):
 
         # Deduct based on approved_days, fallback to number_of_days
         days_to_deduct = self.approved_days or self.number_of_days
-        leave_balance.balance -= days_to_deduct
+        leave_balance.balance = (leave_balance.balance or 0) - days_to_deduct
         leave_balance.save()
 
         # Deduct from carry forward if exists
@@ -1352,8 +1388,8 @@ class employee_leave_request(models.Model):
             final_carry_forward__gt=0
         ).order_by('-reset_date').first()
 
-        if carry_forward_entry:
-            carry_forward_entry.final_carry_forward -= leave_days_to_deduct
+        if carry_forward_entry:   # v1.10.0: never below 0 (the rest of the leave comes from this year's days)
+            carry_forward_entry.final_carry_forward = max(carry_forward_entry.final_carry_forward - leave_days_to_deduct, Decimal('0'))
             carry_forward_entry.save()
 
     def restore_leave_balance(self):
@@ -1364,11 +1400,13 @@ class employee_leave_request(models.Model):
             leave_type=self.leave_type
         )
 
-        leave_balance.balance += self.number_of_days
+        # v1.10.0: give back what was deducted (approved days), not the days applied
+        days_back = self.approved_days or self.number_of_days
+        leave_balance.balance = (leave_balance.balance or 0) + days_back
         leave_balance.save()
 
         # Restore in carry forward if it was deducted
-        leave_days_to_restore = Decimal(str(self.number_of_days))
+        leave_days_to_restore = Decimal(str(days_back))
         carry_forward_entry = LeaveCarryForwardTransaction.objects.filter(
             employee=self.employee,
             leave_type=self.leave_type
@@ -1508,11 +1546,7 @@ class employee_leave_request(models.Model):
         # ---------------- REPORTING MANAGER ---------------- #
         if approval_type == 'reporting_manager':
 
-            manager = self.employee.emp_reporting_manager
-
-            # ✅ FIX: convert to CustomUser
-            if manager and hasattr(manager, 'user'):
-                manager = manager.user
+            manager = _lp_approver(None, self.employee, self.employee.emp_reporting_manager)
 
             if not manager:
                 self.status = 'approved'
@@ -1604,7 +1638,7 @@ class employee_leave_request(models.Model):
 
         if next_level:
 
-            approver = next_level.approver
+            approver = _lp_approver(next_level, self.employee, next_level.approver)
 
             # ✅ SAFETY (avoid NULL crash)
             if not approver:
@@ -1860,7 +1894,7 @@ class LeaveApproval(models.Model):
 
         # Handle notifications for compensatory requests
         elif self.compensatory_request:
-            self.compensatory_request.status = 'Rejected'
+            self.compensatory_request.status = 'rejected'
             self.compensatory_request.save()
 
             notification = LvApprovalNotify.objects.create(
@@ -1898,6 +1932,8 @@ class LeaveApproval(models.Model):
 @receiver(post_save, sender=employee_leave_request)
 def create_initial_leave_approval(sender, instance, created, **kwargs):
     if not created:
+        return
+    if getattr(instance, '_hr_direct', False):   # v1.11.0: settled by HR (rejoining) – already approved, no approval steps
         return
 
     employee = instance.employee
@@ -1976,11 +2012,7 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
     # ---------------- REPORTING MANAGER ----------------
     if approval_type == 'reporting_manager':
 
-        manager = employee.emp_reporting_manager
-
-        # ✅ FIX: convert manager → user
-        if manager and hasattr(manager, 'user'):
-            manager = manager.user
+        manager = _lp_approver(None, employee, employee.emp_reporting_manager)
 
         if not manager:
             instance.status = 'approved'
@@ -2060,14 +2092,7 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
 
             return
 
-        approver = first_level.approver
-
-        # ✅ FIX: fallback like general request
-        if not approver:
-            approver = instance.created_by
-
-            if not approver and employee and hasattr(employee, 'user'):
-                approver = employee.user
+        approver = _lp_approver(first_level, employee, first_level.approver)
 
         if not approver:
             instance.status = 'approved'
@@ -3030,7 +3055,17 @@ class Attendance(models.Model):
 
         self.total_hours = end - start
     def fetch_shift(self):
+        # v1.12.0: one shift resolver (published roster > shift override / approved change > schedule pattern with the
+        # employee's rotation offset, any assignment route) – see ShiftPlanner/resolver.py
+        from django.apps import apps as _apps
+        if _apps.is_installed('ShiftPlanner'):
+            from ShiftPlanner.resolver import shift_for
+            r = shift_for(self.employee, self.date)
+            return r['shift'] if r else None
         from calendars.models import EmployeeShiftSchedule
+        override = ShiftOverride.objects.filter(employee=self.employee, date=self.date).first()
+        if override is not None:
+            return override.override_shift
 
         schedules = EmployeeShiftSchedule.objects.filter(
             start_date__lte=self.date
@@ -3040,7 +3075,7 @@ class Attendance(models.Model):
 
         for schedule in schedules:
             if schedule.get_assigned_employees().filter(id=self.employee.id).exists():
-                return schedule.get_shift_for_date(self.date)
+                return schedule.get_shift_for_date(self.date, employee=self.employee)
 
         return None
     # def fetch_shift(self):
@@ -3056,7 +3091,9 @@ class Attendance(models.Model):
     #     return schedule.get_shift_for_date(self.date) if schedule else None
 
     def get_shift_duration(self):
-        if not self.shift:
+        # v1.12.0: a day-off shift (no start / end time) lasts 0 instead of crashing. The span stays gross (break
+        # included) because total_hours is gross too – deducting the break on one side only would add it to overtime.
+        if not self.shift or not self.shift.start_time or not self.shift.end_time:
             return timedelta(0)
 
         start = datetime.combine(self.date, self.shift.start_time)
@@ -3083,41 +3120,11 @@ class Attendance(models.Model):
             self.shift = self.fetch_shift()
 
         super().save(*args, **kwargs)
+        # v1.12.0: ONE overtime path (calendars.utils.calculate_employee_overtime → AttendancePlus engine when
+        # installed). The second inline block that was here wrote the same row again with update_or_create,
+        # reset approved=False on every save and clashed with the EXT slab row (unique employee/date/ot_type).
         from calendars.utils import calculate_employee_overtime
         calculate_employee_overtime(self)
-
-        # OT applicable?
-        if not (self.employee.emp_ot_applicable and self.total_hours):
-            return
-
-        ot_type = self.get_ot_type()
-
-        # Weekend or Holiday → full hours
-        if ot_type in ["WEEKEND", "HOLIDAY"]:
-            extra_duration = self.total_hours
-        else:
-            if not self.shift:
-                return
-            shift_duration = self.get_shift_duration()
-            extra_duration = self.total_hours - shift_duration
-
-        if extra_duration <= timedelta(0):
-            return
-
-        ot_hours = Decimal(extra_duration.total_seconds()) / Decimal(3600)
-
-        from calendars.models import EmployeeOvertime
-
-        EmployeeOvertime.objects.update_or_create(
-            employee=self.employee,
-            date=self.date,
-            ot_type=ot_type,
-            defaults={
-                "hours": ot_hours.quantize(Decimal("0.01")),
-                "approved": False,
-                "created_by": self.created_by
-            }
-        )
     # # calendars/models.py (inside Attendance)
 
     def is_weekend(self):
@@ -3146,12 +3153,14 @@ def handle_rejoining(sender, instance, **kwargs):
     if isinstance(attendance_date, datetime):
         attendance_date = attendance_date.date()
 
+    # v1.11.0: only leave that ended in the last 60 days and was not a settlement itself; every old leave got a record before
     leave_requests = employee_leave_request.objects.filter(
         employee=employee,
         status='approved',
         end_date__lt=attendance_date,
+        end_date__gte=attendance_date - timedelta(days=60),
         employeerejoining__isnull=True
-    ).order_by('end_date')
+    ).exclude(reason__startswith='Late return after').order_by('-end_date')
 
     if not leave_requests.exists():
         return
@@ -3164,6 +3173,13 @@ def handle_rejoining(sender, instance, **kwargs):
         end_date = end_date.date()
 
     unpaid_days = max(0, (attendance_date - end_date).days - 1)
+    try:   # v1.11.0: working days of the gap (weekends / holidays between are not absence)
+        from HRActions.rejoin import _days_list
+        unpaid_days = len(_days_list(employee, end_date + timedelta(days=1), attendance_date - timedelta(days=1), 'working'))
+    except Exception:
+        pass
+    if leave_request.number_of_days < 3 and not unpaid_days:
+        return   # short leave back on time – no rejoining record needed
 
     EmployeeRejoining.objects.get_or_create(
         employee=employee,
@@ -3175,17 +3191,15 @@ def handle_rejoining(sender, instance, **kwargs):
     )
 @receiver(post_save, sender=Attendance)
 def create_compensatory_record(sender, instance, created, **kwargs):
-
-    if not created:
-        return
+    # v1.11.0: runs when the check-out arrives too (before, only attendance created complete got an allocation)
 
     if instance.is_compensated:
         return
 
-    if not (instance.is_weekend() or instance.is_holiday()):
+    if not instance.total_hours:
         return
 
-    if not instance.total_hours:
+    if not (instance.is_weekend() or instance.is_holiday()):
         return
 
     existing = CompensatoryLeaveAllocation.objects.filter(
@@ -3196,10 +3210,19 @@ def create_compensatory_record(sender, instance, created, **kwargs):
     if existing:
         return
 
+    hours = instance.total_hours.total_seconds() / 3600
+    try:   # v1.11.0: days by the hours worked (policy line: hours for a full / half day)
+        from LeavePolicy.compoff import days_for_hours
+        days = days_for_hours(instance.employee, hours)
+    except ImportError:
+        days = 1
+    if not days:
+        return
+
     allocation = CompensatoryLeaveAllocation.objects.create(
         employee=instance.employee,
-        credited_days=1,
-        reason=f"Worked on {instance.date}",
+        credited_days=days,
+        reason=f"Worked {hours:.1f} h on {instance.date} ({'public holiday' if instance.is_holiday() else 'weekend'})",
         created_by=instance.created_by
     )
 

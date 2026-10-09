@@ -602,6 +602,13 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     if overtime_source in ("ATTENDANCE", "MANUAL"):
         ot_filter["source"] = overtime_source
 
+    # v1.12.0: only approved overtime is paid (attendance OT waits for approval; OT entered / imported
+    # by HR – source MANUAL – counts as approved)
+    from django.db.models import Q as _Q
+    ot_filter["pk__in"] = EmployeeOvertime.objects.filter(
+        _Q(approved=True) | _Q(source="MANUAL"), employee=employee, date__range=(start_date, end_date)
+    ).values("pk")
+
     variables["ot_hours"] = (
         EmployeeOvertime.objects
         .filter(**ot_filter)
@@ -692,6 +699,29 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         str(working_days)
     )
 
+    # v1.11.0: clearer day counts – working_days stays "days present in the attendance calendar" for existing formulas
+    try:
+        _wk = set(get_employee_weekend_days(employee))
+        _hol = set(get_employee_holidays(employee, start_date, end_date))
+        variables["scheduled_working_days"] = Decimal(sum(1 for d in daterange(start_date, end_date) if d.strftime("%A") not in _wk and d not in _hol))
+    except Exception:
+        variables["scheduled_working_days"] = Decimal("0")
+    variables["present_days"] = Decimal(str(working_days))
+    try:
+        _AC = apps.get_model("calendars", "AttendanceCalendar")
+        variables["unpaid_leave_days"] = Decimal(str(_AC.objects.filter(employee=employee, date__range=(start_date, end_date))
+                                                     .aggregate(t=Sum("unpaid_fraction"))["t"] or 0))
+    except Exception:
+        variables["unpaid_leave_days"] = Decimal("0")
+
+    # v1.11.0: hours worked in the period (WORKHOURS() / worked_hours in formulas)
+    try:
+        _wh = Attendance.objects.filter(employee=employee, date__range=(start_date, end_date), total_hours__isnull=False) \
+            .aggregate(t=Sum("total_hours"))["t"]
+        variables["worked_hours"] = (Decimal(str(round(_wh.total_seconds() / 3600, 2))) if _wh else Decimal("0.00"))
+    except Exception:
+        variables["worked_hours"] = Decimal("0.00")
+
     # ========================================================
     # EMPLOYEE VARIABLES
     # ========================================================
@@ -751,6 +781,34 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         str(encashment_amount)
     )
 
+    # v1.10.0: approved leave encashments not paid yet → use in a "Leave Encashment" component
+    # (payroll category leave_encashment, formula: leave_encashment_amount)
+    try:
+        LeaveEncashmentRequest = apps.get_model("PayrollManagement", "LeaveEncashment")
+        variables["leave_encashment_amount"] = (
+            LeaveEncashmentRequest.objects.filter(
+                employee=employee, status="approved", payroll_run__isnull=True,
+                approved_at__date__lte=end_date,
+            ).aggregate(total=Sum("encashment_amount"))["total"]
+            or Decimal("0.00")
+        )
+    except Exception:
+        variables["leave_encashment_amount"] = Decimal("0.00")
+
+    # v1.11.0: approved expense reports to be paid with payroll (component formula: expense_reimbursement_amount)
+    try:
+        from ExpenseManagement.services import expense_reimbursement_amount
+        variables["expense_reimbursement_amount"] = expense_reimbursement_amount(employee, start_date, end_date)
+    except Exception:
+        variables["expense_reimbursement_amount"] = Decimal("0.00")
+
+    # v1.12.0: asset damage / loss recovery instalments due (component formula: asset_recovery_amount)
+    try:
+        from AssetPlus.services import asset_recovery_amount
+        variables["asset_recovery_amount"] = asset_recovery_amount(employee, start_date, end_date)
+    except Exception:
+        variables["asset_recovery_amount"] = Decimal("0.00")
+
     # ========================================================
     # OVERTIME BREAKDOWN
     # ========================================================
@@ -800,6 +858,28 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         employee,
         "HOLIDAY"
     )
+
+    # ========================================================
+    # v1.12.0 ATTENDANCE: late / early / absent / missing punch / half day / breaks,
+    # rate-weighted approved OT and standard hours from the planned shifts (AttendancePlus),
+    # plus the shift planner variables (night / shift allowance ...) when installed.
+    # ========================================================
+    try:
+        from AttendancePlus.payroll import variables as _att_vars
+        variables.update(_att_vars(employee, start_date, end_date, overtime_ids=ot_filter["pk__in"]))
+    except ImportError:
+        from .formula import ATTENDANCE_VARIABLE_NAMES
+        for _n in ATTENDANCE_VARIABLE_NAMES:
+            variables.setdefault(_n, Decimal("0"))
+    except Exception:
+        logger.exception("attendance payroll variables failed for %s", employee.pk)
+    try:
+        from ShiftPlanner.payroll import variables as _shift_vars
+        variables.update(_shift_vars(employee, start_date, end_date) or {})
+    except ImportError:
+        pass
+    except Exception:
+        logger.exception("shift planner payroll variables failed for %s", employee.pk)
 
     # ========================================================
     # SALARY STRUCTURE
@@ -984,7 +1064,17 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     #   etc.
     # ========================================================
 
-    for sc in salary_structs:
+    # v1.11.0: a formula may use another formula component – calculate them in dependency order
+    from .formula import order_components
+    _formula_scs = [sc for sc in salary_structs if sc.component.component_value_type != "fixed" and sc.component.formula]
+    _order, _cycle = order_components([sc.component for sc in _formula_scs])
+    if _cycle:
+        logger.error("Formula components refer to each other (circle): %s – they are paid as 0",
+                     ", ".join(c.code or c.name for c in _cycle))
+    _rank = {c.pk: i for i, c in enumerate(_order)}
+    _ordered_scs = sorted((sc for sc in _formula_scs if sc.component.pk in _rank), key=lambda sc: _rank[sc.component.pk])
+
+    for sc in _ordered_scs:
 
         comp = sc.component
 

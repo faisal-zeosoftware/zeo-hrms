@@ -98,11 +98,8 @@ class AttendanceResource(resources.ModelResource):
             try:
                 attendance = Attendance.objects.get(employee=employee, date=date)
 
-                # Assign shift
-                schedule = EmployeeShiftSchedule.objects.filter(employee=employee).first()
-                if schedule:
-                    shift = schedule.get_shift_for_date(date)  # Pass both employee and date
-                    attendance.shift = shift
+                # Assign shift – v1.12.0: shift resolver (roster / override / any schedule assignment route)
+                attendance.shift = attendance.fetch_shift()
 
                 # Calculate total hours
                 attendance.calculate_total_hours()
@@ -257,14 +254,11 @@ class MonthlyAttendanceResource(resources.ModelResource):
                 attendance.check_in_time = check_in
                 attendance.check_out_time = check_out
 
-                # Assign shift
-                schedule = EmployeeShiftSchedule.objects.filter(employee=employee).first()
-                if schedule and hasattr(schedule, 'get_shift_for_date') and callable(schedule.get_shift_for_date):
-                    try:
-                        shift = schedule.get_shift_for_date(date_obj)
-                        attendance.shift = shift
-                    except Exception:
-                        pass
+                # Assign shift – v1.12.0: shift resolver (roster / override / any schedule assignment route)
+                try:
+                    attendance.shift = attendance.fetch_shift()
+                except Exception:
+                    pass
 
                 if check_in and check_out:
                     check_in_dt = datetime.combine(date_obj, check_in)

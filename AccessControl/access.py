@@ -442,7 +442,11 @@ def install():
         perms = orig_gp(self)
         if getattr(self, 'zeo_access', True) is False:
             return perms
-        return [ZeoAccess()] + list(perms)
+        try:  # v1.13.0 employee self-service guard (HR-only fields, request status, payroll results)
+            from .ess_guard import EssGuard
+            return [ZeoAccess(), EssGuard()] + list(perms)
+        except Exception:
+            return [ZeoAccess()] + list(perms)
 
     def filter_queryset(self, queryset):
         qs = orig_fq(self, queryset)

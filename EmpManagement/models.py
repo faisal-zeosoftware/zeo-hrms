@@ -36,7 +36,7 @@ from django.db import transaction
 #EmpManagement
 class emp_master(models.Model):    
     GENDER_CHOICES = [ ("M", "Male"), ("F", "Female"),("O", "Other"),]
-    MARITAL_STATUS_CHOICES = [("M", "Married"),("S", "Single"),('divorced','divorced'),('widow','widow')]
+    MARITAL_STATUS_CHOICES = [("M", "Married"),("S", "Single"),('divorced','Divorced'),('widow','Widowed'),("D", "Divorced"),("W", "Widowed")]
     
     emp_code                 = models.CharField(max_length=50,unique=True)
     emp_first_name           = models.CharField(max_length=50,null=True,blank =True)
@@ -97,11 +97,19 @@ class emp_master(models.Model):
         created = not self.pk
         authenticated_user = kwargs.pop('authenticated_user', None)
 
-        # Set probation period
-        if self.emp_joined_date and self.emp_branch_id:
-            self.emp_date_of_confirmation = self.emp_joined_date + timedelta(
-                days=self.emp_branch_id.probation_period_days
-            )
+        # Confirmation date = joining date + the branch's probation period, unless a date was entered.
+        # It is worked out again when the joining date changes and the old date was the worked-out one.
+        if self.emp_joined_date and self.emp_branch_id and self.emp_branch_id.probation_period_days is not None:
+            auto = self.emp_joined_date + timedelta(days=self.emp_branch_id.probation_period_days)
+            if not self.emp_date_of_confirmation:
+                self.emp_date_of_confirmation = auto
+            elif self.pk:
+                old = type(self).objects.filter(pk=self.pk).values('emp_joined_date', 'emp_date_of_confirmation', 'emp_branch_id').first()
+                if old and old['emp_joined_date'] != self.emp_joined_date and old['emp_joined_date']:
+                    old_branch = self.emp_branch_id if old['emp_branch_id'] == self.emp_branch_id_id else None
+                    days = (old_branch or self.emp_branch_id).probation_period_days
+                    if old['emp_date_of_confirmation'] == old['emp_joined_date'] + timedelta(days=days) and self.emp_date_of_confirmation == old['emp_date_of_confirmation']:
+                        self.emp_date_of_confirmation = auto
         if self.person_id == '':
             self.person_id = None
         # Set created_by and is_active for new records
@@ -319,12 +327,11 @@ class Emp_CustomField(models.Model):
                 raise ValidationError({'field_value': 'provide value to the radio options.'})
         # Validate checkbox field values
         elif self.data_type == 'checkbox':
-            if self.checkbox_values:
-                options = self.checkbox_values
-                if not  options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-            else:
-                raise ValidationError({'field_value': 'provide value to the checkbox options.'})
+            # v1.12.0: a Yes / No field needs no option list
+            if not self.checkbox_values:
+                self.checkbox_values = ['Yes', 'No']
+        elif self.data_type == 'multiselect' and not (self.dropdown_values or self.radio_values or self.checkbox_values):
+            raise ValidationError({'dropdown_values': 'Add at least one option.'})
     def save(self, *args, **kwargs):
         self.clean()  # Call clean to perform validation
         super().save(*args, **kwargs)
@@ -339,85 +346,17 @@ class Emp_CustomFieldValue(models.Model):
  
 
     def __str__(self):
-        return f'{self.emp_custom_field.emp_custom_field}: {self.field_value}'
+        return f'{self.emp_custom_field}: {self.field_value}'
 
     def save(self, *args, **kwargs):
-        if not self.emp_custom_field:
-            raise ValueError("Field name cannot be None or empty.")
-        if not Emp_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).exists():
-            raise ValueError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-
-        # Check if a custom field value already exists for the same emp_master and emp_custom_field
-        existing_value = Emp_CustomFieldValue.objects.filter(
-            emp_custom_field=self.emp_custom_field,
-            emp_master=self.emp_master
-        ).first()
-
-        if existing_value:
-            # If it exists, update the existing record instead of creating a new one
-            existing_value.field_value = self.field_value
-            # Use update() to avoid calling save() and prevent recursion
-            Emp_CustomFieldValue.objects.filter(
-                id=existing_value.id
-            ).update(field_value=self.field_value)
-        else:
-            # Call full_clean to ensure that the clean method is called
-            self.full_clean()
-            super().save(*args, **kwargs)
+        # v1.12.0: typed check on create AND update (one row per record and field) – DataTools.forms
+        from DataTools.forms import save_model_value
+        save_model_value(self, super().save, *args, **kwargs)
 
     def clean(self):
-        # Retrieve the custom field object
-        custom_field = Emp_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).first()
-
-        if not custom_field:
-            raise ValidationError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-        
-        field_value = self.field_value
-
-        if custom_field.data_type == 'dropdown':
-            if custom_field.dropdown_values:
-                options = custom_field.dropdown_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
-        
-        elif custom_field.data_type == 'radio':
-            if custom_field.radio_values:
-                options = custom_field.radio_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
-       
-        elif custom_field.data_type == 'checkbox':
-            if custom_field.checkbox_values:
-                options = custom_field.checkbox_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-
-
-        elif custom_field.data_type == 'date':
-            if not field_value:
-                raise ValidationError({'field_value': 'Date value is required.'})
-
-            try:
-                if isinstance(field_value, (datetime, date)):
-                    valid_date = field_value.strftime('%d-%m-%Y')
-                else:
-                    field_value_str = str(field_value).strip()
-                    # Remove time part if exists
-                    if ' ' in field_value_str:
-                        field_value_str = field_value_str.split(' ')[0]
-                    # Try multiple formats
-                    for fmt in ('%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%d'):
-                        try:
-                            valid_date = datetime.strptime(field_value_str, fmt).strftime('%d-%m-%Y')
-                            break
-                        except ValueError:
-                            continue
-                    else:
-                        raise ValueError
-                self.field_value = valid_date
-            except ValueError:
-                raise ValidationError({'field_value': 'Invalid date format. Allowed formats: DD-MM-YYYY or DD/MM/YYYY.'})
-
+        # v1.12.0: every field type (number, e-mail, date, Yes / No, multi-select …), rules and mandatory
+        from DataTools.forms import clean_model_value
+        clean_model_value(self)
 
 
 #EMPLOYEE FAMILY(ef) data
@@ -491,12 +430,11 @@ class EmpFamily_CustomField(models.Model):
                 raise ValidationError({'field_value': 'provide value to the radio options.'})
         # Validate checkbox field values
         elif self.data_type == 'checkbox':
-            if self.checkbox_values:
-                options = self.checkbox_values
-                if not  options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-            else:
-                raise ValidationError({'field_value': 'provide value to the checkbox options.'})
+            # v1.12.0: a Yes / No field needs no option list
+            if not self.checkbox_values:
+                self.checkbox_values = ['Yes', 'No']
+        elif self.data_type == 'multiselect' and not (self.dropdown_values or self.radio_values or self.checkbox_values):
+            raise ValidationError({'dropdown_values': 'Add at least one option.'})
     def save(self, *args, **kwargs):
         self.clean()  # Call clean to perform validation
         super().save(*args, **kwargs)
@@ -510,75 +448,18 @@ class Fam_CustomFieldValue(models.Model):
  
 
     def __str__(self):
-        return f'{self.emp_custom_field.emp_custom_field}: {self.field_value}'
+        return f'{self.emp_custom_field}: {self.field_value}'
 
     def save(self, *args, **kwargs):
-        if not self.emp_custom_field:
-            raise ValueError("Field name cannot be None or empty.")
-        if not EmpFamily_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).exists():
-            raise ValueError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-
-        # Check if a custom field value already exists for the same emp_master and emp_custom_field
-        existing_value = Fam_CustomFieldValue.objects.filter(
-            emp_custom_field=self.emp_custom_field,
-            emp_family=self.emp_family
-        ).first()
-
-        if existing_value:
-            # If it exists, update the existing record instead of creating a new one
-            existing_value.field_value = self.field_value
-            # Use update() to avoid calling save() and prevent recursion
-            Fam_CustomFieldValue.objects.filter(
-                id=existing_value.id
-            ).update(field_value=self.field_value)
-        else:
-            # Call full_clean to ensure that the clean method is called
-            self.full_clean()
-            super().save(*args, **kwargs)
+        # v1.12.0: typed check on create AND update (one row per record and field) – DataTools.forms
+        from DataTools.forms import save_model_value
+        save_model_value(self, super().save, *args, **kwargs)
 
     def clean(self):
-        # Retrieve the custom field object
-        custom_field = EmpFamily_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).first()
+        # v1.12.0: every field type (number, e-mail, date, Yes / No, multi-select …), rules and mandatory
+        from DataTools.forms import clean_model_value
+        clean_model_value(self)
 
-        if not custom_field:
-            raise ValidationError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-        
-        field_value = self.field_value
-
-        if custom_field.data_type == 'dropdown':
-            if custom_field.dropdown_values:
-                options = custom_field.dropdown_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
-        
-        elif custom_field.data_type == 'radio':
-            if custom_field.radio_values:
-                options = custom_field.radio_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
-       
-        elif custom_field.data_type == 'checkbox':
-            if custom_field.checkbox_values:
-                options = custom_field.checkbox_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-
-
-        elif custom_field.data_type == 'date':
-            if field_value:
-                try:
-                    parts = field_value.split('-')
-                    if len(parts) != 3:
-                        raise ValueError
-                    day, month, year = parts
-                    formatted_date = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
-                    datetime.strptime(formatted_date, '%d-%m-%Y')
-                except ValueError:
-                    raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
-            else:
-                raise ValidationError({'field_value': 'Date value is required.'})
-
-    
 
 #EMPLOPYEE JOB HISTORY
 class EmpJobHistory(models.Model):
@@ -649,12 +530,11 @@ class EmpJobHistory_CustomField(models.Model):
                 raise ValidationError({'field_value': 'provide value to the radio options.'})
         # Validate checkbox field values
         elif self.data_type == 'checkbox':
-            if self.checkbox_values:
-                options = self.checkbox_values
-                if not  options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-            else:
-                raise ValidationError({'field_value': 'provide value to the checkbox options.'})
+            # v1.12.0: a Yes / No field needs no option list
+            if not self.checkbox_values:
+                self.checkbox_values = ['Yes', 'No']
+        elif self.data_type == 'multiselect' and not (self.dropdown_values or self.radio_values or self.checkbox_values):
+            raise ValidationError({'dropdown_values': 'Add at least one option.'})
     def save(self, *args, **kwargs):
         self.clean()  # Call clean to perform validation
         super().save(*args, **kwargs)
@@ -668,75 +548,18 @@ class JobHistory_CustomFieldValue(models.Model):
  
 
     def __str__(self):
-        return f'{self.emp_custom_field.emp_custom_field}: {self.field_value}'
+        return f'{self.emp_custom_field}: {self.field_value}'
 
     def save(self, *args, **kwargs):
-        if not self.emp_custom_field:
-            raise ValueError("Field name cannot be None or empty.")
-        if not EmpJobHistory_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).exists():
-            raise ValueError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-
-        # Check if a custom field value already exists for the same emp_master and emp_custom_field
-        existing_value = JobHistory_CustomFieldValue.objects.filter(
-            emp_custom_field=self.emp_custom_field,
-            emp_job_history=self.emp_job_history
-        ).first()
-
-        if existing_value:
-            # If it exists, update the existing record instead of creating a new one
-            existing_value.field_value = self.field_value
-            # Use update() to avoid calling save() and prevent recursion
-            JobHistory_CustomFieldValue.objects.filter(
-                id=existing_value.id
-            ).update(field_value=self.field_value)
-        else:
-            # Call full_clean to ensure that the clean method is called
-            self.full_clean()
-            super().save(*args, **kwargs)
+        # v1.12.0: typed check on create AND update (one row per record and field) – DataTools.forms
+        from DataTools.forms import save_model_value
+        save_model_value(self, super().save, *args, **kwargs)
 
     def clean(self):
-        # Retrieve the custom field object
-        custom_field = EmpJobHistory_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).first()
+        # v1.12.0: every field type (number, e-mail, date, Yes / No, multi-select …), rules and mandatory
+        from DataTools.forms import clean_model_value
+        clean_model_value(self)
 
-        if not custom_field:
-            raise ValidationError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-        
-        field_value = self.field_value
-
-        if custom_field.data_type == 'dropdown':
-            if custom_field.dropdown_values:
-                options = custom_field.dropdown_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
-        
-        elif custom_field.data_type == 'radio':
-            if custom_field.radio_values:
-                options = custom_field.radio_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
-       
-        elif custom_field.data_type == 'checkbox':
-            if custom_field.checkbox_values:
-                options = custom_field.checkbox_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-
-
-        elif custom_field.data_type == 'date':
-            if field_value:
-                try:
-                    parts = field_value.split('-')
-                    if len(parts) != 3:
-                        raise ValueError
-                    day, month, year = parts
-                    formatted_date = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
-                    datetime.strptime(formatted_date, '%d-%m-%Y')
-                except ValueError:
-                    raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
-            else:
-                raise ValidationError({'field_value': 'Date value is required.'})
-    
-    
 
 #EMPLOYEE QUALIFICATION
 class EmpQualification(models.Model):
@@ -803,12 +626,11 @@ class EmpQualification_CustomField(models.Model):
                 raise ValidationError({'field_value': 'provide value to the radio options.'})
         # Validate checkbox field values
         elif self.data_type == 'checkbox':
-            if self.checkbox_values:
-                options = self.checkbox_values
-                if not  options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-            else:
-                raise ValidationError({'field_value': 'provide value to the checkbox options.'})
+            # v1.12.0: a Yes / No field needs no option list
+            if not self.checkbox_values:
+                self.checkbox_values = ['Yes', 'No']
+        elif self.data_type == 'multiselect' and not (self.dropdown_values or self.radio_values or self.checkbox_values):
+            raise ValidationError({'dropdown_values': 'Add at least one option.'})
     def save(self, *args, **kwargs):
         self.clean()  # Call clean to perform validation
         super().save(*args, **kwargs)
@@ -822,74 +644,18 @@ class Qualification_CustomFieldValue(models.Model):
  
 
     def __str__(self):
-        return f'{self.emp_custom_field.emp_custom_field}: {self.field_value}'
+        return f'{self.emp_custom_field}: {self.field_value}'
 
     def save(self, *args, **kwargs):
-        if not self.emp_custom_field:
-            raise ValueError("Field name cannot be None or empty.")
-        if not EmpQualification_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).exists():
-            raise ValueError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-
-        # Check if a custom field value already exists for the same emp_master and emp_custom_field
-        existing_value = Qualification_CustomFieldValue.objects.filter(
-            emp_custom_field=self.emp_custom_field,
-            emp_qualification=self.emp_qualification
-        ).first()
-
-        if existing_value:
-            # If it exists, update the existing record instead of creating a new one
-            existing_value.field_value = self.field_value
-            # Use update() to avoid calling save() and prevent recursion
-            Qualification_CustomFieldValue.objects.filter(
-                id=existing_value.id
-            ).update(field_value=self.field_value)
-        else:
-            # Call full_clean to ensure that the clean method is called
-            self.full_clean()
-            super().save(*args, **kwargs)
+        # v1.12.0: typed check on create AND update (one row per record and field) – DataTools.forms
+        from DataTools.forms import save_model_value
+        save_model_value(self, super().save, *args, **kwargs)
 
     def clean(self):
-        # Retrieve the custom field object
-        custom_field = EmpQualification_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).first()
+        # v1.12.0: every field type (number, e-mail, date, Yes / No, multi-select …), rules and mandatory
+        from DataTools.forms import clean_model_value
+        clean_model_value(self)
 
-        if not custom_field:
-            raise ValidationError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-        
-        field_value = self.field_value
-
-        if custom_field.data_type == 'dropdown':
-            if custom_field.dropdown_values:
-                options = custom_field.dropdown_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
-        
-        elif custom_field.data_type == 'radio':
-            if custom_field.radio_values:
-                options = custom_field.radio_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
-       
-        elif custom_field.data_type == 'checkbox':
-            if custom_field.checkbox_values:
-                options = custom_field.checkbox_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-
-
-        elif custom_field.data_type == 'date':
-            if field_value:
-                try:
-                    parts = field_value.split('-')
-                    if len(parts) != 3:
-                        raise ValueError
-                    day, month, year = parts
-                    formatted_date = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
-                    datetime.strptime(formatted_date, '%d-%m-%Y')
-                except ValueError:
-                    raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
-            else:
-                raise ValidationError({'field_value': 'Date value is required.'})
-            
 
 class document_type(models.Model):
     branch      = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True)
@@ -1059,12 +825,11 @@ class EmpDocuments_CustomField(models.Model):
                 raise ValidationError({'field_value': 'provide value to the radio options.'})
         # Validate checkbox field values
         elif self.data_type == 'checkbox':
-            if self.checkbox_values:
-                options = self.checkbox_values
-                if not  options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
-            else:
-                raise ValidationError({'field_value': 'provide value to the checkbox options.'})
+            # v1.12.0: a Yes / No field needs no option list
+            if not self.checkbox_values:
+                self.checkbox_values = ['Yes', 'No']
+        elif self.data_type == 'multiselect' and not (self.dropdown_values or self.radio_values or self.checkbox_values):
+            raise ValidationError({'dropdown_values': 'Add at least one option.'})
     def save(self, *args, **kwargs):
         self.clean()  # Call clean to perform validation
         super().save(*args, **kwargs)
@@ -1078,76 +843,19 @@ class Doc_CustomFieldValue(models.Model):
  
 
     def __str__(self):
-        return f'{self.emp_custom_field.emp_custom_field}: {self.field_value}'
+        return f'{self.emp_custom_field}: {self.field_value}'
 
     def save(self, *args, **kwargs):
-        if not self.emp_custom_field:
-            raise ValueError("Field name cannot be None or empty.")
-        if not EmpDocuments_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).exists():
-            raise ValueError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-
-        # Check if a custom field value already exists for the same emp_master and emp_custom_field
-        existing_value = Doc_CustomFieldValue.objects.filter(
-            emp_custom_field=self.emp_custom_field,
-            emp_documents=self.emp_documents
-        ).first()
-
-        if existing_value:
-            # If it exists, update the existing record instead of creating a new one
-            existing_value.field_value = self.field_value
-            # Use update() to avoid calling save() and prevent recursion
-            Doc_CustomFieldValue.objects.filter(
-                id=existing_value.id
-            ).update(field_value=self.field_value)
-        else:
-            # Call full_clean to ensure that the clean method is called
-            self.full_clean()
-            super().save(*args, **kwargs)
+        # v1.12.0: typed check on create AND update (one row per record and field) – DataTools.forms
+        from DataTools.forms import save_model_value
+        save_model_value(self, super().save, *args, **kwargs)
 
     def clean(self):
-        # Retrieve the custom field object
-        custom_field = EmpDocuments_CustomField.objects.filter(emp_custom_field=self.emp_custom_field).first()
-
-        if not custom_field:
-            raise ValidationError(f"Field name '{self.emp_custom_field}' does not exist in Emp_CustomField.")
-        
-        field_value = self.field_value
-
-        if custom_field.data_type == 'dropdown':
-            if custom_field.dropdown_values:
-                options = custom_field.dropdown_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the dropdown options.'})
-        
-        elif custom_field.data_type == 'radio':
-            if custom_field.radio_values:
-                options = custom_field.radio_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the radio options.'})
-       
-        elif custom_field.data_type == 'checkbox':
-            if custom_field.checkbox_values:
-                options = custom_field.checkbox_values
-                if not field_value or field_value not in options:
-                    raise ValidationError({'field_value': 'Select a value from the checkbox options.'})
+        # v1.12.0: every field type (number, e-mail, date, Yes / No, multi-select …), rules and mandatory
+        from DataTools.forms import clean_model_value
+        clean_model_value(self)
 
 
-        elif custom_field.data_type == 'date':
-            if field_value:
-                try:
-                    parts = field_value.split('-')
-                    if len(parts) != 3:
-                        raise ValueError
-                    day, month, year = parts
-                    formatted_date = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
-                    datetime.strptime(formatted_date, '%d-%m-%Y')
-                except ValueError:
-                    raise ValidationError({'field_value': 'Invalid date format. Date should be in DD-MM-YYYY format.'})
-            else:
-                raise ValidationError({'field_value': 'Date value is required.'})
-    
-    
-    
 # Display document type name and employee ID  
 class EmpLeaveRequest(models.Model):
     employee    = models.ForeignKey('emp_master', on_delete=models.CASCADE,related_name='emp_leaverequest')

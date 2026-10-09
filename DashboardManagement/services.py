@@ -117,6 +117,94 @@ def hours(att):
     return 0
 
 
+DEFAULT_END = time(18, 0)
+EARLY_GRACE_MIN = 15
+
+
+class ShiftResolver:
+    """The shift an employee works on a day: shift override → shift schedule (pattern) → the shift on the punch.
+    Built once for a set of employees and a period (one query per schedule; pattern look-ups are cached)."""
+
+    def __init__(self, emp_ids, d_from, d_to):
+        emp_ids = set(emp_ids)
+        self.over, self.sched, self._cache = {}, [], {}
+        self.book = None
+        from django.apps import apps as _apps
+        if _apps.is_installed('ShiftPlanner'):  # v1.12.0: the shift planner's resolver (published roster first)
+            from ShiftPlanner.resolver import Book
+            self.book = Book(d_from, d_to, emp_ids)
+        SO, SCH = M('calendars.ShiftOverride'), M('calendars.EmployeeShiftSchedule')
+        Emp = M('EmpManagement.emp_master')
+        self.emps = {e.id: e for e in Emp.objects.filter(id__in=emp_ids)}
+        if SO:
+            for o in SO.objects.filter(employee_id__in=emp_ids, date__gte=d_from, date__lte=d_to).select_related('override_shift'):
+                self.over[(o.employee_id, o.date)] = o.override_shift
+        if SCH:
+            for s in SCH.objects.filter(Q(end_date__isnull=True) | Q(end_date__gte=d_from), start_date__lte=d_to).select_related('shift_pattern').order_by('-start_date', '-id'):
+                try:
+                    ids = set(s.get_assigned_employees().values_list('id', flat=True)) & emp_ids
+                except Exception:
+                    ids = set()
+                if ids:
+                    self.sched.append((s, ids))
+
+    def shift(self, emp_id, d, att=None):
+        if self.book is not None and self.emps.get(emp_id) is not None:
+            r = self.book.get(self.emps[emp_id], d)
+            if r is not None:
+                if not r['off']:
+                    return r['shift']
+                return att.shift if att is not None and att.shift_id else None
+        if (emp_id, d) in self.over and self.over[(emp_id, d)] is not None:
+            return self.over[(emp_id, d)]
+        for s, ids in self.sched:
+            if emp_id in ids:
+                key = (s.id, emp_id, d)
+                if key not in self._cache:
+                    try:
+                        self._cache[key] = s.get_shift_for_date(d, self.emps.get(emp_id))
+                    except Exception:
+                        self._cache[key] = None
+                if self._cache[key] is not None:
+                    return self._cache[key]
+        return att.shift if att is not None and att.shift_id else None
+
+
+def _dt(d, t):
+    return datetime.combine(d, t)
+
+
+def minutes_late(att, shift=None):
+    """Minutes after the shift start (0 when on time or within the grace minutes)."""
+    if not att.check_in_time:
+        return 0
+    st = getattr(shift, 'start_time', None) or shift_start(att)
+    m = int((_dt(att.date, att.check_in_time) - _dt(att.date, st)).total_seconds() // 60)
+    return m if m > LATE_GRACE_MIN else 0
+
+
+def minutes_early(att, shift=None):
+    """Minutes before the shift end at check-out (0 when not early); handles shifts that end after midnight."""
+    if not (att.check_out_time and att.check_in_time):
+        return 0
+    st = getattr(shift, 'start_time', None) or shift_start(att)
+    en = getattr(shift, 'end_time', None) or getattr(getattr(att, 'shift', None), 'end_time', None) or DEFAULT_END
+    end_dt = _dt(att.date, en) + (timedelta(days=1) if en <= st else timedelta())
+    out_dt = _dt(att.date, att.check_out_time) + (timedelta(days=1) if att.check_out_time < att.check_in_time else timedelta())
+    m = int((end_dt - out_dt).total_seconds() // 60)
+    return m if m > EARLY_GRACE_MIN else 0
+
+
+def weighted_progress(goals):
+    goals = list(goals)
+    if not goals:
+        return 0
+    w = sum(float(g.weight or 0) for g in goals)
+    if w <= 0:
+        return round(sum(float(g.progress_percent or 0) for g in goals) / len(goals), 1)
+    return round(sum(float(g.progress_percent or 0) * float(g.weight or 0) for g in goals) / w, 1)
+
+
 def today_status(emp_qs, today):
     Att = M('calendars.Attendance')
     ids = list(emp_qs.values_list('id', flat=True))
@@ -183,7 +271,7 @@ def my_requests(emp, limit=None):
                 text = summ(r)
             except Exception:
                 text = ''
-            rows.append({'module': key, 'module_label': label, 'id': r.id, 'document_number': getattr(r, 'document_number', None),
+            rows.append({'module': key, 'module_label': label, 'id': r.id, '_m': rm, '_id': r.id, 'document_number': getattr(r, 'document_number', None),
                          'summary': text, 'date': _date_of(r, dfield), 'status': r.status, 'status_key': _status_key(r.status)})
     rows.sort(key=lambda x: (x['date'] or date.min, x['id']), reverse=True)
     return rows[:limit] if limit else rows
@@ -207,7 +295,7 @@ def pending_approvals(user):
                 text = summ(r)
             except Exception:
                 text = ''
-            out.append({'module': key, 'module_label': label, 'approval_id': a.id, 'request_id': r.id, 'level': getattr(a, 'level', None),
+            out.append({'module': key, 'module_label': label, 'approval_id': a.id, 'request_id': r.id, '_m': rm, '_id': r.id, 'level': getattr(a, 'level', None),
                         'document_number': getattr(r, 'document_number', None), 'summary': text, 'date': _date_of(r, dfield),
                         'employee_id': e.id if e else None, 'employee': emp_name(e), 'employee_code': e.emp_code if e else None})
     # new modules
@@ -264,7 +352,7 @@ def ess_summary(user):
         bal.append({'leave_type_id': b.leave_type_id, 'name': b.leave_type.name, 'balance': b.balance or 0, 'openings': b.openings or 0, 'used': used.get(b.leave_type_id, 0)})
     data['leave_balances'] = bal
     nxt = LR.objects.filter(employee=emp, status__in=('approved', 'pending'), end_date__gte=today).order_by('start_date').first()
-    data['next_leave'] = {'type': nxt.leave_type.name, 'from': nxt.start_date, 'to': nxt.end_date, 'days': nxt.number_of_days, 'status': nxt.status} if nxt else None
+    data['next_leave'] = {'type': nxt.leave_type.name, 'from': nxt.start_date, 'to': nxt.end_date, 'days': nxt.number_of_days, 'status': nxt.status, '_m': nxt._meta.label, '_id': nxt.id} if nxt else None
 
     # attendance – this month + last 30 days
     Att = M('calendars.Attendance')
@@ -296,6 +384,11 @@ def ess_summary(user):
         trend.append({'date': d, 'hours': hours(a) if a else 0, 'late': bool(a and is_late(a)), 'working': is_working_day(d),
                       'status': 'present' if a else ('leave' if d in leave_days else ('off' if not is_working_day(d) else ('absent' if d < today else 'today')))})
     data['attendance_trend'] = trend
+    OT = M('calendars.EmployeeOvertime')
+    if OT:
+        oq = OT.objects.filter(employee=emp, date__gte=month_start, date__lte=today)
+        data['overtime'] = {'month_label': today.strftime('%B %Y'), 'hours': round(float(oq.aggregate(s=Sum('hours'))['s'] or 0), 2),
+                            'approved': round(float(oq.filter(approved=True).aggregate(s=Sum('hours'))['s'] or 0), 2), 'entries': oq.count()}
 
     # requests (all modules)
     reqs = my_requests(emp)
@@ -305,9 +398,9 @@ def ess_summary(user):
 
     # payroll
     PS = M('PayrollManagement.Payslip')
-    last = PS.objects.filter(employee=emp).select_related('payroll_run').order_by('-payroll_run__year', '-payroll_run__month', '-id').first()
+    last = PS.objects.filter(employee=emp, status__in=('Approved', 'approved', 'paid', 'Paid')).select_related('payroll_run').order_by('-payroll_run__year', '-payroll_run__month', '-id').first()  # v1.13.0: never drafts
     data['payslip'] = {'id': last.id, 'period': f"{last.payroll_run.name}" if last.payroll_run_id else '', 'gross': last.gross_salary, 'deductions': last.total_deductions,
-                       'net': last.net_salary, 'status': last.status} if last else None
+                       'net': last.net_salary, 'status': last.status, '_m': last._meta.label, '_id': last.id} if last else None
     LA = M('PayrollManagement.LoanApplication')
     loans = list(LA.objects.filter(employee=emp, status__in=('Approved', 'Disbursed', 'In Progress', 'Paused')))
     data['loans'] = {'count': len(loans), 'outstanding': sum((l.remaining_balance or 0) for l in loans), 'emi': sum((l.emi_amount or 0) for l in loans)}
@@ -317,14 +410,14 @@ def ess_summary(user):
 
     # assets & documents
     AA = M('OrganisationManager.AssetAllocation')
-    data['assets'] = [{'name': a.asset.name, 'serial': a.asset.serial_number, 'since': a.assigned_date} for a in AA.objects.filter(employee=emp, returned_date__isnull=True).select_related('asset')]
+    data['assets'] = [{'name': a.asset.name, 'serial': a.asset.serial_number, 'since': a.assigned_date, '_m': a._meta.label, '_id': a.id} for a in AA.objects.filter(employee=emp, returned_date__isnull=True).select_related('asset')]
     DOC = M('EmpManagement.Emp_Documents')
     docs = []
     for d in DOC.objects.filter(emp_id=emp).select_related('document_type').order_by('emp_doc_expiry_date'):
         if d.emp_doc_expiry_date:
             days = (d.emp_doc_expiry_date - today).days
             docs.append({'type': d.document_type.type_name if d.document_type_id else '', 'number': d.emp_doc_number, 'expiry': d.emp_doc_expiry_date, 'days': days,
-                         'state': 'expired' if days < 0 else ('expiring' if days <= 60 else 'valid')})
+                         'state': 'expired' if days < 0 else ('expiring' if days <= 60 else 'valid'), '_m': d._meta.label, '_id': d.id})
     data['documents'] = docs
 
     # performance & learning
@@ -344,10 +437,38 @@ def ess_summary(user):
     if CERT:
         data['certificates'] = [{'title': c.title, 'expiry': c.expiry_date, 'status': c.status} for c in CERT.objects.filter(employee=emp).order_by('-issued_on')[:6]]
 
+    data['tasks'] = my_tasks(user, emp, today)
     data['holidays'] = upcoming_holidays(today)
     data['announcements'] = announcements()
     data['approvals'] = summarize_approvals(pending_approvals(user))
     return data
+
+
+def _task_rows(user, emp, today):
+    rows = []
+    T = M('ProjectManagement.Task')
+    if T and emp:
+        for t in T.objects.filter(task_members=emp, is_active=True).exclude(status='completed').select_related('project').distinct().order_by('end_date', 'id'):
+            rows.append({'kind': 'task', 'kind_label': 'Project task', '_m': t._meta.label, '_id': t.id, 'title': t.title, 'project': str(t.project) if t.project_id else '',
+                         'due': t.end_date, 'status': (t.status or '').replace('_', ' '), 'overdue': bool(t.end_date and t.end_date < today),
+                         'link': '/main-sidebar/project-options/project-tasks'})
+    ACT = M('Chatter.Activity')
+    if ACT and user is not None:
+        for a in ACT.objects.filter(assigned_to=user, state='open').order_by('due_date', 'id'):
+            rows.append({'kind': 'activity', 'kind_label': (a.get_activity_type_display() or 'To-do'), '_m': a.model if a.object_id and str(a.object_id).isdigit() and '.' in (a.model or '') else None,
+                         '_id': int(a.object_id) if a.object_id and str(a.object_id).isdigit() else None, 'title': a.summary or a.record_label or 'Activity',
+                         'project': a.record_label or '', 'due': a.due_date, 'status': a.state, 'overdue': bool(a.due_date and a.due_date < today),
+                         'link': a.page or '/main-sidebar/todo'})
+    rows.sort(key=lambda r: (r['due'] is None, r['due'] or date.max))
+    return rows
+
+
+def my_tasks(user, emp, today=None):
+    """Open project tasks where the employee is a member, plus open to-dos / meetings planned for the user (Chatter)."""
+    today = today or timezone.localdate()
+    rows = _task_rows(user, emp, today)
+    return {'open': len(rows), 'overdue': sum(1 for r in rows if r['overdue']),
+            'due_week': sum(1 for r in rows if r['due'] and today <= r['due'] <= today + timedelta(days=7)), 'items': rows[:6]}
 
 
 def upcoming_holidays(today, n=5):
@@ -451,6 +572,11 @@ def team_summary(user, scope='team', department=None):
             labels = dict(GS._meta.get_field('status').choices)
             cnt = Counter(GS.objects.filter(cycle=cyc, employee_id__in=ids).values_list('status', flat=True))
             data['performance'] = {'cycle_id': cyc.id, 'cycle': cyc.name, 'rows': [{'key': s, 'label': labels[s], 'count': cnt.get(s, 0)} for s in order]}
+            data['goals'] = team_goals(ids, cyc, emp_by_id)
+        data['ratings'] = team_ratings(ids)
+
+    # overtime this month
+    data['overtime'] = team_overtime(ids, today, emp_by_id)
 
     # learning
     NOM = M('LearningManagement.Nomination')
@@ -491,6 +617,54 @@ def team_summary(user, scope='team', department=None):
     return data
 
 
+def team_overtime(ids, today, emp_by_id=None):
+    OT = M('calendars.EmployeeOvertime')
+    if not OT:
+        return None
+    m0 = today.replace(day=1)
+    qs = OT.objects.filter(employee_id__in=ids, date__gte=m0, date__lte=today)
+    per, approved, total = defaultdict(float), 0.0, 0.0
+    for o in qs.values('employee_id', 'hours', 'approved'):
+        h = float(o['hours'] or 0)
+        per[o['employee_id']] += h
+        total += h
+        approved += h if o['approved'] else 0
+    if emp_by_id is None:
+        emp_by_id = {e.id: e for e in M('EmpManagement.emp_master').objects.filter(id__in=list(per))}
+    top = sorted(per.items(), key=lambda x: -x[1])[:5]
+    return {'month_label': today.strftime('%B %Y'), 'hours': round(total, 2), 'approved': round(approved, 2), 'pending': round(total - approved, 2),
+            'people': len(per), 'top': [{'employee_id': k, 'employee': emp_name(emp_by_id.get(k)), 'hours': round(v, 2)} for k, v in top]}
+
+
+def team_goals(ids, cyc, emp_by_id=None):
+    GS = M('PerformanceManagement.GoalSheet')
+    sheets = list(GS.objects.filter(cycle=cyc, employee_id__in=ids).select_related('employee').prefetch_related('goals'))
+    rows = []
+    for s in sheets:
+        goals = list(s.goals.all())
+        rows.append({'sheet_id': s.id, 'employee_id': s.employee_id, 'employee': emp_name(s.employee), 'goals': len(goals), 'progress': weighted_progress(goals),
+                     'done': sum(1 for g in goals if g.progress_status == 'done'), 'at_risk': sum(1 for g in goals if g.progress_status in ('at_risk', 'off_track'))})
+    rows.sort(key=lambda r: r['progress'])
+    with_goals = [r for r in rows if r['goals']]
+    return {'cycle_id': cyc.id, 'cycle': cyc.name, 'sheets': len(rows), 'avg_progress': round(sum(r['progress'] for r in with_goals) / len(with_goals), 1) if with_goals else 0,
+            'at_risk': sum(r['at_risk'] for r in rows), 'completed_goals': sum(r['done'] for r in rows), 'total_goals': sum(r['goals'] for r in rows), 'rows': rows[:8]}
+
+
+def team_ratings(ids):
+    """Final (or proposed) rating 1–5 of the team in the latest cycle that has ratings."""
+    GS = M('PerformanceManagement.GoalSheet')
+    if not GS:
+        return None
+    q = GS.objects.filter(employee_id__in=ids).filter(Q(final_rating__isnull=False) | Q(proposed_rating__isnull=False)).select_related('cycle').order_by('-cycle__period_from')
+    first = q.first()
+    if not first:
+        return {'cycle': None, 'cycle_id': None, 'rated': 0, 'avg': None, 'rows': [{'rating': r, 'count': 0} for r in range(1, 6)]}
+    cnt = Counter((s.final_rating or s.proposed_rating) for s in q.filter(cycle=first.cycle))
+    rated = sum(cnt.values())
+    return {'cycle': first.cycle.name, 'cycle_id': first.cycle_id, 'rated': rated, 'avg': round(sum(k * v for k, v in cnt.items()) / rated, 2) if rated else None,
+            'rows': [{'rating': r, 'count': cnt.get(r, 0)} for r in range(1, 6)]}
+
+
 # --------------------------------------------------------------------------- employee 360
 def can_view_employee(user, emp):
     if is_admin(user):
@@ -516,7 +690,7 @@ def employee_360(user, emp):
                                    for a in sorted(att, key=lambda a: a.date, reverse=True)[:7]]}
     data['requests'] = my_requests(emp, limit=10)
     AA = M('OrganisationManager.AssetAllocation')
-    data['assets'] = [{'name': a.asset.name, 'serial': a.asset.serial_number, 'since': a.assigned_date} for a in AA.objects.filter(employee=emp, returned_date__isnull=True).select_related('asset')]
+    data['assets'] = [{'name': a.asset.name, 'serial': a.asset.serial_number, 'since': a.assigned_date, '_m': a._meta.label, '_id': a.id} for a in AA.objects.filter(employee=emp, returned_date__isnull=True).select_related('asset')]
     DOC = M('EmpManagement.Emp_Documents')
     data['documents'] = [{'type': d.document_type.type_name if d.document_type_id else '', 'expiry': d.emp_doc_expiry_date,
                           'days': (d.emp_doc_expiry_date - today).days if d.emp_doc_expiry_date else None} for d in DOC.objects.filter(emp_id=emp).select_related('document_type')]
@@ -553,6 +727,16 @@ def drill(user, metric, params):
     module = params.get('module')
     title, cols, rows = metric, EMP_COLS, []
 
+    if metric == 'my_tasks':
+        emp = my_employee(user)
+        rows = _task_rows(user, emp, today)
+        if params.get('state') == 'overdue':
+            rows = [r for r in rows if r['overdue']]
+        for r in rows:
+            r['flag'] = 'Overdue' if r['overdue'] else ''
+        return {'title': 'My tasks and to-dos', 'columns': [col('kind_label', 'Type'), col('title', 'Task'), col('project', 'Project / record'), col('due', 'Due', 'date'),
+                                                            col('status', 'Status', 'status'), col('flag', 'Flag', 'status')], 'rows': rows}
+
     if metric in ('my_requests', 'my_attendance', 'my_documents', 'my_payslips', 'my_leave'):
         emp = my_employee(user)
         if not emp:
@@ -570,21 +754,21 @@ def drill(user, metric, params):
         if metric == 'my_attendance':
             Att = M('calendars.Attendance')
             d0 = today - timedelta(days=int(params.get('days') or 30))
-            rows = [{'date': a.date, 'shift': a.shift.name if a.shift_id else '', 'in': a.check_in_time, 'out': a.check_out_time, 'hours': hours(a), 'late': 'Late' if is_late(a) else ''}
+            rows = [{'_m': a._meta.label, '_id': a.id, 'date': a.date, 'shift': a.shift.name if a.shift_id else '', 'in': a.check_in_time, 'out': a.check_out_time, 'hours': hours(a), 'late': 'Late' if is_late(a) else ''}
                     for a in Att.objects.filter(employee=emp, date__gte=d0).select_related('shift').order_by('-date')]
             return {'title': 'My attendance', 'columns': [col('date', 'Date', 'date'), col('shift', 'Shift'), col('in', 'In', 'time'), col('out', 'Out', 'time'), col('hours', 'Hours', 'number'), col('late', 'Flag', 'status')], 'rows': rows}
         if metric == 'my_payslips':
             PS = M('PayrollManagement.Payslip')
-            rows = [{'period': p.payroll_run.name if p.payroll_run_id else '', 'gross': p.gross_salary, 'deductions': p.total_deductions, 'net': p.net_salary, 'status': p.status,
+            rows = [{'_m': p._meta.label, '_id': p.id, 'period': p.payroll_run.name if p.payroll_run_id else '', 'gross': p.gross_salary, 'deductions': p.total_deductions, 'net': p.net_salary, 'status': p.status,
                      'lines': ', '.join(f"{c.component.name} {c.amount:,.0f}" for c in p.components.select_related('component') if c.component_id)}
-                    for p in PS.objects.filter(employee=emp).select_related('payroll_run').order_by('-payroll_run__year', '-payroll_run__month')]
+                    for p in PS.objects.filter(employee=emp, status__in=('Approved', 'approved', 'paid', 'Paid')).select_related('payroll_run').order_by('-payroll_run__year', '-payroll_run__month')]  # v1.13.0: approved / paid only
             return {'title': 'My payslips', 'columns': [col('period', 'Payroll'), col('gross', 'Gross', 'money'), col('deductions', 'Deductions', 'money'), col('net', 'Net', 'money'), col('lines', 'Components')], 'rows': rows}
         if metric == 'my_leave':
             LR = M('calendars.employee_leave_request')
             qs = LR.objects.filter(employee=emp).select_related('leave_type').order_by('-start_date')
             if params.get('leave_type'):
                 qs = qs.filter(leave_type_id=params['leave_type'])
-            rows = [{'document_number': r.document_number, 'type': r.leave_type.name, 'from': r.start_date, 'to': r.end_date, 'days': r.number_of_days, 'status': r.status} for r in qs]
+            rows = [{'_m': r._meta.label, '_id': r.id, 'document_number': r.document_number, 'type': r.leave_type.name, 'from': r.start_date, 'to': r.end_date, 'days': r.number_of_days, 'status': r.status} for r in qs]
             return {'title': 'My leave', 'columns': [col('document_number', 'Number'), col('type', 'Type'), col('from', 'From', 'date'), col('to', 'To', 'date'), col('days', 'Days', 'number'), col('status', 'Status', 'status')], 'rows': rows}
         if metric == 'my_documents':
             return {'title': 'My documents', 'columns': [col('type', 'Document'), col('number', 'Number'), col('expiry', 'Expiry', 'date'), col('days', 'Days left', 'number'), col('state', 'Status', 'status')],
@@ -624,7 +808,7 @@ def drill(user, metric, params):
         d = date.fromisoformat(params['date']) if params.get('date') else today
         st = today_status(emps, d)
         if metric == 'on_leave_today':
-            rows = [dict(emp_brief(l.employee), employee_id=l.employee_id, type=l.leave_type.name, to=l.end_date) for l in st['leave_rows'].values()]
+            rows = [dict(emp_brief(l.employee), employee_id=l.employee_id, type=l.leave_type.name, to=l.end_date, _m=l._meta.label, _id=l.id) for l in st['leave_rows'].values()]
             return {'title': f"On leave · {d:%d/%m/%Y}", 'columns': EMP_COLS + [col('type', 'Leave'), col('to', 'Back after', 'date')], 'rows': rows}
         if metric == 'not_punched_today':
             return {'title': f"Not checked in · {d:%d/%m/%Y}", 'columns': EMP_COLS, 'rows': emp_rows(st['not_punched'])}
@@ -636,7 +820,7 @@ def drill(user, metric, params):
                 'rows': emp_rows(sel, extra)}
     if metric == 'out_next':
         out = leave_on(ids, today, today + timedelta(days=int(params.get('days') or 30)), statuses=('approved', 'pending')).order_by('start_date')
-        rows = [dict(emp_brief(l.employee), employee_id=l.employee_id, type=l.leave_type.name, **{'from': l.start_date}, to=l.end_date, days=l.number_of_days, status=l.status) for l in out]
+        rows = [dict(emp_brief(l.employee), employee_id=l.employee_id, type=l.leave_type.name, **{'from': l.start_date}, to=l.end_date, days=l.number_of_days, status=l.status, _m=l._meta.label, _id=l.id) for l in out]
         return {'title': 'Leave – next 30 days', 'columns': EMP_COLS[:2] + [col('type', 'Leave'), col('from', 'From', 'date'), col('to', 'To', 'date'), col('days', 'Days', 'number'), col('status', 'Status', 'status')], 'rows': rows}
     if metric == 'team_requests':
         rows = []
@@ -649,7 +833,7 @@ def drill(user, metric, params):
                     text = summ(r)
                 except Exception:
                     text = ''
-                rows.append(dict(employee_id=r.employee_id, code=r.employee.emp_code, name=emp_name(r.employee), module_label=label,
+                rows.append(dict(employee_id=r.employee_id, code=r.employee.emp_code, name=emp_name(r.employee), module_label=label, _m=rm, _id=r.id,
                                  document_number=getattr(r, 'document_number', None), summary=text, date=_date_of(r, dfield), status=r.status))
         return {'title': 'Open requests from the team', 'columns': [col('module_label', 'Type'), col('document_number', 'Number'), col('name', 'Employee'), col('summary', 'Details'), col('date', 'Date', 'date'), col('status', 'Status', 'status')], 'rows': rows}
     if metric == 'documents':
@@ -659,7 +843,7 @@ def drill(user, metric, params):
             q = q.filter(emp_doc_expiry_date__lt=today)
         elif params.get('state') == 'expiring':
             q = q.filter(emp_doc_expiry_date__gte=today)
-        rows = [{'employee_id': d.emp_id_id, 'code': d.emp_id.emp_code, 'name': emp_name(d.emp_id), 'type': d.document_type.type_name if d.document_type_id else '',
+        rows = [{'_m': d._meta.label, '_id': d.id, 'employee_id': d.emp_id_id, 'code': d.emp_id.emp_code, 'name': emp_name(d.emp_id), 'type': d.document_type.type_name if d.document_type_id else '',
                  'number': d.emp_doc_number, 'expiry': d.emp_doc_expiry_date, 'days': (d.emp_doc_expiry_date - today).days,
                  'state': 'expired' if d.emp_doc_expiry_date < today else 'expiring'} for d in q]
         return {'title': 'Documents expired / expiring in 60 days', 'columns': [col('code', 'Code'), col('name', 'Employee'), col('type', 'Document'), col('number', 'Number'), col('expiry', 'Expiry', 'date'), col('days', 'Days', 'number'), col('state', 'Status', 'status')], 'rows': rows}
@@ -668,22 +852,22 @@ def drill(user, metric, params):
         q = GS.objects.filter(employee_id__in=ids, cycle_id=params.get('cycle')).select_related('employee', 'cycle')
         if params.get('status'):
             q = q.filter(status=params['status'])
-        rows = [{'employee_id': s.employee_id, 'code': s.employee.emp_code, 'name': emp_name(s.employee), 'status': s.get_status_display(), 'self_score': s.self_score,
+        rows = [{'_m': s._meta.label, '_id': s.id, 'employee_id': s.employee_id, 'code': s.employee.emp_code, 'name': emp_name(s.employee), 'status': s.get_status_display(), 'self_score': s.self_score,
                  'manager_score': s.manager_score, 'final_rating': s.final_rating} for s in q]
         return {'title': 'Goal sheets', 'columns': [col('code', 'Code'), col('name', 'Employee'), col('status', 'Stage', 'status'), col('self_score', 'Self', 'number'), col('manager_score', 'Manager', 'number'), col('final_rating', 'Final', 'number')], 'rows': rows}
     if metric == 'trainings':
         NOM = M('LearningManagement.Nomination')
         q = NOM.objects.filter(employee_id__in=ids, session__start_date__gte=today).exclude(seat_status='cancelled').select_related('employee', 'session__course').order_by('session__start_date')
-        rows = [{'employee_id': n.employee_id, 'code': n.employee.emp_code, 'name': emp_name(n.employee), 'course': n.session.course.title, 'date': n.session.start_date, 'seat': n.seat_status} for n in q]
+        rows = [{'_m': n._meta.label, '_id': n.id, 'employee_id': n.employee_id, 'code': n.employee.emp_code, 'name': emp_name(n.employee), 'course': n.session.course.title, 'date': n.session.start_date, 'seat': n.seat_status} for n in q]
         return {'title': 'Upcoming trainings', 'columns': [col('code', 'Code'), col('name', 'Employee'), col('course', 'Course'), col('date', 'Date', 'date'), col('seat', 'Seat', 'status')], 'rows': rows}
     if metric == 'certificates':
         CERT = M('LearningManagement.Certificate')
-        rows = [{'employee_id': c.employee_id, 'code': c.employee.emp_code, 'name': emp_name(c.employee), 'title': c.title, 'expiry': c.expiry_date, 'status': c.status}
+        rows = [{'_m': c._meta.label, '_id': c.id, 'employee_id': c.employee_id, 'code': c.employee.emp_code, 'name': emp_name(c.employee), 'title': c.title, 'expiry': c.expiry_date, 'status': c.status}
                 for c in CERT.objects.filter(employee_id__in=ids, expiry_date__isnull=False, expiry_date__lte=today + timedelta(days=60)).select_related('employee') if c.status in ('expiring', 'expired')]
         return {'title': 'Certificates expiring / expired', 'columns': [col('code', 'Code'), col('name', 'Employee'), col('title', 'Certificate'), col('expiry', 'Expiry', 'date'), col('status', 'Status', 'status')], 'rows': rows}
     if metric == 'assets':
         AA = M('OrganisationManager.AssetAllocation')
-        rows = [{'employee_id': a.employee_id, 'code': a.employee.emp_code, 'name': emp_name(a.employee), 'asset': a.asset.name, 'serial': a.asset.serial_number, 'since': a.assigned_date}
+        rows = [{'_m': a._meta.label, '_id': a.id, 'employee_id': a.employee_id, 'code': a.employee.emp_code, 'name': emp_name(a.employee), 'asset': a.asset.name, 'serial': a.asset.serial_number, 'since': a.assigned_date}
                 for a in AA.objects.filter(employee_id__in=ids, returned_date__isnull=True).select_related('employee', 'asset')]
         return {'title': 'Assets with the team', 'columns': [col('code', 'Code'), col('name', 'Employee'), col('asset', 'Asset'), col('serial', 'Serial'), col('since', 'Since', 'date')], 'rows': rows}
     if metric == 'celebrations':
@@ -692,12 +876,12 @@ def drill(user, metric, params):
     if metric == 'payroll_run' and scope == 'company':
         PS = M('PayrollManagement.Payslip')
         q = PS.objects.filter(payroll_run_id=params.get('run'), employee_id__in=ids).select_related('employee__emp_dept_id', 'employee__emp_desgntn_id').order_by('employee__emp_code')
-        rows = [dict(emp_brief(p.employee), employee_id=p.employee_id, gross=p.gross_salary, deductions=p.total_deductions, net=p.net_salary,
+        rows = [dict(emp_brief(p.employee), employee_id=p.employee_id, _m=p._meta.label, _id=p.id, gross=p.gross_salary, deductions=p.total_deductions, net=p.net_salary,
                      lines=', '.join(f"{c.component.name} {c.amount:,.0f}" for c in p.components.select_related('component') if c.component_id and c.component.component_type == 'deduction')) for p in q]
         return {'title': 'Payslips', 'columns': EMP_COLS[:3] + [col('gross', 'Gross', 'money'), col('deductions', 'Deductions', 'money'), col('net', 'Net', 'money'), col('lines', 'Deduction lines')], 'rows': rows}
     if metric == 'loans' and scope == 'company':
         LA = M('PayrollManagement.LoanApplication')
-        rows = [{'employee_id': l.employee_id, 'code': l.employee.emp_code, 'name': emp_name(l.employee), 'type': l.loan_type.loan_type if l.loan_type_id else '', 'amount': l.amount_requested,
+        rows = [{'_m': l._meta.label, '_id': l.id, 'employee_id': l.employee_id, 'code': l.employee.emp_code, 'name': emp_name(l.employee), 'type': l.loan_type.loan_type if l.loan_type_id else '', 'amount': l.amount_requested,
                  'emi': l.emi_amount, 'remaining': l.remaining_balance, 'status': l.status}
                 for l in LA.objects.filter(employee_id__in=ids, status__in=('Approved', 'Disbursed', 'In Progress', 'Paused')).select_related('employee', 'loan_type')]
         return {'title': 'Loans outstanding', 'columns': [col('code', 'Code'), col('name', 'Employee'), col('type', 'Loan'), col('amount', 'Amount', 'money'), col('emi', 'EMI', 'money'), col('remaining', 'Remaining', 'money'), col('status', 'Status', 'status')], 'rows': rows}
@@ -706,6 +890,45 @@ def drill(user, metric, params):
         q = MR.objects.filter(status__in=('pending', 'approved'))
         if scope != 'company':
             q = q.filter(requested_by=user)
-        rows = [{'document_number': r.document_number, 'position': r.position_title, 'department': r.department.dept_name if r.department_id else '', 'headcount': r.headcount, 'status': r.get_status_display()} for r in q]
+        rows = [{'_m': r._meta.label, '_id': r.id, 'document_number': r.document_number, 'position': r.position_title, 'department': r.department.dept_name if r.department_id else '', 'headcount': r.headcount, 'status': r.get_status_display()} for r in q]
         return {'title': 'Open requisitions', 'columns': [col('document_number', 'Number'), col('position', 'Position'), col('department', 'Department'), col('headcount', 'HC', 'number'), col('status', 'Status', 'status')], 'rows': rows}
+    if metric == 'team_overtime':
+        OT = M('calendars.EmployeeOvertime')
+        m0 = today.replace(day=1)
+        q = OT.objects.filter(employee_id__in=ids, date__gte=m0, date__lte=today).select_related('employee').order_by('-date')
+        if params.get('employee'):
+            q = q.filter(employee_id=params['employee'])
+        rows = [{'_m': o._meta.label, '_id': o.id, 'employee_id': o.employee_id, 'code': o.employee.emp_code, 'name': emp_name(o.employee), 'date': o.date,
+                 'type': o.get_ot_type_display(), 'hours': float(o.hours or 0), 'approved': 'Approved' if o.approved else 'Pending'} for o in q]
+        return {'title': f"Overtime · {today:%B %Y}", 'columns': [col('code', 'Code'), col('name', 'Employee'), col('date', 'Date', 'date'), col('type', 'Type'),
+                                                                 col('hours', 'Hours', 'number'), col('approved', 'Status', 'status')], 'rows': rows}
+    if metric == 'goal_progress':
+        AC = M('PerformanceManagement.AppraisalCycle')
+        cyc = AC.objects.filter(pk=params.get('cycle')).first() if params.get('cycle') else AC.objects.filter(status__in=('active', 'calibration')).order_by('-period_from').first()
+        if not cyc:
+            return {'title': 'Goal progress', 'columns': [], 'rows': []}
+        g = team_goals(ids, cyc)
+        GS = M('PerformanceManagement.GoalSheet')
+        full = []
+        for s in GS.objects.filter(cycle=cyc, employee_id__in=ids).select_related('employee').prefetch_related('goals'):
+            goals = list(s.goals.all())
+            full.append({'_m': s._meta.label, '_id': s.id, 'employee_id': s.employee_id, 'code': s.employee.emp_code, 'name': emp_name(s.employee), 'goals': len(goals),
+                         'progress': weighted_progress(goals), 'done': sum(1 for x in goals if x.progress_status == 'done'),
+                         'at_risk': sum(1 for x in goals if x.progress_status in ('at_risk', 'off_track')), 'status': s.get_status_display()})
+        full.sort(key=lambda r: r['progress'])
+        return {'title': f"Goal progress · {g['cycle']}", 'columns': [col('code', 'Code'), col('name', 'Employee'), col('goals', 'Goals', 'number'), col('progress', 'Progress %', 'number'),
+                                                                      col('done', 'Done', 'number'), col('at_risk', 'At risk', 'number'), col('status', 'Stage', 'status')], 'rows': full}
+    if metric == 'rating_dist':
+        GS = M('PerformanceManagement.GoalSheet')
+        q = GS.objects.filter(employee_id__in=ids, cycle_id=params.get('cycle')).select_related('employee', 'cycle')
+        if params.get('rating'):
+            r = int(params['rating'])
+            q = q.filter(Q(final_rating=r) | Q(final_rating__isnull=True, proposed_rating=r))
+        else:
+            q = q.filter(Q(final_rating__isnull=False) | Q(proposed_rating__isnull=False))
+        rows = [{'_m': s._meta.label, '_id': s.id, 'employee_id': s.employee_id, 'code': s.employee.emp_code, 'name': emp_name(s.employee), 'rating': s.final_rating or s.proposed_rating,
+                 'final': 'Final' if s.final_rating else 'Proposed', 'manager_score': s.manager_score, 'status': s.get_status_display()} for s in q]
+        return {'title': 'Performance ratings' + (f" · {params['rating']}" if params.get('rating') else ''),
+                'columns': [col('code', 'Code'), col('name', 'Employee'), col('rating', 'Rating', 'number'), col('final', 'Kind'), col('manager_score', 'Manager score', 'number'), col('status', 'Stage', 'status')],
+                'rows': rows}
     return {'title': 'Unknown metric', 'columns': [], 'rows': []}

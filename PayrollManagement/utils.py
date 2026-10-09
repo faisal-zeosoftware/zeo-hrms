@@ -45,6 +45,13 @@ def get_gratuity_variables(
         is_active=True
     ).order_by("minimum_value")
 
+    if not rules.exists():
+        # v1.11.0: no gratuity table set up → UAE Labour Law (Art. 51): 21 days' basic a year for the first
+        # 5 years, 30 days after; nothing is due before 1 year of service; capped at 2 years' basic.
+        from types import SimpleNamespace as _NS
+        rules = [_NS(minimum_value=0, maximum_value=5, resignation_days=21, termination_days=21),
+                 _NS(minimum_value=5, maximum_value=99, resignation_days=30, termination_days=30)]
+
     current_rule = None
 
     for rule in rules:
@@ -119,6 +126,8 @@ def get_gratuity_variables(
         daily_wage
         * gratuity_days
     )
+    if years_of_service < 1 and not GratuityTable.objects.filter(is_active=True).exists():
+        total_gratuity_liability = Decimal("0.00")   # UAE: no gratuity before 1 year of service
 
     max_gratuity = (
         basic_salary
@@ -162,82 +171,14 @@ def eval_formula(formula, components_dict):
         raise ValueError(f"Error evaluating formula '{formula}': {e}")
     
 def evaluate_formula(formula, variables, employee, component):
-    try:
-        logger.debug(
-            f"Evaluating formula: {formula} with variables: {variables} for employee: {employee}"
-        )
-        formula = formula.strip("'")
-
-        # 🔑 Convert all numbers into Decimal("...")
-        formula = re.sub(r'(\d+\.\d+|\d+)', r'Decimal("\1")', formula)
-
-        s = SimpleEval()
-        s.names = variables
-        s.functions = {"Decimal": Decimal}  # allow Decimal inside eval
-
-        # ✅ Custom operators
-        s.operators.update({
-            '<': lambda x, y: x < y,
-            '>': lambda x, y: x > y,
-            '>=': lambda x, y: x >= y,
-            '<=': lambda x, y: x <= y,
-            '==': lambda x, y: x == y,
-            '!=': lambda x, y: x != y,
-            'and': lambda x, y: x and y,
-            'or': lambda x, y: x or y,
-            'not': lambda x: not x,
-            '+': lambda x, y: x + y,
-            '-': lambda x, y: x - y,
-            '*': lambda x, y: x * y,
-            '/': lambda x, y: x / y,
-            '%': lambda x, y: x % y,
-        })
-
-        # ✅ Extended IF (works like CASE WHEN)
-        def IF(*args):
-            """
-            Supports:
-            - IF(cond, true_val, false_val)   → normal
-            - IF(cond1, val1, cond2, val2, ..., default_val) → CASE-like
-            """
-            n = len(args)
-            if n < 3:
-                raise ValueError("Invalid IF usage")
-            # Pairwise check (cond, val)
-            for i in range(0, n - 1, 2):
-                if args[i]:
-                    return args[i+1]
-            return args[-1]  # default
-
-        # ✅ Custom functions
-        s.functions.update({
-            "MAX": max,
-            "MIN": min,
-            "AVG": lambda *args: sum(args) / len(args) if args else Decimal("0.00"),
-            "SUM": sum,
-            "ROUND": lambda val, ndigits=2: val.quantize(Decimal("1." + "0"*ndigits)) 
-                if isinstance(val, Decimal) else round(val, ndigits),
-            "IF": IF,
-        })
-
-        result = s.eval(formula)
-
-        # Ensure result is Decimal
-        if not isinstance(result, Decimal):
-            result = Decimal(str(result))
-
-        return result.quantize(Decimal("0.00"))
-
-    except (NameNotDefined, FunctionNotDefined) as e:
-        logger.error(
-            f"Invalid variable or function in formula '{formula}' for employee {employee}: {e}"
-        )
-        return Decimal("0.00")
-    except Exception as e:
-        logger.error(
-            f"Error evaluating formula '{formula}' for employee {employee}: {e}"
-        )
-        return Decimal("0.00")
+    """v1.11.0: calculated by PayrollManagement.formula (same rules as the check when the component is saved)."""
+    from .formula import calculate
+    value, error, warnings = calculate(formula, variables)
+    if error:
+        logger.error(f"Formula error in {getattr(component, 'name', component)} for employee {employee}: {error} – formula '{formula}' (paid as 0)")
+    for w in warnings:
+        logger.warning(f"Formula {getattr(component, 'name', component)} for employee {employee}: {w}")
+    return value
 
 # PayrollManagement/utils.py or PayrollManagement/pdf_utils.py
 from reportlab.lib.pagesizes import letter
@@ -290,8 +231,8 @@ def generate_payslip_pdf(request, payslip):
         ["Last Name", payslip.employee.emp_last_name or "N/A"],
         ["Department", payslip.employee.emp_dept_id.dept_name if payslip.employee.emp_dept_id else "N/A"],
         ["Branch", payslip.employee.emp_branch_id.branch_name if payslip.employee.emp_branch_id else "N/A"],
-        ["Designation", payslip.employee.emp_desgntn_id.desgntn_name if payslip.employee.emp_desgntn_id else "N/A"],
-        ["Joining Date", payslip.employee.emp_joined_date.strftime("%Y-%m-%d")],
+        ["Designation", payslip.employee.emp_desgntn_id.desgntn_job_title if payslip.employee.emp_desgntn_id else "N/A"],  # v1.13.0: was desgntn_name (500)
+        ["Joining Date", payslip.employee.emp_joined_date.strftime("%Y-%m-%d") if payslip.employee.emp_joined_date else "N/A"],
     ]
     employee_table = Table(employee_details, colWidths=[200, 200])
     employee_table.setStyle(TableStyle([
@@ -313,7 +254,7 @@ def generate_payslip_pdf(request, payslip):
     additions_total = 0
     components = PayslipComponent.objects.filter(
         payslip=payslip,
-        component__show_on_payslip=True,
+        component__show_in_payslip=True,  # v1.13.0: field is show_in_payslip
         component__component_type='addition'
     )
     for component in components:
@@ -354,7 +295,7 @@ def generate_payslip_pdf(request, payslip):
     deductions_total = 0
     deductions = PayslipComponent.objects.filter(
         payslip=payslip,
-        component__show_on_payslip=True,
+        component__show_in_payslip=True,  # v1.13.0: field is show_in_payslip
         component__component_type='deduction'
     )
     for component in deductions:

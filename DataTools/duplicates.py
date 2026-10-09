@@ -164,7 +164,25 @@ def install():
     orig = serializers.ModelSerializer.run_validation
 
     def run_validation(self, data=serializers.empty):
-        value = orig(self, data)
+        try:
+            from .forms import pre_data
+            data = pre_data(self, data)   # v1.12.0: Yes / No, lists and numbers sent as JSON for custom field values
+        except Exception:
+            pass
+        try:
+            value = orig(self, data)
+        except serializers.ValidationError as exc:
+            # the database's own "… with this … already exists." in the same words as the checks above
+            model = getattr(getattr(self, 'Meta', None), 'model', None)
+            detail = exc.detail if isinstance(exc.detail, dict) else None
+            if model is not None and detail and hasattr(data, 'get'):
+                for field, errs in list(detail.items()):
+                    if isinstance(errs, list) and any(getattr(e, 'code', '') == 'unique' and ' with this ' in str(e) for e in errs):
+                        raw = data.get(field)
+                        if isinstance(raw, str) and raw.strip():
+                            detail[field] = [serializers.ErrorDetail(f'{_label(model, field)} “{raw.strip()}” already exists.', code='unique')]
+            raise
+
         if not getattr(self, 'skip_duplicate_check', False):
             check(self, value)
         from .forms import check_value

@@ -45,6 +45,7 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill,Alignment,Font,NamedStyle,Border, Side
 from rest_framework import status,generics,viewsets,permissions
 from .permissions import EmployeePermission
+from DataTools.permissions import CustomFieldDesignPermission, CustomFieldValuePermission  # v1.12.0 form designer
 from datetime import datetime, timedelta
 from OrganisationManager.models import DocumentNumbering
 from OrganisationManager.serializer import AnnouncementSerializer,AssetAllocationSerializer
@@ -97,7 +98,10 @@ class EmpViewSet(viewsets.ModelViewSet):
     # permission_classes = [EmployeePermission]
     def get_queryset(self):
         user = self.request.user
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().select_related(
+            'emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id', 'emp_nationality', 'emp_relegion',
+            'emp_country_id', 'emp_state_id', 'emp_reporting_manager', 'work_location', 'visa_location',
+            'emp_weekend_calendar', 'holiday_calendar', 'users')
 
         # ESS user → show only own employee profile
         if user.is_authenticated and getattr(user, 'is_ess', False):
@@ -623,7 +627,9 @@ class EmpViewSet(viewsets.ModelViewSet):
     def emp_announcement(self, request, pk=None):
         employee = self.get_object()
         if request.method == 'GET':
-            payslip = employee.employee_announcements.all()
+            # v1.13.0: also announcements for the employee's branch / department / designation / category (and company-wide)
+            from OrganisationManager.announcements import announcements_for
+            payslip = announcements_for(employee)
             serializer = AnnouncementSerializer(payslip, many=True)
             return Response(serializer.data)
     @action(detail=True, methods=['GET'])
@@ -776,7 +782,7 @@ class EmpViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     @action(detail=False, methods=['get'])
     def filter_empty_user_non_ess(self, request):
-        filtered_employees = self.queryset.filter(users__isnull=True, is_ess=False)
+        filtered_employees = self.filter_queryset(self.get_queryset()).filter(users__isnull=True, is_ess=False)  # v1.13.0: scoped
         serializer = EmployeeFilterSerializer(filtered_employees, many=True)
         return Response(serializer.data)
     @action(detail=True, methods=['GET'])
@@ -828,6 +834,7 @@ class EmpViewSet(viewsets.ModelViewSet):
         display_names = {
             "emp_code": "Employee Code",
             "emp_first_name": "First Name",
+            "emp_middle_name": "Middle Name",   # v1.13.0
             "emp_last_name": "Last Name",
             "emp_gender": "Gender",
             "emp_date_of_birth": "Date of Birth",
@@ -840,18 +847,18 @@ class EmpViewSet(viewsets.ModelViewSet):
             "emp_permenent_address": "Permanent Address",
             "emp_present_address": "Present Address",
             "emp_status": "Status",
-            "emp_hired_date": "Hired Date",
-            "emp_active_date": "Active Date",
+            "emp_joined_date": "Joining Date",
+            "emp_date_of_confirmation": "Confirmation Date",
             "emp_relegion": "Religion",
             "emp_blood_group": "Blood Group",
-            "emp_nationality_id": "Nationality",
+            "emp_nationality": "Nationality",
             "emp_marital_status": "Marital Status",
             "emp_father_name": "Father Name",
             "emp_mother_name": "Mother Name",
-            "emp_posting_location": "Posting Location",
+            "work_location": "Work Location",
             "is_active": "Active",
-            "epm_ot_applicable": "OT Applicable",
-            "emp_company_id": "Company",
+            "emp_ot_applicable": "OT Applicable",
+            "visa_location": "Visa Location",
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -927,6 +934,7 @@ class EmpViewSet(viewsets.ModelViewSet):
         display_names = {
             "emp_code": "Employee Code",
             "emp_first_name": "First Name",
+            "emp_middle_name": "Middle Name",   # v1.13.0
             "emp_last_name": "Last Name",
             "emp_gender": "Gender",
             "emp_date_of_birth": "Date of Birth",
@@ -939,18 +947,18 @@ class EmpViewSet(viewsets.ModelViewSet):
             "emp_permenent_address": "Permanent Address",
             "emp_present_address": "Present Address",
             "emp_status": "Status",
-            "emp_hired_date": "Hired Date",
-            "emp_active_date": "Active Date",
+            "emp_joined_date": "Joining Date",
+            "emp_date_of_confirmation": "Confirmation Date",
             "emp_relegion": "Religion",
             "emp_blood_group": "Blood Group",
-            "emp_nationality_id": "Nationality",
+            "emp_nationality": "Nationality",
             "emp_marital_status": "Marital Status",
             "emp_father_name": "Father Name",
             "emp_mother_name": "Mother Name",
-            "emp_posting_location": "Posting Location",
+            "work_location": "Work Location",
             "is_active": "Active",
-            "epm_ot_applicable": "OT Applicable",
-            "emp_company_id": "Company",
+            "emp_ot_applicable": "OT Applicable",
+            "visa_location": "Visa Location",
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -1047,18 +1055,16 @@ class ReportViewset(viewsets.ModelViewSet):
             "emp_permenent_address": "Permanent Address",
             "emp_present_address": "Present Address",
             "emp_status": "Status",
-            "emp_hired_date": "Hired Date",
-            "emp_active_date": "Active Date",
             "emp_relegion": "Religion",
             "emp_blood_group": "Blood Group",
-            "emp_nationality_id": "Nationality",
+            "emp_nationality": "Nationality",
             "emp_marital_status": "Marital Status",
             "emp_father_name": "Father Name",
             "emp_mother_name": "Mother Name",
-            "emp_posting_location": "Posting Location",
+            "work_location": "Work Location",
             "is_active": "Active",
-            "epm_ot_applicable": "OT Applicable",
-            "emp_company_id": "Company",
+            "emp_ot_applicable": "OT Applicable",
+            "visa_location": "Visa Location",
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -1305,6 +1311,7 @@ class ReportViewset(viewsets.ModelViewSet):
         field_names = {
             "Employee Code": "emp_code",
             "First Name": "emp_first_name",
+            "Middle Name": "emp_middle_name",   # v1.13.0
             "Last Name": "emp_last_name",
             "Gender": "emp_gender",
             "Date of Birth": "emp_date_of_birth",
@@ -1317,18 +1324,18 @@ class ReportViewset(viewsets.ModelViewSet):
             "Permanent Address": "emp_permenent_address",
             "Present Address": "emp_present_address",
             "Status": "emp_status",
-            "Hired Date": "emp_hired_date",
-            "Active Date": "emp_active_date",
+            "Joining Date": "emp_joined_date",
+            "Confirmation Date": "emp_date_of_confirmation",
             "Religion": "emp_relegion",
             "Blood Group": "emp_blood_group",
-            "Nationality": "emp_nationality_id",
+            "Nationality": "emp_nationality",
             "Marital Status": "emp_marital_status",
             "Father Name": "emp_father_name",
             "Mother Name": "emp_mother_name",
-            "Posting Location": "emp_posting_location",
+            "Work Location": "work_location",
             "Active": "is_active",
-            "OT Applicable": "epm_ot_applicable",
-            "Company": "emp_company_id",
+            "OT Applicable": "emp_ot_applicable",
+            "Visa Location": "visa_location",
             "Branch": "emp_branch_id",
             "Department": "emp_dept_id",
             "Designation": "emp_desgntn_id",
@@ -1381,6 +1388,7 @@ class ReportViewset(viewsets.ModelViewSet):
         field_names_mapping = {
             "emp_code": "Employee Code",
             "emp_first_name": "First Name",
+            "emp_middle_name": "Middle Name",   # v1.13.0
             "emp_last_name": "Last Name",
             "emp_gender": "Gender",
             "emp_date_of_birth": "Date of Birth",
@@ -1393,18 +1401,18 @@ class ReportViewset(viewsets.ModelViewSet):
             "emp_permenent_address": "Permanent Address",
             "emp_present_address": "Present Address",
             "emp_status": "Status",
-            "emp_hired_date": "Hired Date",
-            "emp_active_date": "Active Date",
+            "emp_joined_date": "Joining Date",
+            "emp_date_of_confirmation": "Confirmation Date",
             "emp_relegion": "Religion",
             "emp_blood_group": "Blood Group",
-            "emp_nationality_id": "Nationality",
+            "emp_nationality": "Nationality",
             "emp_marital_status": "Marital Status",
             "emp_father_name": "Father Name",
             "emp_mother_name": "Mother Name",
-            "emp_posting_location": "Posting Location",
+            "work_location": "Work Location",
             "is_active": "Active",
-            "epm_ot_applicable": "OT Applicable",
-            "emp_company_id": "Company",
+            "emp_ot_applicable": "OT Applicable",
+            "visa_location": "Visa Location",
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -1457,7 +1465,8 @@ class ReportViewset(viewsets.ModelViewSet):
 class CustomFieldViewset(viewsets.ModelViewSet):
     queryset = Emp_CustomField.objects.all()
     serializer_class = CustomFieldSerializer
-    permission_classes = [EmpCustomFieldPermission]
+    # v1.12.0: everyone in the company can read the field list (ESS profile, lists); designer rights to change it
+    permission_classes = [CustomFieldDesignPermission]
 
     def handle_exception(self, exc):
         if isinstance(exc, ValidationError):
@@ -1500,14 +1509,16 @@ class CustomFieldViewset(viewsets.ModelViewSet):
 class Emp_CustomFieldValueViewSet(viewsets.ModelViewSet):
     queryset = Emp_CustomFieldValue.objects.all()
     serializer_class = Emp_CustomFieldValueSerializer
-    permission_classes = [EmpCustomFieldValuePermission]
+    # v1.12.0: HR rights, or an employee for their own record (self service)
+    permission_classes = [CustomFieldValuePermission]
+    zeo_access = False
 
     
       
 class EmpFam_CustomFieldViewset(viewsets.ModelViewSet):
     queryset = EmpFamily_CustomField.objects.all()
     serializer_class = EmpFam_CustomFieldSerializer
-    # permission_classes = [EmpFamilyCustomFieldPermission]
+    permission_classes = [CustomFieldDesignPermission]  # v1.12.0
 
     def handle_exception(self, exc):
         if isinstance(exc, ValidationError):
@@ -1539,12 +1550,14 @@ class EmpFam_CustomFieldViewset(viewsets.ModelViewSet):
 class Fam_CustomFieldValueViewSet(viewsets.ModelViewSet):
     queryset = Fam_CustomFieldValue.objects.all()
     serializer_class = Fam_CustomFieldValueSerializer
+    permission_classes = [CustomFieldValuePermission]  # v1.12.0
+    zeo_access = False
 
 
 class EmpJobHistory_UdfViewset(viewsets.ModelViewSet):
     queryset = EmpJobHistory_CustomField.objects.all()
     serializer_class = EmpJobHistory_Udf_Serializer
-    # permission_classes = [EmpJobHistoryCustomFieldPermission]
+    permission_classes = [CustomFieldDesignPermission]  # v1.12.0
 
     def handle_exception(self, exc):
         if isinstance(exc, ValidationError):
@@ -1577,11 +1590,13 @@ class EmpJobHistory_UdfViewset(viewsets.ModelViewSet):
 class JobHistory_CustomFieldValueViewSet(viewsets.ModelViewSet):
     queryset = JobHistory_CustomFieldValue.objects.all()
     serializer_class = JobHistory_CustomFieldValueSerializer
+    permission_classes = [CustomFieldValuePermission]  # v1.12.0
+    zeo_access = False
 
 class EmpQf_UdfViewset(viewsets.ModelViewSet):
     queryset = EmpQualification_CustomField.objects.all()
     serializer_class = Emp_qf_udf_Serializer
-    # permission_classes = [EmpQualificationCustomFieldPermission]
+    permission_classes = [CustomFieldDesignPermission]  # v1.12.0
 
     def handle_exception(self, exc):
         if isinstance(exc, ValidationError):
@@ -1614,13 +1629,15 @@ class EmpQf_UdfViewset(viewsets.ModelViewSet):
 class Qf_CustomFieldValueViewSet(viewsets.ModelViewSet):
     queryset = Qualification_CustomFieldValue.objects.all()
     serializer_class = Qualification_CustomFieldValueSerializer
+    permission_classes = [CustomFieldValuePermission]  # v1.12.0
+    zeo_access = False
 
 
 
 class EmpDoc_UdfViewset(viewsets.ModelViewSet):
     queryset = EmpDocuments_CustomField.objects.all()
     serializer_class = EmpDocuments_Udf_Serializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [CustomFieldDesignPermission]  # v1.12.0
 
     def handle_exception(self, exc):
         if isinstance(exc, ValidationError):
@@ -1652,7 +1669,8 @@ class EmpDoc_UdfViewset(viewsets.ModelViewSet):
 class Doc_CustomFieldValueViewSet(viewsets.ModelViewSet):
     queryset = Doc_CustomFieldValue.objects.all()
     serializer_class = DOC_CustomFieldValueSerializer
-    # permission_classes = [EmpCustomFieldValuePermission]
+    permission_classes = [CustomFieldValuePermission]  # v1.12.0
+    zeo_access = False
 
 
 
@@ -2055,12 +2073,13 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
     def get_available_fields(self):
         # Define your available fields logic specific to documents
         excluded_fields = {'id', 'created_at', 'created_by', 'updated_at', 'updated_by', 'emp_sl_no', 'emp_doc_document'}
-        included_emp_master_fields = {'emp_first_name', 'emp_active_date', 'emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id'}
+        included_emp_master_fields = {'emp_first_name', 'emp_joined_date', 'emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id'}
         
         display_names = {
             "emp_id": "Employee ID",
             "emp_first_name": "First Name",
-            "emp_active_date": "Active Date",
+            "emp_middle_name": "Middle Name",   # v1.13.0
+            "emp_joined_date": "Joining Date",
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -2163,7 +2182,8 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
         column_headings = {
             "emp_id": "Employee ID",
             "emp_first_name": "First Name",
-            "emp_active_date": "Active Date",
+            "emp_middle_name": "Middle Name",   # v1.13.0
+            "emp_joined_date": "Joining Date",
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -2356,7 +2376,8 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
         field_names_mapping = {
             "emp_id": "Employee Code",
             "emp_first_name": "First Name",
-            "emp_active_date": "Active Date",
+            "emp_middle_name": "Middle Name",   # v1.13.0
+            "emp_joined_date": "Joining Date",
             "emp_branch_id": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -3047,7 +3068,8 @@ class GeneralReportViewset(viewsets.ModelViewSet):
         display_names = {
             "employee": "Employee Code",
             "emp_first_name": "First Name",
-            "emp_active_date": "Active Date",
+            "emp_middle_name": "Middle Name",   # v1.13.0
+            "emp_joined_date": "Joining Date",
             "emp_branch_id":"Branches",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -3146,6 +3168,7 @@ class GeneralReportViewset(viewsets.ModelViewSet):
         column_headings = {
             "employee": "Employee Code",
             "emp_first_name": "First Name",
+            "emp_middle_name": "Middle Name",   # v1.13.0
             "branch": "Branch",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -4292,14 +4315,14 @@ class EndOfServiceViewset(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='employee/(?P<employee_id>[^/.]+)')
     def get_by_employee(self, request, employee_id=None):
         try:
-            eos = EndOfService.objects.get(resignation__employee_id=employee_id)
+            eos = self.filter_queryset(self.get_queryset()).get(resignation__employee_id=employee_id)  # v1.13.0: scoped
             serializer = self.get_serializer(eos)
             return Response(serializer.data)
         except EndOfService.DoesNotExist:
             return Response({"detail": "End of service not found for this employee."}, status=status.HTTP_404_NOT_FOUND)
     @action(detail=True, methods=['get'], url_path='final-settlement-data')
     def final_settlement_data(self, request, pk=None):
-        eos = get_object_or_404(EndOfService, pk=pk)
+        eos = get_object_or_404(self.filter_queryset(self.get_queryset()), pk=pk)  # v1.13.0: scoped (was any record)
         resignation = eos.resignation
         employee = resignation.employee
 

@@ -19,6 +19,19 @@ class CustomUserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
+    # def create_superuser(self, username, email, password=None, **extra_fields):
+    #     """
+    #     Create and save a SuperUser with the given username, email, and password.
+    #     """
+    #     extra_fields.setdefault("is_staff", True)
+    #     extra_fields.setdefault("is_superuser", True)
+
+    #     if not extra_fields.get("is_staff"):
+    #         raise ValueError(_("Superuser must have is_staff=True."))
+    #     if not extra_fields.get("is_superuser"):
+    #         raise ValueError(_("Superuser must have is_superuser=True."))
+
+    #     return self.create_user(username, password, email=email, **extra_fields)
     def create_superuser(self, username, email, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
@@ -40,7 +53,6 @@ class CustomUserManager(BaseUserManager):
                 grant_admin_access(user, tenant)
 
         return user
-
 
     def delete_user(self, user_obj):
         with transaction.atomic(): # added transaction

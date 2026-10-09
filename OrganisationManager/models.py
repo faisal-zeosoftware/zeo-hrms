@@ -208,6 +208,9 @@ class DocumentNumbering(models.Model):
         if self.start_date and self.end_date:
             if self.start_date >= self.end_date:
                 raise ValidationError({'end_date': "End date must be greater than start date."})
+        # v1.10.0: two branches with the same prefix give the same document numbers
+        if DocumentNumbering.objects.filter(type=self.type, prefix__iexact=self.prefix or '', suffix__iexact=self.suffix or '').exclude(id=self.id).exclude(branch_id=self.branch_id).exists():
+            raise ValidationError({'prefix': "Another branch already uses this prefix for this document type. Use a different prefix per branch (e.g. SHJ-LEA, DXB-LEA)."})
 
         prefix = self.prefix or ''
         suffix = self.suffix or ''
@@ -403,7 +406,8 @@ class AssetRequest(models.Model):
         return f"{self.document_number}-{self.asset_type.name}"
 
     def get_employee_requests(employee_id):
-        return AssetRequest.objects.filter(employee_id=employee_id).order_by('-created_at_date')
+        # v1.12.0: ordered by a field that did not exist (created_at_date) -> FieldError
+        return AssetRequest.objects.filter(employee_id=employee_id).order_by('-request_date', '-id')
     
     def move_to_next_level(self):
         from django.utils import timezone
@@ -413,7 +417,7 @@ class AssetRequest(models.Model):
         # REJECT CHECK
         # =========================================================
         if self.approvals.filter(status=AssetApproval.REJECTED).exists():
-            self.status = "Rejected"
+            self.status = "rejected"  # v1.12.0: the choice is lower case ("Rejected" matched no status filter)
             self.save()
 
             send_notification_email(
@@ -460,7 +464,7 @@ class AssetRequest(models.Model):
         # NO APPROVAL
         # =========================================================
         if approval_type == "no_approval":
-            self.status = "Approved"
+            self.status = "approved"  # v1.12.0: lower-case choice
             self.save()
 
             if self.requested_asset:
@@ -519,7 +523,7 @@ class AssetRequest(models.Model):
             # FINAL APPROVAL (NO LEVEL FOUND)
             # =========================================================
             if not next_level or not next_level.approver:
-                self.status = "Approved"
+                self.status = "approved"  # v1.12.0: lower-case choice
                 self.save()
 
                 if self.requested_asset:
@@ -596,7 +600,7 @@ class AssetRequest(models.Model):
                 notification_model=AssetNotification,
             )
 
-            self.status = "Pending"
+            self.status = "pending"  # v1.12.0: lower-case choice
             self.save()
 
 class AssetApprovalWorkflow(models.Model):
@@ -680,7 +684,7 @@ class AssetApproval(models.Model):
         if note:
             self.note = note
         self.save()
-        self.asset_request.status = 'Rejected'
+        self.asset_request.status = 'rejected'  # v1.12.0: lower-case choice
         self.asset_request.save()
         send_notification_email(
             user=self.asset_request.created_by,
@@ -747,6 +751,11 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         instance.status = 'approved'
         instance.save(update_fields=["status"])
+
+        # v1.12.0: an auto-approved request now hands the requested asset over, like the other approval paths
+        asset = instance.requested_asset
+        if asset and asset.status == 'available' and not AssetAllocation.objects.filter(asset=asset, returned_date__isnull=True).exists():
+            AssetAllocation.objects.create(asset=asset, employee=instance.employee, assigned_date=timezone.now().date())
 
         send_notification_email(
             user=approver,
@@ -940,16 +949,17 @@ class AssetCustomFieldValue(models.Model):
     field_value = models.TextField(null=True, blank=True)  # Value provided by the user
 
     def __str__(self):
-        return f"{self.asset.name} - {self.custom_field.name}: {self.field_value}"
+        # v1.12.0: the field name is custom_field (custom_field.name raised AttributeError)
+        return f"{self.asset.name if self.asset else '-'} - {self.custom_field.custom_field if self.custom_field else '-'}: {self.field_value}"
 
-    
     def clean(self):
-        # Ensure the custom field belongs to the correct asset type
-        if self.custom_field.asset_type != self.asset_master.asset_type:
+        # v1.12.0: used self.asset_master (does not exist) and was switched off; values are also checked against
+        # the field type / options in AssetCustomFieldValueSerializer
+        if self.custom_field and self.asset and self.custom_field.asset_type_id and self.custom_field.asset_type_id != self.asset.asset_type_id:
             raise ValidationError("The custom field does not belong to this asset type.")
 
     def save(self, *args, **kwargs):
-        # self.clean()
+        self.clean()
         super().save(*args, **kwargs)
 
 
@@ -988,13 +998,13 @@ class GratuityTable(models.Model):
     termination_days = models.PositiveIntegerField(help_text="Gratuity days for termination")
     is_active = models.BooleanField(default=True, help_text="Is this range active?")
 
-    # class Meta:
-    #     constraints = [
-    #         models.CheckConstraint(
-    #             check=Q(minimum_value__lt=F('maximum_value')) | Q(maximum_value__isnull=True),
-    #             name='valid_range'
-    #         )
-    #     ]
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=Q(minimum_value__lt=F('maximum_value')) | Q(maximum_value__isnull=True),
+                name='valid_range'
+            )
+        ]
 
     def __str__(self):
         return f"{self.minimum_value} to {self.maximum_value} years - Resignation: {self.resignation_days}, Termination: {self.termination_days}"

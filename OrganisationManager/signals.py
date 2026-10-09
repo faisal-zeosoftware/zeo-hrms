@@ -141,7 +141,7 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                 ("HRA", "addition", "HRA", "hra", "fixed", "", False, True, False, False),
                 ("Air Ticket", "addition", "ATK", "air_ticket", "fixed", "", False, True, False, True),
                 ("Petty Cash", "addition", "PC", "other_allowance", "fixed", "", False, True, False, False),
-                ("Gratuity", "addition", "GTY", "gratuity", "variable", "(Basic Salary ÷ 30 × 21) ÷ 12", False, True, False, True),
+                ("Gratuity", "addition", "GTY", "gratuity", "variable", "monthly_gratuity_accrual", False, True, False, True),   # v1.11.0: was a description (paid 0)
                 # deductions used automatically by payroll for approved loans and salary advances
                 ("Loan Deduction", "deduction", "LOAN", "loan", "variable", "", True, True, False, False),
                 ("Advance Salary Deduction", "deduction", "ADV", "advance_salary", "variable", "", False, True, True, False),
@@ -175,62 +175,9 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                         # "air_ticket":air_ticket,
                     },
                 )
-            #department
-        default_departments = [
-            ("Human Resources", "HR"),
-            ("Information Technology", "IT"),
-            ("Finance", "FIN"),
-            ("Sales", "SAL"),
-            ("Operations", "OPS"),
-        ]
-
-        for name, code in default_departments:
-            department, created = dept_master.objects.get_or_create(
-                dept_code=f"{code}-{tenant.schema_name[:3].upper()}",
-                defaults={
-                    "dept_name": name,
-                    "dept_description": f"Default {name} Department",
-                }
-            )
-
-            department.branch.add(branch)
-
-        # Default Designations
-        default_designations = [
-            ("Manager", "MGR"),
-            ("Team Lead", "TL"),
-            ("Executive", "EXE"),
-            ("Senior Executive", "SE"),
-            ("Assistant", "AST"),
-        ]
-
-        for title, code in default_designations:
-            designation, created = desgntn_master.objects.get_or_create(
-                desgntn_code=f"{code}-{tenant.schema_name[:3].upper()}",
-                defaults={
-                    "desgntn_job_title": title,
-                    "desgntn_description": f"Default {title} Designation",
-                }
-            )
-
-            designation.branch.add(branch)
-
-        # Default Categories
-        default_categories = [
-            ("Technical", "TECH"),
-            ("Non-Technical", "NON-TECH"),
-        ]
-
-        for title, code in default_categories:
-            category, created = ctgry_master.objects.get_or_create(
-                ctgry_code=f"{code}-{tenant.schema_name[:3].upper()}",
-                defaults={
-                    "ctgry_title": title,
-                    "ctgry_description": f"Default {title} Category",
-                }
-            )
-
-            category.branch.add(branch)
+        # Standard departments, designations, categories and religions (OrganisationManager/defaults.py)
+        from OrganisationManager import defaults as std_defaults
+        std_defaults.load_all([branch], schema=tenant.schema_name)
 
         country_name = (tenant.country.country_name.strip().upper()if tenant.country else "")
         
@@ -259,19 +206,37 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db import transaction
 
+def branch_doc_prefix(branch, doc_type):
+    """e.g. BR-DXB + leave_request → DXB-LEA; unique per document type (a number is added when needed)."""
+    import re
+    code = re.sub(r'[^A-Z0-9]', '', (branch.branch_code or '').upper())
+    code = re.sub(r'^BR(?=[A-Z0-9])', '', code) or f'B{branch.pk}'
+    base = f"{code[:3]}-{doc_type[:3].upper()}"
+    prefix, n = base, 2
+    while DocumentNumbering.objects.filter(type=doc_type, prefix__iexact=prefix).exclude(branch_id=branch).exists():
+        prefix = f"{code[:2]}{n}-{doc_type[:3].upper()}"
+        n += 1
+    return prefix[:8]
+
+
 @receiver(post_save, sender=brnch_mstr)
 def create_defaults_for_branch(sender, instance, created, **kwargs):
     if not created:
         return
 
+    # a new branch sees the company's standard departments, designations and categories (v1.7.2)
+    try:
+        from OrganisationManager import defaults as std_defaults
+        std_defaults.load_all([instance], create=False)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('Standard masters could not be linked to the new branch')
+
     with transaction.atomic():
         for doc_type, _ in DocumentNumbering.DOCUMENT_TYPES:
 
-            raw_prefix = f"{instance.branch_code[:2]}-{doc_type[:3].upper()}"
-
-        
-            max_prefix_length = 8 
-            prefix = raw_prefix[:max_prefix_length]
+            # v1.10.0: a prefix of its own per branch (all branches used "BR-…" and produced the same numbers)
+            prefix = branch_doc_prefix(instance, doc_type)
 
             DocumentNumbering.objects.get_or_create(
                 branch_id=instance,

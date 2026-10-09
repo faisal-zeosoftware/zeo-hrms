@@ -5,8 +5,51 @@ from django.db import transaction
 from django.db.models import Avg, Count, Q
 from django.utils import timezone
 
+import logging
+
 from zeo.module_helpers import notify
 from .models import Certificate, Course, Nomination, ParticipantResult, TrainingBond, TrainingNeed, TrainingSession
+
+
+log = logging.getLogger(__name__)
+
+
+def plus_hook(name, *args, **kwargs):
+    """Calls LearningPlus.services.<name> when the LearningPlus app is installed (attendance sheet, skills ...)."""
+    if not apps.is_installed('LearningPlus'):
+        return None
+    from LearningPlus import services as plus
+    fn = getattr(plus, name, None)
+    return fn(*args, **kwargs) if fn else None
+
+
+def ld_users(employee=None):
+    """L&D / HR users of this company (group right change_nomination), limited to the employee's branch
+    when they have branch access set; company administrators when nobody holds the right."""
+    from django.db import connection
+    from tenant_users.tenants.models import UserTenantPermissions
+    schema = connection.schema_name
+    utps = (UserTenantPermissions.objects.filter(groups__permissions__codename='change_nomination', profile__is_active=True,
+                                                 profile__tenants__schema_name=schema).select_related('profile').distinct())
+    users = [p.profile for p in utps]
+    branch = getattr(employee, 'emp_branch_id_id', None) if employee is not None else None
+    if branch and users:
+        from OrganisationManager.models import UserBranchAccess
+        out = []
+        for u in users:
+            allowed = set(UserBranchAccess.objects.filter(user=u).values_list('branch', flat=True))
+            if not allowed or branch in allowed:
+                out.append(u)
+        users = out
+    if not users:
+        users = [p.profile for p in UserTenantPermissions.objects.filter(is_superuser=True, profile__is_active=True,
+                                                                          profile__tenants__schema_name=schema).select_related('profile').distinct()]
+    seen, out = set(), []
+    for u in users:
+        if u.id not in seen:
+            seen.add(u.id)
+            out.append(u)
+    return out
 
 
 def leave_clash(employee, session):
@@ -68,6 +111,11 @@ def approve(nom, level, user=None):
         raise ValidationError("level must be 'manager' or 'ld'.")
     _try_confirm(nom)
     nom.save()
+    if level == 'manager' and nom.ld_status == 'pending':
+        # second level: tell L&D / HR the nomination is waiting for them
+        for u in ld_users(nom.employee):
+            notify(user=u, title="Nomination awaiting L&D approval", notification_type='learning',
+                   message=f"{nom.employee} - {nom.session.course.title} ({nom.session.code}) was approved by the manager and needs L&D approval.")
     if nom.bond_required and nom.ld_status == 'approved' and not hasattr(nom, 'bond'):
         TrainingBond.objects.create(employee=nom.employee, course=nom.session.course, session=nom.session, nomination=nom,
                                     amount=nom.session.effective_cost or 0, start_date=nom.session.end_date)
@@ -115,6 +163,12 @@ def close_session(session, user=None):
         raise ValidationError("Session already closed.")
     issued = failed = 0
     course = session.course
+    try:  # date-wise attendance sheet (LearningPlus) -> attendance % on each result
+        with transaction.atomic():
+            plus_hook('sync_attendance', session.id)
+    except Exception:
+        log.exception('attendance sheet sync failed for %s', session.code)
+    passed_noms = []
     for nom in session.nominations.filter(seat_status='confirmed').select_related('employee'):
         result, _ = ParticipantResult.objects.get_or_create(nomination=nom)
         result.evaluate()
@@ -126,6 +180,7 @@ def close_session(session, user=None):
                 defaults={'course': course, 'title': course.title, 'issued_on': session.end_date, 'expiry_date': expiry,
                           'issued_by': course.provider or 'Internal', 'certificate_number': f"{session.code}-{nom.employee.emp_code}"})
             TrainingNeed.objects.filter(employee=nom.employee, course=course).exclude(status__in=('completed', 'cancelled')).update(status='completed')
+            passed_noms.append(nom)
             issued += 1
         else:
             TrainingNeed.objects.get_or_create(
@@ -135,7 +190,14 @@ def close_session(session, user=None):
             failed += 1
     session.status = 'completed'
     session.save(update_fields=['status'])
-    return {'certificates_issued': issued, 'not_passed': failed}
+    skills = 0
+    try:  # skills gained by the participants who passed (LearningPlus course skills)
+        with transaction.atomic():
+            for nom in passed_noms:
+                skills += plus_hook('skills_from_course', nom.employee_id, course, source='course', ref=session.code) or 0
+    except Exception:
+        log.exception('skill update failed for %s', session.code)
+    return {'certificates_issued': issued, 'not_passed': failed, 'skills_updated': skills}
 
 
 def expiry_scan(days=60):

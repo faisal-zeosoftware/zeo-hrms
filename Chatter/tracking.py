@@ -18,7 +18,7 @@ from django.db.models.signals import post_delete, post_save, pre_save
 logger = logging.getLogger(__name__)
 _local = threading.local()
 
-SKIP_APPS = {'Chatter', 'contenttypes', 'sessions', 'admin', 'auth', 'token_blacklist', 'django_celery_beat',
+SKIP_APPS = {'migrations', 'Chatter', 'contenttypes', 'sessions', 'admin', 'auth', 'token_blacklist', 'django_celery_beat',
              'django_celery_results', 'tenants', 'Core', 'tenant_users', 'permissions'}
 SKIP_FIELDS = {'password', 'last_login', 'created_at', 'updated_at', 'modified_at', 'created_on', 'updated_on',
                'date_joined', 'last_updated'}
@@ -61,7 +61,8 @@ def _plain(v):
         return float(v)
     if isinstance(v, (datetime.date, datetime.datetime, datetime.time)):
         return v.isoformat()
-    if hasattr(v, 'name') and hasattr(v, 'url'):          # file field
+    from django.db.models.fields.files import FieldFile
+    if isinstance(v, FieldFile):                          # file field (empty ones have no url – v1.10.0)
         return v.name or None
     return str(v)
 
@@ -114,11 +115,18 @@ def _write(instance, action, changes):
     name = ''
     if user is not None:
         name = (getattr(user, 'get_full_name', lambda: '')() or getattr(user, 'username', '') or getattr(user, 'email', ''))
-    RecordLog.objects.create(
-        model=model_key(type(instance)), object_id=str(instance.pk), record_label=label, action=action,
-        changes=changes, user=user, user_name=name[:150] or ('System' if user is None else ''),
-        ip=ip[:64], path=(getattr(req, 'path', '') or '')[:255], method=getattr(req, 'method', '') or '',
-        agent=(meta.get('HTTP_USER_AGENT') or '')[:255])
+    from django.db import DatabaseError, transaction
+    try:
+        # v1.13.1: a savepoint, so a company schema that is still being created (history table not there yet)
+        # never breaks the save that triggered the log line
+        with transaction.atomic():
+            RecordLog.objects.create(
+                model=model_key(type(instance)), object_id=str(instance.pk), record_label=label, action=action,
+                changes=changes, user=user, user_name=name[:150] or ('System' if user is None else ''),
+                ip=ip[:64], path=(getattr(req, 'path', '') or '')[:255], method=getattr(req, 'method', '') or '',
+                agent=(meta.get('HTTP_USER_AGENT') or '')[:255])
+    except DatabaseError:
+        logger.debug('record log skipped for %s (history table not available yet)', model_key(type(instance)))
 
 
 def _pre_save(sender, instance, raw=False, **kwargs):

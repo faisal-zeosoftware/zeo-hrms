@@ -112,6 +112,8 @@ class FieldDef(models.Model):
     help_text = models.CharField(max_length=255, blank=True)
     default = models.CharField(max_length=255, blank=True)
     show_in_list = models.BooleanField(default=True)
+    # v1.12.0: lowest / highest, length, pattern, show on, show only if, read-only for employees (DataTools.fieldrules)
+    rules = models.JSONField(default=dict, blank=True)
     active = models.BooleanField(default=True)
     created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)

@@ -41,16 +41,46 @@ class TimeSheetSerializer(serializers.ModelSerializer):
     class Meta:
         model = TimeSheet
         fields = '__all__'
+
+    def validate(self, attrs):
+        """No future dates, max 24 h a day, employee on the project / task, task of the project."""
+        from ProjectControl import services as S
+        inst = self.instance
+
+        def get(k):
+            return attrs[k] if k in attrs else (getattr(inst, k) if inst is not None else None)
+
+        project, task, emp = get('project'), get('task'), get('employee')
+        day = get('date') or S.local_today()
+        if hasattr(day, 'date') and callable(day.date):
+            day = day.date()
+        hours = S.hours_of(get('time_spent') or '00:00')
+        errors = S.validate_entry(emp, project, task, day, hours, exclude_id=inst.pk if inst is not None else None)
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def to_representation(self, instance):
         rep = super( TimeSheetSerializer, self).to_representation(instance)
-        # if instance.branches.exists():
-        #     rep['branches'] = [branches.branch_name for branches in instance.branches.all()]
+        rep['project_id'] = instance.project_id
+        rep['task_id'] = instance.task_id
+        rep['employee_id'] = instance.employee_id
         if instance.project:  
             rep['project'] = instance.project.title
         if instance.task:
             rep['task'] = instance.task.title
         if instance.employee:
             rep['employee'] = instance.employee.emp_code
+        from django.apps import apps as django_apps
+        if django_apps.is_installed('ProjectControl'):
+            from ProjectControl import services as S
+            e = S.get_extra(instance, create=False)
+            rep['hours'] = float(e.hours if e and not e.running else S.hours_of(instance.time_spent))
+            rep['billable'] = e.billable if e else S.default_billable(instance.project_id, instance.task_id)
+            rep['approval_status'] = e.approval_status if e else 'draft'
+            rep['rejection_reason'] = e.rejection_reason if e else ''
+            rep['running'] = bool(e and e.running)
+            rep['locked'] = bool(e and e.locked)
         return rep
 
 

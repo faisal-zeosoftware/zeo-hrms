@@ -368,6 +368,13 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = leave_type
         fields = '__all__'
+
+    def validate_unit(self, value):
+        # v1.11.0: leave requests count days only – hourly leave is hidden until requests can take hours
+        if value == 'hours' and getattr(self.instance, 'unit', None) != 'hours':
+            raise serializers.ValidationError('Hourly leave is not available: leave requests are counted in days.')
+        return value
+
     def to_representation(self, instance):
         rep = super(LeaveTypeSerializer, self).to_representation(instance)
         if instance.branch:
@@ -396,8 +403,9 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         # Email is best-effort: the request is saved and the in-app notification is created even when
         # Settings -> Email Configuration is missing or incomplete (it used to block every request).
         warn_if_email_not_configured()
-        leave_type = data.get('leave_type')
-        employee = data.get('employee')
+        # v1.13.0: a partial edit (e.g. only the reason) keeps the request's own employee and leave type
+        leave_type = data.get('leave_type') or getattr(self.instance, 'leave_type', None)
+        employee = data.get('employee') or getattr(self.instance, 'employee', None)
 
         if not leave_type or not employee:
             raise serializers.ValidationError("Employee and Leave Type are required.")
@@ -530,13 +538,13 @@ class AttendanceSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         # Detect if the date has been updated
         new_date = validated_data.get('date', instance.date)
-        if new_date != instance.date:
-            # Recalculate the shift if the date is updated
-            schedule = EmployeeShiftSchedule.objects.filter(employee=instance.employee).first()
-            if schedule:
-                new_shift = schedule.get_shift_for_date(instance.employee, new_date)
-                validated_data['shift'] = new_shift
-        else:
+        if new_date != instance.date and 'shift' not in validated_data:
+            # v1.12.0: recalculate the shift of the new date with the shift resolver (the old call passed the
+            # arguments the wrong way round and crashed)
+            old_date, instance.date = instance.date, new_date
+            validated_data['shift'] = instance.fetch_shift()
+            instance.date = old_date
+        elif 'shift' not in validated_data:
             # If the date is not updated, retain the current shift
             validated_data['shift'] = instance.shift  # Keep the existing shift
 
@@ -603,7 +611,7 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
         # Settings -> Email Configuration is missing or incomplete (it used to block every request).
         warn_if_email_not_configured()
 
-        employee = data.get('employee')
+        employee = data.get('employee') or getattr(self.instance, 'employee', None)  # v1.13.0: partial edit keeps the employee
 
         if not employee:
             raise serializers.ValidationError({
@@ -935,57 +943,67 @@ class EmployeeShiftScheduleSerializer(serializers.ModelSerializer):
         from django.db.models import Q
         from datetime import date
 
-        start_date = attrs.get('start_date')
-        end_date = attrs.get('end_date')
+        inst = self.instance
+        start_date = attrs.get('start_date', getattr(inst, 'start_date', None))
+        end_date = attrs.get('end_date', getattr(inst, 'end_date', None))
 
-        if end_date and start_date > end_date:
+        if end_date and start_date and start_date > end_date:
             raise serializers.ValidationError(
                 "End date must be greater than or equal to start date"
             )
 
         request = self.context['request']
 
-        # M2M data from request
-        employees = request.data.get('employee', [])
-        branches = request.data.get('branches', [])
-        departments = request.data.get('departments', [])
-        designations = request.data.get('designations', [])
-        categories = request.data.get('categories', [])
+        # v1.12.0: the overlap check covers every assignment route. Two schedules may not both assign the same
+        # employee directly (employee / employee_offsets), and two group schedules (branch, department,
+        # designation, category) may not cover the same employee at the same time. A direct assignment over a
+        # group schedule is allowed – it wins in the shift resolver (ShiftPlanner/resolver.py).
+        def ids(key):
+            d = request.data
+            if key in d:
+                v = d.getlist(key) if hasattr(d, 'getlist') else d.get(key)
+                if not isinstance(v, (list, tuple)):
+                    v = [v]
+                out = set()
+                for x in v:
+                    if isinstance(x, str) and ',' in x:
+                        out |= {int(y) for y in x.split(',') if y.strip().isdigit()}
+                    elif str(x).isdigit():
+                        out.add(int(x))
+                return out
+            if inst is not None:
+                return set(getattr(inst, key).values_list('id', flat=True))
+            return set()
 
-        # Resolve ALL affected employees
-        affected_employees = emp_master.objects.none()
+        offsets = request.data.get('employee_offsets') if 'employee_offsets' in request.data else getattr(inst, 'employee_offsets', None)
+        direct = ids('employee') | {int(k) for k in (offsets or {}) if str(k).isdigit()} if isinstance(offsets or {}, dict) else ids('employee')
+        groups = {'emp_branch_id__in': ids('branches'), 'emp_dept_id__in': ids('departments'),
+                  'emp_desgntn_id__in': ids('designations'), 'emp_ctgry_id__in': ids('categories')}
 
-        if employees:
-            affected_employees |= emp_master.objects.filter(id__in=employees)
+        def group_emps(g):
+            q = Q()
+            for k, v in g.items():
+                if v:
+                    q |= Q(**{k: v})
+            return set(emp_master.objects.filter(q).values_list('id', flat=True)) if q else set()
 
-        if branches:
-            affected_employees |= emp_master.objects.filter(emp_branch_id__in=branches)
-
-        if departments:
-            affected_employees |= emp_master.objects.filter(emp_dept_id__in=departments)
-
-        if designations:
-            affected_employees |= emp_master.objects.filter(emp_desgntn_id__in=designations)
-
-        if categories:
-            affected_employees |= emp_master.objects.filter(emp_ctgry_id__in=categories)
-
-        affected_employees = affected_employees.distinct()
-
-        for emp in affected_employees:
-            overlap = EmployeeShiftSchedule.objects.filter(
-                employee=emp,
-                start_date__lte=end_date or date.max
-            ).filter(
-                Q(end_date__gte=start_date) | Q(end_date__isnull=True)
-            )
-
-            if self.instance:
-                overlap = overlap.exclude(id=self.instance.id)
-
-            if overlap.exists():
+        new_group = group_emps(groups)
+        others = EmployeeShiftSchedule.objects.filter(start_date__lte=end_date or date.max).filter(
+            Q(end_date__gte=start_date) | Q(end_date__isnull=True)).prefetch_related('employee', 'branches', 'departments', 'designations', 'categories')
+        if inst is not None:
+            others = others.exclude(id=inst.id)
+        for o in others:
+            o_direct = {e.id for e in o.employee.all()} | {int(k) for k in (o.employee_offsets or {}) if str(k).isdigit()}
+            clash = direct & o_direct
+            if new_group and not clash:
+                o_group = group_emps({'emp_branch_id__in': {x.id for x in o.branches.all()}, 'emp_dept_id__in': {x.id for x in o.departments.all()},
+                                      'emp_desgntn_id__in': {x.id for x in o.designations.all()}, 'emp_ctgry_id__in': {x.id for x in o.categories.all()}})
+                clash = new_group & o_group
+            if clash:
+                emp = emp_master.objects.filter(id__in=clash).order_by('emp_code').first()
                 raise serializers.ValidationError(
-                    f"Shift overlap detected for employee {emp.emp_code}"
+                    f"Shift overlap detected for employee {emp.emp_code if emp else ''} "
+                    f"(schedule “{o.schedule_name or o.id}” covers the same dates)"
                 )
 
         return attrs
@@ -1271,9 +1289,16 @@ class lvBalanceReportSerializer(serializers.ModelSerializer):
 
 class CompensatoryLeaveAllocationSerializer(serializers.ModelSerializer):
     attendances = AttendanceSerializer(many=True, read_only=True)
+    employee_name = serializers.SerializerMethodField()   # v1.11.0: the list showed the employee id
+
     class Meta:
         model = CompensatoryLeaveAllocation
         fields ='__all__'
+
+    def get_employee_name(self, o):
+        e = o.employee
+        name = ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x)
+        return f'{name} ({e.emp_code})' if name else e.emp_code
 
 class CompensatoryLeaveRequestSerializer(serializers.ModelSerializer):
     class Meta:

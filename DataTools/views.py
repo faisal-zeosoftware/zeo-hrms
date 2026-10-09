@@ -265,17 +265,21 @@ def check_extras(model, x, ecf):
             _, err = clean_value(d, v)
             if err:
                 errors.append(err)
-    for name, v in (ecf or {}).items():
-        if v in (None, ''):
-            continue
-        try:
-            from EmpManagement.models import Emp_CustomField
-            c = Emp_CustomField.objects.filter(emp_custom_field=name).first()
-            opts = (c.dropdown_values or c.radio_values) if c else None
-            if c and c.data_type in ('dropdown', 'radio') and opts and str(v) not in opts:
-                errors.append(f'{name}: choose one of {", ".join(opts)}.')
-        except Exception:
-            pass
+    if ecf and model._meta.model_name == 'emp_master':
+        # v1.12.0: the same typed checks as the employee screens (type, options, rules, mandatory)
+        from .forms import models_for, check_row
+        D, V, fk = models_for('employee')
+        lower = {n.lower(): n for n in D.objects.values_list('emp_custom_field', flat=True)}
+        given = {lower.get(str(k).strip().lower(), k): v for k, v in (ecf or {}).items()}
+        for name, v in given.items():
+            if name not in lower.values():
+                errors.append(f'There is no custom field called “{name}”.')
+                continue
+            try:
+                check_row(V, name, v, current=dict(given))
+            except Exception as e:
+                from .forms import _msg
+                errors.append(_msg(e) if hasattr(e, 'detail') else str(e))
     return errors
 
 
@@ -289,7 +293,8 @@ def save_extras(request, model, obj_id, x, ecf):
         emp = emp_master.objects.filter(pk=obj_id).first()
         for name, v in ecf.items():
             if emp is not None and v not in (None, ''):
-                Emp_CustomFieldValue(emp_custom_field=name, field_value=str(v), emp_master=emp, created_by=request.user).save()
+                # the model checks and stores the value in its normal form (v1.12.0)
+                Emp_CustomFieldValue(emp_custom_field=name, field_value=v, emp_master=emp, created_by=request.user).save()
 
 
 class _check_access:
@@ -412,6 +417,14 @@ class DirectoryView(APIView):
                 'designation_id': e.emp_desgntn_id_id, 'designation': getattr(e.emp_desgntn_id, 'desgntn_job_title', '') or '',
                 'category_id': e.emp_ctgry_id_id, 'category': getattr(e.emp_ctgry_id, 'ctgry_title', '') or '',
             })
+        try:  # v1.12.0: location / division / section / cost centre / grade / position / employment type when switched on
+            from django.apps import apps as _apps
+            if _apps.is_installed('OrgStructure'):
+                from OrgStructure.hooks import directory_extend
+                out = directory_extend(out)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('directory org fields failed')
         return Response(out)
 
 

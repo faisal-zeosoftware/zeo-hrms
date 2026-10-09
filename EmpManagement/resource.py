@@ -155,8 +155,9 @@ class EmployeeResource(resources.ModelResource):
     is_ess = fields.Field(attribute='is_ess', column_name='Iss ESS (True/False)')
     emp_mobile_number_1 = fields.Field(attribute='emp_mobile_number_1', column_name='Personal Number')
     emp_mobile_number_2 = fields.Field(attribute='emp_mobile_number_2', column_name='Company Number')
-    # emp_country_id = fields.Field(attribute='emp_country_id', column_name='Country',widget=CaseInsensitiveForeignKeyWidget(cntry_mstr, 'country_name'))
-    # emp_state_id = fields.Field(attribute='emp_state_id', column_name='State',widget=CaseInsensitiveForeignKeyWidget(state_mstr, 'state_name'))
+    # v1.13.0: country / state imported again (by name)
+    emp_country_id = fields.Field(attribute='emp_country_id', column_name='Country',widget=CaseInsensitiveForeignKeyWidget(cntry_mstr, 'country_name'))
+    emp_state_id = fields.Field(attribute='emp_state_id', column_name='State',widget=CaseInsensitiveForeignKeyWidget(state_mstr, 'state_name'))
     emp_city = fields.Field(attribute='emp_city', column_name='City')
     emp_permenent_address = fields.Field(attribute='emp_permenent_address', column_name='Permanent Address')
     emp_present_address = fields.Field(attribute='emp_present_address', column_name='Present Address')
@@ -187,7 +188,7 @@ class EmployeeResource(resources.ModelResource):
         fields = (
             'emp_code','emp_first_name','emp_middle_name','emp_last_name','emp_gender','emp_date_of_birth',
             'emp_personal_email','emp_company_email','is_ess','emp_mobile_number_1',
-            'emp_mobile_number_2','emp_city',
+            'emp_mobile_number_2','emp_country_id','emp_state_id','emp_city',
             'emp_permenent_address','emp_present_address','emp_status','emp_joined_date',
             'emp_date_of_confirmation','emp_reporting_manager','emp_relegion','emp_blood_group','emp_nationality',
             'emp_marital_status','emp_father_name','emp_mother_name',
@@ -292,8 +293,8 @@ class EmployeeResource(resources.ModelResource):
             row['visa_location'] = None
 
         # 8️⃣ Country, State Validation
-        country_name = row.get('Country Code', '').strip()
-        state_name = row.get('State', '').strip()
+        country_name = str(row.get('Country') or row.get('Country Code') or '').strip()   # v1.13.0: template column is "Country"
+        state_name = str(row.get('State') or '').strip()
 
         if country_name:
             country = cntry_mstr.objects.filter(country_name__iexact=country_name).first()
@@ -308,6 +309,8 @@ class EmployeeResource(resources.ModelResource):
             state = state_mstr.objects.filter(state_name__iexact=state_name).first()
             if not state:
                 errors.append(f"No matching State found for '{state_name}'")
+            elif country_name and row.get('emp_country_id') and state.country_id != row.get('emp_country_id'):
+                errors.append(f"State '{state_name}' is not in country '{country_name}'")
             else:
                 row['emp_state_id'] = state.id
         else:
@@ -342,10 +345,14 @@ class EmployeeResource(resources.ModelResource):
             'Employee Active(True/False)': 'is_active',
             'Employee OT applicable(True/False)': 'emp_ot_applicable'
         }
+        # v1.13.0: an empty cell takes the default (active / status yes, ESS / OT no) and the cleaned value is written
+        # back to the column (an empty cell used to fail with '"" value must be either True or False')
+        bool_defaults = {'is_ess': False, 'emp_status': True, 'is_active': True, 'emp_ot_applicable': False}
         for field, attr in bool_fields.items():
             value = row.get(field)
             if value is None or value == "":
-                row[attr] = False
+                row[attr] = bool_defaults[attr]
+                row[field] = row[attr]
                 continue
             if isinstance(value, bool):
                 row[attr] = value
@@ -353,8 +360,10 @@ class EmployeeResource(resources.ModelResource):
             val_str = str(value).strip().lower()
             if val_str in ['true', '1', 'yes', 'y']:
                 row[attr] = True
+                row[field] = True
             elif val_str in ['false', '0', 'no', 'n']:
                 row[attr] = False
+                row[field] = False
             else:
                 errors.append(f"Invalid boolean value for {field}: '{value}'")
 
@@ -373,8 +382,12 @@ class EmployeeResource(resources.ModelResource):
         
         # 1️⃣4️⃣ Validate Marital Status
         marital_status = row.get('Marital Status')
-        if marital_status and marital_status.lower() not in ['married', 'single', 'divorced', 'widow']:
-            errors.append("Invalid Marital Status. Allowed: Married, Single, Divorced, Widow")
+        # v1.13.0: one code per status (M / S / D / W) whatever the spelling
+        _ms = {'m': 'M', 'married': 'M', 's': 'S', 'single': 'S', 'd': 'D', 'divorced': 'D', 'w': 'W', 'widow': 'W', 'widowed': 'W'}
+        if marital_status and str(marital_status).strip().lower() not in _ms:
+            errors.append("Invalid Marital Status. Allowed: Married, Single, Divorced, Widowed")
+        elif marital_status:
+            row['Marital Status'] = _ms[str(marital_status).strip().lower()]
 
         # 1️⃣5️⃣ Person ID Validation
         person_id = row.get('Person ID')
@@ -403,6 +416,16 @@ class EmployeeResource(resources.ModelResource):
             
         #date validation
         date_fields = ['Date of Birth(DD/MM/YYYY)*', 'Joining Date(DD/MM/YYYY)*', 'Confirmaton Date(DD/MM/YYYY)']
+        # v1.13.0: date of birth not in the future, at least 18 years old on the joining date (UAE)
+        try:
+            _dob = CustomDateWidget().clean(row.get('Date of Birth(DD/MM/YYYY)*'))
+            _join = CustomDateWidget().clean(row.get('Joining Date(DD/MM/YYYY)*'))
+            if _dob and _dob > date.today():
+                errors.append('Date of Birth cannot be in the future.')
+            elif _dob and _join and (_join.year - _dob.year - ((_join.month, _join.day) < (_dob.month, _dob.day))) < 18:
+                errors.append('The employee must be at least 18 years old on the joining date (UAE minimum age for employment).')
+        except (ValueError, TypeError):
+            pass   # the format check below explains the problem
         for field in date_fields:
             date_value = row.get(field)
             if date_value:
@@ -597,6 +620,14 @@ class DocumentResource(resources.ModelResource):
                     errors.append(f"Error parsing date for {field}: {str(e)}")
             # else:
             #     errors.append(f"Date value for {field} is empty")
+        # v1.13.0: expiry after issue
+        try:
+            _iss = CustomDateWidget().clean(row.get('Document Issued Date'))
+            _exp = CustomDateWidget().clean(row.get('Document Expiry Date'))
+            if _iss and _exp and _exp <= _iss:
+                errors.append('Document Expiry Date must be after the Document Issued Date.')
+        except (ValueError, TypeError):
+            pass
         # 7️⃣ Boolean Fields
         # 4️⃣ Normalize Boolean fields
         bool_fields = {
@@ -733,5 +764,14 @@ class EmpBankDetailsResource(resources.ModelResource):
 
         if not emp_master.objects.filter(emp_code=emp_code).exists():
             errors.append(f"emp_master matching query does not exist for ID: {emp_code}")
+        # v1.13.0: UAE IBAN with mod-97 check digits
+        iban = re.sub(r'\s+', '', str(row.get('IBAN/Account') or '')).upper()
+        if iban:
+            if not iban.startswith('AE') or len(iban) != 23 or not iban[2:].isdigit():
+                errors.append(f"IBAN '{iban}' must be AE followed by 21 digits (23 characters).")
+            elif int(''.join(str(int(ch, 36)) for ch in iban[4:] + iban[:4])) % 97 != 1:
+                errors.append(f"IBAN '{iban}' is not valid (check digits do not match).")
+            else:
+                row['IBAN/Account'] = iban
         if errors:
             raise ValidationError(errors)

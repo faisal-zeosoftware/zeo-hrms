@@ -17,7 +17,8 @@ GET    todo/?scope=mine|created|all     the user's activities (To-do)
 GET    users/                           users of the company (to assign activities)
 GET/POST/PUT/DELETE fields/             form designer: extra fields of a screen (?screen=<endpoint>)
 GET    fields/screens/                  screens that can get extra fields
-PUT    values/                          {endpoint, id, values: {name: value}}
+PUT    values/                          {endpoint, id, values: {name: value}, create: true on a new record}
+POST   values/check/                    {endpoint, id?, values} – check before the screen saves (v1.12.0)
 GET    values/?endpoint=&ids=1,2        extra field values for list columns and export
 GET/PUT layout/dashboard/?name=main     dashboard designer (per user)
 GET/PUT layout/list/?key=               column chooser and last view (per user)
@@ -193,7 +194,7 @@ def def_json(d):
     return {'id': d.id, 'screen': d.screen, 'model': d.model, 'name': d.name, 'label': d.label, 'field_type': d.field_type,
             'type_label': TYPE_NAMES.get(d.field_type, d.field_type), 'options': d.options or [], 'required': d.required,
             'section': d.section, 'order': d.order, 'help_text': d.help_text, 'default': d.default,
-            'show_in_list': d.show_in_list, 'active': d.active}
+            'show_in_list': d.show_in_list, 'active': d.active, 'rules': d.rules or {}}
 
 
 # ---------------------------------------------------------------- record panel
@@ -491,6 +492,13 @@ class FieldsView(APIView):
         msg = _check_def(d)
         if msg:
             return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+        from DataTools.fieldrules import clean_rules
+        rules, rmsg = clean_rules(_rules_in(d), d.get('field_type') or 'text')
+        if rmsg:
+            return Response({'detail': rmsg}, status=status.HTTP_400_BAD_REQUEST)
+        dmsg = _check_default(d, rules)
+        if dmsg:
+            return Response({'detail': dmsg}, status=status.HTTP_400_BAD_REQUEST)
         key = model_key(model)
         name = _slug(d.get('name') or d.get('label'))
         if FieldDef.objects.filter(model=key, name=name).exists() or FieldDef.objects.filter(model=key, label__iexact=str(d['label']).strip()).exists():
@@ -501,7 +509,7 @@ class FieldsView(APIView):
             options=[str(o).strip() for o in (d.get('options') or []) if str(o).strip()], required=bool(d.get('required')),
             section=str(d.get('section') or '').strip()[:100], order=int(d.get('order') or ((last.order + 10) if last else 10)),
             help_text=str(d.get('help_text') or '')[:255], default=str(d.get('default') or '')[:255],
-            show_in_list=bool(d.get('show_in_list', True)), created_by=request.user)
+            show_in_list=bool(d.get('show_in_list', True)), rules=rules, created_by=request.user)
         return Response(def_json(f), status=status.HTTP_201_CREATED)
 
     def put(self, request):
@@ -522,6 +530,21 @@ class FieldsView(APIView):
             return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
         if FieldDef.objects.filter(model=f.model, label__iexact=str(merged['label']).strip()).exclude(pk=f.pk).exists():
             return Response({'detail': f'A field called “{merged["label"]}” already exists on this screen.'}, status=status.HTTP_400_BAD_REQUEST)
+        from DataTools.fieldrules import clean_rules
+        rules, rmsg = clean_rules(_rules_in(merged), merged.get('field_type') or 'text')
+        if rmsg:
+            return Response({'detail': rmsg}, status=status.HTTP_400_BAD_REQUEST)
+        dmsg = _check_default(merged, rules)
+        if dmsg:
+            return Response({'detail': dmsg}, status=status.HTTP_400_BAD_REQUEST)
+        # a new type / fewer options / new rules: list the records whose stored value no longer fits
+        bad = _affected(f, merged, rules)
+        if bad and str(d.get('confirm')).lower() not in ('true', '1', 'yes'):
+            return Response({'detail': f'{len(bad)} record(s) have a value that does not fit the changed field. '
+                                       f'Save again with confirm to keep the change; those values stay as they are until the records are edited.',
+                             'affected': bad[:200], 'affected_count': len(bad), 'needs_confirm': True},
+                            status=status.HTTP_409_CONFLICT)
+        f.rules = rules
         f.label = str(merged['label']).strip()[:150]
         f.field_type = merged['field_type']
         f.options = [str(o).strip() for o in (merged.get('options') or []) if str(o).strip()]
@@ -533,7 +556,11 @@ class FieldsView(APIView):
         f.show_in_list = bool(merged.get('show_in_list'))
         f.active = bool(merged.get('active', True))
         f.save()
-        return Response(def_json(f))
+        out = def_json(f)
+        if bad:
+            out['affected'] = bad[:200]
+            out['affected_count'] = len(bad)
+        return Response(out)
 
     def delete(self, request):
         if not self._can_design(request):
@@ -545,6 +572,52 @@ class FieldsView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+def _rules_in(d):
+    """Rules sent as {"rules": {...}} or as top-level keys (min, max, regex …)."""
+    from DataTools.fieldrules import RULE_KEYS
+    r = dict(d.get('rules') or {}) if isinstance(d.get('rules'), dict) else {}
+    for k in RULE_KEYS:
+        if k in d and k != 'default':
+            r[k] = d.get(k)
+    r.pop('default', None)   # extra fields keep their default in FieldDef.default
+    return r
+
+
+class _Probe:
+    """A field definition as clean_value needs it, from designer input (nothing saved)."""
+    def __init__(self, data, rules, required=False):
+        self.label = str(data.get('label') or data.get('name') or 'Field').strip()
+        self.field_type = data.get('field_type') or 'text'
+        self.options = [str(o).strip() for o in (data.get('options') or []) if str(o).strip()]
+        self.required = required
+        self.rules = rules
+
+
+def _check_default(data, rules):
+    dv = data.get('default')
+    if dv in (None, ''):
+        dv = (rules or {}).get('default')
+    if dv in (None, '') or (data.get('field_type') or 'text') in ('file', 'employee'):
+        return None
+    _, err = clean_value(_Probe(data, rules), dv)
+    return f'Default value – {err}' if err else None
+
+
+def _affected(f, merged, rules):
+    """Stored values of field f that would not pass the changed definition."""
+    probe = _Probe(merged, rules)
+    if (probe.field_type == f.field_type and probe.options == list(f.options or []) and (rules or {}) == (f.rules or {})):
+        return []
+    out = []
+    for v in FieldValue.objects.filter(field=f).exclude(value=None).only('object_id', 'value')[:5000]:
+        if v.value in ('', []):
+            continue
+        _, err = clean_value(probe, v.value)
+        if err:
+            out.append({'object_id': v.object_id, 'value': _show(v.value), 'error': err})
+    return out
+
+
 EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 PHONE = re.compile(r'^[+0-9 ()\-]{6,20}$')
 URL = re.compile(r'^(https?://)?[^\s/$.?#].[^\s]*$', re.I)
@@ -552,7 +625,25 @@ COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 
 
 def clean_value(f, v):
-    """Check and normalise a value for a designer field. Returns (value, error)."""
+    """Check and normalise a value for a designer field. Returns (value, error).
+    v1.12.0: also applies the field's rules (lowest / highest, length, pattern) and a required
+    Yes / No field must be ticked."""
+    val, err = _clean_typed(f, v)
+    if err:
+        return val, err
+    t = getattr(f, 'field_type', 'text')
+    if t == 'checkbox' and getattr(f, 'required', False) and val is False:
+        return None, f'{f.label} must be ticked.'
+    rules = getattr(f, 'rules', None) or {}
+    if rules and val is not None:
+        from DataTools.fieldrules import check_rules
+        msg = check_rules(f.label, t, val, rules)
+        if msg:
+            return None, msg
+    return val, None
+
+
+def _clean_typed(f, v):
     empty = v is None or (isinstance(v, str) and not v.strip()) or (isinstance(v, list) and not v)
     if empty:
         return (None, f'{f.label} is required.') if f.required else (None, None)
@@ -561,41 +652,58 @@ def clean_value(f, v):
         if t in ('text', 'textarea'):
             return str(v)[:10000], None
         if t == 'integer':
-            return int(str(v).replace(',', '').strip()), None
+            s = str(v).replace(',', '').strip()
+            if not re.match(r'^-?\d+$', s):
+                raise ValueError
+            return int(s), None
         if t in ('decimal', 'currency', 'percent'):
             n = float(str(v).replace(',', '').replace('%', '').strip())
+            if n != n or n in (float('inf'), float('-inf')):
+                raise ValueError
             if t == 'percent' and not 0 <= n <= 100:
                 return None, f'{f.label}: enter a percentage between 0 and 100.'
-            return round(n, 4), None
+            return round(n, 2 if t == 'currency' else 4), None
         if t == 'rating':
-            n = int(v)
+            n = int(str(v).strip())
             return (n, None) if 1 <= n <= 5 else (None, f'{f.label}: choose 1 to 5 stars.')
         if t == 'date':
             d = _parse_date(v)
             return (d.isoformat(), None) if d else (None, f'{f.label}: enter a date.')
         if t == 'datetime':
             s = str(v).strip().replace(' ', 'T')
-            datetime.datetime.fromisoformat(s[:19])
-            return s[:16], None
+            return datetime.datetime.fromisoformat(s[:19]).strftime('%Y-%m-%dT%H:%M'), None
         if t == 'time':
-            datetime.datetime.strptime(str(v).strip()[:5], '%H:%M')
-            return str(v).strip()[:5], None
+            s = str(v).strip()
+            if not re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', s):
+                raise ValueError
+            h, m = s.split(':')[:2]
+            return datetime.datetime.strptime(f'{int(h):02d}:{m}', '%H:%M').strftime('%H:%M'), None
         if t == 'checkbox':
-            return (str(v).strip().lower() in ('1', 'true', 'yes', 'y', 'on')) if not isinstance(v, bool) else v, None
+            if isinstance(v, bool):
+                return v, None
+            s = str(v).strip().lower()
+            if s in ('1', 'true', 'yes', 'y', 'on'):
+                return True, None
+            if s in ('0', 'false', 'no', 'n', 'off'):
+                return False, None
+            return None, f'{f.label}: choose Yes or No.'
         if t in ('dropdown', 'radio'):
             opts = {o.lower(): o for o in f.options or []}
             o = opts.get(str(v).strip().lower())
             return (o, None) if o else (None, f'{f.label}: choose one of {", ".join(f.options)}.')
         if t == 'multiselect':
-            items = v if isinstance(v, list) else [x for x in re.split(r'[;,]', str(v))]
+            items = v if isinstance(v, list) else [x for x in re.split(r'[;,]', str(v)) if x.strip()]
             opts = {o.lower(): o for o in f.options or []}
             out = []
             for x in items:
                 o = opts.get(str(x).strip().lower())
                 if not o:
                     return None, f'{f.label}: “{x}” is not one of the options.'
-                out.append(o)
-            return out, None
+                if o not in out:
+                    out.append(o)
+            if not out:
+                return (None, f'{f.label} is required.') if f.required else (None, None)
+            return [o for o in f.options if o in out], None
         if t == 'email':
             s = str(v).strip()
             return (s, None) if EMAIL.match(s) else (None, f'{f.label}: enter a valid e-mail address.')
@@ -622,24 +730,83 @@ def clean_value(f, v):
     return v, None
 
 
-def save_values(request, model_label, obj_id, values, partial=True):
-    """Validate and store designer values for a record. Returns a list of error messages."""
+def is_ess(request):
+    """True for a self-service employee (no back-office rights in this company)."""
+    from AccessControl.access import ctx
+    try:
+        c = ctx(request)
+        return not (c.admin or c.codes)
+    except Exception:
+        return False
+
+
+def check_values(request, model_label, obj_id, values, partial=True, create=False, obj=None, check_only=False):
+    """Validate designer values for a record without saving. Returns (errors, {FieldDef: clean value})."""
+    from DataTools.fieldrules import show_if_ok, visible_on
     defs = {d.name: d for d in FieldDef.objects.filter(model=model_label, active=True)}
     by_label = {d.label.lower(): d for d in defs.values()}
-    errors, clean = [], {}
+    stored = {}
+    if obj_id not in (None, ''):
+        stored = {v.field_id: v.value for v in FieldValue.objects.filter(field__in=defs.values(), object_id=str(obj_id))}
+    given = {}
     for k, v in (values or {}).items():
         f = defs.get(k) or by_label.get(str(k).lower())
-        if f is None:
+        if f is not None:
+            given[f] = v
+    defaulted = set()
+    if create:   # defaults of a new record (v1.12.0: applied on the server too)
+        for f in defs.values():
+            if f not in given and f.default not in (None, '') and f.field_type not in ('file', 'employee'):
+                given[f] = f.default
+                defaulted.add(f)
+    # values the "show only if" conditions look at: the record, what is stored, what is sent
+    current = {}
+    if obj is not None:
+        for fld in obj._meta.concrete_fields:
+            current[fld.name] = getattr(obj, fld.attname, None)
+    for f in defs.values():
+        if f.id in stored:
+            current[f.name] = stored[f.id]
+            current[f.label] = stored[f.id]
+    for f, v in given.items():
+        current[f.name] = v
+        current[f.label] = v
+    ess = is_ess(request)
+    errors, clean = [], {}
+    for f, v in given.items():
+        shown = show_if_ok(f.rules, current)
+        if ess and ((f.rules or {}).get('ess_read_only') or not visible_on(f.rules, 'ess')) and f not in defaulted:
+            val, err = clean_value(f, v)
+            if (val if not err else v) != stored.get(f.id) and not (val in (None, '', []) and stored.get(f.id) in (None, '', [])):
+                errors.append(f'{f.label} is kept up to date by HR; you cannot change it.')
+            continue
+        if check_only and f.field_type == 'file' and isinstance(v, dict) and v.get('pending'):
+            clean[f] = v   # chosen in the form, uploaded right after the record is saved
             continue
         val, err = clean_value(f, v)
+        if err and not shown and val is None and (v is None or v == '' or v == []):
+            err = None   # hidden by its condition: not required
         if err:
             errors.append(err)
         else:
             clean[f] = val
-    if not partial:
+    if not partial or create:
         for f in defs.values():
-            if f.required and f not in clean and not FieldValue.objects.filter(field=f, object_id=str(obj_id)).exclude(value=None).exists():
-                errors.append(f'{f.label} is required.')
+            if not f.required or not show_if_ok(f.rules, current):
+                continue
+            have = clean.get(f) if f in clean else stored.get(f.id)
+            if f in given and f not in clean:
+                continue   # already reported
+            if have in (None, '', []) or (f.field_type == 'checkbox' and have is False):
+                if ess and ((f.rules or {}).get('ess_read_only') or not visible_on(f.rules, 'ess')):
+                    continue
+                errors.append(f'{f.label} is required.' if f.field_type != 'checkbox' else f'{f.label} must be ticked.')
+    return errors, clean
+
+
+def save_values(request, model_label, obj_id, values, partial=True, create=False, obj=None):
+    """Validate and store designer values for a record. Returns a list of error messages."""
+    errors, clean = check_values(request, model_label, obj_id, values, partial=partial, create=create, obj=obj)
     if errors:
         return errors
     for f, val in clean.items():
@@ -650,6 +817,28 @@ def save_values(request, model_label, obj_id, values, partial=True):
         FieldValue.objects.update_or_create(field=f, object_id=str(obj_id), defaults={'value': val, 'updated_by': request.user})
         _log_value(request, model_label, obj_id, f, old_val, val)
     return []
+
+
+def can_write(request, rec):
+    """May the user change this record's extra fields? Admin, add_/change_ rights on the model, or their own record."""
+    from AccessControl.access import ctx, emp_path, user_fields
+    c = ctx(request)
+    if c.admin:
+        return True
+    name = rec.model._meta.model_name
+    if {f'change_{name}', f'add_{name}'} & c.codes:
+        return True
+    if rec.obj is None:
+        return False
+    ep = emp_path(rec.model)
+    if ep is not None and c.emp is not None:
+        q = {'pk': rec.obj.pk, **({ep: c.emp} if ep else {'pk': c.emp.pk})}
+        if rec.model._default_manager.filter(**q).exists():
+            return True
+    for uf in user_fields(rec.model):
+        if getattr(rec.obj, f'{uf}_id', None) == request.user.id:
+            return True
+    return False
 
 
 def _show(v):
@@ -680,7 +869,11 @@ class ValuesView(APIView):
         rec, err = get_record(request, request.data.get('endpoint'), request.data.get('id'))
         if err:
             return err
-        errors = save_values(request, rec.key, rec.id, request.data.get('values') or {}, partial=not request.data.get('full'))
+        if not can_write(request, rec):
+            return Response({'detail': 'You do not have permission to change this record.'}, status=status.HTTP_403_FORBIDDEN)
+        create = str(request.data.get('create')).lower() in ('true', '1')
+        errors = save_values(request, rec.key, rec.id, request.data.get('values') or {},
+                             partial=not (request.data.get('full') or create), create=create, obj=rec.obj)
         if errors:
             return Response({'detail': ' '.join(errors), 'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
         defs = FieldDef.objects.filter(model=rec.key, active=True)
@@ -707,13 +900,65 @@ class ValuesView(APIView):
         out = {}
         for v in FieldValue.objects.filter(field__in=defs, object_id__in=list(ok)).select_related('field'):
             out.setdefault(v.object_id, {})[v.field.name] = _show(v.value)
-        fields = [def_json(d) for d in defs]
+        from DataTools.fieldrules import visible_on
+        ess = is_ess(request)
+        fields = []
+        for d in defs:
+            j = def_json(d)
+            j['show_in_list'] = bool(d.show_in_list) and visible_on(d.rules, 'list')
+            j['show_in_export'] = visible_on(d.rules, 'export')
+            if ess and not visible_on(d.rules, 'ess'):
+                for row in out.values():
+                    row.pop(d.name, None)
+                continue
+            fields.append(j)
         if ecf:
-            from EmpManagement.models import Emp_CustomFieldValue
+            # v1.12.0: employee custom fields with their real type, options and "show on" settings
+            from EmpManagement.models import Emp_CustomField, Emp_CustomFieldValue
+            from DataTools.forms import field_meta
+            meta = field_meta('employee')
+            hidden = set()
+            for c in Emp_CustomField.objects.all():
+                m = meta.get(c.emp_custom_field, {})
+                rules = m.get('rules') or {}
+                if ess and not visible_on(rules, 'ess'):
+                    hidden.add(c.emp_custom_field)
+                    continue
+                fields.append({'name': 'ecf:' + c.emp_custom_field, 'label': c.emp_custom_field, 'field_type': c.data_type or 'text',
+                               'options': c.dropdown_values or c.radio_values or [], 'show_in_list': visible_on(rules, 'list'),
+                               'show_in_export': visible_on(rules, 'export'), 'active': True, 'section': m.get('section', ''),
+                               'order': m.get('order', c.pk * 10), 'required': bool(m.get('mandatory'))})
             for v in Emp_CustomFieldValue.objects.filter(emp_master_id__in=list(ok)).values('emp_master_id', 'emp_custom_field', 'field_value'):
-                out.setdefault(str(v['emp_master_id']), {})['ecf:' + v['emp_custom_field']] = v['field_value']
-            fields += [{'name': 'ecf:' + n, 'label': n, 'field_type': 'text', 'show_in_list': True, 'active': True} for n in ecf]
+                if v['emp_custom_field'] not in hidden:
+                    out.setdefault(str(v['emp_master_id']), {})['ecf:' + v['emp_custom_field']] = v['field_value']
         return Response({'fields': fields, 'values': out})
+
+
+class ValuesCheckView(APIView):
+    """v1.12.0: check extra field values before the screen saves its record (nothing is stored).
+    POST values/check/ {endpoint, id (empty for a new record), values: {name: value}}
+    -> 200 {ok: true, values: {name: clean value}} or 400 {detail, errors}"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        endpoint, obj_id = request.data.get('endpoint'), request.data.get('id')
+        obj = None
+        if obj_id not in (None, ''):
+            rec, err = get_record(request, endpoint, obj_id)
+            if err:
+                return err
+            key, obj = rec.key, rec.obj
+        else:
+            path, view, model = model_of(request, endpoint)
+            if model is None:
+                return Response({'detail': 'This screen cannot get extra fields.'}, status=status.HTTP_400_BAD_REQUEST)
+            key = model_key(model)
+        create = obj_id in (None, '')
+        errors, clean = check_values(request, key, obj_id if not create else None, request.data.get('values') or {},
+                                     partial=not create, create=create, obj=obj, check_only=True)
+        if errors:
+            return Response({'detail': ' '.join(errors), 'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'ok': True, 'values': {f.name: v for f, v in clean.items()}})
 
 
 # ---------------------------------------------------------------- per-user layouts

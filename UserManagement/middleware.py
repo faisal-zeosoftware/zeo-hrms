@@ -101,6 +101,16 @@ class SchemaMiddleware(MiddlewareMixin):
         
         # Get schema name from the query parameter
         schema_name = request.GET.get('schema')
+        if not schema_name and app_name == 'iclock':
+            # v1.12.0: ZKTeco ADMS devices cannot send ?schema= – find the company by the device serial number
+            try:
+                from AttendancePlus.services import find_schema_for_serial
+                schema_name = find_schema_for_serial(request.GET.get('SN') or request.GET.get('sn') or '')
+            except Exception:
+                schema_name = None
+            if not schema_name:
+                from django.http import HttpResponse
+                return HttpResponse('Device not registered', content_type='text/plain', status=401)
         if not schema_name:
             return JsonResponse({"error": "Schema name is required"}, status=400)
 

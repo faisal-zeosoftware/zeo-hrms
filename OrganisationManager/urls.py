@@ -1,5 +1,5 @@
 from django.urls import path, include
-from . views import (FiscalYearViewSet,PeriodViewSet,BranchViewSet,DepartmentViewSet,DocNumberingviewset,FiscalPeriodDatesView,
+from . views import (StandardMastersView,FiscalYearViewSet,PeriodViewSet,BranchViewSet,DepartmentViewSet,DocNumberingviewset,FiscalPeriodDatesView,
                      DesignationViewSet,CatogoryViewSet,CompanyFiscalData,permissionviewset,Groupviewset,permviewset,FiscalYearDatesView,DeptBulkUploadViewSet,DesignationBulkUploadViewSet,
                    save_notification_settings,CompanyPolicyViewSet,list_data_in_schema,CategoryBulkUploadViewSet,AnnouncementViewSet,
                    AnnouncementCommentViewSet,AssetTypeViewSet,AssetMasterViewSet,Asset_CustomFieldValueViewSet,AssetReportViewset,AssetTransactionReportViewset,AssetAllocationViewSet,AssetRequestViewSet,AssetCustomFieldViewSet,
@@ -54,6 +54,7 @@ router.register(r'branch-geofence', BranchGeoFenceViewSet,'branch-geofence')
 
 urlpatterns = [
     # Other paths
+    path('api/masters/standard/', StandardMastersView.as_view(), name='standard-masters'),
     path('api/', include(router.urls)),
 
     path('company-fiscal-data/<int:company_id>/', CompanyFiscalData.as_view(), name='company-fiscal-data'),

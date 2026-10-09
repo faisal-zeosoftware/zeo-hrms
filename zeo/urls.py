@@ -33,7 +33,18 @@ urlpatterns = [
     path('learning/',include('LearningManagement.urls')),
     path('dashboard/',include('DashboardManagement.urls')),
     path('tools/',include('DataTools.urls')),
+    path('leave-policy/',include('LeavePolicy.urls')),
+    path('hr-actions/',include('HRActions.urls')),
+    path('expense/',include('ExpenseManagement.urls')),
+    path('project-control/',include('ProjectControl.urls')),
     path('chatter/', include('Chatter.urls')),
+    path('org-structure/', include('OrgStructure.urls')),        # v1.12.0
+    path('shift-planner/', include('ShiftPlanner.urls')),        # v1.12.0
+    path('attendance-plus/', include('AttendancePlus.urls')),    # v1.12.0
+    path('iclock/', include('AttendancePlus.adms_urls')),        # v1.12.0 ZKTeco ADMS push (devices use this fixed path)
+    path('asset-plus/', include('AssetPlus.urls')),              # v1.12.0
+    path('employee-profile/', include('EmployeeProfile.urls')),  # v1.13.0
+    path('self-service/', include('SelfService.urls')),          # v1.13.0
     
 
 

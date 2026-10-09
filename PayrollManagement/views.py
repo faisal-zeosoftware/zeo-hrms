@@ -71,9 +71,64 @@ logger = logging.getLogger(__name__)
 # Create your views here.
 
 
+class _SalaryComponentRights(permissions.BasePermission):
+    """v1.11.0: anyone logged in could create or change salary components before; reading stays open (payslips)."""
+    message = 'You may not change salary components.'
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.method in permissions.SAFE_METHODS or getattr(view, 'action', '') in ('formula_help', 'check_formula'):
+            return True
+        from Chatter.views import has_code
+        return has_code(request, 'add_salarycomponent', 'change_salarycomponent', 'delete_salarycomponent')
+
+
 class SalaryComponentViewSet(viewsets.ModelViewSet):
     queryset = SalaryComponent.objects.all()
     serializer_class = SalaryComponentSerializer
+    permission_classes = [_SalaryComponentRights]
+
+    @action(detail=False, methods=['get'], url_path='formula-help')
+    def formula_help(self, request):
+        """v1.11.0: everything a formula may use – for the formula writer."""
+        from .formula import known_names, FUNCTIONS, OPERATORS, VARIABLES
+        known = known_names()
+        comps = [{'name': k, 'label': v} for k, v in known.items() if v.startswith('Component:')]
+        leaves = [{'name': k, 'label': v} for k, v in known.items() if k.startswith('leave_balance_')]
+        return Response({'variables': [{'name': k, 'label': v} for k, v in VARIABLES.items()], 'components': comps, 'leave_balances': leaves,
+                         'functions': [{'name': k, 'label': v} for k, v in FUNCTIONS.items()], 'operators': OPERATORS})
+
+    @action(detail=False, methods=['post'], url_path='check-formula')
+    def check_formula(self, request):
+        """v1.11.0: {formula, code?, name?, employee?, month?, year?} → problems, and the value for one employee."""
+        from .formula import problems, calculate, names_in
+        from .signals import get_formula_variables
+        from calendar import monthrange
+        from datetime import date as _date
+        formula = (request.data.get('formula') or '').strip()
+        errs = problems(formula, own_code=request.data.get('code') or None, own_name=request.data.get('name')) if formula else ['The formula is empty.']
+        out = {'ok': not errs, 'problems': errs}
+        emp_id = request.data.get('employee')
+        if emp_id and not errs:
+            from EmpManagement.models import emp_master
+            emp = emp_master.objects.filter(pk=emp_id).first()
+            if emp:
+                today = _date.today()
+                y, m = int(request.data.get('year') or today.year), int(request.data.get('month') or today.month)
+                v = get_formula_variables(emp, _date(y, m, 1), _date(y, m, monthrange(y, m)[1]))
+                value, err, warns = calculate(formula, v)
+                names, _, _ = names_in(formula)
+                lower = {k.lower(): k for k in v}
+                def _fmt(x):
+                    try:
+                        return f'{Decimal(str(x)).quantize(Decimal("0.01")):,}'
+                    except Exception:
+                        return str(x)
+                used = {n: _fmt(v.get(n, v.get(lower.get(n.lower(), ''), ''))) for n in sorted(names)}
+                out.update({'employee': f'{emp.emp_first_name} ({emp.emp_code})', 'period': f'{m:02d}/{y}', 'value': str(value), 'error': err,
+                            'warnings': warns, 'used': used})
+        return Response(out)
     @action(detail=False, methods=['get'])
     def fixed_components(self, request):
         queryset = self.get_queryset().filter(component_value_type='fixed')
@@ -179,9 +234,28 @@ class SalaryRevisionHistoryViewSet(viewsets.ReadOnlyModelViewSet):
 class PayslipViewSet(viewsets.ModelViewSet):
     queryset = Payslip.objects.all()
     serializer_class = PayslipSerializer
+
+    # v1.13.0: employees only ever see their own approved / paid payslips (never drafts); payroll / HR users
+    # see the payslips of their branches. Every action goes through the same scoped queryset.
+    RELEASED = ('Approved', 'approved', 'paid', 'Paid')
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        try:
+            from AccessControl.access import ctx
+            c = ctx(self.request)
+            if not c.admin and 'view_payslip' not in c.codes:
+                qs = qs.filter(status__in=self.RELEASED)
+        except Exception:
+            qs = qs.filter(status__in=self.RELEASED)
+        return qs
+
+    def _scoped(self):
+        return self.filter_queryset(self.get_queryset())
+
     @action(detail=False, methods=['get'])
     def aproved_payslips(self, request):
-        aproved_payslips = self.queryset.filter(status='Approved')
+        aproved_payslips = self._scoped().filter(status__in=self.RELEASED)
         serializer = self.get_serializer(aproved_payslips, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     @action(detail=False, methods=['get'], url_path='employee/(?P<emp_code>[^/.]+)/download/(?P<year>\d{4})/(?P<month>\d{1,2})')
@@ -194,18 +268,9 @@ class PayslipViewSet(viewsets.ModelViewSet):
             if not 1 <= month <= 12:
                 return Response({"error": "Month must be between 1 and 12"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Fetch the employee by emp_code
-            try:
-                employee = emp_master.objects.get(emp_code=emp_code)
-            except emp_master.DoesNotExist:
-                return Response(
-                    {"error": f"No employee found with emp_code {emp_code}"}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            # Fetch the payslip for the employee, month, and year
-            payslip = Payslip.objects.get(
-                employee=employee,
+            # Fetch the payslip for the employee, month, and year (v1.13.0: only payslips this user may see)
+            payslip = self._scoped().get(
+                employee__emp_code=emp_code,
                 payroll_run__month=month,
                 payroll_run__year=year
             )
@@ -228,8 +293,8 @@ class PayslipViewSet(viewsets.ModelViewSet):
             if not 1 <= month <= 12:
                 return Response({"error": "Month must be between 1 and 12"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Fetch the payslip for the employee, month, and year
-            payslip = Payslip.objects.get(
+            # Fetch the payslip for the employee, month, and year (v1.13.0: only payslips this user may see)
+            payslip = self._scoped().get(
                 employee_id=employee_id,
                 payroll_run__month=month,
                 payroll_run__year=year
@@ -2017,6 +2082,15 @@ class LeaveEncashmentViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # v1.10.0: the employee's leave policy (encashable leave type, days per leave year)
+        try:
+            from LeavePolicy.engine import check_encashment
+            problems = check_encashment(LeaveEncashment(employee=employee, leave_type=leave, encashment_days=days))
+        except ImportError:
+            problems = []
+        if problems:
+            return Response({"error": " ".join(problems), "problems": problems}, status=status.HTTP_400_BAD_REQUEST)
 
         formula = (
             request.data.get("formula")

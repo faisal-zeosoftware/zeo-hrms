@@ -872,6 +872,8 @@ class EmployeeShiftSchedulePermission(permissions.BasePermission):
         action_permissions = {
             'list': 'view_employeeshiftschedule',
             'retrieve': 'view_employeeshiftschedule',
+            'get_shift_for_day': 'view_employeeshiftschedule',   # v1.12.0: custom read actions
+            'get_shifts_for_year': 'view_employeeshiftschedule',
             'create': 'add_employeeshiftschedule',
             'update': 'change_employeeshiftschedule',
             'partial_update': 'change_employeeshiftschedule',
@@ -1435,3 +1437,23 @@ class LeaveCategoryPermission(permissions.BasePermission):
             if group.permissions.filter(codename=required_perm).exists():
                 return True
         return False
+
+class ModelCodePermission(permissions.BasePermission):
+    """v1.12.0 – generic rule for views that had no permission class: (tenant) superuser or a group holding
+    <verb>_<model of the view>; custom GET actions need view_<model>, other custom actions change_<model>."""
+    VERBS = {'list': 'view', 'retrieve': 'view', 'create': 'add', 'update': 'change', 'partial_update': 'change', 'destroy': 'delete'}
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.user.is_superuser:
+            return True
+        try:
+            user_permissions = UserTenantPermissions.objects.get(profile=request.user)
+        except UserTenantPermissions.DoesNotExist:
+            return False
+        if user_permissions.is_superuser:
+            return True
+        model = view.queryset.model._meta.model_name
+        verb = self.VERBS.get(getattr(view, 'action', None)) or ('view' if request.method in permissions.SAFE_METHODS else 'change')
+        return user_permissions.groups.filter(permissions__codename=f'{verb}_{model}').exists()

@@ -2,6 +2,8 @@ from zeo.workflow_utils import replace_existing_workflows
 from EmpManagement.email_utils import warn_if_email_not_configured
 
 from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
+from django.core.validators import RegexValidator
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.exceptions import ValidationError
@@ -45,9 +47,11 @@ class Fam_CustomFieldValueSerializer(serializers.ModelSerializer):
         model = Fam_CustomFieldValue
         fields = '__all__'
     
-    def validate_field_name(self, value):
-        if not EmpFamily_CustomField.objects.filter(field_name=value).exists():
-            raise serializers.ValidationError(f"Field name '{value}' does not exist in Document_CustomField.")
+    def validate_emp_custom_field(self, value):
+        # v1.12.0: was validate_field_name on a column that does not exist (never ran); the typed check of the
+        # value itself is DataTools.forms.check_row (run for every value serializer)
+        if not EmpFamily_CustomField.objects.filter(emp_custom_field__iexact=str(value or '').strip()).exists():
+            raise serializers.ValidationError(f'There is no custom field called “{value}”. Add it in the form designer first.')
         return value
 class EmpFam_CustomFieldSerializer(serializers.ModelSerializer):
     field_values = Fam_CustomFieldValueSerializer(many=True, read_only=True)
@@ -80,9 +84,11 @@ class JobHistory_CustomFieldValueSerializer(serializers.ModelSerializer):
         model = JobHistory_CustomFieldValue
         fields = '__all__'
     
-    def validate_field_name(self, value):
-        if not EmpJobHistory_CustomField.objects.filter(field_name=value).exists():
-            raise serializers.ValidationError(f"Field name '{value}' does not exist in Document_CustomField.")
+    def validate_emp_custom_field(self, value):
+        # v1.12.0: was validate_field_name on a column that does not exist (never ran); the typed check of the
+        # value itself is DataTools.forms.check_row (run for every value serializer)
+        if not EmpJobHistory_CustomField.objects.filter(emp_custom_field__iexact=str(value or '').strip()).exists():
+            raise serializers.ValidationError(f'There is no custom field called “{value}”. Add it in the form designer first.')
         return value
 
 class EmpJobHistory_Udf_Serializer(serializers.ModelSerializer):
@@ -117,9 +123,11 @@ class Qualification_CustomFieldValueSerializer(serializers.ModelSerializer):
         model = Qualification_CustomFieldValue
         fields = '__all__'
     
-    def validate_field_name(self, value):
-        if not EmpQualification_CustomField.objects.filter(field_name=value).exists():
-            raise serializers.ValidationError(f"Field name '{value}' does not exist in Document_CustomField.")
+    def validate_emp_custom_field(self, value):
+        # v1.12.0: was validate_field_name on a column that does not exist (never ran); the typed check of the
+        # value itself is DataTools.forms.check_row (run for every value serializer)
+        if not EmpQualification_CustomField.objects.filter(emp_custom_field__iexact=str(value or '').strip()).exists():
+            raise serializers.ValidationError(f'There is no custom field called “{value}”. Add it in the form designer first.')
         return value
     
 class Emp_qf_udf_Serializer(serializers.ModelSerializer):
@@ -159,9 +167,11 @@ class DOC_CustomFieldValueSerializer(serializers.ModelSerializer):
         model = Doc_CustomFieldValue
         fields = '__all__'
     
-    def validate_field_name(self, value):
-        if not EmpDocuments_CustomField.objects.filter(field_name=value).exists():
-            raise serializers.ValidationError(f"Field name '{value}' does not exist in Document_CustomField.")
+    def validate_emp_custom_field(self, value):
+        # v1.12.0: was validate_field_name on a column that does not exist (never ran); the typed check of the
+        # value itself is DataTools.forms.check_row (run for every value serializer)
+        if not EmpDocuments_CustomField.objects.filter(emp_custom_field__iexact=str(value or '').strip()).exists():
+            raise serializers.ValidationError(f'There is no custom field called “{value}”. Add it in the form designer first.')
         return value
 class EmpDocuments_Udf_Serializer(serializers.ModelSerializer):
     field_values = DOC_CustomFieldValueSerializer(many=True, read_only=True)
@@ -203,6 +213,17 @@ class DocumentSerializer(serializers.ModelSerializer):
         fields = super().get_fields()
         fields['is_active'].read_only = True
         return fields
+
+    def validate(self, attrs):
+        # v1.13.0: the expiry date must be after the issue date (both are required by the table)
+        inst = self.instance
+        issued = attrs.get('emp_doc_issued_date', getattr(inst, 'emp_doc_issued_date', None))
+        expiry = attrs.get('emp_doc_expiry_date', getattr(inst, 'emp_doc_expiry_date', None))
+        if issued and expiry and expiry <= issued:
+            raise serializers.ValidationError({'emp_doc_expiry_date': 'The expiry date must be after the issue date.'})
+        if issued and issued > datetime.date.today():
+            raise serializers.ValidationError({'emp_doc_issued_date': 'The issue date cannot be in the future.'})
+        return attrs
     def to_representation(self, instance):
         rep = super(DocumentSerializer, self).to_representation(instance)
         if instance.emp_id:
@@ -214,7 +235,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         return rep
     def create(self, validated_data):
         # Remove any non-existent or invalid fields
-        writable_fields = ['emp_id', 'emp_sl_no','document_type', 'emp_doc_number', 'emp_doc_issued_date', 'emp_doc_expiry_date', 'emp_doc_document', 'is_active']
+        writable_fields = ['emp_id', 'document_type', 'emp_doc_number', 'emp_doc_issued_date', 'emp_doc_expiry_date', 'emp_doc_document', 'is_active', 'created_by', 'updated_by']   # v1.13.0: emp_sl_no is not a field
         valid_data = {k: v for k, v in validated_data.items() if k in writable_fields}
 
         # Create the Emp_Documents object with valid data
@@ -254,9 +275,11 @@ class Emp_CustomFieldValueSerializer(serializers.ModelSerializer):
         model = Emp_CustomFieldValue
         fields = '__all__'
     
-    def validate_field_name(self, value):
-        if not Emp_CustomField.objects.filter(field_name=value).exists():
-            raise serializers.ValidationError(f"Field name '{value}' does not exist in Emp_CustomField.")
+    def validate_emp_custom_field(self, value):
+        # v1.12.0: was validate_field_name on a column that does not exist (never ran); the typed check of the
+        # value itself is DataTools.forms.check_row (run for every value serializer)
+        if not Emp_CustomField.objects.filter(emp_custom_field__iexact=str(value or '').strip()).exists():
+            raise serializers.ValidationError(f'There is no custom field called “{value}”. Add it in the form designer first.')
         return value
     
     
@@ -269,9 +292,25 @@ class CustomFieldSerializer(serializers.ModelSerializer):
     
 #emp bank details  
 class EmpBankDetailsSerializer(serializers.ModelSerializer):
+    # v1.13.0: spaces / lower case allowed on input, checked and cleaned in validate_iban_number
+    iban_number = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=40)
+
     class Meta:
         model = EmployeeBankDetail
         fields = '__all__'
+
+    def validate_iban_number(self, value):
+        # v1.13.0: UAE IBAN (AE + 21 digits = 23 characters) with the mod-97 check digits
+        if value in (None, ''):
+            return value
+        import re as _re
+        s = _re.sub(r'\s+', '', str(value)).upper()
+        if not s.startswith('AE') or len(s) != 23 or not s[2:].isdigit():
+            raise serializers.ValidationError('Enter a UAE IBAN: AE followed by 21 digits (23 characters).')
+        moved = s[4:] + s[:4]
+        if int(''.join(str(int(ch, 36)) for ch in moved)) % 97 != 1:
+            raise serializers.ValidationError('This IBAN is not valid (the check digits do not match). Copy it again from the bank letter.')
+        return s
 
 class EmpBankBulkuploadSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True)
@@ -455,6 +494,41 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
         model = EmployeeResignation
         fields = '__all__'
     
+# v1.13.0: employee code numbering (EmployeeProfile) – off when the app is not installed / migrated
+def _auto_code_on(branch_id):
+    try:
+        from django.apps import apps as _apps
+        if not _apps.is_installed('EmployeeProfile'):
+            return False
+        from EmployeeProfile.services import auto_code_enabled
+        return auto_code_enabled(branch_id)
+    except Exception:
+        return False
+
+
+def _auto_code_any():
+    try:
+        from django.apps import apps as _apps
+        if not _apps.is_installed('EmployeeProfile'):
+            return False
+        from EmployeeProfile.services import table_ready
+        from EmployeeProfile.models import EmployeeCodeSetting
+        return table_ready('EmployeeProfile_employeecodesetting') and EmployeeCodeSetting.objects.filter(enabled=True).exists()
+    except Exception:
+        return False
+
+
+# v1.13.0: one code per marital status (the model also lists 'divorced' / 'widow'; old rows keep them)
+MARITAL_CODES = {'m': 'M', 'married': 'M', 's': 'S', 'single': 'S', 'unmarried': 'S', 'd': 'D', 'divorced': 'D',
+                 'w': 'W', 'widow': 'W', 'widowed': 'W', 'widower': 'W'}
+
+
+def marital_code(v):
+    if v in (None, ''):
+        return v
+    return MARITAL_CODES.get(str(v).strip().lower(), v)
+
+
 #EMPLOYEE SERIALIZER
 class EmpSerializer(serializers.ModelSerializer):
     is_active = serializers.BooleanField(read_only=True)
@@ -500,15 +574,183 @@ class EmpSerializer(serializers.ModelSerializer):
             )
         return value
 
+    # ---- v1.7.2: checks and conveniences for every way an employee is saved (screens, import, API) ----
+    # Linked fields may arrive as names (the GET answer shows names); they are turned back into ids.
+    NAME_FIELDS = {
+        'emp_reporting_manager': ('UserManagement.CustomUser', 'username'),
+        'emp_branch_id': ('OrganisationManager.brnch_mstr', 'branch_name'),
+        'work_location': ('OrganisationManager.brnch_mstr', 'branch_name'),
+        'visa_location': ('OrganisationManager.brnch_mstr', 'branch_name'),
+        'emp_dept_id': ('OrganisationManager.dept_master', 'dept_name'),
+        'emp_desgntn_id': ('OrganisationManager.desgntn_master', 'desgntn_job_title'),
+        'emp_ctgry_id': ('OrganisationManager.ctgry_master', 'ctgry_title'),
+        'emp_nationality': ('Core.Nationality', 'N_name'),
+        'emp_relegion': ('Core.ReligionMaster', 'religion'),
+        'emp_country_id': ('Core.cntry_mstr', 'country_name'),
+        'emp_state_id': ('Core.state_mstr', 'state_name'),
+    }
+    CALENDAR_FIELDS = {'emp_weekend_calendar': 'calendars.weekend_calendar', 'holiday_calendar': 'calendars.holiday_calendar'}
+    BLOOD_GROUPS = ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')
+
+    def to_internal_value(self, data):
+        from django.apps import apps as _apps
+        if hasattr(data, 'getlist'):
+            # keep a QueryDict (form posts: empty file / unticked box rules), but a changeable copy without deep-copying files
+            from django.http import QueryDict
+            copy = QueryDict(mutable=True)
+            for key in data.keys():
+                copy.setlist(key, data.getlist(key))
+            data = copy
+        else:
+            data = dict(data)
+        for field, (model, attr) in self.NAME_FIELDS.items():
+            v = data.get(field)
+            if isinstance(v, str) and v.strip() and not v.strip().isdigit():
+                obj = _apps.get_model(model).objects.filter(**{attr + '__iexact': v.strip()}).first()
+                if obj is not None:
+                    data[field] = obj.pk
+        if 'emp_marital_status' in data and data.get('emp_marital_status') not in (None, ''):
+            data['emp_marital_status'] = marital_code(data.get('emp_marital_status'))   # v1.13.0
+        for field in ('barcode_number', 'person_id'):
+            if field in data and (data[field] is None or str(data[field]).strip() in ('', 'null')):
+                data[field] = None
+            elif field in data and isinstance(data[field], str):
+                data[field] = data[field].strip()
+        calendars = {}
+        for f in list(self.CALENDAR_FIELDS):
+            if f in data:
+                calendars[f] = data.get(f)
+                del data[f]
+        ret = super().to_internal_value(data)
+        errors = {}
+        for field, raw in calendars.items():
+            if isinstance(raw, dict):
+                raw = raw.get('id')
+            if raw in (None, '', 'null'):
+                ret[field] = None
+                continue
+            obj = _apps.get_model(self.CALENDAR_FIELDS[field]).objects.filter(pk=raw).first() if str(raw).isdigit() else None
+            if obj is None:
+                errors[field] = 'This calendar does not exist.'
+            else:
+                ret[field] = obj
+        if errors:
+            raise serializers.ValidationError(errors)
+        return ret
+
+    def validate_emp_code(self, value):
+        value = (value or '').strip()
+        if not value:
+            # v1.13.0: an empty code is filled on save when employee code numbering is on (checked in validate)
+            if self.instance is None and _auto_code_any():
+                return ''
+            raise serializers.ValidationError('Enter the employee code.')
+        qs = emp_master.objects.filter(emp_code__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(f'Employee code "{value}" is already used.')
+        return value
+
+    def validate(self, attrs):
+        import re
+        inst = self.instance
+        errors = {}
+
+        def now(k):
+            return attrs[k] if k in attrs else (getattr(inst, k, None) if inst is not None else None)
+
+        def changed(k):
+            return k in attrs and (inst is None or attrs[k] != getattr(inst, k, None))
+
+        if inst is None or 'emp_first_name' in attrs:
+            if not (now('emp_first_name') or '').strip():
+                errors['emp_first_name'] = 'Enter the first name.'
+        if inst is None or 'emp_branch_id' in attrs:
+            if not now('emp_branch_id'):
+                errors['emp_branch_id'] = 'Choose the branch.'
+        # v1.13.0: empty employee code only when numbering is on for the branch (filled in create)
+        if inst is None and not (attrs.get('emp_code') or '').strip() and 'emp_branch_id' not in errors:
+            b = now('emp_branch_id')
+            if not _auto_code_on(getattr(b, 'pk', b)):
+                errors['emp_code'] = 'Enter the employee code (automatic numbering is off for this branch).'
+        dob, joined = now('emp_date_of_birth'), now('emp_joined_date')
+        if dob and changed('emp_date_of_birth') and dob > datetime.date.today():
+            errors['emp_date_of_birth'] = 'The date of birth cannot be in the future.'
+        if dob and joined and (changed('emp_date_of_birth') or changed('emp_joined_date')) and 'emp_date_of_birth' not in errors:
+            age = joined.year - dob.year - ((joined.month, joined.day) < (dob.month, dob.day))
+            if age < 18:   # v1.13.0: UAE minimum age for full employment (15-18 only as juveniles with a permit)
+                errors['emp_joined_date'] = 'The employee must be at least 18 years old on the joining date (UAE minimum age for employment). Check the date of birth and the joining date.'
+        for k in ('emp_mobile_number_1', 'emp_mobile_number_2'):
+            v = (attrs.get(k) or '').strip()
+            if v and changed(k) and (not re.fullmatch(r'\+?[0-9 ()\-]{6,24}', v) or len(re.sub(r'\D', '', v)) < 7):
+                errors[k] = 'Enter a valid phone number (digits, spaces, + and -).'
+        if 'emp_blood_group' in attrs and attrs['emp_blood_group']:
+            bg = re.sub(r'\s+', '', str(attrs['emp_blood_group'])).upper().replace('POSITIVE', '+').replace('NEGATIVE', '-').replace('POS', '+').replace('NEG', '-')
+            if bg not in self.BLOOD_GROUPS:
+                if changed('emp_blood_group'):
+                    errors['emp_blood_group'] = 'Use A+, A-, B+, B-, AB+, AB-, O+ or O-.'
+            else:
+                attrs['emp_blood_group'] = bg
+        # v1.12.0: a reporting manager who (directly or indirectly) reports to this employee would make a loop
+        if inst is not None and changed('emp_reporting_manager') and now('emp_reporting_manager'):
+            mgr = now('emp_reporting_manager')
+            mgr_id = getattr(mgr, 'pk', mgr)
+            if inst.users_id and mgr_id == inst.users_id:
+                errors['emp_reporting_manager'] = 'An employee cannot be their own reporting manager.'
+            else:
+                try:
+                    from django.apps import apps as _apps
+                    if _apps.is_installed('OrgStructure'):
+                        from OrgStructure.services import would_loop_manager
+                        if would_loop_manager(inst.pk, mgr_id):
+                            errors['emp_reporting_manager'] = 'This manager already reports (directly or indirectly) to the employee – choose another manager.'
+                except Exception:
+                    pass
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+    def _user(self):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        return user if getattr(user, 'is_authenticated', False) else None
+
+    def _active_flag(self):
+        raw = getattr(self, 'initial_data', {}).get('is_active') if hasattr(self, 'initial_data') else None
+        if raw is None or raw == '':
+            return None
+        return str(raw).strip().lower() in ('1', 'true', 'yes', 'on')
+
     
     class Meta:
         model = emp_master
         fields = '__all__' 
+        extra_kwargs = {
+            # uniqueness of the code is checked (ignoring upper / lower case) in validate_emp_code
+            'emp_code': {'validators': [], 'required': False, 'allow_blank': True},   # v1.13.0: blank = numbered on save when numbering is on
+            'person_id': {'validators': [RegexValidator(r'^[A-Za-z0-9-]{14}$', 'Person ID must be exactly 14 letters or digits.'), UniqueValidator(queryset=emp_master.objects.all(), message='This Person ID is already used by another employee.')]},
+            'barcode_number': {'validators': [UniqueValidator(queryset=emp_master.objects.all(), message='This attendance card / barcode is already used by another employee.')]},
+        }
     def create(self, validated_data):
         validated_data['is_active'] = True  # Force is_active to True
+        if self._user() and not validated_data.get('created_by'):
+            validated_data['created_by'] = self._user()
+        if not (validated_data.get('emp_code') or '').strip():
+            # v1.13.0: next number of the branch's rule; the rule row stays locked until the employee is saved
+            from django.db import transaction
+            from EmployeeProfile.services import allocate_code
+            b = validated_data.get('emp_branch_id')
+            with transaction.atomic():
+                validated_data['emp_code'] = allocate_code(getattr(b, 'pk', b))
+                if not validated_data['emp_code']:
+                    raise serializers.ValidationError({'emp_code': 'Enter the employee code.'})
+                return super().create(validated_data)
         return super().create(validated_data)
     def to_representation(self, instance):
         rep = super(EmpSerializer, self).to_representation(instance)
+        if rep.get('emp_marital_status'):   # v1.13.0: old rows may hold 'divorced' / 'widow' – screens and filters see one code
+            rep['emp_marital_status'] = marital_code(rep['emp_marital_status'])
         if instance.emp_state_id:  # Check if emp_state_id is not None
             rep['emp_state_id'] = instance.emp_state_id.state_name
         if instance.emp_country_id:  
@@ -535,6 +777,18 @@ class EmpSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         if 'is_active' not in validated_data:
             validated_data['is_active'] = instance.is_active
+        if self._user():
+            validated_data['updated_by'] = self._user()
+        # "Employee Is Active" on the edit screens: the employee's status, and its login with it
+        active = self._active_flag()
+        if active is not None:
+            validated_data['emp_status'] = active
+            if active != bool(instance.is_active):
+                validated_data['is_active'] = active
+                linked = instance.users
+                if linked is not None and (not active or instance.is_ess or validated_data.get('is_ess')):
+                    linked.is_active = active
+                    linked.save(update_fields=['is_active'])
         return super().update(instance, validated_data)        
     
     def get_holidays(self, obj):
@@ -584,22 +838,9 @@ class EmpSerializer(serializers.ModelSerializer):
     def get_announcements(self, obj):
         from OrganisationManager .models import Announcement
         now = timezone.now()
-        # Announcements directly assigned to employee
-        direct = Announcement.objects.filter(
-            specific_employees=obj
-        )
-        # Announcements assigned to employee branch
-        branch_ann = Announcement.objects.filter(
-            branches=obj.emp_branch_id
-        )
-        # Combine & remove duplicates
-        announcements = (direct | branch_ann).distinct()
-
-        #Exclude expired or not yet active announcements
-        announcements = announcements.filter(
-            models.Q(expires_at__isnull=True) | models.Q(expires_at__gte=now),
-            models.Q(schedule_at__isnull=True) | models.Q(schedule_at__lte=now)
-        )
+        # v1.13.0: direct, branch, department, designation, category and company-wide announcements within their dates
+        from OrganisationManager.announcements import announcements_for
+        announcements = announcements_for(obj, now=now)
         return announcements.values(
             "id", "title", "message", "created_at", "is_sticky",
             "allow_comments", "attachment","schedule_at","expires_at"
@@ -636,7 +877,9 @@ class EmplistSerializer(serializers.ModelSerializer):
             rep['emp_branch_id'] =instance.emp_branch_id.branch_name
         return rep
 class EmpBulkUploadSerializer(serializers.ModelSerializer):
-    emp_custom_fields = CustomFieldSerializer(many=True, required=False)
+    # v1.12.0: custom field VALUES of the new employee ([{emp_custom_field, field_value}]); this used to create
+    # field definitions with an emp_master argument they do not have (TypeError)
+    emp_custom_fields = serializers.ListField(child=serializers.DictField(), required=False, write_only=True)
     file = serializers.FileField(write_only=True) 
     class Meta:
         model = emp_master
@@ -647,7 +890,9 @@ class EmpBulkUploadSerializer(serializers.ModelSerializer):
         file=validated_data.pop('file', None)
         instance = super().create(validated_data)
         for custom_field_data in custom_fields_data:
-            Emp_CustomField.objects.create(emp_master=instance, **custom_field_data)
+            name = custom_field_data.get('emp_custom_field')
+            if name and custom_field_data.get('field_value') not in (None, ''):
+                Emp_CustomFieldValue(emp_master=instance, emp_custom_field=name, field_value=custom_field_data.get('field_value')).save()
         return instance
 
 class NotificationSerializer(serializers.ModelSerializer):
@@ -744,6 +989,23 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
             "prefix": obj.document_number.split('-')[0] if obj.document_number else None,
             # "year": obj.document_number.split('-')[1] if obj.document_number else None,
         }
+    def to_internal_value(self, data):
+        # v1.13.0: `total` is stored in whole dirhams (integer column). Accept 125 / 125.00, refuse 125.50 with a clear message.
+        raw = data.get('total') if hasattr(data, 'get') else None
+        if raw not in (None, ''):
+            from decimal import Decimal, InvalidOperation
+            try:
+                amt = Decimal(str(raw).replace(',', '').strip())
+            except InvalidOperation:
+                raise serializers.ValidationError({'total': 'Enter the amount as a number of dirhams, e.g. 125.'})
+            if amt != amt.to_integral_value():
+                raise serializers.ValidationError({'total': 'Enter the amount in whole dirhams (AED) – fils cannot be stored. Round it, e.g. 125 instead of 125.50, or submit receipts as an expense claim.'})
+            if amt < 0:
+                raise serializers.ValidationError({'total': 'The amount cannot be negative.'})
+            if str(raw) != str(int(amt)):
+                data = data.copy() if hasattr(data, 'copy') else dict(data)
+                data['total'] = str(int(amt))
+        return super().to_internal_value(data)
     def to_representation(self, instance):
         rep = super(GeneralRequestSerializer, self).to_representation(instance)
         if instance.employee:  
@@ -1423,6 +1685,7 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
     final_month_salary = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     last_payroll_processed = serializers.SerializerMethodField()
     asset_return_pending = serializers.SerializerMethodField()
+    asset_clearance = serializers.SerializerMethodField()
 
     class Meta:
         model = EndOfService
@@ -1432,7 +1695,7 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
             'notice_period_days', 'total_service_days', 'net_number_of_days_worked',
             'leave_days_without_pay', 'leave_balance', 'last_month_salary',
             'gratuity_days', 'gratuity_amount', 'notice_pay', 'status', 'processed_date','basic_salary','work_status',
-            'per_day_gratuity','air_ticket','final_month_salary','last_payroll_processed','asset_return_pending'
+            'per_day_gratuity','air_ticket','final_month_salary','last_payroll_processed','asset_return_pending','asset_clearance'
 
         ]
         # fields = '__all__'
@@ -1449,10 +1712,23 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
         return component.amount if component else Decimal('0.00')
     def get_asset_return_pending(self, obj):
         employee = obj.resignation.employee
+        try:  # v1.12.0: AssetPlus exit clearance (assets, custody, undecided damage / loss, deductions left)
+            from AssetPlus.services import clearance
+            return clearance(employee.pk)['blocked']
+        except Exception:
+            pass
         return AssetAllocation.objects.filter(
             employee=employee,
             returned_date__isnull=True
         ).exists()
+
+    def get_asset_clearance(self, obj):
+        try:  # v1.12.0: what blocks the final settlement (AssetPlus)
+            from AssetPlus.services import clearance
+            c = clearance(obj.resignation.employee_id)
+            return {'blocked': c['blocked'], 'waived': c['waived'], 'recovery_due': str(c['recovery_due']), 'items': [i['text'] for i in c['items']]}
+        except Exception:
+            return None
     def get_per_day_gratuity(self, obj):
         basic = self.get_basic_salary(obj)
         return round(basic / 30, 2) if basic else 0.0

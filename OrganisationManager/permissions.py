@@ -252,6 +252,11 @@ class CompanyPolicyPermission(permissions.BasePermission):
         if user_permissions.is_superuser:
             return True
 
+        # v1.12.0 fix: every employee may read and download the policies that apply to them – the view's
+        # get_queryset limits the rows (before, employees without view_companypolicy could not open any policy)
+        if getattr(view, 'action', None) in ('list', 'retrieve', 'download_policy'):
+            return True
+
         # Map view actions to required permissions
         action_permissions = {
             'list': 'view_companypolicy',
@@ -406,7 +411,7 @@ class AssetAllocationPermission(permissions.BasePermission):
             'retrieve': 'view_assetallocation',
             'create': 'add_assetallocation',
             'update': 'change_assetallocation',
-            'partial_update': 'change_assetallocatione',
+            'partial_update': 'change_assetallocation',
             'destroy': 'delete_assetallocation',
         }
 

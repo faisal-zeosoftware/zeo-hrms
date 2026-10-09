@@ -96,7 +96,53 @@ class BranchViewSet(viewsets.ModelViewSet):
             serializer = CompanyPolicySerializer(family_members, many=True)
             return Response(serializer.data)
 #DEPARTMENT 
-class DepartmentViewSet(viewsets.ModelViewSet):
+
+
+class MasterGuardMixin:
+    """v1.7.2 – Department / Designation / Category:
+    * new records without a branch are linked to the branches of the person creating them (else nobody in a branch sees them);
+    * created by / updated by are filled in, and editing no longer overwrites "created by";
+    * a record still used by employees cannot be deleted (the employees silently lost it before)."""
+    master_prefix = ''     # dept / desgntn / ctgry
+    employee_field = ''    # emp_dept_id / ...
+
+    def _branches_for(self):
+        from AccessControl.access import ctx
+        c = ctx(self.request)
+        if getattr(c, 'branches', None):
+            return list(c.branches)
+        return list(brnch_mstr.objects.values_list('id', flat=True))
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user.is_authenticated else None
+        extra = {}
+        if user is not None:
+            extra[f'{self.master_prefix}_created_by'] = user
+            extra[f'{self.master_prefix}_updated_by'] = user
+        obj = serializer.save(**extra)
+        if not obj.branch.exists():
+            obj.branch.set(self._branches_for())
+
+    def perform_update(self, serializer):
+        user = self.request.user if self.request.user.is_authenticated else None
+        keep = getattr(serializer.instance, f'{self.master_prefix}_created_by', None)
+        extra = {f'{self.master_prefix}_created_by': keep}
+        if user is not None:
+            extra[f'{self.master_prefix}_updated_by'] = user
+        serializer.save(**extra)
+
+    def destroy(self, request, *args, **kwargs):
+        from EmpManagement.models import emp_master
+        obj = self.get_object()
+        used = emp_master.objects.filter(**{self.employee_field: obj}).count()
+        if used:
+            return Response({'detail': f'"{obj}" is used by {used} employee{"s" if used != 1 else ""}. '
+                                       f'Move them to another one first, or mark this one inactive.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return super().destroy(request, *args, **kwargs)
+
+class DepartmentViewSet(MasterGuardMixin, viewsets.ModelViewSet):
+    master_prefix, employee_field = 'dept', 'emp_dept_id'
     queryset = dept_master.objects.all()
     serializer_class = DeptSerializer
     # authentication_classes = [SessionAuthentication,]
@@ -291,7 +337,8 @@ class DeptBulkUploadViewSet(viewsets.ModelViewSet):
         response["Content-Disposition"] = 'attachment; filename="department_demo.csv"'
         return response
 #DESIGNATION 
-class DesignationViewSet(viewsets.ModelViewSet):
+class DesignationViewSet(MasterGuardMixin, viewsets.ModelViewSet):
+    master_prefix, employee_field = 'desgntn', 'emp_desgntn_id'
     queryset = desgntn_master.objects.all()
     serializer_class = DesgSerializer
     # authentication_classes = [SessionAuthentication,]
@@ -449,7 +496,8 @@ class DesignationBulkUploadViewSet(viewsets.ModelViewSet):
         return response
 
 #CATOGARY CRUD
-class CatogoryViewSet(viewsets.ModelViewSet):
+class CatogoryViewSet(MasterGuardMixin, viewsets.ModelViewSet):
+    master_prefix, employee_field = 'ctgry', 'emp_ctgry_id'
     queryset = ctgry_master.objects.all()
     serializer_class = CtgrySerializer
     # authentication_classes = [SessionAuthentication,]
@@ -679,6 +727,9 @@ class CompanyPolicyViewSet(viewsets.ModelViewSet):
     queryset = CompanyPolicy.objects.all()
     serializer_class = CompanyPolicySerializer
     permission_classes = [CompanyPolicyPermission]
+    # v1.12.0: get_queryset already limits employees to the policies that apply to them; the central access layer
+    # only adds the branch limit (else it kept just the policies naming the user)
+    self_service_actions = ('list', 'retrieve', 'download_policy')
     
     def get_queryset(self):
         user = self.request.user
@@ -690,26 +741,29 @@ class CompanyPolicyViewSet(viewsets.ModelViewSet):
         if user.is_superuser:
             return CompanyPolicy.objects.all()
 
-        # Specific users can see only assigned policies
-        specific_policies = CompanyPolicy.objects.filter(
-            specific_users__id=user.id
+        # v1.12.0 fix: HR with company-policy rights see the policies of their branches (they saw none before)
+        from AccessControl.access import ctx as _ctx
+        c = _ctx(self.request)
+        if c.admin or c.codes & {'view_companypolicy', 'change_companypolicy', 'add_companypolicy', 'delete_companypolicy'}:
+            qs = CompanyPolicy.objects.all()
+            if c.branches is not None:
+                qs = qs.filter(Q(branch__in=c.branches) | Q(branch__isnull=True)).distinct()
+            return qs
+
+        # v1.12.0 fix: employees see the policies that apply to them – assigned to them by name, or matching their
+        # branch / department / category / designation (an empty rule matches everyone). The old code read
+        # attributes that do not exist (emp_master / emp_branch) and so showed nothing.
+        emp = emp_master.objects.filter(users=user).first()
+        if emp is None:
+            return CompanyPolicy.objects.filter(specific_users__id=user.id).distinct()
+        rules = (Q(branch__isnull=True) | Q(branch=emp.emp_branch_id_id)) & \
+            (Q(department__isnull=True) | Q(department=emp.emp_dept_id_id)) & \
+            (Q(category__isnull=True) | Q(category=emp.emp_ctgry_id_id)) & \
+            (Q(designation__isnull=True) | Q(designation=emp.emp_desgntn_id_id))
+        has_rule = Q(branch__isnull=False) | Q(department__isnull=False) | Q(category__isnull=False) | Q(designation__isnull=False)
+        return CompanyPolicy.objects.filter(
+            Q(specific_users__id=user.id) | (rules & (has_rule | Q(specific_users__isnull=True)))
         ).distinct()
-
-        if specific_policies.exists():
-            return specific_policies
-
-        # ESS users can see branch/department/category policies
-        if getattr(user, "is_ess", False):
-            emp = getattr(user, "emp_master", None)
-
-            if emp:
-                return CompanyPolicy.objects.filter(
-                    branch=emp.emp_branch,
-                    department=emp.emp_dept,
-                    category=emp.emp_ctgry
-                ).distinct()
-
-        return CompanyPolicy.objects.none()
     
     # def get_queryset(self):
     #     user = self.request.user
@@ -957,9 +1011,61 @@ class AssetMasterViewSet(viewsets.ModelViewSet):
     queryset = Asset.objects.all()
     serializer_class = AssetSerializer
     permission_classes = [AssetMasterPermission]
+class _AssetSelfServiceAccess(permissions.BasePermission):
+    """v1.12.0: these two viewsets had no permission classes (and the project default is empty).
+    Logged in; reading is limited to the user's own rows by the central access layer unless they hold view_<model>;
+    writes need add_/change_/delete_<model> (or company admin) – except that an employee may raise / withdraw
+    their own asset request (`self_service_writes`)."""
+    message = 'You do not have permission to do this.'
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        from AccessControl.access import ctx
+        c = ctx(request)
+        if c.admin:
+            return True
+        model = view.queryset.model._meta.model_name
+        action_name = getattr(view, 'action', None)
+        verb = {'create': 'add', 'destroy': 'delete'}.get(action_name, 'change')
+        if f'{verb}_{model}' in c.codes:
+            return True
+        if action_name in getattr(view, 'self_service_writes', ()) and c.emp is not None:
+            st = request.data.get('status') if hasattr(request.data, 'get') else None
+            if action_name == 'create' and st and str(st).lower() != 'pending':
+                self.message = 'A new request always starts as pending.'
+                return False
+            return True
+        self.message = f'You do not have permission to {verb} {view.queryset.model._meta.verbose_name}.'
+        return False
+
+    def has_object_permission(self, request, view, obj):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        from AccessControl.access import ctx
+        c = ctx(request)
+        model = view.queryset.model._meta.model_name
+        verb = {'create': 'add', 'destroy': 'delete'}.get(getattr(view, 'action', None), 'change')
+        if c.admin or f'{verb}_{model}' in c.codes:
+            return True
+        # self-service: only an own request that is still pending, and never its status
+        if str(getattr(obj, 'status', '')).lower() != 'pending':
+            self.message = 'Only a pending request can be changed or withdrawn.'
+            return False
+        new_status = request.data.get('status') if hasattr(request.data, 'get') else None
+        if new_status and str(new_status).lower() != str(obj.status).lower():
+            self.message = 'You cannot change the status of your own request.'
+            return False
+        return True
+
+
 class AssetRequestViewSet(viewsets.ModelViewSet):
     queryset = AssetRequest.objects.all()
     serializer_class = AssetRequestSerializer
+    permission_classes = [_AssetSelfServiceAccess]
+    self_service_writes = ('create', 'update', 'partial_update', 'destroy')   # own pending request only (the access layer checks the employee)
 
 
     def perform_create(self, serializer):
@@ -1012,7 +1118,8 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
             if not employee_id:
                 return Response({'error': 'Employee ID is required'}, status=status.HTTP_400_BAD_REQUEST)
             
-            requests = AssetRequest.get_employee_requests(employee_id)
+            # v1.12.0: only rows the user may see (an employee used to read anybody's history)
+            requests = self.filter_queryset(self.get_queryset()).filter(employee_id=employee_id).order_by('-request_date', '-id')
 
             # Manually serialize the fields you want
             history_data = []
@@ -1023,7 +1130,7 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
                     'branch': request.branch.branch_name if request.branch else None,
                     'asset_type': request.asset_type.name if request.asset_type else None,
                     'status': request.status,
-                    'created_at_date': request.created_at_date,
+                    'created_at_date': request.request_date,  # v1.12.0: created_at_date does not exist
                 })
 
             return Response(history_data, status=status.HTTP_200_OK)
@@ -1031,6 +1138,7 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
 class AssetAllocationViewSet(viewsets.ModelViewSet):
     queryset = AssetAllocation.objects.all()
     serializer_class = AssetAllocationSerializer
+    permission_classes = [_AssetSelfServiceAccess]   # v1.12.0: employees could allocate assets to themselves
     @action(detail=True, methods=['post'])
     def return_asset(self, request, pk=None):
         allocation = self.get_object()
@@ -1341,11 +1449,7 @@ class Asset_CustomFieldValueViewSet(viewsets.ModelViewSet):
     queryset = AssetCustomFieldValue.objects.all()
     serializer_class = AssetCustomFieldValueSerializer
 
-class AssetCustomFieldViewSet(viewsets.ModelViewSet):
-    queryset = AssetCustomField.objects.all()
-    serializer_class = AssetCustomFieldSerializer
-
-class AssetCustomFieldViewSet(viewsets.ModelViewSet):
+class AssetCustomFieldViewSet(viewsets.ModelViewSet):   # v1.12.0: was defined twice
     queryset = AssetCustomField.objects.all()
     serializer_class = AssetCustomFieldSerializer
 
@@ -1645,7 +1749,7 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
         display_names = {
             "employee": "Employee Code",
             "emp_first_name": "First Name",
-            "emp_active_date": "Active Date",
+            "emp_joined_date": "Joining Date",
             "emp_branch_id":"Branches",
             "emp_dept_id": "Department",
             "emp_desgntn_id": "Designation",
@@ -2026,3 +2130,45 @@ class UserAccessibleBranchListAPIView(APIView):
 class BranchGeoFenceViewSet(viewsets.ModelViewSet):
     queryset = BranchGeoFence.objects.all()
     serializer_class = BranchGeoFenceSerializer
+
+
+class StandardMastersView(APIView):
+    """GET ?kind=department|designation|category → the standard list with what already exists.
+    POST {kind, branches?} → adds the missing ones and links them to the branches (default: the user's branches)."""
+    CODES = {'department': 'add_dept_master', 'designation': 'add_desgntn_master', 'category': 'add_ctgry_master'}
+
+    def _check(self, request, kind):
+        from AccessControl.access import ctx
+        if kind not in self.CODES:
+            return Response({'detail': 'kind must be department, designation or category.'}, status=status.HTTP_400_BAD_REQUEST)
+        c = ctx(request)
+        if not (c.admin or self.CODES[kind] in c.codes):
+            return Response({'detail': 'You may not add records to this list.'}, status=status.HTTP_403_FORBIDDEN)
+        return None
+
+    def get(self, request):
+        from . import defaults
+        kind = request.query_params.get('kind', '')
+        bad = self._check(request, kind)
+        if bad:
+            return bad
+        return Response({'kind': kind, 'items': defaults.preview(kind)})
+
+    def post(self, request):
+        from . import defaults
+        from AccessControl.access import ctx
+        kind = request.data.get('kind', '')
+        bad = self._check(request, kind)
+        if bad:
+            return bad
+        c = ctx(request)
+        allowed = list(c.branches) if getattr(c, 'branches', None) else list(brnch_mstr.objects.values_list('id', flat=True))
+        wanted = request.data.get('branches') or allowed
+        branches = [b for b in brnch_mstr.objects.filter(id__in=wanted) if b.id in allowed]
+        result = defaults.load(kind, branches, request.user if request.user.is_authenticated else None)
+        if kind == 'department':
+            try:
+                result['religions'] = defaults.load_religions()
+            except Exception:
+                pass
+        return Response(result, status=status.HTTP_200_OK)

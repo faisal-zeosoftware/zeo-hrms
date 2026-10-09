@@ -200,6 +200,37 @@ class AnnouncementCommentSerializer(serializers.ModelSerializer):
         fields = ['id', 'announcement', 'employee', 'comment', 'created_at', 'employee_name']
 
 class AssetCustomFieldValueSerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        # v1.12.0: the model check was switched off – the value must belong to the asset's type, match the field
+        # type / options, and there is one value per asset and field
+        from django.utils.dateparse import parse_date
+        asset = attrs.get('asset', getattr(self.instance, 'asset', None))
+        field = attrs.get('custom_field', getattr(self.instance, 'custom_field', None))
+        value = attrs.get('field_value', getattr(self.instance, 'field_value', None))
+        if not asset or not field:
+            raise serializers.ValidationError({'custom_field': 'Choose the asset and the custom field.'})
+        if field.asset_type_id and field.asset_type_id != asset.asset_type_id:
+            raise serializers.ValidationError({'custom_field': f'"{field.custom_field}" is not a field of the asset type {asset.asset_type}.'})
+        dup = AssetCustomFieldValue.objects.filter(asset=asset, custom_field=field)
+        if self.instance:
+            dup = dup.exclude(pk=self.instance.pk)
+        if dup.exists():
+            raise serializers.ValidationError({'custom_field': f'{asset} already has a value for "{field.custom_field}". Edit that value instead.'})
+        if value not in (None, ''):
+            t = field.data_type or 'text'
+            if t == 'date' and parse_date(str(value)[:10]) is None:
+                raise serializers.ValidationError({'field_value': 'Enter a date (YYYY-MM-DD).'})
+            if t in ('dropdown', 'radio'):
+                opts = [str(o) for o in ((field.dropdown_values if t == 'dropdown' else field.radio_values) or [])]
+                if str(value) not in opts:
+                    raise serializers.ValidationError({'field_value': f'Choose one of: {", ".join(opts)}.'})
+            if t == 'checkbox':
+                opts = [str(o) for o in (field.checkbox_values or [])]
+                bad = [v.strip() for v in str(value).split(',') if v.strip() and v.strip() not in opts]
+                if bad:
+                    raise serializers.ValidationError({'field_value': f'{", ".join(bad)} is not an option ({", ".join(opts)}).'})
+        return attrs
+
     def to_representation(self, instance):
         rep = super(AssetCustomFieldValueSerializer, self).to_representation(instance)
         if instance.asset:  # Check if emp_state_id is not None
@@ -216,8 +247,31 @@ class AssetCustomFieldSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetCustomField
         fields = '__all__'
+
+    def validate(self, attrs):
+        # v1.12.0: clear messages instead of the model's generic errors
+        name = (attrs.get('custom_field', getattr(self.instance, 'custom_field', '')) or '').strip()
+        if not name:
+            raise serializers.ValidationError({'custom_field': 'Enter the field name.'})
+        others = AssetCustomField.objects.filter(custom_field__iexact=name)
+        if self.instance:
+            others = others.exclude(pk=self.instance.pk)
+        if others.exists():
+            raise serializers.ValidationError({'custom_field': f'A field called "{name}" already exists. Field names are unique across all asset types – use another name.'})
+        t = attrs.get('data_type', getattr(self.instance, 'data_type', None)) or 'text'
+        key = {'dropdown': 'dropdown_values', 'radio': 'radio_values', 'checkbox': 'checkbox_values'}.get(t)
+        if key:
+            vals = attrs.get(key, getattr(self.instance, key, None))
+            if isinstance(vals, str):
+                vals = [v.strip() for v in vals.split(',') if v.strip()]
+                attrs[key] = vals
+            if not vals or not isinstance(vals, list) or not any(str(v).strip() for v in vals):
+                raise serializers.ValidationError({key: f'Enter the {t} options, separated by commas.'})
+        attrs['custom_field'] = name
+        return attrs
 class AssetTypeSerializer(serializers.ModelSerializer):
-    asset_custom_fields=AssetCustomFieldValueSerializer(many=True, read_only=True, source='field_values')
+    # v1.12.0: was AssetCustomFieldValueSerializer(source='field_values') – AssetType has no field_values; its fields are custom_fields
+    asset_custom_fields = AssetCustomFieldSerializer(many=True, read_only=True, source='custom_fields')
     class Meta:
         model = AssetType
         fields = '__all__'

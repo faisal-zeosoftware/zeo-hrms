@@ -4,7 +4,7 @@ from django.db import models
 class cntry_mstr(models.Model):
     country_code  =  models.CharField(max_length=150,unique=True,null=True)
     timezone      =  models.CharField(max_length=100, help_text="Set timezone as per IANA timezone database format, e.g., 'America/New_York'",null=True)
-    country_name  =  models.CharField(max_length=50,unique=True)
+    country_name  =  models.CharField(max_length=100,unique=True)
     is_active     = models.BooleanField(default=True)
     
     def __str__(self):

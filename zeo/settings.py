@@ -67,7 +67,7 @@ if not SECRET_KEY:
 DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
+ALLOWED_HOSTS = ['80.65.208.178', 'localhost', '127.0.0.1','discharge-doctrine-superman.ngrok-free.dev']
 
 SHARED_APPS = [
     'django_tenants',
@@ -164,7 +164,12 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:4200",  # Angular app running locally
+    "http://80.65.208.178:4200",  # Example for your frontend URL
+#    "http://80.65.208.178",  # Your server IP if accessing directly
+
+]
 
 CORS_ALLOW_HEADERS = [
     'content-type',

@@ -177,8 +177,14 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
+# CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
 
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:4200",  # Angular app running locally
+    "http://80.65.208.178:4200",  # Example for your frontend URL
+#    "http://80.65.208.178",  # Your server IP if accessing directly
+
+]
 FORMAT_MODULE_PATH = ['LanguagePack.formats']   # v1.15.0
 CORS_ALLOW_HEADERS = [
     'x-language',        # v1.15.0

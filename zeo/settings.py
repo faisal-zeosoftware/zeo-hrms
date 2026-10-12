@@ -67,7 +67,8 @@ if not SECRET_KEY:
 DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
+ALLOWED_HOSTS = ['80.65.208.178', 'localhost', '127.0.0.1']
+# ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
 
 SHARED_APPS = [
     'django_tenants',

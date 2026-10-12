@@ -61,6 +61,19 @@ def send_notification_email(
     email_template_model = email_template_model or EmailTemplate
     notification_model = notification_model or RequestNotification
 
+    # v1.15.0: the reader's language (their own choice, else the company default) for the notification and the e-mail
+    reader_lang = 'en'
+    try:
+        from Translations.i18n import for_lang
+        from Translations.services import reader_lang as _reader_lang
+        reader_lang = _reader_lang(user, employee)
+        if reader_lang != 'en':
+            message, title = for_lang(message, reader_lang), for_lang(title, reader_lang)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning(f"Notification language skipped: {e}")
+
     created_notification = None
 
     try:
@@ -144,8 +157,15 @@ def send_notification_email(
         }
 
     subject = email_template.subject
+    body_text = email_template.body
+    if reader_lang != 'en':  # v1.15.0: the company's own translation of the template, else the language pack, else English
+        try:
+            from Translations.services import mail_texts
+            subject, body_text = mail_texts(email_template, reader_lang)
+        except Exception as e:
+            logger.warning(f"E-mail template language skipped: {e}")
 
-    template = Template(email_template.body)
+    template = Template(body_text)
 
     recipient_name = (
         user.get_username()
@@ -262,7 +282,24 @@ from django.db.models import Q
 #             ).order_by('-created_at').first()
 
 #             return payslip.net_salary if payslip else Decimal('0.00')
-def calculate_progressive_gratuity(years_of_service, daily_wage, termination_type):
+def service_years(start, end):
+    """Years of service from the joining day to the last working day (both counted): whole years by anniversary dates, the rest in
+    days ÷ 365. 01/11/2020 – 31/10/2026 = 6 years exactly."""
+    from datetime import timedelta as _td
+    stop = end + _td(days=1)
+    years = stop.year - start.year
+    def _anniv(y):
+        try:
+            return start.replace(year=start.year + y)
+        except ValueError:            # 29 February joiner
+            return start.replace(year=start.year + y, day=28)
+    while years > 0 and _anniv(years) > stop:
+        years -= 1
+    rest = (stop - _anniv(years)).days
+    return Decimal(years) + Decimal(rest) / Decimal('365')
+
+
+def calculate_progressive_gratuity(years_of_service, daily_wage, termination_type, branch_id=None):
     from OrganisationManager.models import GratuityTable
 
     total_gratuity_days = Decimal('0.00')
@@ -273,6 +310,15 @@ def calculate_progressive_gratuity(years_of_service, daily_wage, termination_typ
     ).order_by('minimum_value'))
 
     if not rules:
+        # v1.14.0: another country's rule set (branch / company country pack) → its formula (daily wage = basic / 30)
+        try:
+            from CountryPack import services as _cp
+            if not _cp.uses_uae_gratuity(branch_id):
+                kind = 'termination' if termination_type in ['termination', 'retirement', 'death_or_disablement'] else 'resignation'
+                g = _cp.gratuity_breakdown(remaining_years, Decimal(daily_wage or 0) * Decimal('30'), kind, branch_id)
+                return Decimal(str(g['days'])).quantize(Decimal('0.01')), Decimal(str(g['amount'])).quantize(Decimal('0.01'))
+        except ImportError:
+            pass
         # No gratuity table set up for the company: fall back to UAE Labour Law (Federal Decree-Law
         # 33 of 2021, Art. 51) instead of silently paying zero - nothing below 1 year, 21 days' basic
         # per year for the first 5 years, 30 days per year after that.
@@ -335,7 +381,27 @@ def calculate_settlement(eos):
         # -------------------------------
         # SERVICE CALCULATION
         # -------------------------------
-        total_days = (end_date - start_date).days
+        # v1.15.1: service counts the joining and the last day; days of unpaid leave are not service
+        # (UAE Decree-Law 33/2021 Art. 51) – they were never taken off before
+        total_days = (end_date - start_date).days + 1
+        try:
+            from django.apps import apps as _apps
+            _LR = _apps.get_model('calendars', 'employee_leave_request')
+            _unpaid = 0.0
+            for _r in _LR.objects.filter(employee=employee, status='approved', leave_type__type='unpaid', start_date__lte=end_date, end_date__gte=start_date):
+                _days = float(_r.approved_days or _r.number_of_days or 0)
+                _span = (_r.end_date - _r.start_date).days + 1
+                _inside = (min(_r.end_date, end_date) - max(_r.start_date, start_date)).days + 1
+                _unpaid += _days * _inside / _span if _span > 0 else 0
+            # v1.18.0: days of absence without pay (absent, no leave) are not service either (Art. 51) – only unpaid leave was taken off
+            try:
+                _AD = _apps.get_model('AttendancePlus', 'AttendanceDay')
+                _unpaid += _AD.objects.filter(employee_id=employee.pk, date__range=(start_date, end_date), status='absent').count()
+            except LookupError:
+                pass
+            eos.leave_days_without_pay = round(_unpaid, 2)
+        except Exception:
+            logger.exception('unpaid leave days for EOS failed')
         eos.total_service_days = total_days
         eos.years_of_service = total_days / 365
         eos.net_number_of_days_worked = total_days - eos.leave_days_without_pay
@@ -372,26 +438,60 @@ def calculate_settlement(eos):
         # -------------------------------
         # GRATUITY RULE
         # -------------------------------
-        net_days = eos.total_service_days - (eos.leave_days_without_pay or 0)
-        years = Decimal(net_days) / Decimal('365')
+        # v1.18.0: completed years by the calendar (anniversaries) + the days of the part year ÷ 365, less the unpaid days ÷ 365 –
+        # total days ÷ 365 counted every 29 February as extra service (6 years = 2,191 days gave 6.0027 years)
+        years = service_years(start_date, end_date) - Decimal(str(eos.leave_days_without_pay or 0)) / Decimal('365')
+        try:   # v1.20.2: counted as the country rule set says (anniversary years or all days ÷ 365)
+            from CountryPack.services import gratuity_service_years
+            years = gratuity_service_years(start_date, end_date, eos.leave_days_without_pay or 0, employee.emp_branch_id_id)
+        except ImportError:
+            pass
+        if years < 0:
+            years = Decimal('0')
+        eos.years_of_service = float(round(years, 4))
 
         gratuity_days, gratuity_amount = calculate_progressive_gratuity(
             years_of_service=years,
             daily_wage=daily_wage,
-            termination_type=resignation.termination_type
+            termination_type=resignation.termination_type,
+            branch_id=employee.emp_branch_id_id,
         )
 
         eos.gratuity_days = gratuity_days
         eos.gratuity_amount = gratuity_amount
+        try:   # v1.18.0: UAE nationals are covered by the GPSSA pension – no Labour Law gratuity (Art. 51 is for non-nationals)
+            from PayrollManagement.signals import is_uae_national
+            if is_uae_national(employee):
+                eos.gratuity_days, eos.gratuity_amount = 0, Decimal('0.00')
+        except ImportError:
+            pass
 
         max_gratuity = basic_salary * Decimal('24')
+        try:   # v1.20.2: rule set "cap_basis": "wage" – two years of the full monthly wage, not of the basic
+            from CountryPack.services import rule_set_for_branch
+            _g = (rule_set_for_branch(employee.emp_branch_id_id) or {}).get('gratuity') or {}
+            if _g.get('cap_basis') == 'wage':
+                from DashboardManagement.reports import wage_by_employee
+                max_gratuity = Decimal(str(wage_by_employee([employee.pk]).get(employee.pk) or 0)) * 12 * Decimal(str(_g.get('cap_years_of_pay') or 2))
+        except Exception:
+            pass
+        try:  # v1.14.0: the 2-year cap is the UAE one; other rule sets apply their own cap in calculate_progressive_gratuity
+            from CountryPack.services import uses_uae_gratuity
+            if not uses_uae_gratuity(employee.emp_branch_id_id) and not GratuityTable.objects.filter(is_active=True).exists():
+                max_gratuity = eos.gratuity_amount
+        except ImportError:
+            pass
         if eos.gratuity_amount > max_gratuity:
             eos.gratuity_amount = max_gratuity
         # -------------------------------
         # NOTICE PAY
         # -------------------------------
-        if eos.notice_period_days:
-            eos.notice_pay = daily_wage * Decimal(eos.notice_period_days)
+        # v1.15.1: pay in lieu of notice only for the notice days not worked (resigned on → last working day);
+        # before, the whole notice period was added even when the employee worked it
+        served = (end_date - resignation.resigned_on).days if resignation.resigned_on else 0
+        unserved = max(int(eos.notice_period_days or 0) - max(served, 0), 0)
+        if unserved:
+            eos.notice_pay = (daily_wage * Decimal(unserved)).quantize(Decimal('0.01'))
         else:
             eos.notice_pay = Decimal('0.00')
 

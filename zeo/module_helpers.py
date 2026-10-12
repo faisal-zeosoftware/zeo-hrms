@@ -140,6 +140,11 @@ def notify(*, user=None, employee=None, title='', message='', notification_type=
     """Best effort: never raises, never blocks the business transaction."""
     if not user and employee is not None:
         user = getattr(employee, 'users', None)
+    try:  # v1.15.0: in the reader's language (before the 255-character cut)
+        from Translations.i18n import for_reader
+        title, message = for_reader(title, user, employee), for_reader(message, user, employee)
+    except Exception:
+        pass
     try:
         from EmpManagement.utils import send_notification_email, get_employee_context
         context = get_employee_context(employee) if employee is not None else {}
@@ -192,7 +197,11 @@ def _label(obj):
         return f"{name} ({obj.emp_code})" if name else obj.emp_code
     for attr in ('branch_name', 'dept_name', 'desgntn_job_title', 'ctgry_title', 'username'):
         if hasattr(obj, attr) and getattr(obj, attr):
-            return getattr(obj, attr)
+            try:  # v1.15.0: the translated name in the request language (GET only; English otherwise)
+                from Translations.services import display_name
+                return display_name(obj, attr) or getattr(obj, attr)
+            except Exception:
+                return getattr(obj, attr)
     return str(obj)
 
 

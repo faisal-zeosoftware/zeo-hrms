@@ -3,6 +3,7 @@ from rest_framework import serializers
 from zeo.module_helpers import DisplayFieldsMixin, model_clean
 from . import models as M
 from .services import course_progress, emp_name, trainer_stats
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 def _ref_models():
@@ -51,7 +52,7 @@ class IdRefMixin(DisplayFieldsMixin):
         for key, (model, _) in _ref_models().items():
             v = attrs.get(key)
             if v not in (None, '') and not model.objects.filter(pk=v).exists():
-                raise serializers.ValidationError({key: f"{key[:-3].replace('_', ' ').title()} {v} does not exist."})
+                raise serializers.ValidationError({key: tr('{0} {1} does not exist.', key[:-3].replace('_', ' ').title(), v)})
         return model_clean(self, attrs, self.Meta.model)
 
 

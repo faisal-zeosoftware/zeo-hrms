@@ -69,21 +69,17 @@ def create_tenant_defaults(sender, tenant, **kwargs):
             year=current_year
         )
 
-        # Create Predefined Default Holidays for the Current Year
-        default_holidays = [
-            ("New Year's Day", date(current_year, 1, 1), date(current_year, 1, 1)),
-            ("Labor Day", date(current_year, 5, 1), date(current_year, 5, 1)),
-            ("Christmas Day", date(current_year, 12, 25), date(current_year, 12, 25)),
-        ]
-
-        for desc, start, end in default_holidays:
+        # v1.15.1: the default holidays come from the company's country pack (CountryPack/holidays.py) instead of a
+        # fixed western list for every company. Islamic holidays are added with their expected dates and a note.
+        try:
+            from CountryPack.packs import pack_for_code
+            from CountryPack.holidays import seed_calendar
+            cc = getattr(getattr(tenant, 'country', None), 'country_code', '') or ''
+            seed_calendar(h_calendar, pack_for_code(cc) if cc else 'AE', current_year)
+        except Exception:
             holiday.objects.get_or_create(
-                description=desc,
-                defaults={
-                    'calendar': h_calendar,
-                    'start_date': start,
-                    'end_date': end
-                }
+                description=f"New Year's Day {current_year}",
+                defaults={'calendar': h_calendar, 'start_date': date(current_year, 1, 1), 'end_date': date(current_year, 1, 1)},
             )
 
         # Assign Holiday Calendar to Default Branch
@@ -180,13 +176,13 @@ def create_tenant_defaults(sender, tenant, **kwargs):
         std_defaults.load_all([branch], schema=tenant.schema_name)
 
         country_name = (tenant.country.country_name.strip().upper()if tenant.country else "")
-        
-        if country_name in ["UAE", "UNITED ARAB EMIRATES"]:
-            print("Creating UAE document types...")
-            default_document_types = [
-                "Emirates ID",
-                "Passport",
-        ]
+        # v1.14.0: the document types of the company country's pack (AE: Emirates ID, Passport – as before)
+        try:
+            from CountryPack.services import document_types_for_country
+            default_document_types = document_types_for_country(tenant.country) if tenant.country else []
+        except ImportError:
+            default_document_types = ["Emirates ID", "Passport"] if country_name in ["UAE", "UNITED ARAB EMIRATES"] else []
+        if default_document_types:
             for name in default_document_types:
                 doc_type, created = document_type.objects.get_or_create(
                     type_name=name,
@@ -252,6 +248,15 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
                 }
             )
 
+    # v1.22.0: a branch added later gets the first branch's calendars, leave types, workflows and salary components
+    try:
+        from OrganisationManager.branch_setup import copy_setup
+        if brnch_mstr.objects.exclude(pk=instance.pk).exists():
+            copy_setup(instance, user=getattr(instance, 'br_created_by', None))
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('The set-up of the first branch could not be copied to the new branch')
+
     # Default e-mail templates. They used to be created only from post_schema_sync, which can run
     # before the first branch exists, so new companies had no templates at all.
     try:
@@ -287,6 +292,7 @@ def create_workflow_and_default_level(sender, instance, created, **kwargs):
         approver=None
     )
 SETTINGS_CODES = [
+    'add_term', 'change_term', 'delete_term',   # v1.15.0 translations are server-wide: company admins / named translators only
     'view_brnch_mstr',
     'add_brnch_mstr',
     'change_brnch_mstr',

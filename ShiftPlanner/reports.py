@@ -3,6 +3,7 @@ v1.12.0 – shift reports for the report centre (DashboardManagement/reports.py 
 Registered at the end of DashboardManagement/reports.py ('shift-roster', 'shift-requests').
 """
 from datetime import timedelta
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 def _h():
@@ -17,7 +18,7 @@ def r_shift_roster(run):
     from .resolver import describe
     from .services import shifts_by_id
     if run.date_from and run.date_to and (run.date_to - run.date_from).days > 92:
-        raise ValueError('Choose at most 3 months.')
+        raise ValueError(tr('Choose at most 3 months.'))
     emps = {e.pk: e for e in run.all_employees}
     shifts = shifts_by_id()
     rules = {x.shift_id: x for x in ShiftRule.objects.all()}

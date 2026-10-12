@@ -7,6 +7,7 @@
 """
 from django.db import connection
 from rest_framework.permissions import SAFE_METHODS, BasePermission
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 LD_CODES = {'add_course', 'change_course', 'add_trainingsession', 'change_trainingsession', 'change_nomination'}
 
@@ -68,14 +69,14 @@ class LPPermission(BasePermission):
     def has_permission(self, request, view):
         u = request.user
         if not u or not u.is_authenticated:
-            self.message = 'Please log in.'
+            self.message = tr('Please log in.')
             return False
         schema = connection.schema_name
         if schema == 'public':
-            self.message = 'Select a company.'
+            self.message = tr('Select a company.')
             return False
         if not u.is_superuser and not u.tenants.filter(schema_name=schema).exists():
-            self.message = 'You do not have access to this company.'
+            self.message = tr('You do not have access to this company.')
             return False
         if request.method in SAFE_METHODS:
             return True
@@ -87,5 +88,5 @@ class LPPermission(BasePermission):
         verb = {'POST': 'add', 'DELETE': 'delete'}.get(request.method, 'change')
         if is_hr(request, model._meta.model_name if model else None, verb):
             return True
-        self.message = 'Only L&D / HR can change this.'
+        self.message = tr('Only L&D / HR can change this.')
         return False

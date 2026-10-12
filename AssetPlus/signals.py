@@ -14,6 +14,7 @@ from django.core.exceptions import ValidationError
 from django.db import connection
 from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def _allocation_before(sender, instance, **kwargs):
     if st in ('maintenance', 'disposed', 'lost'):
         raise ValidationError({'asset': [S.BLOCK_MSG[st]]})
     if S.open_shared(asset.pk):
-        raise ValidationError({'asset': ['This asset is allocated to a location / department. Return or transfer it first.']})
+        raise ValidationError({'asset': [tr('This asset is allocated to a location / department. Return or transfer it first.')]})
 
 
 @receiver(post_save, sender='OrganisationManager.AssetAllocation')
@@ -121,6 +122,41 @@ def _allocation_after(sender, instance, created, **kwargs):
                         employee_id=instance.employee_id, ref=('allocation', instance.pk))
     except Exception:
         log.exception('allocation history failed')
+
+
+# v1.15.1 – Asset.status follows the allocations (one source of truth for the asset screens and the dashboards):
+# allocating, returning (also by editing the returned date), deleting an allocation and editing the status on the old
+# asset master screen all end with the status the allocations give.
+def _sync(asset_id):
+    if not asset_id or not _tenant() or not _ready():
+        return
+    from . import services as S
+    try:
+        S.sync_status(asset_id)
+    except Exception:
+        log.exception('asset status sync failed')
+
+
+@receiver(post_save, sender='OrganisationManager.AssetAllocation', dispatch_uid='assetplus_alloc_status_sync')
+def _allocation_status_sync(sender, instance, **kwargs):
+    _sync(instance.asset_id)
+
+
+@receiver(post_delete, sender='OrganisationManager.AssetAllocation', dispatch_uid='assetplus_alloc_status_sync_del')
+def _allocation_deleted_status_sync(sender, instance, **kwargs):
+    _sync(instance.asset_id)
+
+
+@receiver(post_save, sender='AssetPlus.SharedAllocation', dispatch_uid='assetplus_shared_status_sync')
+@receiver(post_delete, sender='AssetPlus.SharedAllocation', dispatch_uid='assetplus_shared_status_sync_del')
+def _shared_status_sync(sender, instance, **kwargs):
+    _sync(instance.asset_id)
+
+
+@receiver(post_save, sender='OrganisationManager.Asset', dispatch_uid='assetplus_asset_status_sync')
+def _asset_status_sync(sender, instance, **kwargs):
+    if instance.status in ('available', 'assigned'):
+        _sync(instance.pk)
 
 
 @receiver(pre_save, sender='OrganisationManager.AssetRequest')

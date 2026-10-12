@@ -154,6 +154,30 @@ def r_asset_disposals(run):
             ('result', 'Result', 'text'), ('status', 'Status', 'text')], rows
 
 
+def r_asset_verification(run):
+    """v1.18.0: periodic physical verification – overdue / due in the period, and the result of the last check."""
+    R = _h()
+    days = S.M('AssetPlus', 'AssetPlusSettings').get().verification_days
+    bn = _branch_names()
+    rows = []
+    for a, p, h, s, b in _assets(run):
+        nxt = S.verification_next_due(p, a) if days else None
+        if run.date_to and nxt and nxt > run.date_to and p.last_verified_result not in ('not_found', 'damaged'):
+            continue
+        state = 'Not scheduled' if not nxt else ('Overdue' if nxt < run.today else 'Due')
+        if p.last_verified_result in ('not_found', 'damaged'):
+            state = 'Exception'
+        rows.append({'code': p.asset_code, 'asset': a.name, 'branch': bn.get(b, ''), 'location': p.location,
+                     'held_by': S.person(h.employee) if h else (S.holder_label_shared(s) if s else 'In store'),
+                     'last_verified': p.last_verified_on or '', 'result': S.VERIFY_RESULTS.get(p.last_verified_result, 'Never verified'),
+                     'by': S.user_label(p.last_verified_by_id) if p.last_verified_by_id else '', 'next_due': nxt or '', 'state': state, **R.src(a)})
+    order = {'Exception': 0, 'Overdue': 1, 'Due': 2}
+    rows.sort(key=lambda r: (order.get(r['state'], 9), str(r['next_due'])))
+    return [('code', 'Asset code', 'text'), ('asset', 'Asset', 'text'), ('branch', 'Branch', 'text'), ('location', 'Location', 'text'),
+            ('held_by', 'Held by', 'text'), ('last_verified', 'Last verified', 'date'), ('result', 'Result', 'text'), ('by', 'Verified by', 'text'),
+            ('next_due', 'Next verification', 'date'), ('state', 'State', 'text')], rows
+
+
 # key: (title, section, description, function, default period, rights) – same shape as DashboardManagement.reports.REPORTS
 REPORTS = {
     'asset-register': ('Asset register (book value)', 'Requests & exits', 'Every asset with code, branch, status, holder, cost, accumulated depreciation and book value on the period end date.',
@@ -164,6 +188,8 @@ REPORTS = {
                            r_assets_by_employee, None, ['view_assetallocation']),
     'asset-recovery': ('Damage and loss recovery', 'Requests & exits', 'Damage and loss records with responsibility, amount to recover, recovered by payroll and outstanding.',
                        r_asset_recovery, 'year', ['view_assetdamage', 'view_assetloss', 'view_asset']),
+    'asset-verification': ('Asset verification due', 'Requests & exits', 'Periodic physical verification: assets overdue or due in the period, exceptions (not found / damaged) and the last check.',
+                           r_asset_verification, 'next90', ['view_asset', 'verify_asset']),
     'asset-disposals': ('Disposals – gain / loss', 'Requests & exits', 'Assets sold, scrapped, donated or written off with book value, value received and gain or loss.',
                         r_asset_disposals, 'year', ['view_asset', 'view_assetdisposal']),
 }
@@ -171,4 +197,5 @@ REPORT_MODELS = {
     'asset-register': {'OrganisationManager.Asset'}, 'asset-maintenance-due': {'OrganisationManager.Asset'},
     'assets-by-employee': {'OrganisationManager.AssetAllocation', 'OrganisationManager.Asset', 'EmpManagement.emp_master'},
     'asset-recovery': {'OrganisationManager.Asset', 'EmpManagement.emp_master'}, 'asset-disposals': {'OrganisationManager.Asset'},
+    'asset-verification': {'OrganisationManager.Asset'},
 }

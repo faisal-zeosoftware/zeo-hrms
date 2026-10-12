@@ -6,6 +6,7 @@ from django.db.models import Q
 
 from .models import (DEFAULT_LABELS, BranchCountryPolicy, CostCenter, CountryPolicy, Division, DivisionDepartment, EmployeeOrg, EmploymentType,
                      Grade, JobPosition, Location, OrgSettings, Section)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -177,10 +178,10 @@ def validate_assignment(emp, data, current=None, by_code=False, settings=None):
         v = data.get(k)
         obj = _pick(model, v, by_code=by_code or k.endswith('_code'))
         if v not in (None, '', 0, '0') and obj is None:
-            errors[f] = f'{s.label(key)} "{v}" does not exist.'
+            errors[f] = tr('{0} "{1}" does not exist.', s.label(key), v)
             continue
         if obj is not None and not obj.active and (current is None or getattr(current, f + '_id') != obj.pk):
-            errors[f] = f'{s.label(key)} {obj.name} is inactive – choose an active one.'
+            errors[f] = tr('{0} {1} is inactive – choose an active one.', s.label(key), obj.name)
             continue
         out[f] = obj
     if 'contract_end_date' in data:
@@ -191,23 +192,23 @@ def validate_assignment(emp, data, current=None, by_code=False, settings=None):
         except ValueError:
             out['contract_end_date'] = None
         if v and out['contract_end_date'] is None:
-            errors['contract_end_date'] = 'Use the date format YYYY-MM-DD.'
+            errors['contract_end_date'] = tr('Use the date format YYYY-MM-DD.')
     else:
         out['contract_end_date'] = current.contract_end_date if current else None
     # mandatory fields of active settings
     for f, key, _ in ORG_FIELDS:
         if s.is_on(key) and (s.mandatory or {}).get(key) and out.get(f) is None and f not in errors:
-            errors[f] = f'{s.label(key)} is required.'
+            errors[f] = tr('{0} is required.', s.label(key))
     branch = emp.emp_branch_id_id
     dept = emp.emp_dept_id_id
     desg = emp.emp_desgntn_id_id
     for f, key, _ in ORG_FIELDS:
         obj = out.get(f)
         if obj is not None and f not in errors and obj.branch_ids and branch and branch not in [int(b) for b in obj.branch_ids]:
-            errors[f] = f'{s.label(key)} {obj.name} is not used in the employee’s branch – pick one of the branch or add the branch to it.'
+            errors[f] = tr('{0} {1} is not used in the employee’s branch – pick one of the branch or add the branch to it.', s.label(key), obj.name)
     sec = out.get('section')
     if sec is not None and 'section' not in errors and sec.department_id != dept:
-        errors['section'] = f'{s.label("sections")} {sec.name} belongs to another department – choose a {s.label("sections").lower()} of the employee’s department.'
+        errors['section'] = tr('{0} {1} belongs to another department – choose a {2} of the employee’s department.', s.label("sections"), sec.name, s.label("sections").lower())
     div = out.get('division')
     if 'division' not in data and 'division_id' not in data and 'division_code' not in data and s.use_divisions and dept:
         link = DivisionDepartment.objects.filter(department_id=dept).select_related('division').first()
@@ -216,21 +217,21 @@ def validate_assignment(emp, data, current=None, by_code=False, settings=None):
     if div is not None and 'division' not in errors and dept:
         link = DivisionDepartment.objects.filter(department_id=dept).first()
         if link and link.division_id != div.pk:
-            errors['division'] = f'The employee’s department belongs to another {s.label("divisions").lower()}.'
+            errors['division'] = tr('The employee’s department belongs to another {0}.', s.label("divisions").lower())
     g = out.get('grade')
     if g is not None and 'grade' not in errors and g.designation_ids and desg and desg not in [int(x) for x in g.designation_ids]:
-        errors['grade'] = f'{s.label("grades")} {g.name} is not allowed for the employee’s designation.'
+        errors['grade'] = tr('{0} {1} is not allowed for the employee’s designation.', s.label("grades"), g.name)
     p = out.get('job_position')
     if p is not None and 'job_position' not in errors:
         if p.department_id and dept and p.department_id != dept:
-            errors['job_position'] = f'{s.label("job_positions")} {p.name} belongs to another department.'
+            errors['job_position'] = tr('{0} {1} belongs to another department.', s.label("job_positions"), p.name)
         elif p.designation_id and desg and p.designation_id != desg:
-            errors['job_position'] = f'{s.label("job_positions")} {p.name} is for another designation.'
+            errors['job_position'] = tr('{0} {1} is for another designation.', s.label("job_positions"), p.name)
         elif p.grade_id and g is not None and p.grade_id != g.pk:
-            errors['job_position'] = f'{s.label("job_positions")} {p.name} is graded {p.grade.name}, not {g.name}.'
+            errors['job_position'] = tr('{0} {1} is graded {2}, not {3}.', s.label("job_positions"), p.name, p.grade.name, g.name)
     cc = out.get('cost_center')
     if cc is not None and 'cost_center' not in errors and cc.department_id and dept and cc.department_id != dept:
-        errors['cost_center'] = f'{s.label("cost_centers")} {cc.name} belongs to another department.'
+        errors['cost_center'] = tr('{0} {1} belongs to another department.', s.label("cost_centers"), cc.name)
     et = out.get('employment_type')
     if et is not None and not et.has_end_date and out.get('contract_end_date') and 'contract_end_date' not in errors and 'contract_end_date' in data:
         pass  # an end date on a permanent type is allowed (kept for information)

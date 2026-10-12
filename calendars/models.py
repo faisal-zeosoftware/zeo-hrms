@@ -1077,7 +1077,7 @@ class CompensatoryLeaveRequest(models.Model):
             last_approval = self.approvals.order_by('-level').first()
             LeaveApproval.objects.create(
                 compensatory_request=self,
-                approver=next_level.approver,
+                approver=_lp_approver(next_level, self.employee, next_level.approver),   # v1.15.1: role / fallback when the level names nobody
                 level=next_level.level,
                 status=LeaveApproval.PENDING,
                 note=last_approval.note if last_approval else None
@@ -1144,7 +1144,7 @@ def create_initial_approval_for_compensatory_leave(sender, instance, created, **
         if first_level:
             LeaveApproval.objects.create(
                 compensatory_request=instance,
-                approver=first_level.approver,
+                approver=_lp_approver(first_level, instance.employee, first_level.approver),   # v1.15.1: never empty (approver is required)
                 level=first_level.level,
                 status=LeaveApproval.PENDING
             )
@@ -1264,6 +1264,22 @@ class employee_leave_request(models.Model):
 
         # Check if leave type does not allow negative balance and employee has insufficient balance
         if not self.leave_type.negative and (leave_balance.balance or 0) < leave_days_requested:
+            # v1.16.0 (D21): the employee has a leave policy that does not include this leave type – say so instead of
+            # "Insufficient leave balance" (the balance is 0 because the policy never gives this type)
+            policy = None
+            try:
+                from LeavePolicy import engine as lp_engine
+                policy = lp_engine.policy_for(self.employee)
+            except Exception:
+                policy = None
+            if policy is not None:
+                try:
+                    from Translations.i18n import tr
+                except Exception:
+                    def tr(text, *a):
+                        return text.format(*a)
+                raise ValidationError(tr('{0} is not in the leave policy "{1}" of this employee. Choose another leave type, '
+                                         'or ask HR to add {0} to the policy.', self.leave_type.name, policy.name))
             raise ValidationError("Insufficient leave balance for this leave type.")
         
 
@@ -1285,8 +1301,6 @@ class employee_leave_request(models.Model):
         status_changed_to_rejected = (
         previous_instance and previous_instance.status == 'approved'
         ) and self.status == 'rejected'
-        print("s",status_changed_to_approved)
-        print("sr",status_changed_to_rejected)
         with transaction.atomic():
             super().save(*args, **kwargs)
             if status_changed_to_approved:
@@ -1334,9 +1348,13 @@ class employee_leave_request(models.Model):
         holiday_dates = set()
 
         if assigned_holiday:
-            holiday_dates = set(
-                assigned_holiday.holiday_list.all().values_list('start_date', flat=True)
-            )
+            # v1.15.1: every day of a holiday (Eid / National Day run over several days) – only the first day was
+            # skipped, so working-day leave over the 2nd day was counted and taken from the balance
+            for _s, _e in assigned_holiday.holiday_list.all().values_list('start_date', 'end_date'):
+                _d = _s
+                while _d <= (_e or _s):
+                    holiday_dates.add(_d)
+                    _d += timedelta(days=1)
 
         # -------------------- DATE LOOP --------------------
         while current_date <= self.end_date:
@@ -3645,6 +3663,7 @@ class EmployeeOvertime(models.Model):
         ('NORMAL', 'Normal OT'),
         ('WEEKEND', 'Weekend OT'),
         ('HOLIDAY', 'Holiday OT'),
+        ('NIGHT', 'Night OT'),   # v1.20.2: 22:00–04:00 for workers not on rotating shifts (choices only – no table change)
     )
     SLAB_CHOICES = (
         ('OT', 'Overtime'),
@@ -3704,6 +3723,7 @@ class OvertimePolicy(models.Model):
         ('NORMAL', 'Normal OT'),
         ('WEEKEND', 'Weekend OT'),
         ('HOLIDAY', 'Holiday OT'),
+        ('NIGHT', 'Night OT'),   # v1.20.2 (choices only – no table change)
     )
     name = models.CharField(max_length=100)
     ot_type = models.CharField(max_length=10,choices=OT_TYPE_CHOICES,null=True, blank=True,)

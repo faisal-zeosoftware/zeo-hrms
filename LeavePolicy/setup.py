@@ -87,6 +87,19 @@ def load(user=None):
             t = LT.objects.filter(is_compensatory=True).first()
             if t is not None:
                 by_name[name.lower()] = t
+        if t is None and cat == 'paternity':
+            # v1.18.0: a new company starts with a default "Paternity Leave"; UAE law has parental leave (Art. 32) – use that type
+            # (renamed) instead of adding a second one that has no workflow or policy line. Only while nobody has used it.
+            LR = M('calendars', 'employee_leave_request')
+            t = LT.objects.filter(leave_category='paternity', name__iexact='Paternity Leave').first()
+            if t is not None and not LR.objects.filter(leave_type=t).exists():
+                t.name, t.description = name, desc[:200]
+                t.include_weekend, t.include_holiday, t.use_common_workflow = True, True, False
+                t.save()
+                by_name.pop('paternity leave', None)
+                by_name[name.lower()] = t
+            else:
+                t = None
         if t is None:
             c, n = code, 2
             while LT.objects.filter(code=c, branch__isnull=True).exists():

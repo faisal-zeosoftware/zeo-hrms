@@ -10,6 +10,7 @@ from django.utils import timezone
 from . import notify
 from .models import Availability, RosterEntry, RosterPeriod, ShiftRule
 from .resolver import Book, ZERO, describe, holidays
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 EDITABLE = ('draft', 'rejected', 'published')
 LIVE = ('draft', 'submitted', 'approved', 'published', 'rejected')
@@ -143,7 +144,7 @@ def refuse_if_leave(emp, *days):
     for d in days:
         lv = leave_on(emp.pk, d)
         if lv:
-            raise PlanError(f'{person(emp)} has {lv["status"]} leave ({lv["type"]}) on {d:%d %b %Y}. Cancel or change the leave first.')
+            raise PlanError(tr('{0} has {1} leave ({2}) on {3:%d %b %Y}. Cancel or change the leave first.', person(emp), lv["status"], lv["type"], d))
 
 
 def availability_index(emp_ids):
@@ -207,13 +208,13 @@ def _weekend_names(emp):
 
 def check_editable(p):
     if p.status not in EDITABLE:
-        raise PlanError(f'This roster is {p.get_status_display().lower()}. Send it back to draft before changing it.', status=409)
+        raise PlanError(tr('This roster is {0}. Send it back to draft before changing it.', p.get_status_display().lower()), status=409)
 
 
 def upsert_entry(p, emp, day, shift_id, off, source, user=None, note=None, notify_after_publish=True):
     """Set one roster cell. On a published roster the change is marked and the employee is told."""
     if day < p.date_from or day > p.date_to:
-        raise PlanError(f'{day:%d %b %Y} is outside this roster ({p.date_from:%d %b} – {p.date_to:%d %b %Y}).')
+        raise PlanError(tr('{0:%d %b %Y} is outside this roster ({1:%d %b} – {2:%d %b %Y}).', day, p.date_from, p.date_to))
     if shift_id is None and not off:
         RosterEntry.objects.filter(period=p, employee_id=emp.pk, date=day).delete()
         return None
@@ -231,8 +232,8 @@ def upsert_entry(p, emp, day, shift_id, off, source, user=None, note=None, notif
     e.save()
     if p.status == 'published' and notify_after_publish and (created or before != (e.shift_id, e.off)):
         sh = shifts_by_id().get(e.shift_id) if e.shift_id else None
-        notify.send(employee=emp, kind='changed', title='Your shift was changed',
-                    message=f'Your shift on {day:%a %d %b %Y} is now: {shift_label(sh)}.' + (f' Note: {e.note}' if e.note else ''))
+        notify.send(employee=emp, kind='changed', title=tmsg('Your shift was changed'),
+                    message=tmsg('Your shift on {0:%a %d %b %Y} is now: {1}.', day, shift_label(sh)) + (f' Note: {e.note}' if e.note else ''))
     return e
 
 
@@ -416,3 +417,34 @@ def stamp(obj, user, status, note=''):
     obj.decided_by_id = getattr(user, 'pk', None)
     obj.decided_at = timezone.now()
     obj.decision_note = (note or '')[:255]
+
+
+# ------------------------------------------------------------------ v1.18.0: leave ↔ roster / staffing conflict (advice for approvers)
+def leave_roster_conflicts(req):
+    """For a leave request: the days the employee is rostered on a working shift in an approved / published roster, and per
+    day how many colleagues of the same roster stay on that shift once approved / pending leave is taken away.
+    Returns {'rostered_days': n, 'days': [{date, shift, others_left}], 'text': '...'} or None when there is no roster clash."""
+    from .models import RosterEntry
+    try:
+        a, b = req.start_date, req.end_date
+        mine = list(RosterEntry.objects.filter(employee_id=req.employee_id, date__range=(a, b), off=False, shift_id__isnull=False,
+                                               period__status__in=('approved', 'published')).select_related('period'))
+    except Exception:
+        return None
+    if not mine:
+        return None
+    from django.apps import apps
+    Shift = apps.get_model('calendars', 'Shift')
+    names = dict(Shift.objects.filter(pk__in={e.shift_id for e in mine}).values_list('id', 'name')) if Shift else {}
+    days = []
+    for e in mine:
+        same = list(RosterEntry.objects.filter(period_id=e.period_id, date=e.date, shift_id=e.shift_id, off=False)
+                    .exclude(employee_id=req.employee_id).values_list('employee_id', flat=True))
+        away = leave_map(same, e.date, e.date) if same else {}
+        left = sum(1 for x in same if (x, e.date) not in away)
+        days.append({'date': e.date, 'shift': names.get(e.shift_id, ''), 'others_left': left})
+    thin = [d for d in days if d['others_left'] <= 1]
+    text = tr('Rostered on {0} of the leave days – the roster planner must cover them.', len(days))
+    if thin:
+        text += ' ' + tr('Short staffing: {0}.', ', '.join(f"{d['date']:%d/%m} {d['shift']} ({d['others_left']} left)" for d in thin[:6]))
+    return {'rostered_days': len(days), 'days': days, 'short_days': len(thin), 'text': text}

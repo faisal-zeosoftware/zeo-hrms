@@ -14,6 +14,7 @@ from django.db import transaction
 
 from AccessControl.ess_guard import (DEFAULT_POLICY, HIDDEN, HR, LOCKED, POLICIES, REQUEST, SELF, field_policy,
                                      policy_map)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 M = apps.get_model
 
@@ -193,8 +194,38 @@ def groups_definition():
             known = {f[0] for f in fields}
             fields += [f for f in ep_fields[g['key']] if f[0] and f[0] not in known and f[0] not in SYSTEM_FIELDS
                        and f[0] not in ('employee', 'employee_id', 'emp_id', 'family_id', 'bank_detail_id', 'qualification_id', 'id')]
-        out.append(dict(g, fields=fields))
+        out.append(_country(dict(g, fields=fields), ep_fields))
     return out
+
+
+# v1.14.0: fields whose caption / use depend on the company's country pack (EmployeeProfile.profile_groups has the country version)
+COUNTRY_FIELDS = {'emirates_id', 'emirates_id_issue_date', 'emirates_id_expiry_date', 'visa_uid', 'visa_file_no', 'labour_card_no',
+                  'labour_card_issue_date', 'labour_card_expiry_date', 'work_permit_no', 'work_permit_expiry_date', 'mohre_contract_type',
+                  'mohre_contract_no', 'driving_licence_emirate', 'emp_state_id', 'wps_agent', 'route_code'}
+
+
+def _country(g, ep_fields):
+    try:
+        from CountryPack.services import current_pack
+        cp = current_pack()
+    except ImportError:
+        return g
+    if cp['pack'] == 'AE' and not cp['overridden']['labels'] and not cp['overridden']['features']:
+        return g
+    ep = {f[0]: f for f in ep_fields.get(g['key']) or []}
+    fields = []
+    for f in g['fields']:
+        if f[0] in COUNTRY_FIELDS and ep:
+            if f[0] not in ep:
+                continue   # switched off for this country
+            f = (f[0], ep[f[0]][1], f[2])
+        if f[0] == 'person_id':
+            if not cp['features']['wps_sif']:
+                continue
+            f = (f[0], f"{cp['labels']['labour_authority']} person ID", f[2])
+        fields.append(f)
+    label = 'Identity documents' if g['key'] == 'identity' and cp['pack'] != 'AE' else g['label']
+    return dict(g, label=label, fields=fields)
 
 
 # ------------------------------------------------------------------------------------------------ policy
@@ -537,33 +568,33 @@ def _fallback_validate(emp, group, record_id, data, action='update'):
         if iban not in (None, ''):
             s = re.sub(r'\s+', '', str(iban)).upper()
             if s.startswith('AE') and len(s) != 23:
-                errors['iban_number'] = 'A UAE IBAN has 23 characters (AE + 21).'
+                errors['iban_number'] = tr('A UAE IBAN has 23 characters (AE + 21).')
             elif not _iban_ok(s):
-                errors['iban_number'] = 'This IBAN is not valid – check the digits (the check digits do not match).'
+                errors['iban_number'] = tr('This IBAN is not valid – check the digits (the check digits do not match).')
             else:
                 data['iban_number'] = s
         if action == 'create' and not data.get('account_number'):
-            errors['account_number'] = 'Enter the account number.'
+            errors['account_number'] = tr('Enter the account number.')
     if group in ('contact',):
         for k in ('emp_mobile_number_1', 'emp_mobile_number_2'):
             v = (data.get(k) or '').strip() if isinstance(data.get(k), str) else data.get(k)
             if v and (not re.fullmatch(r'\+?[0-9 ()\-]{6,24}', str(v)) or len(re.sub(r'\D', '', str(v))) < 7):
-                errors[k] = 'Enter a valid phone number (digits, spaces, + and -).'
+                errors[k] = tr('Enter a valid phone number (digits, spaces, + and -).')
         v = data.get('emp_personal_email')
         if v and not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', str(v)):
-            errors['emp_personal_email'] = 'Enter a valid e-mail address.'
+            errors['emp_personal_email'] = tr('Enter a valid e-mail address.')
     if group == 'documents':
         a, b = data.get('emp_doc_issued_date'), data.get('emp_doc_expiry_date')
         if a and b and str(b) <= str(a):
-            errors['emp_doc_expiry_date'] = 'The expiry date must be after the issue date.'
+            errors['emp_doc_expiry_date'] = tr('The expiry date must be after the issue date.')
     if group == 'experience':
         a, b = data.get('emp_jh_from_date'), data.get('emp_jh_end_date')
         if a and b and str(b) < str(a):
-            errors['emp_jh_end_date'] = 'The end date cannot be before the start date.'
+            errors['emp_jh_end_date'] = tr('The end date cannot be before the start date.')
     if group == 'family':
         d = data.get('ef_date_of_birth')
         if d and str(d) > date.today().isoformat():
-            errors['ef_date_of_birth'] = 'The date of birth cannot be in the future.'
+            errors['ef_date_of_birth'] = tr('The date of birth cannot be in the future.')
     if errors:
         raise ValidationError(errors)
 
@@ -603,7 +634,7 @@ def _fallback_apply(emp, group, record_id, data, user, action='update'):
                 return record_id
             obj = Model.objects.filter(emp_id=emp, pk=record_id).first() if action == 'update' else Model(emp_id=emp, created_by_id=getattr(user, 'pk', None))
             if obj is None:
-                raise ValidationError({'record_id': 'This skill no longer exists.'})
+                raise ValidationError({'record_id': tr('This skill no longer exists.')})
             if 'skill' in data:
                 setattr(obj, f'{fk}_id', int(data['skill']) if data['skill'] not in (None, '') else None)
             if 'percentage' in data:
@@ -614,12 +645,12 @@ def _fallback_apply(emp, group, record_id, data, user, action='update'):
         app, mname = g['model'].split('.')
         Model = M(app, mname)
         if app == 'EmployeeProfile':
-            raise ValidationError({'group': 'This part of the profile needs the Employee profile module.'})
+            raise ValidationError({'group': tr('This part of the profile needs the Employee profile module.')})
         link = 'employee' if mname == 'EmployeeBankDetail' else 'emp_id'
         if action == 'delete':
             obj = Model.objects.filter(**{link: emp, 'pk': record_id}).first()
             if obj is None:
-                raise ValidationError({'record_id': 'This record no longer exists.'})
+                raise ValidationError({'record_id': tr('This record no longer exists.')})
             obj.delete()
             return record_id
         if action == 'create':
@@ -629,7 +660,7 @@ def _fallback_apply(emp, group, record_id, data, user, action='update'):
         else:
             obj = Model.objects.filter(**{link: emp, 'pk': record_id}).first()
             if obj is None:
-                raise ValidationError({'record_id': 'This record no longer exists.'})
+                raise ValidationError({'record_id': tr('This record no longer exists.')})
         base = {k: v for k, v in data.items() if k in {f.name for f in Model._meta.fields}}
         if group == 'family' and action == 'create':
             base.setdefault('ef_company_expence', 0)

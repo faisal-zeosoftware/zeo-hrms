@@ -707,6 +707,17 @@ class EmpSerializer(serializers.ModelSerializer):
                             errors['emp_reporting_manager'] = 'This manager already reports (directly or indirectly) to the employee – choose another manager.'
                 except Exception:
                     pass
+        # v1.22.0: the reporting manager must be a user of this company (else approvals wait for someone who cannot open it)
+        if changed('emp_reporting_manager') and now('emp_reporting_manager') and 'emp_reporting_manager' not in errors:
+            try:
+                from django.db import connection as _cn
+                from UserManagement.models import CustomUser as _CU
+                mgr = now('emp_reporting_manager')
+                mgr_id = getattr(mgr, 'pk', mgr)
+                if _cn.schema_name != 'public' and not _CU.objects.filter(pk=mgr_id, tenants__schema_name=_cn.schema_name).exists():
+                    errors['emp_reporting_manager'] = 'This user does not belong to this company – choose a user of the company as reporting manager.'
+            except Exception:
+                pass
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
@@ -747,7 +758,40 @@ class EmpSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({'emp_code': 'Enter the employee code.'})
                 return super().create(validated_data)
         return super().create(validated_data)
+    # v1.16.0 (D15): leave balances / leave requests / salary rows each read their leave type or salary component again
+    # (one query per row: ~1,100 of the employee list's queries). The rows are read exactly as before (same query, same
+    # order); only the linked leave type / component comes from one read per request.
+    _SHARED_LINKS = (('emp_leave_balance_set', 'leave_type', 'calendars.leave_type'),
+                     ('employee_leave_request_set', 'leave_type', 'calendars.leave_type'),
+                     ('salary_structures', 'component', 'PayrollManagement.SalaryComponent'))
+
+    def _share_linked_rows(self, instance):
+        from django.apps import apps as _apps
+        ctx = self.context if isinstance(self.context, dict) else {}
+        known = ctx.setdefault('_shared_link_rows', {})
+        cache = getattr(instance, '_prefetched_objects_cache', None)
+        if cache is None:
+            cache = instance._prefetched_objects_cache = {}
+        for rel, fk, label in self._SHARED_LINKS:
+            manager = getattr(instance, rel, None)
+            if manager is None or rel in cache:
+                continue
+            qs = manager.all()
+            rows = list(qs)                               # the same query the nested list runs
+            if label not in known:
+                known[label] = {o.pk: o for o in _apps.get_model(label)._default_manager.all()}
+            field = rows[0]._meta.get_field(fk) if rows else None
+            for row in rows:
+                obj = known[label].get(getattr(row, field.attname))
+                if obj is not None:
+                    field.set_cached_value(row, obj)
+            cache[rel] = qs                               # the nested list iterates these rows
+
     def to_representation(self, instance):
+        try:
+            self._share_linked_rows(instance)
+        except Exception:
+            pass
         rep = super(EmpSerializer, self).to_representation(instance)
         if rep.get('emp_marital_status'):   # v1.13.0: old rows may hold 'divorced' / 'widow' – screens and filters see one code
             rep['emp_marital_status'] = marital_code(rep['emp_marital_status'])
@@ -833,14 +877,18 @@ class EmpSerializer(serializers.ModelSerializer):
         )
 
         # 5️⃣ Now fetch all holidays from these calendars
-        holidays = holiday.objects.filter(calendar__in=holiday_calendars)
+        holidays = holiday.objects.filter(calendar__in=holiday_calendars).order_by('start_date', 'id')   # v1.15.1: by date
         return HolidaySerializer(holidays, many=True).data
     def get_announcements(self, obj):
         from OrganisationManager .models import Announcement
         now = timezone.now()
         # v1.13.0: direct, branch, department, designation, category and company-wide announcements within their dates
-        from OrganisationManager.announcements import announcements_for
-        announcements = announcements_for(obj, now=now)
+        from OrganisationManager.announcements import announcements_for, announcement_targets
+        # v1.16.0 (D15): the announcement targets are read once per request (the list serialises every employee)
+        ctx = self.context if isinstance(self.context, dict) else {}
+        if ctx.get('_announcement_targets') is None:
+            ctx['_announcement_targets'] = announcement_targets()
+        announcements = announcements_for(obj, now=now, targets=ctx['_announcement_targets'])
         return announcements.values(
             "id", "title", "message", "created_at", "is_sticky",
             "allow_comments", "attachment","schedule_at","expires_at"

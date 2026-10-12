@@ -10,6 +10,9 @@ from rest_framework.views import APIView
 from . import rejoin as rj_svc
 from . import transfer as tr_svc
 from .models import EmployeeTransfer, RejoinSettlement
+from Translations.i18n import tr as _tr  # v1.15.0 language packs: messages in the user's language
+from django.db.models import Q  # v1.22.0 branch rights
+from AccessControl.access import allowed_branches, emp_ids_in_branches, branch_allows  # v1.22.0 branch rights
 
 M = apps.get_model
 TRANSFER = ('run_employee_transfer', 'add_employeetransfer', 'change_emp_master')
@@ -63,12 +66,16 @@ class TransfersView(APIView):
 
     def get(self, request):
         if not _can(request, TRANSFER + ('view_employeetransfer',)):
-            return Response({'detail': 'You may not see transfers.'}, status=403)
+            return Response({'detail': _tr('You may not see transfers.')}, status=403)
         n = _names()
         E = M('EmpManagement', 'emp_master')
         emps = {e.pk: e for e in E.objects.filter(pk__in=EmployeeTransfer.objects.values('employee_id'))}
         rows = []
-        for t in EmployeeTransfer.objects.all()[:500]:
+        transfers = EmployeeTransfer.objects.all()
+        mine = allowed_branches(request)   # v1.22.0 branch rights: transfers of the user's employees / from or to their branches
+        if mine is not None:
+            transfers = transfers.filter(Q(employee_id__in=emp_ids_in_branches(mine)) | Q(from_branch_id__in=mine) | Q(to_branch_id__in=mine))
+        for t in transfers[:500]:
             rows.append({'id': t.id, 'employee_id': t.employee_id, 'employee': _person(emps.get(t.employee_id)), 'effective_date': t.effective_date,
                          'from_branch': n['b'].get(t.from_branch_id, ''), 'to_branch': n['b'].get(t.to_branch_id, ''),
                          'from_department': n['d'].get(t.from_department_id, ''), 'to_department': n['d'].get(t.to_department_id, ''),
@@ -80,13 +87,13 @@ class TransfersView(APIView):
     def post(self, request):
         """Create a transfer: carried out now when the date has come, else scheduled."""
         if not _can(request, TRANSFER):
-            return Response({'detail': 'You may not transfer employees.'}, status=403)
+            return Response({'detail': _tr('You may not transfer employees.')}, status=403)
         t = _build(request.data, request.user)
         emp = M('EmpManagement', 'emp_master').objects.filter(pk=t.employee_id).first()
         if emp is None:
-            return Response({'detail': 'Choose the employee.'}, status=400)
+            return Response({'detail': _tr('Choose the employee.')}, status=400)
         if not _branches_ok(request, emp.emp_branch_id_id, t.to_branch_id):
-            return Response({'detail': 'You may only transfer between branches you have access to.'}, status=403)
+            return Response({'detail': _tr('You may only transfer between branches you have access to.')}, status=403)
         p = tr_svc.plan(t)
         if p['blockers']:
             return Response({'detail': ' '.join(p['blockers']), 'plan': p}, status=400)
@@ -106,7 +113,7 @@ class TransferPreviewView(APIView):
 
     def post(self, request):
         if not _can(request, TRANSFER):
-            return Response({'detail': 'You may not transfer employees.'}, status=403)
+            return Response({'detail': _tr('You may not transfer employees.')}, status=403)
         return Response(tr_svc.plan(_build(request.data, request.user)))
 
 
@@ -115,12 +122,16 @@ class TransferActionView(APIView):
 
     def post(self, request, pk, action):
         if not _can(request, TRANSFER):
-            return Response({'detail': 'You may not transfer employees.'}, status=403)
+            return Response({'detail': _tr('You may not transfer employees.')}, status=403)
         t = EmployeeTransfer.objects.filter(pk=pk).first()
         if t is None:
-            return Response({'detail': 'Transfer not found.'}, status=404)
+            return Response({'detail': _tr('Transfer not found.')}, status=404)
+        # v1.22.0 branch rights: the employee's current branch and the target branch must be the user's (as when creating)
+        emp = M('EmpManagement', 'emp_master').objects.filter(pk=t.employee_id).first()
+        if not _branches_ok(request, emp.emp_branch_id_id if emp else None, t.from_branch_id, t.to_branch_id):
+            return Response({'detail': _tr('You may only transfer between branches you have access to.')}, status=403)
         if t.status != 'scheduled':
-            return Response({'detail': f'This transfer is {t.get_status_display().lower()}.'}, status=400)
+            return Response({'detail': _tr('This transfer is {0}.', t.get_status_display().lower())}, status=400)
         if action == 'cancel':
             t.status = 'cancelled'
             t.save(update_fields=['status'])
@@ -138,7 +149,7 @@ class RejoinsView(APIView):
 
     def get(self, request):
         if not _can(request, REJOIN + ('view_employeerejoining',)):
-            return Response({'detail': 'You may not see rejoinings.'}, status=403)
+            return Response({'detail': _tr('You may not see rejoinings.')}, status=403)
         from AccessControl.access import ctx
         c = ctx(request)
         RJ = M('calendars', 'EmployeeRejoining')
@@ -162,18 +173,20 @@ class RejoinsView(APIView):
 
     def post(self, request):
         if not _can(request, REJOIN):
-            return Response({'detail': 'You may not record rejoinings.'}, status=403)
+            return Response({'detail': _tr('You may not record rejoinings.')}, status=403)
         LR = M('calendars', 'employee_leave_request')
         req = LR.objects.filter(pk=request.data.get('leave_request'), status='approved').select_related('employee').first()
         back = parse_date(str(request.data.get('rejoin_date') or ''))
         if req is None or back is None:
-            return Response({'detail': 'Choose an approved leave and the date the employee is back.'}, status=400)
+            return Response({'detail': _tr('Choose an approved leave and the date the employee is back.')}, status=400)
+        if not branch_allows(request, employee_id=req.employee_id):   # v1.22.0 branch rights
+            return Response({'detail': _tr('You can only work with your branches.')}, status=403)
         if back <= req.start_date:
-            return Response({'detail': 'The return date must be after the leave started.'}, status=400)
+            return Response({'detail': _tr('The return date must be after the leave started.')}, status=400)
         RJ = M('calendars', 'EmployeeRejoining')
         r = RJ.objects.filter(leave_request=req).first()
         if r and RejoinSettlement.objects.filter(rejoining_id=r.pk).exists():
-            return Response({'detail': 'This return is already settled.'}, status=400)
+            return Response({'detail': _tr('This return is already settled.')}, status=400)
         if r:
             RJ.objects.filter(pk=r.pk).update(rejoining_date=back)
         else:
@@ -189,10 +202,10 @@ class RejoinSettleView(APIView):
 
     def post(self, request, pk, action):
         if not _can(request, REJOIN):
-            return Response({'detail': 'You may not settle rejoinings.'}, status=403)
+            return Response({'detail': _tr('You may not settle rejoinings.')}, status=403)
         r = M('calendars', 'EmployeeRejoining').objects.select_related('employee', 'leave_request', 'leave_request__leave_type').filter(pk=pk).first()
-        if r is None:
-            return Response({'detail': 'Rejoining not found.'}, status=404)
+        if r is None or not branch_allows(request, employee_id=r.employee_id):   # v1.22.0 branch rights
+            return Response({'detail': _tr('Rejoining not found.')}, status=404)
         tr, lt = request.data.get('treatment') or 'unpaid', request.data.get('leave_type') or None
         if action == 'preview':
             return Response(rj_svc.plan(r, tr, lt))

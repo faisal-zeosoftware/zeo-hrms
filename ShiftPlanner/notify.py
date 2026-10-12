@@ -18,6 +18,11 @@ def send(*, employee=None, user=None, kind='general', title='', message='', ref=
     try:
         if user is None:
             user = _user_of(employee)
+        try:  # v1.15.0: notice and e-mail in the reader's language
+            from Translations.i18n import for_reader
+            title, message = for_reader(title, user, employee), for_reader(message, user, employee)
+        except Exception:
+            pass
         if ref and ShiftNotice.objects.filter(ref=ref, user_id=getattr(user, 'pk', None), employee_id=getattr(employee, 'pk', None)).exists():
             return None
         n = ShiftNotice.objects.create(user_id=getattr(user, 'pk', None), employee_id=getattr(employee, 'pk', None), kind=kind,

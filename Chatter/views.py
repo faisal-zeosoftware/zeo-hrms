@@ -59,6 +59,15 @@ def _clean_endpoint(endpoint):
     return path
 
 
+# v1.22.0: the add-on apps (CRM, Property, Maintenance, HSE, Projects) say who may open their records:
+# 'App.Model' → fn(request, queryset) → the rows of that queryset the user may open (roles, branches, own records)
+MODEL_SCOPES = {}
+
+
+def register_scope(model, fn):
+    MODEL_SCOPES[model._meta.label] = fn
+
+
 def _view_of(request, endpoint):
     path = _clean_endpoint(endpoint)
     try:
@@ -68,10 +77,13 @@ def _view_of(request, endpoint):
     cls = getattr(match.func, 'cls', None) or getattr(match.func, 'view_class', None)
     if cls is None:
         return path, None
-    view = cls()
+    try:
+        view = cls(**(getattr(match.func, 'view_initkwargs', None) or {}))   # v1.22.0: e.g. the kit app of a register view
+    except TypeError:
+        view = cls()
     view.request = request
     view.format_kwarg = None
-    view.args, view.kwargs = (), {}
+    view.args, view.kwargs = (), dict(match.kwargs or {})   # v1.22.0: e.g. the register kind of the add-on apps
     view.action = 'retrieve'
     return path, view
 
@@ -87,6 +99,12 @@ def model_of(request, endpoint):
             model = view.get_serializer_class().Meta.model
         except Exception:
             model = None
+    if model is None:   # v1.22.0: screens of the add-on apps (APIViews) name their model themselves
+        try:
+            fn = getattr(view, 'zeo_model_for', None)
+            model = fn(view.kwargs) if callable(fn) else getattr(view, 'zeo_model', None)
+        except Exception:
+            model = None
     return path, view, model
 
 
@@ -100,6 +118,14 @@ def visible(request, view, model, ids):
         qs = model._default_manager.filter(pk__in=ids)
     except (ValueError, TypeError):
         return set()
+    own = MODEL_SCOPES.get(model._meta.label)   # v1.22.0: add-on screens apply their own rights (roles, branches, own records)
+    if own is not None and not is_admin(request):
+        try:
+            return {str(pk) for pk in own(request, qs).values_list('pk', flat=True)}
+        except Exception:
+            return set()
+    if own is not None:
+        return {str(pk) for pk in qs.values_list('pk', flat=True)}
     try:
         qs = scope_queryset(request, view, qs)
     except Exception:
@@ -198,12 +224,24 @@ def def_json(d):
 
 
 # ---------------------------------------------------------------- record panel
+def _owner(key):
+    try:
+        from DataTools.onedesign import owner_of
+        return owner_of(key)
+    except Exception:
+        return None
+
+
 class RecordView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         rec, err = get_record(request, request.query_params.get('endpoint'), request.query_params.get('id'))
         if err:
+            if err.status_code == 400:   # v1.17.0 (audit M12): a screen without a record panel – an empty panel, not an error in the console
+                return Response({'panel': False, 'model': None, 'id': request.query_params.get('id'), 'label': '', 'history': [], 'notes': [],
+                                 'attachments': [], 'activities': [], 'fields': [], 'values': {}, 'owner': None,
+                                 'admin': is_admin(request), 'me': request.user.id})
             return err
         q = dict(model=rec.key, object_id=rec.id)
         defs = list(FieldDef.objects.filter(model=rec.key, active=True))
@@ -217,6 +255,7 @@ class RecordView(APIView):
             'activities': [act_json(a) for a in acts],
             'fields': [def_json(d) for d in defs],
             'values': {d.name: vals.get(d.id) for d in defs},
+            'owner': _owner(rec.key),   # v1.16.0: the form's own designer (employee forms, assets), else null
             'admin': is_admin(request),
             'me': request.user.id,
         })
@@ -283,6 +322,12 @@ def _att_access(request, a):
         return False
     if is_admin(request):
         return True
+    own = MODEL_SCOPES.get(model._meta.label)   # v1.22.0 add-on records
+    if own is not None:
+        try:
+            return own(request, model._default_manager.filter(pk=a.object_id)).exists()
+        except Exception:
+            return False
     from AccessControl.access import scope_queryset
 
     class _V:  # scope rules only need the model
@@ -478,9 +523,18 @@ class FieldsView(APIView):
             qs = qs.filter(model=model_key(model))
         if request.query_params.get('active') == '1':
             qs = qs.filter(active=True)
-        return Response({'model': model_key(model) if model else None, 'screen': path,
-                         'can_design': self._can_design(request), 'types': [{'value': k, 'label': v} for k, v in FIELD_TYPES],
-                         'fields': [def_json(d) for d in qs]})
+        out = {'model': model_key(model) if model else None, 'screen': path,
+               'can_design': self._can_design(request), 'types': [{'value': k, 'label': v} for k, v in FIELD_TYPES],
+               'fields': [def_json(d) for d in qs]}
+        if model is not None:
+            # v1.16.0: forms with their own designer (employee forms, assets) – the panel opens that designer instead
+            from DataTools.onedesign import owner_of, owner_message
+            o = owner_of(model_key(model))
+            if o:
+                out['owner'] = o
+                out['owner_message'] = owner_message(model_key(model))
+                out['can_design'] = self._can_design(request) or has_code(request, 'add_assetcustomfield', 'change_assetcustomfield')
+        return Response(out)
 
     def post(self, request):
         if not self._can_design(request):
@@ -489,9 +543,17 @@ class FieldsView(APIView):
         path, view, model = model_of(request, d.get('screen'))
         if model is None:
             return Response({'detail': 'This screen cannot get extra fields.'}, status=status.HTTP_400_BAD_REQUEST)
+        # v1.16.0: one designer per form – employee forms and assets are designed in their own designer
+        from DataTools.onedesign import owner_of, owner_message, model_field_duplicate
+        if owner_of(model_key(model)):
+            return Response({'detail': owner_message(model_key(model)), 'owner': owner_of(model_key(model))}, status=status.HTTP_409_CONFLICT)
         msg = _check_def(d)
         if msg:
             return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+        cap = model_field_duplicate(model, d.get('label'))
+        if cap:
+            return Response({'detail': f'“{str(d.get("label")).strip()}” is already a field of this screen ({cap}). Use that field instead of adding an extra one.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         from DataTools.fieldrules import clean_rules
         rules, rmsg = clean_rules(_rules_in(d), d.get('field_type') or 'text')
         if rmsg:
@@ -524,6 +586,10 @@ class FieldsView(APIView):
         f = FieldDef.objects.filter(pk=d.get('id')).first()
         if f is None:
             raise Http404
+        from DataTools.onedesign import owner_of, owner_message
+        if owner_of(f.model) and not (set(d.keys()) <= {'id', 'active'} and not d.get('active')):
+            # v1.16.0: a field of a form with its own designer can only be switched off here (the migration moves it)
+            return Response({'detail': owner_message(f.model), 'owner': owner_of(f.model)}, status=status.HTTP_409_CONFLICT)
         merged = {**def_json(f), **{k: v for k, v in d.items() if k != 'id'}}
         msg = _check_def(merged)
         if msg:
@@ -893,7 +959,14 @@ class ValuesView(APIView):
                 ecf = list(Emp_CustomField.objects.values_list('emp_custom_field', flat=True))
             except Exception:
                 ecf = []
-        if not defs and not ecf:
+        acf = []
+        if key == 'OrganisationManager.asset':   # v1.16.0: asset custom fields (the asset form's one designer)
+            try:
+                from OrganisationManager.models import AssetCustomField
+                acf = list(AssetCustomField.objects.all())
+            except Exception:
+                acf = []
+        if not defs and not ecf and not acf:
             return Response({'fields': [], 'values': {}})
         ids = [i for i in str(request.query_params.get('ids') or '').split(',') if i.strip()][:5000]
         ok = visible(request, view, model, ids)
@@ -921,7 +994,7 @@ class ValuesView(APIView):
             for c in Emp_CustomField.objects.all():
                 m = meta.get(c.emp_custom_field, {})
                 rules = m.get('rules') or {}
-                if ess and not visible_on(rules, 'ess'):
+                if (ess and not visible_on(rules, 'ess')) or m.get('alias_of'):   # v1.16.0: merged fields are not shown twice
                     hidden.add(c.emp_custom_field)
                     continue
                 fields.append({'name': 'ecf:' + c.emp_custom_field, 'label': c.emp_custom_field, 'field_type': c.data_type or 'text',
@@ -931,6 +1004,21 @@ class ValuesView(APIView):
             for v in Emp_CustomFieldValue.objects.filter(emp_master_id__in=list(ok)).values('emp_master_id', 'emp_custom_field', 'field_value'):
                 if v['emp_custom_field'] not in hidden:
                     out.setdefault(str(v['emp_master_id']), {})['ecf:' + v['emp_custom_field']] = v['field_value']
+        if acf:
+            from OrganisationManager.models import AssetCustomFieldValue
+            from DataTools.onedesign import asset_meta, asset_field_json
+            meta = asset_meta()
+            names = {}
+            for c in acf:
+                j = asset_field_json(c, meta)
+                if j['alias_of']:
+                    continue
+                names[c.id] = c.custom_field
+                fields.append({'name': 'acf:' + c.custom_field, 'label': c.custom_field, 'field_type': j['type'], 'options': j['options'],
+                               'show_in_list': visible_on(j['rules'], 'list'), 'show_in_export': visible_on(j['rules'], 'export'),
+                               'active': True, 'section': j['section'], 'order': j['order'], 'required': j['required']})
+            for v in AssetCustomFieldValue.objects.filter(asset_id__in=list(ok), custom_field_id__in=list(names)).values('asset_id', 'custom_field_id', 'field_value'):
+                out.setdefault(str(v['asset_id']), {})['acf:' + names[v['custom_field_id']]] = v['field_value']
         return Response({'fields': fields, 'values': out})
 
 

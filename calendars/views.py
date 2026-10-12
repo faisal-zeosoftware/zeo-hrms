@@ -88,6 +88,7 @@ from rest_framework.response import Response
 
 from .models import emp_leave_balance, leave_type
 from EmpManagement.models import emp_master
+from AccessControl.access import limit_by_branch, check_branch, allowed_branches, BranchReportMixin  # v1.22.0 branch rights
 
 from .utils import get_or_create_applicable_leave_balance
 
@@ -153,12 +154,12 @@ class AssignWeekendViewset(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 class HolidayViewset(viewsets.ModelViewSet):
-    queryset = holiday.objects.all()
+    queryset = holiday.objects.all().order_by('start_date', 'id')   # v1.15.1: holidays by date
     serializer_class = HolidaySerializer
     permission_classes = [HolidayPermission]
 
 class HolidayCalendarViewset(viewsets.ModelViewSet):
-    queryset = holiday_calendar.objects.all()
+    queryset = holiday_calendar.objects.all().order_by('-year', 'id')
     serializer_class = HolidayCalandarSerializer
     permission_classes = [HolidayCalendarPermission]
 
@@ -366,7 +367,8 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
                     document_number = doc_config.get_next_number()
                     tries += 1
 
-            serializer.save(document_number=document_number)
+            # v1.18.0: who entered the request (the employee, or HR on their behalf) – the notice-period rule uses it
+            serializer.save(document_number=document_number, created_by=self.request.user)
             
 
 
@@ -1755,7 +1757,7 @@ class ImportAttendanceViewSet(viewsets.ModelViewSet):
         )
         return response
 
-class Leave_ReportViewset(viewsets.ModelViewSet):
+class Leave_ReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = LeaveReport.objects.all()
     serializer_class = LeaveReportSerializer
     permission_classes = [LeaveReportPermission] 
@@ -1817,7 +1819,7 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
             
-            leavereport = employee_leave_request.objects.all()
+            leavereport = limit_by_branch(request, employee_leave_request.objects.all(), branch_path='employee__emp_branch_id')  # v1.22.0 branch rights
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,leavereport)
@@ -1840,9 +1842,9 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'leave_std_report'
+            file_name = self._std_name('leave_std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            leavereport = employee_leave_request.objects.all()
+            leavereport = self._scoped(employee_leave_request.objects.all(), 'employee__emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, leavereport)
             file_path = report_file(file_name, 'LeaveReport')
@@ -1867,7 +1869,7 @@ class Leave_ReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = LeaveReport.objects.get(file_name='leave_std_report')
+            report = LeaveReport.objects.get(file_name=self._std_name('leave_std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except LeaveReport.DoesNotExist:
@@ -2375,7 +2377,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
             "response": response_text
         })
     
-class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
+class Lv_Approval_ReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = LeaveApprovalReport.objects.all()
     serializer_class = LvApprovalReportSerializer
     permission_classes = [LeaveApprovalReportPermission]
@@ -2429,7 +2431,7 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
             
-            leavereport = LeaveApproval.objects.all()
+            leavereport = limit_by_branch(request, LeaveApproval.objects.all(), branch_path='leave_request__employee__emp_branch_id')  # v1.22.0 branch rights
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,leavereport)
@@ -2452,9 +2454,9 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'lv_approv_std_report'
+            file_name = self._std_name('lv_approv_std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            leavereport = LeaveApproval.objects.all()
+            leavereport = self._scoped(LeaveApproval.objects.all(), 'leave_request__employee__emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, leavereport)
             file_path = report_file(file_name, 'LeaveApprovalReport')
@@ -2479,7 +2481,7 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = LeaveApprovalReport.objects.get(file_name='lv_approv_std_report')
+            report = LeaveApprovalReport.objects.get(file_name=self._std_name('lv_approv_std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except LeaveApprovalReport.DoesNotExist:
@@ -2670,7 +2672,7 @@ class Lv_Approval_ReportViewset(viewsets.ModelViewSet):
             'report_id': report_id,
         })
 
-class AttendanceReportViewset(viewsets.ModelViewSet):
+class AttendanceReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = AttendanceReport.objects.all()
     serializer_class = AttendanceReportSerializer
     permission_classes = [AttendanceReportPermission]
@@ -2724,7 +2726,7 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
             
-            attendancereport = Attendance.objects.all()
+            attendancereport = limit_by_branch(request, Attendance.objects.all(), branch_path='employee__emp_branch_id')  # v1.22.0 branch rights
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,attendancereport)
@@ -2747,9 +2749,9 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'attendance_std_report'
+            file_name = self._std_name('attendance_std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            attendancereport = Attendance.objects.all()
+            attendancereport = self._scoped(Attendance.objects.all(), 'employee__emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, attendancereport)
             file_path = report_file(file_name, 'AttendanceReport')
@@ -2774,7 +2776,7 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = AttendanceReport.objects.get(file_name='attendance_std_report')
+            report = AttendanceReport.objects.get(file_name=self._std_name('attendance_std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except AttendanceReport.DoesNotExist:
@@ -2940,7 +2942,7 @@ class AttendanceReportViewset(viewsets.ModelViewSet):
             'report_id': report_id,
         })
 
-class LvBalanceReportViewset(viewsets.ModelViewSet):
+class LvBalanceReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = lvBalanceReport.objects.all()
     serializer_class = lvBalanceReportSerializer
     permission_classes = [LvBalanceReportPermission]
@@ -2993,7 +2995,7 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
             
-            attendancereport = emp_leave_balance.objects.all()
+            attendancereport = limit_by_branch(request, emp_leave_balance.objects.all(), branch_path='employee__emp_branch_id')  # v1.22.0 branch rights
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,attendancereport)
@@ -3016,9 +3018,9 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'lvbalance_std_report'
+            file_name = self._std_name('lvbalance_std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            lvbalancereport = emp_leave_balance.objects.all()
+            lvbalancereport = self._scoped(emp_leave_balance.objects.all(), 'employee__emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, lvbalancereport)
             file_path = report_file(file_name, 'lvBalanceReport')
@@ -3043,7 +3045,7 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = lvBalanceReport.objects.get(file_name='lvbalance_std_report')
+            report = lvBalanceReport.objects.get(file_name=self._std_name('lvbalance_std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except lvBalanceReport.DoesNotExist:
@@ -3100,7 +3102,7 @@ class LvBalanceReportViewset(viewsets.ModelViewSet):
         if not selected_fields:
             selected_fields = list(report_content[0].keys()) if report_content else []
 
-        balances = emp_leave_balance.objects.all()
+        balances = limit_by_branch(request, emp_leave_balance.objects.all(), branch_path='employee__emp_branch_id')  # v1.22.0 branch rights
         unique_values = self.get_unique_values_for_fields(balances, selected_fields, report_content)
 
         processed_unique_values = {
@@ -3674,7 +3676,8 @@ class ImmediateRejectAPIView(APIView):
             status=LeaveApproval.APPROVED
         ).first()
 
-        if not approval:
+        # v1.15.1: a leave approved without approval steps (no workflow, or settled by HR on rejoining) can be cancelled too
+        if not approval and leave_request.status != 'approved':
             return Response({'error': 'No approved leave request found for this document number.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # v1.10.0: only users with the leave cancellation right (or company admins) may cancel an approved leave
@@ -3683,10 +3686,11 @@ class ImmediateRejectAPIView(APIView):
             return Response({'error': 'You may not cancel approved leave.'}, status=status.HTTP_403_FORBIDDEN)
 
         # Perform rejection
-        approval.status = LeaveApproval.REJECTED
-        approval.rejection_reason = rejection_reason
-        approval.note = note
-        approval.save()
+        if approval:
+            approval.status = LeaveApproval.REJECTED
+            approval.rejection_reason = rejection_reason
+            approval.note = note
+            approval.save()
 
         # Also change the employee_leave_request status to REJECTED
         # leave_request.status = employee_leave_request.status='rejected'
@@ -3700,7 +3704,7 @@ class ImmediateRejectAPIView(APIView):
             {
                 'status': 'rejected_immediately',
                 'document_number': document_number,
-                'leave_approval_id': approval.id,
+                'leave_approval_id': approval.id if approval else None,
                 'leave_request_id': leave_request.id
             },
             status=status.HTTP_200_OK
@@ -3716,7 +3720,7 @@ class EmployeeAttendanceSummaryAPIView(APIView):
         summaries = []
 
         # You can apply filters here if needed (e.g., by branch, department, etc.)
-        all_employees = emp_master.objects.all()
+        all_employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
 
         # for employee in all_employees:
         #     summary_data = get_attendance_summary(employee, start_date, end_date)
@@ -4234,7 +4238,7 @@ class LeaveResetPreviewAPIView(APIView):
                     continue
 
             leave_type = reset.leave_type
-            employees = emp_master.objects.all()
+            employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
 
             for emp in employees:
                 leave_balance = emp_leave_balance.objects.filter(employee=emp, leave_type=leave_type).first()
@@ -4284,6 +4288,16 @@ def month_name_to_number(month_name):
 class EmployeeOvertimeViewset(viewsets.ModelViewSet):
     queryset = EmployeeOvertime.objects.all()
     serializer_class = EmployeeOvertimeSerializer
+
+    def get_queryset(self):
+        # v1.20.2: one query for the list (employee and approver were read row by row: 8,000 entries took over 10 s), newest first,
+        # and the branches picked in the top bar (?branch_id=[1,2]) are honoured
+        import re as _re
+        qs = super().get_queryset().select_related('employee', 'approved_by').order_by('-date', '-id')
+        ids = [int(x) for x in _re.findall(r'\d+', self.request.query_params.get('branch_id', '') or '')]
+        if ids and self.action == 'list':
+            qs = qs.filter(employee__emp_branch_id__in=ids)
+        return qs
 
 import calendar
 
@@ -4339,7 +4353,10 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
         category_ids    = request.data.get("category_ids", [])
         designation_ids = request.data.get("designation_ids", [])
 
+        # v1.22.0 branch rights: picked branches / employees must be the user's; none picked = the user's branches
+        check_branch(request, branch_id=branch_ids, employee_id=employee_ids)
         employees = emp_master.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_dept_id', 'emp_ctgry_id', 'emp_desgntn_id')
+        employees = limit_by_branch(request, employees, branch_path='emp_branch_id')  # v1.22.0 branch rights
 
         if employee_ids:
             employees = employees.filter(id__in=employee_ids)
@@ -4575,15 +4592,22 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
         # Determine Employees
         # ----------------------------------------
 
+        # v1.22.0 branch rights: ?employee_id / ?branch_id must be in the user's branches (own calendar always allowed);
+        # without them only the user's branches' employees are listed
+        from AccessControl.access import ctx as _ctx
+        _me = _ctx(request).emp
         if employee_id:
+            if not (_me is not None and str(_me.pk) == str(employee_id)):
+                check_branch(request, employee_id=employee_id)
             employees = emp_master.objects.filter(id=employee_id)
         elif branch_id:
+            check_branch(request, branch_id=branch_id)
             employees = emp_master.objects.filter(
                 emp_branch_id_id=branch_id,
                 is_active=True
             )
         else:
-            employees = emp_master.objects.filter(is_active=True)
+            employees = limit_by_branch(request, emp_master.objects.filter(is_active=True), branch_path='emp_branch_id')
 
         if not employees.exists():
             return Response({"error": "No employees found"}, status=404)

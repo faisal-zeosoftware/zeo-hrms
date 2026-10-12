@@ -11,6 +11,7 @@ from collections import defaultdict
 
 from .models import OrgSettings
 from .services import FIELD_SETTING, ORG_FIELDS, active_emp_fields, org_rows
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 COL_KEY = 'org_{}'
 HEADCOUNT_KEYS = {'location': 'headcount-location-unit', 'division': 'headcount-division', 'section': 'headcount-section',
@@ -69,9 +70,9 @@ def headcount_rows(emps, group, date_from=None, date_to=None, left=None):
     """emps: employee queryset (already limited to the user's branches)."""
     s = OrgSettings.get()
     if group not in FIELD_SETTING:
-        raise ValueError('Group by one of: ' + ', '.join(FIELD_SETTING) + '.')
+        raise ValueError(tr('Group by one of: ') + ', '.join(FIELD_SETTING) + '.')
     if not s.is_on(FIELD_SETTING[group]):
-        raise ValueError(f'{s.label(FIELD_SETTING[group])} is switched off in Organisation settings.')
+        raise ValueError(tr('{0} is switched off in Organisation settings.', s.label(FIELD_SETTING[group])))
     label = s.label(FIELD_SETTING[group])
     emps = list(emps.select_related('emp_branch_id'))
     orgs = org_rows([e.pk for e in emps])

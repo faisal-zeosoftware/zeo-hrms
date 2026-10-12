@@ -22,7 +22,8 @@ from decimal import Decimal
 from .resolver import Book, ZERO, _day, _emp
 
 NAMES = ('shift_days', 'night_shift_days', 'worked_shift_days', 'worked_night_shift_days', 'shift_allowance_total',
-         'night_allowance_total', 'scheduled_shift_hours', 'roster_off_days', 'leave_on_shift_days', 'shift_changes')
+         'night_allowance_total', 'scheduled_shift_hours', 'roster_off_days', 'leave_on_shift_days', 'shift_changes',
+         'on_call_days', 'on_call_hours', 'on_call_callout_hours')   # v1.18.0: on-call
 
 
 def variables(employee, start, end):
@@ -34,7 +35,12 @@ def variables(employee, start, end):
     from calendars.models import Attendance
     from .models import ShiftRequest
     from .services import leave_map
-    book = Book(a, b, [emp.pk])
+    # v1.16.0 (D15): inside a payroll run one book (all employees, the period) is shared by every employee
+    try:
+        from PayrollManagement.perf import memo, active
+    except Exception:
+        memo, active = None, (lambda: False)
+    book = memo(('shift_book', a, b), lambda: Book(a, b)) if active() else Book(a, b, [emp.pk])
     worked = set(Attendance.objects.filter(employee=emp, date__gte=a, date__lte=b, check_in_time__isnull=False).values_list('date', flat=True))
     leave = {d for (eid, d), v in leave_map([emp.pk], a, b).items() if v['status'] == 'approved'}
     d = a
@@ -60,4 +66,10 @@ def variables(employee, start, end):
     from django.db.models import Q
     out['shift_changes'] = Decimal(ShiftRequest.objects.filter(Q(employee_id=emp.pk) | Q(swap_employee_id=emp.pk), status='approved',
                                                                date__gte=a, date__lte=b).count())
+    # v1.18.0: approved on-call duty in the period
+    from .models import OnCallDuty
+    oc = OnCallDuty.objects.filter(employee_id=emp.pk, status='approved', date__gte=a, date__lte=b)
+    out['on_call_days'] = Decimal(oc.count())
+    out['on_call_hours'] = sum((x.hours or ZERO) for x in oc) or ZERO
+    out['on_call_callout_hours'] = sum((x.callout_hours or ZERO) for x in oc) or ZERO
     return {k: Decimal(v).quantize(Decimal('0.01')) for k, v in out.items()}

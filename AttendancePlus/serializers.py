@@ -3,6 +3,7 @@ from rest_framework import serializers
 from . import models as M
 from . import services as S
 from . import engine as E
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 def _emp_map(ctx, ids):
@@ -47,25 +48,25 @@ class RuleSerializer(EmpMixin, serializers.ModelSerializer):
         scope = g('scope') or 'company'
         need = {'branch': 'branch_id', 'department': 'department_id', 'category': 'category_id', 'employee': 'employee_id'}.get(scope)
         if need and not g(need):
-            raise serializers.ValidationError({need: f'Pick the {scope} this rule applies to.'})
+            raise serializers.ValidationError({need: tr('Pick the {0} this rule applies to.', scope)})
         full, half = g('min_hours_full_day') or 0, g('min_hours_half_day') or 0
         if full and half and half > full:
-            raise serializers.ValidationError({'min_hours_half_day': 'The half-day minimum must be lower than the full-day minimum.'})
+            raise serializers.ValidationError({'min_hours_half_day': tr('The half-day minimum must be lower than the full-day minimum.')})
         mx = g('max_hours') or 0
         if mx and full and mx < full:
-            raise serializers.ValidationError({'max_hours': 'Maximum hours must be more than the full-day minimum.'})
+            raise serializers.ValidationError({'max_hours': tr('Maximum hours must be more than the full-day minimum.')})
         bad = [m for m in (g('allowed_methods') or []) if m not in M.METHOD_KEYS]
         if bad:
-            raise serializers.ValidationError({'allowed_methods': f'Unknown method(s): {", ".join(bad)}.'})
+            raise serializers.ValidationError({'allowed_methods': tr('Unknown method(s): {0}.', ", ".join(bad))})
         if (g('rounding_mode') or 'none') != 'none' and not g('rounding_minutes'):
-            raise serializers.ValidationError({'rounding_minutes': 'Give the rounding step in minutes (e.g. 5 or 15).'})
+            raise serializers.ValidationError({'rounding_minutes': tr('Give the rounding step in minutes (e.g. 5 or 15).')})
         dc = g('day_change_hour')
         if dc is not None and dc > 12:
-            raise serializers.ValidationError({'day_change_hour': 'Use an hour between 0 and 12.'})
+            raise serializers.ValidationError({'day_change_hour': tr('Use an hour between 0 and 12.')})
         for k in ('exempt_category_ids', 'exempt_employee_ids'):
             v = g(k)
             if v and (not isinstance(v, list) or any(not str(x).isdigit() for x in v)):
-                raise serializers.ValidationError({k: 'Use a list of ids.'})
+                raise serializers.ValidationError({k: tr('Use a list of ids.')})
         return data
 
     def to_representation(self, obj):
@@ -82,9 +83,9 @@ class IPSerializer(EmpMixin, serializers.ModelSerializer):
     def validate_cidrs(self, v):
         nets, bad = S.parse_cidrs(v)
         if bad:
-            raise serializers.ValidationError(f'Not a valid IP address or network: {", ".join(bad)}. Use e.g. 10.0.0.0/24 or 94.200.1.5.')
+            raise serializers.ValidationError(tr('Not a valid IP address or network: {0}. Use e.g. 10.0.0.0/24 or 94.200.1.5.', ", ".join(bad)))
         if not nets:
-            raise serializers.ValidationError('Add at least one IP address or network.')
+            raise serializers.ValidationError(tr('Add at least one IP address or network.'))
         return v
 
 
@@ -97,7 +98,7 @@ class DeviceSerializer(EmpMixin, serializers.ModelSerializer):
     def validate_serial_number(self, v):
         v = (v or '').strip()
         if not v.replace('-', '').isalnum():
-            raise serializers.ValidationError('Use the serial number printed on the device (letters and digits).')
+            raise serializers.ValidationError(tr('Use the serial number printed on the device (letters and digits).'))
         return v
 
 

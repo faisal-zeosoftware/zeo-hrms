@@ -149,6 +149,8 @@ class EmploymentInfo(models.Model):
     leaving_reason = models.CharField(max_length=255, blank=True, default='')
     leaving_source = models.CharField(max_length=40, blank=True, default='', help_text='resignation:<id> | eos:<id> | probation | manual')
     last_reminded_on = models.DateField(null=True, blank=True)
+    # v1.20.2: unpaid leave / absence before the company started on ZEO – not service for the end-of-service gratuity
+    unpaid_days_before_golive = models.DecimalField(max_digits=7, decimal_places=2, default=0)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by_id = models.IntegerField(null=True, blank=True)
 

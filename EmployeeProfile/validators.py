@@ -4,6 +4,7 @@ Every checker returns the cleaned value or raises ValueError with a message that
 """
 import re
 from datetime import date
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 EID_RE = re.compile(r'^784-(\d{4})-(\d{7})-(\d)$')
 
@@ -34,15 +35,37 @@ def clean_emirates_id(v):
     if not s:
         return ''
     if not s.isdigit() or len(s) != 15:
-        raise ValueError('Enter the Emirates ID as 784-YYYY-NNNNNNN-N (15 digits).')
+        raise ValueError(tr('Enter the Emirates ID as 784-YYYY-NNNNNNN-N (15 digits).'))
     if not s.startswith('784'):
-        raise ValueError('An Emirates ID starts with 784.')
+        raise ValueError(tr('An Emirates ID starts with 784.'))
     year = int(s[3:7])
     if year < 1900 or year > date.today().year:
-        raise ValueError('The 4 digits after 784 are the year of birth – check them.')
+        raise ValueError(tr('The 4 digits after 784 are the year of birth – check them.'))
     if not luhn_ok(s):
-        raise ValueError('This Emirates ID number is not valid (the last digit does not match). Check the number on the card.')
+        raise ValueError(tr('This Emirates ID number is not valid (the last digit does not match). Check the number on the card.'))
     return f'{s[:3]}-{s[3:7]}-{s[7:14]}-{s[14]}'
+
+
+def _pack_id_format():
+    """v1.14.0: 'emirates_id' (UAE pack), 'iqama' (Saudi pack) or None; UAE when the country packs are not installed."""
+    try:
+        from CountryPack.services import id_format
+        return id_format()
+    except ImportError:
+        return 'emirates_id'
+    except Exception:
+        return 'emirates_id'
+
+
+def clean_national_id(v):
+    """The national / resident ID of the company's country: Emirates ID (AE), Iqama / national ID (SA), else letters and digits."""
+    fmt = _pack_id_format()
+    if fmt == 'emirates_id':
+        return clean_emirates_id(v)
+    from CountryPack.services import clean_generic_id, clean_iqama
+    if fmt == 'iqama':
+        return clean_iqama(v)
+    return clean_generic_id(v)
 
 
 def iban_mod97_ok(iban):
@@ -56,14 +79,28 @@ def clean_iban(v):
     s = re.sub(r'\s+', '', str(v or '')).upper()
     if not s:
         return ''
+    if _pack_id_format() != 'emirates_id' and not s.startswith('AE'):
+        return clean_iban_any(s)   # v1.14.0: company outside the UAE – any country's IBAN
     if not s.startswith('AE'):
-        raise ValueError('Enter a UAE IBAN – it starts with AE (salaries are paid through WPS in the UAE).')
+        raise ValueError(tr('Enter a UAE IBAN – it starts with AE (salaries are paid through WPS in the UAE).'))
     if len(s) != 23:
-        raise ValueError(f'A UAE IBAN has 23 characters (AE + 21 digits); this one has {len(s)}.')
+        raise ValueError(tr('A UAE IBAN has 23 characters (AE + 21 digits); this one has {0}.', len(s)))
     if not s[2:].isdigit():
-        raise ValueError('After AE a UAE IBAN has only digits.')
+        raise ValueError(tr('After AE a UAE IBAN has only digits.'))
     if not iban_mod97_ok(s):
-        raise ValueError('This IBAN is not valid (the check digits do not match). Copy it again from the bank letter.')
+        raise ValueError(tr('This IBAN is not valid (the check digits do not match). Copy it again from the bank letter.'))
+    return s
+
+
+def clean_iban_any(v):
+    """IBAN of any country: 2 letters, 2 check digits, up to 30 letters / digits (15–34 characters), mod-97 check."""
+    s = re.sub(r'\s+', '', str(v or '')).upper()
+    if not s:
+        return ''
+    if not re.fullmatch(r'[A-Z]{2}\d{2}[A-Z0-9]{11,30}', s):
+        raise ValueError(tr('Enter the IBAN as 2 letters (country), 2 check digits and the account (15 to 34 characters, no spaces).'))
+    if not iban_mod97_ok(s):
+        raise ValueError(tr('This IBAN is not valid (the check digits do not match). Copy it again from the bank letter.'))
     return s
 
 
@@ -78,7 +115,7 @@ def clean_passport(v):
     if not s:
         return ''
     if not re.fullmatch(r'[A-Z0-9]{6,12}', s):
-        raise ValueError('A passport number has 6 to 12 letters and digits (no spaces or symbols).')
+        raise ValueError(tr('A passport number has 6 to 12 letters and digits (no spaces or symbols).'))
     return s
 
 
@@ -87,7 +124,7 @@ def clean_digits(v, label, lo, hi):
     if not s:
         return ''
     if not s.isdigit() or not (lo <= len(s) <= hi):
-        raise ValueError(f'{label} has {lo} to {hi} digits only.')
+        raise ValueError(tr('{0} has {1} to {2} digits only.', label, lo, hi))
     return s
 
 
@@ -97,7 +134,7 @@ def clean_code(v, label, lo=3, hi=30, extra=''):
         return ''
     if not re.fullmatch(rf'[A-Z0-9{re.escape(extra)}]{{{lo},{hi}}}', s):
         allowed = 'letters, digits' + (f' and {" ".join(extra)}' if extra else '')
-        raise ValueError(f'{label}: use {lo} to {hi} {allowed}.')
+        raise ValueError(tr('{0}: use {1} to {2} {3}.', label, lo, hi, allowed))
     return s
 
 
@@ -106,7 +143,7 @@ def clean_phone(v, label='Phone'):
     if not s:
         return ''
     if not re.fullmatch(r'\+?[0-9 ()\-]{6,24}', s) or len(re.sub(r'\D', '', s)) < 7:
-        raise ValueError(f'Enter a valid {label.lower()} (digits, spaces, + and -).')
+        raise ValueError(tr('Enter a valid {0} (digits, spaces, + and -).', label.lower()))
     return s
 
 
@@ -117,13 +154,13 @@ def check_dates(issue, expiry, label, errors, issue_key, expiry_key, today=None)
     """issue not in the future / not absurd; expiry after issue and within a sensible validity."""
     today = today or date.today()
     if issue and issue > today:
-        errors[issue_key] = f'The {label} issue date cannot be in the future.'
+        errors[issue_key] = tr('The {0} issue date cannot be in the future.', label)
     if issue and issue.year < 1950:
-        errors[issue_key] = f'Check the {label} issue date.'
+        errors[issue_key] = tr('Check the {0} issue date.', label)
     if issue and expiry:
         if expiry <= issue:
-            errors[expiry_key] = f'The {label} expiry date must be after the issue date.'
+            errors[expiry_key] = tr('The {0} expiry date must be after the issue date.', label)
         elif (expiry - issue).days > MAX_VALIDITY_YEARS * 366:
-            errors[expiry_key] = f'The {label} is valid for more than {MAX_VALIDITY_YEARS} years – check the dates.'
+            errors[expiry_key] = tr('The {0} is valid for more than {1} years – check the dates.', label, MAX_VALIDITY_YEARS)
     if expiry and expiry.year < 1950:
-        errors[expiry_key] = f'Check the {label} expiry date.'
+        errors[expiry_key] = tr('Check the {0} expiry date.', label)

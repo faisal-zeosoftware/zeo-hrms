@@ -60,11 +60,16 @@ def r_probation_due(run):
         st = 'No end date' if days == '' else 'Overdue' if days < 0 else 'Due in 30 days' if days <= 30 else 'Due in 90 days' if days <= 90 else 'Later'
         rows.append({**R.emp_cols(e), 'joined': e.emp_joined_date, 'probation_end': i.probation_end_date, 'days_left': days,
                      'probation': i.get_probation_status_display(), 'extensions': ext.get(e.pk, 0), 'status': st,
-                     'manager': e.emp_reporting_manager.username if e.emp_reporting_manager_id else '', **R.src(e)})
+                     'manager': e.emp_reporting_manager.username if e.emp_reporting_manager_id else '',
+                     # v1.17.0 (audit L7): the confirmation date of the employee master next to it, flagged when the two differ
+                     'confirmation': e.emp_date_of_confirmation,
+                     'differs': 'Yes' if e.emp_date_of_confirmation and i.probation_end_date and e.emp_date_of_confirmation != i.probation_end_date else 'No',
+                     **R.src(e)})
     rows.sort(key=lambda r: (r['days_left'] == '', r['days_left'] if r['days_left'] != '' else 0))
     return R.EMP_COLS + [('joined', 'Joining date', 'date'), ('probation_end', 'Probation ends', 'date'), ('days_left', 'Days left', 'number'),
                          ('probation', 'Probation', 'text'), ('extensions', 'Extensions', 'number'), ('status', 'Status', 'text'),
-                         ('manager', 'Reporting manager', 'text')], rows
+                         ('manager', 'Reporting manager', 'text'), ('confirmation', 'Confirmation date (employee master)', 'date'),
+                         ('differs', 'Dates differ', 'text')], rows
 
 
 def r_no_emergency_contact(run):

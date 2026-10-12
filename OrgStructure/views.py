@@ -32,6 +32,7 @@ from rest_framework.views import APIView
 from . import seed, services as S
 from .models import (FIELDS, BranchCountryPolicy, CostCenter, CountryPolicy, Division, DivisionDepartment, EmployeeOrg, EmploymentType,
                      Grade, JobPosition, Location, OrgSettings, PolicyAcknowledgement, PolicyVersion, Section)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -51,11 +52,11 @@ class Member(BasePermission):
     def has_permission(self, request, view):
         u = request.user
         if not u or not u.is_authenticated:
-            self.message = 'Please log in.'
+            self.message = tr('Please log in.')
             return False
         sch = _schema(request)
         if not sch or sch == 'public':
-            self.message = 'Choose a company.'
+            self.message = tr('Choose a company.')
             return False
         return u.is_superuser or u.tenants.filter(schema_name=sch).exists()
 
@@ -82,7 +83,7 @@ def _ints(v):
         try:
             out.append(int(x))
         except (TypeError, ValueError):
-            raise serializers.ValidationError(f'"{x}" is not a valid id.')
+            raise serializers.ValidationError(tr('"{0}" is not a valid id.', x))
     return sorted(set(out))
 
 
@@ -95,7 +96,7 @@ class SettingsView(Base, APIView):
 
     def put(self, request):
         if not S.is_hr_settings(request):
-            return deny('Only HR administrators can change the organisation settings.')
+            return deny(tr('Only HR administrators can change the organisation settings.'))
         s = OrgSettings.get()
         data = request.data if isinstance(request.data, dict) else {}
         for f in FIELDS:
@@ -151,18 +152,18 @@ class MasterSerializer(serializers.ModelSerializer):
     def validate_code(self, v):
         v = (v or '').strip()
         if not v:
-            raise serializers.ValidationError('Enter a code.')
+            raise serializers.ValidationError(tr('Enter a code.'))
         qs = self.Meta.model.objects.filter(code__iexact=v)
         if self.instance is not None:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
-            raise serializers.ValidationError(f'Code {v} is already used – choose another code.')
+            raise serializers.ValidationError(tr('Code {0} is already used – choose another code.', v))
         return v
 
     def validate_name(self, v):
         v = (v or '').strip()
         if not v:
-            raise serializers.ValidationError('Enter a name.')
+            raise serializers.ValidationError(tr('Enter a name.'))
         return v
 
     def validate_branch_ids(self, v):
@@ -170,35 +171,35 @@ class MasterSerializer(serializers.ModelSerializer):
         known = set(self.maps()['branch'])
         bad = [i for i in ids if i not in known]
         if bad:
-            raise serializers.ValidationError(f'Branch {bad[0]} does not exist.')
+            raise serializers.ValidationError(tr('Branch {0} does not exist.', bad[0]))
         allowed = self.context.get('allowed_branches')
         if allowed is not None:
             if not ids:
-                raise serializers.ValidationError('Choose at least one of your branches (only unrestricted users can make it for all branches).')
+                raise serializers.ValidationError(tr('Choose at least one of your branches (only unrestricted users can make it for all branches).'))
             if any(i not in allowed for i in ids):
-                raise serializers.ValidationError('You can only use your own branches.')
+                raise serializers.ValidationError(tr('You can only use your own branches.'))
         return ids
 
     def _check_dept(self, v, required=False, label='Department'):
         if v in (None, ''):
             if required:
-                raise serializers.ValidationError(f'Choose the {label.lower()}.')
+                raise serializers.ValidationError(tr('Choose the {0}.', label.lower()))
             return None
         if int(v) not in self.maps()['department']:
-            raise serializers.ValidationError(f'{label} {v} does not exist.')
+            raise serializers.ValidationError(tr('{0} {1} does not exist.', label, v))
         return int(v)
 
     def _check_emp(self, v, label='Employee'):
         if v in (None, ''):
             return None
         if not M('EmpManagement', 'emp_master').objects.filter(pk=v).exists():
-            raise serializers.ValidationError(f'{label} {v} does not exist.')
+            raise serializers.ValidationError(tr('{0} {1} does not exist.', label, v))
         return int(v)
 
     def create(self, data):
         if 'branch_ids' not in data:
             if self.context.get('allowed_branches') is not None:
-                raise serializers.ValidationError({'branch_ids': 'Choose at least one of your branches.'})
+                raise serializers.ValidationError({'branch_ids': tr('Choose at least one of your branches.')})
             data['branch_ids'] = []
         req = self.context.get('request')
         data['created_by_id'] = getattr(getattr(req, 'user', None), 'pk', None)
@@ -223,24 +224,24 @@ class LocationSerializer(MasterSerializer):
 
     def validate_country_id(self, v):
         if v and not M('Core', 'cntry_mstr').objects.filter(pk=v).exists():
-            raise serializers.ValidationError('Choose a country from the list.')
+            raise serializers.ValidationError(tr('Choose a country from the list.'))
         return v
 
     def validate_latitude(self, v):
         if v is not None and not -90 <= float(v) <= 90:
-            raise serializers.ValidationError('Latitude is between -90 and 90.')
+            raise serializers.ValidationError(tr('Latitude is between -90 and 90.'))
         return v
 
     def validate_longitude(self, v):
         if v is not None and not -180 <= float(v) <= 180:
-            raise serializers.ValidationError('Longitude is between -180 and 180.')
+            raise serializers.ValidationError(tr('Longitude is between -180 and 180.'))
         return v
 
     def validate(self, d):
         lat = d.get('latitude', getattr(self.instance, 'latitude', None))
         lng = d.get('longitude', getattr(self.instance, 'longitude', None))
         if (lat is None) != (lng is None):
-            raise serializers.ValidationError({'longitude': 'Enter both latitude and longitude, or neither.'})
+            raise serializers.ValidationError({'longitude': tr('Enter both latitude and longitude, or neither.')})
         return d
 
 
@@ -281,10 +282,10 @@ class DivisionSerializer(MasterSerializer):
         dm = self.maps()['department']
         for i in ids:
             if i not in dm:
-                raise serializers.ValidationError(f'Department {i} does not exist.')
+                raise serializers.ValidationError(tr('Department {0} does not exist.', i))
             other = DivisionDepartment.objects.filter(department_id=i).exclude(division_id=getattr(self.instance, 'pk', None)).select_related('division').first()
             if other:
-                raise serializers.ValidationError(f'Department {dm[i]} already belongs to division {other.division.name} – remove it there first.')
+                raise serializers.ValidationError(tr('Department {0} already belongs to division {1} – remove it there first.', dm[i], other.division.name))
         return ids
 
     def _links(self, obj, ids):
@@ -333,9 +334,9 @@ class SectionSerializer(MasterSerializer):
         if self.instance is not None and 'department_id' in d and d['department_id'] != self.instance.department_id:
             n = EmployeeOrg.objects.filter(section=self.instance).count()
             if n:
-                raise serializers.ValidationError({'department_id': f'{n} employee(s) are in this section – move them before changing its department.'})
+                raise serializers.ValidationError({'department_id': tr('{0} employee(s) are in this section – move them before changing its department.', n)})
         if dept is None:
-            raise serializers.ValidationError({'department_id': 'Choose the department.'})
+            raise serializers.ValidationError({'department_id': tr('Choose the department.')})
         return d
 
 
@@ -385,18 +386,18 @@ class GradeSerializer(MasterSerializer):
         dm = self.maps()['designation']
         bad = [i for i in ids if i not in dm]
         if bad:
-            raise serializers.ValidationError(f'Designation {bad[0]} does not exist.')
+            raise serializers.ValidationError(tr('Designation {0} does not exist.', bad[0]))
         return ids
 
     def validate_level(self, v):
         if v is None or v < 1:
-            raise serializers.ValidationError('Level is 1 or more (1 = lowest).')
+            raise serializers.ValidationError(tr('Level is 1 or more (1 = lowest).'))
         return v
 
     def validate_currency(self, v):
         v = (v or 'AED').strip().upper()
         if len(v) != 3 or not v.isalpha():
-            raise serializers.ValidationError('Use a 3-letter currency code, e.g. AED.')
+            raise serializers.ValidationError(tr('Use a 3-letter currency code, e.g. AED.'))
         return v
 
     def validate(self, d):
@@ -404,9 +405,9 @@ class GradeSerializer(MasterSerializer):
         hi = d.get('salary_max', getattr(self.instance, 'salary_max', None))
         for k, v in (('salary_min', lo), ('salary_max', hi)):
             if v is not None and v < 0:
-                raise serializers.ValidationError({k: 'Salary cannot be negative.'})
+                raise serializers.ValidationError({k: tr('Salary cannot be negative.')})
         if lo is not None and hi is not None and lo > hi:
-            raise serializers.ValidationError({'salary_max': 'The maximum salary must be at least the minimum.'})
+            raise serializers.ValidationError({'salary_max': tr('The maximum salary must be at least the minimum.')})
         return d
 
 
@@ -469,20 +470,20 @@ class PositionSerializer(MasterSerializer):
         if v in (None, ''):
             return None
         if int(v) not in self.maps()['designation']:
-            raise serializers.ValidationError(f'Designation {v} does not exist.')
+            raise serializers.ValidationError(tr('Designation {0} does not exist.', v))
         return int(v)
 
     def validate(self, d):
         g = d.get('grade', getattr(self.instance, 'grade', None))
         desg = d.get('designation_id', getattr(self.instance, 'designation_id', None))
         if g is not None and g.designation_ids and desg and desg not in [int(x) for x in g.designation_ids]:
-            raise serializers.ValidationError({'grade': f'Grade {g.name} is not allowed for this designation.'})
+            raise serializers.ValidationError({'grade': tr('Grade {0} is not allowed for this designation.', g.name)})
         parent = d.get('reports_to', getattr(self.instance, 'reports_to', None))
         if parent is not None and self.instance is not None and S.would_loop_position(self.instance.pk, parent.pk):
-            raise serializers.ValidationError({'reports_to': f'{parent.name} already reports (directly or indirectly) to this position – that would make a loop.'})
+            raise serializers.ValidationError({'reports_to': tr('{0} already reports (directly or indirectly) to this position – that would make a loop.', parent.name)})
         hb = d.get('headcount_budget', getattr(self.instance, 'headcount_budget', 1))
         if hb is not None and hb < 0:
-            raise serializers.ValidationError({'headcount_budget': 'Headcount cannot be negative.'})
+            raise serializers.ValidationError({'headcount_budget': tr('Headcount cannot be negative.')})
         return d
 
 
@@ -497,7 +498,7 @@ class EmploymentTypeSerializer(MasterSerializer):
 
     def validate_probation_days(self, v):
         if v is not None and v > 365:
-            raise serializers.ValidationError('Probation is at most 365 days.')
+            raise serializers.ValidationError(tr('Probation is at most 365 days.'))
         return v
 
 
@@ -563,26 +564,26 @@ class MasterViewSet(Base, viewsets.ModelViewSet):
 
     def create(self, request, *a, **kw):
         if not self._can('add'):
-            return deny(f'You may not add {self.model._meta.verbose_name_plural}.')
+            return deny(tr('You may not add {0}.', self.model._meta.verbose_name_plural))
         return super().create(request, *a, **kw)
 
     def update(self, request, *a, **kw):
         if not self._can('change'):
-            return deny(f'You may not change {self.model._meta.verbose_name_plural}.')
+            return deny(tr('You may not change {0}.', self.model._meta.verbose_name_plural))
         if not self._check_obj_branch(self.get_object()):
-            return deny('This record is shared with branches you do not manage – ask a company administrator to change it.')
+            return deny(tr('This record is shared with branches you do not manage – ask a company administrator to change it.'))
         return super().update(request, *a, **kw)
 
     def destroy(self, request, *a, **kw):
         if not self._can('delete'):
-            return deny(f'You may not delete {self.model._meta.verbose_name_plural}.')
+            return deny(tr('You may not delete {0}.', self.model._meta.verbose_name_plural))
         obj = self.get_object()
         if not self._check_obj_branch(obj):
-            return deny('This record is shared with branches you do not manage – ask a company administrator to delete it.')
+            return deny(tr('This record is shared with branches you do not manage – ask a company administrator to delete it.'))
         f = EMP_FIELD_OF.get(self.model)
         n = EmployeeOrg.objects.filter(**{f: obj}).count() if f else 0
         if n:
-            return deny(f'{obj.name} is used by {n} employee(s) – make it inactive instead, or move the employees first.', 400)
+            return deny(tr('{0} is used by {1} employee(s) – make it inactive instead, or move the employees first.', obj.name, n), 400)
         try:
             with transaction.atomic():
                 if self.model is CostCenter and obj.expense_cost_center_id:
@@ -596,7 +597,7 @@ class MasterViewSet(Base, viewsets.ModelViewSet):
                         log.debug('expense cost centre cleanup failed', exc_info=True)
                 obj.delete()
         except ProtectedError:
-            return deny(f'{obj.name} is still used (for example by a job position) – make it inactive instead.', 400)
+            return deny(tr('{0} is still used (for example by a job position) – make it inactive instead.', obj.name), 400)
         return Response(status=204)
 
     @action(detail=False, methods=['get'], url_path='options')
@@ -719,7 +720,7 @@ class EmploymentTypeViewSet(MasterViewSet):
     @action(detail=False, methods=['post'], url_path='load-standard')
     def load_standard(self, request):
         if not self._can('add'):
-            return deny('You may not add employment types.')
+            return deny(tr('You may not add employment types.'))
         return Response({'created': seed.load_employment_types()})
 
 
@@ -738,16 +739,16 @@ def _visible_emp(request, emp_id, write=False):
     E = M('EmpManagement', 'emp_master')
     emp = E.objects.select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id').filter(pk=emp_id).first() if str(emp_id).isdigit() else None
     if emp is None:
-        return None, deny('Employee not found.', 404)
+        return None, deny(tr('Employee not found.'), 404)
     me = S.my_employee(request)
     if S.is_hr_employees(request, write=write):
         allowed = S.user_branches(request)
         if allowed is None or emp.emp_branch_id_id in allowed:
             return emp, None
-        return None, deny('This employee is in a branch you do not manage.')
+        return None, deny(tr('This employee is in a branch you do not manage.'))
     if not write and me is not None and me.pk == emp.pk:
         return emp, None
-    return None, deny('You may only see your own organisation details.' if not write else 'You may not change employees’ organisation details.')
+    return None, deny(tr('You may only see your own organisation details.') if not write else tr('You may not change employees’ organisation details.'))
 
 
 class EmployeeOrgView(Base, APIView):
@@ -771,7 +772,7 @@ class EmployeeOrgView(Base, APIView):
                 d['division_default'] = {'id': link.division_id, 'name': link.division.name}
             return Response(d)
         if not S.is_hr_employees(request):
-            return deny('You may only see your own organisation details.')
+            return deny(tr('You may only see your own organisation details.'))
         qs = _emp_qs(request)
         ids = request.query_params.get('ids')
         if ids:
@@ -801,7 +802,7 @@ class MyOrgView(Base, APIView):
     def get(self, request):
         emp = S.my_employee(request)
         if emp is None:
-            return Response({'active_fields': [], 'detail': 'Your login is not linked to an employee.'})
+            return Response({'active_fields': [], 'detail': tr('Your login is not linked to an employee.')})
         s = OrgSettings.get()
         fields = S.active_emp_fields(s)
         o = EmployeeOrg.objects.select_related(*fields).filter(employee_id=emp.pk).first() if fields else None
@@ -818,7 +819,7 @@ class EmployeeOrgBulkView(Base, APIView):
 
     def post(self, request):
         if not S.is_hr_employees(request, write=True):
-            return deny('You may not change employees’ organisation details.')
+            return deny(tr('You may not change employees’ organisation details.'))
         rows = request.data if isinstance(request.data, list) else (request.data or {}).get('rows') or []
         out, ok = [], 0
         for i, r in enumerate(rows, 1):
@@ -846,7 +847,7 @@ class EmployeeOrgImportView(Base, APIView):
 
     def post(self, request):
         if not S.is_hr_employees(request, write=True):
-            return deny('You may not change employees’ organisation details.')
+            return deny(tr('You may not change employees’ organisation details.'))
         data = request.data if isinstance(request.data, dict) else {'rows': request.data}
         rows = data.get('rows') or []
         dry = str(data.get('dry_run', request.query_params.get('dry_run', ''))).lower() in ('1', 'true', 'yes')
@@ -884,7 +885,7 @@ class HierarchyView(Base, APIView):
 
     def get(self, request):
         if not S.is_hr_employees(request) and not S.has(request, 'view_jobposition'):
-            return deny('You may not see the organisation hierarchy.')
+            return deny(tr('You may not see the organisation hierarchy.'))
         mode = request.query_params.get('mode', 'positions')
         root = request.query_params.get('root')
         if mode == 'managers':
@@ -958,12 +959,12 @@ class HierarchyCheckView(Base, APIView):
         d = request.data or {}
         if d.get('position') is not None:
             loop = S.would_loop_position(d.get('position'), d.get('reports_to'))
-            return Response({'ok': not loop, 'detail': 'That would make the positions report to each other in a loop.' if loop else ''})
+            return Response({'ok': not loop, 'detail': tr('That would make the positions report to each other in a loop.') if loop else ''})
         try:
             loop = S.would_loop_manager(int(d.get('employee') or 0), d.get('manager'))
         except (TypeError, ValueError):
-            return deny('Send employee (id) and manager (user id).', 400)
-        return Response({'ok': not loop, 'detail': 'That manager already reports (directly or indirectly) to this employee – it would make a loop.' if loop else ''})
+            return deny(tr('Send employee (id) and manager (user id).'), 400)
+        return Response({'ok': not loop, 'detail': tr('That manager already reports (directly or indirectly) to this employee – it would make a loop.') if loop else ''})
 
 
 class NoManagerView(Base, APIView):
@@ -971,7 +972,7 @@ class NoManagerView(Base, APIView):
 
     def get(self, request):
         if not S.is_hr_employees(request):
-            return deny('You may not see this list.')
+            return deny(tr('You may not see this list.'))
         qs = _emp_qs(request).filter(Q(is_active=True) | Q(is_active__isnull=True))
         E = M('EmpManagement', 'emp_master')
         U = M('UserManagement', 'CustomUser')
@@ -1011,13 +1012,13 @@ class PolicyStatusView(Base, APIView):
 
     def get(self, request, pk=None):
         if not S.is_hr_policies(request):
-            return deny('You may not see policy acknowledgements.')
+            return deny(tr('You may not see policy acknowledgements.'))
         E = M('EmpManagement', 'emp_master')
         emps = list(_emp_qs(request).filter(Q(is_active=True) | Q(is_active__isnull=True)))
         if pk is not None:
             p = _policies().filter(pk=pk).first()
             if p is None:
-                return deny('Policy not found.', 404)
+                return deny(tr('Policy not found.'), 404)
             v = S.policy_version(p)
             acks = {a.employee_id: a for a in PolicyAcknowledgement.objects.filter(policy_id=p.pk, version=v.version)}
             older = set(PolicyAcknowledgement.objects.filter(policy_id=p.pk, version__lt=v.version).values_list('employee_id', flat=True))
@@ -1053,10 +1054,10 @@ class PolicyStatusView(Base, APIView):
 
     def put(self, request, pk=None):
         if not S.is_hr_policies(request, write=True):
-            return deny('You may not change policy settings.')
+            return deny(tr('You may not change policy settings.'))
         p = _policies().filter(pk=pk).first() if pk else None
         if p is None:
-            return deny('Policy not found.', 404)
+            return deny(tr('Policy not found.'), 404)
         v = S.policy_version(p)
         d = request.data or {}
         if 'requires_ack' in d:
@@ -1108,10 +1109,10 @@ def remind_policy(p, actor=None):
 class PolicyRemindView(Base, APIView):
     def post(self, request, pk):
         if not S.is_hr_policies(request, write=True):
-            return deny('You may not send policy reminders.')
+            return deny(tr('You may not send policy reminders.'))
         p = _policies().filter(pk=pk).first()
         if p is None:
-            return deny('Policy not found.', 404)
+            return deny(tr('Policy not found.'), 404)
         return Response({'notified': remind_policy(p, request.user)})
 
 
@@ -1142,9 +1143,9 @@ class MyPolicyAckView(Base, APIView):
         emp = S.my_employee(request)
         p = _policies().filter(pk=pk).first()
         if p is None:
-            return deny('Policy not found.', 404)
+            return deny(tr('Policy not found.'), 404)
         if emp is None or not S.policy_applies(p, emp, user_id=request.user.pk):
-            return deny('This policy does not apply to you.')
+            return deny(tr('This policy does not apply to you.'))
         v = S.policy_version(p)
         try:
             a, created = PolicyAcknowledgement.objects.get_or_create(policy_id=p.pk, employee_id=emp.pk, version=v.version,
@@ -1165,13 +1166,13 @@ class MyPolicyFileView(Base, APIView):
         emp = S.my_employee(request)
         p = _policies().filter(pk=pk).first()
         if p is None or not p.policy_file:
-            return deny('The policy file was not found.', 404)
+            return deny(tr('The policy file was not found.'), 404)
         if not (S.is_hr_policies(request) or (emp is not None and S.policy_applies(p, emp, user_id=request.user.pk))):
-            return deny('This policy does not apply to you.')
+            return deny(tr('This policy does not apply to you.'))
         try:
             return FileResponse(p.policy_file.open('rb'), as_attachment=False, filename=p.policy_file.name.split('/')[-1])
         except Exception:
-            return deny('The policy file could not be opened.', 404)
+            return deny(tr('The policy file could not be opened.'), 404)
 
 
 # ------------------------------------------------------------------ country policies
@@ -1195,71 +1196,71 @@ class CountryPolicySerializer(serializers.ModelSerializer):
     def validate_code(self, v):
         v = (v or '').strip().upper()
         if not v:
-            raise serializers.ValidationError('Enter a code.')
+            raise serializers.ValidationError(tr('Enter a code.'))
         return v
 
     def validate_country_code(self, v):
         v = (v or '').strip().upper()
         if len(v) != 2 or not v.isalpha():
-            raise serializers.ValidationError('Use the 2-letter country code, e.g. AE.')
+            raise serializers.ValidationError(tr('Use the 2-letter country code, e.g. AE.'))
         return v
 
     def validate_weekend_days(self, v):
         if not isinstance(v, list) or any(not isinstance(d, int) or not 0 <= d <= 6 for d in v):
-            raise serializers.ValidationError('Weekend days are numbers 0 (Monday) to 6 (Sunday).')
+            raise serializers.ValidationError(tr('Weekend days are numbers 0 (Monday) to 6 (Sunday).'))
         if len(v) > 3:
-            raise serializers.ValidationError('At most 3 weekend days.')
+            raise serializers.ValidationError(tr('At most 3 weekend days.'))
         return sorted(set(v))
 
     def validate_sick_leave(self, v):
         try:
             v = [[int(a), float(b)] for a, b in (v or [])]
         except (TypeError, ValueError):
-            raise serializers.ValidationError('Sick leave slabs are pairs of [days, pay %].')
+            raise serializers.ValidationError(tr('Sick leave slabs are pairs of [days, pay %].'))
         if any(a <= 0 or not 0 <= b <= 100 for a, b in v):
-            raise serializers.ValidationError('Days must be more than 0 and pay % between 0 and 100.')
+            raise serializers.ValidationError(tr('Days must be more than 0 and pay % between 0 and 100.'))
         return v
 
     def _obj(self, v, name):
         if not isinstance(v, dict):
-            raise serializers.ValidationError(f'{name} must be an object of settings.')
+            raise serializers.ValidationError(tr('{0} must be an object of settings.', name))
         return v
 
     def validate_annual_leave(self, v):
         v = self._obj(v, 'Annual leave')
         if 'days' in v and (not isinstance(v['days'], (int, float)) or v['days'] < 0 or v['days'] > 60):
-            raise serializers.ValidationError('Annual leave days are between 0 and 60.')
+            raise serializers.ValidationError(tr('Annual leave days are between 0 and 60.'))
         for s in v.get('steps') or []:
             if not isinstance(s, dict) or 'after_years' not in s or 'days' not in s:
-                raise serializers.ValidationError('Each step needs after_years and days.')
+                raise serializers.ValidationError(tr('Each step needs after_years and days.'))
         return v
 
     def validate_maternity(self, v):
         v = self._obj(v, 'Maternity')
         d = float(v.get('days') or 0)
         if float(v.get('full_pay_days') or 0) + float(v.get('half_pay_days') or 0) > d:
-            raise serializers.ValidationError('Full-pay plus half-pay days cannot exceed the maternity days.')
+            raise serializers.ValidationError(tr('Full-pay plus half-pay days cannot exceed the maternity days.'))
         return v
 
     def validate_gratuity(self, v):
         v = self._obj(v, 'Gratuity')
         for s in v.get('slabs') or []:
             if not isinstance(s, dict) or 'days' not in s or 'from_year' not in s:
-                raise serializers.ValidationError('Each gratuity slab needs from_year, to_year and days.')
+                raise serializers.ValidationError(tr('Each gratuity slab needs from_year, to_year and days.'))
         return v
 
     def validate_overtime(self, v):
         v = self._obj(v, 'Overtime')
         for k in ('normal', 'night', 'rest_day', 'holiday'):
             if k in v and (not isinstance(v[k], (int, float)) or not 100 <= v[k] <= 400):
-                raise serializers.ValidationError(f'Overtime {k.replace("_", " ")} rate is a % of the hourly wage between 100 and 400.')
+                raise serializers.ValidationError(tr('Overtime {0} rate is a % of the hourly wage between 100 and 400.', k.replace("_", " ")))
         return v
 
     def validate_notice_period(self, v):
         v = self._obj(v, 'Notice period')
         lo, hi = v.get('min_days'), v.get('max_days')
         if lo is not None and hi is not None and lo > hi:
-            raise serializers.ValidationError('The minimum notice cannot be more than the maximum.')
+            raise serializers.ValidationError(tr('The minimum notice cannot be more than the maximum.'))
         return v
 
     def validate(self, d):
@@ -1267,11 +1268,11 @@ class CountryPolicySerializer(serializers.ModelSerializer):
         wh = d.get('weekly_hours', getattr(self.instance, 'weekly_hours', 48))
         rh = d.get('ramadan_daily_hours', getattr(self.instance, 'ramadan_daily_hours', None))
         if dh is not None and not 0 < dh <= 12:
-            raise serializers.ValidationError({'daily_hours': 'Daily hours are between 1 and 12.'})
+            raise serializers.ValidationError({'daily_hours': tr('Daily hours are between 1 and 12.')})
         if wh is not None and not 0 < wh <= 72:
-            raise serializers.ValidationError({'weekly_hours': 'Weekly hours are between 1 and 72.'})
+            raise serializers.ValidationError({'weekly_hours': tr('Weekly hours are between 1 and 72.')})
         if rh is not None and dh is not None and rh > dh:
-            raise serializers.ValidationError({'ramadan_daily_hours': 'Ramadan hours cannot be more than the normal daily hours.'})
+            raise serializers.ValidationError({'ramadan_daily_hours': tr('Ramadan hours cannot be more than the normal daily hours.')})
         return d
 
 
@@ -1295,26 +1296,26 @@ class CountryPolicyViewSet(Base, viewsets.ModelViewSet):
 
     def create(self, request, *a, **kw):
         if not self._w():
-            return deny('You may not add country policies.')
+            return deny(tr('You may not add country policies.'))
         return super().create(request, *a, **kw)
 
     def update(self, request, *a, **kw):
         if not self._w():
-            return deny('You may not change country policies.')
+            return deny(tr('You may not change country policies.'))
         return super().update(request, *a, **kw)
 
     def destroy(self, request, *a, **kw):
         if not self._w():
-            return deny('You may not delete country policies.')
+            return deny(tr('You may not delete country policies.'))
         obj = self.get_object()
         if obj.branches.exists():
-            return deny(f'{obj.name} is applied to {obj.branches.count()} branch(es) – apply another policy to them first.', 400)
+            return deny(tr('{0} is applied to {1} branch(es) – apply another policy to them first.', obj.name, obj.branches.count()), 400)
         return super().destroy(request, *a, **kw)
 
     @action(detail=False, methods=['post'], url_path='load-standard')
     def load_standard(self, request):
         if not self._w():
-            return deny('You may not load country policies.')
+            return deny(tr('You may not load country policies.'))
         overwrite = str((request.data or {}).get('overwrite', '')).lower() in ('1', 'true')
         c, u = seed.load_standard(overwrite=overwrite)
         return Response({'created': c, 'updated': u})
@@ -1323,7 +1324,7 @@ class CountryPolicyViewSet(Base, viewsets.ModelViewSet):
     def apply(self, request, pk=None):
         """{branch_ids: [..]} or {branch_ids: 'all'} – the policy becomes the rule set of those branches."""
         if not self._w():
-            return deny('You may not apply country policies.')
+            return deny(tr('You may not apply country policies.'))
         obj = self.get_object()
         raw = (request.data or {}).get('branch_ids')
         Br = M('OrganisationManager', 'brnch_mstr')
@@ -1339,9 +1340,9 @@ class CountryPolicyViewSet(Base, viewsets.ModelViewSet):
             return Response({'branch_ids': f'Branch {bad[0]} does not exist.'}, status=400)
         allowed = S.user_branches(request)
         if allowed is not None and any(i not in allowed for i in ids):
-            return deny('You can only apply policies to your own branches.')
+            return deny(tr('You can only apply policies to your own branches.'))
         if not obj.active:
-            return deny('This policy is inactive – activate it before applying it.', 400)
+            return deny(tr('This policy is inactive – activate it before applying it.'), 400)
         for b in ids:
             BranchCountryPolicy.objects.update_or_create(branch_id=b, defaults={'country_policy': obj, 'applied_by_id': request.user.pk})
         return Response({'applied': ids, 'policy': obj.name})
@@ -1373,11 +1374,11 @@ class BranchCountryPolicyView(Base, APIView):
 
     def delete(self, request):
         if not S.is_hr_country(request, write=True):
-            return deny('You may not change country policies.')
+            return deny(tr('You may not change country policies.'))
         b = request.query_params.get('branch')
         allowed = S.user_branches(request)
         if allowed is not None and (not b or not b.isdigit() or int(b) not in allowed):
-            return deny('You can only change your own branches.')
+            return deny(tr('You can only change your own branches.'))
         BranchCountryPolicy.objects.filter(branch_id=b).delete()
         return Response(status=204)
 
@@ -1388,7 +1389,7 @@ class HeadcountView(Base, APIView):
 
     def get(self, request):
         if not S.is_hr_employees(request):
-            return deny('You may not see headcount.')
+            return deny(tr('You may not see headcount.'))
         from .reports import headcount_rows
         try:
             cols, rows = headcount_rows(_emp_qs(request), request.query_params.get('group', 'division'))

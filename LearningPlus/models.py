@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 DELIVERY = [('classroom', 'Classroom'), ('online', 'Online'), ('blended', 'Blended')]
 LEVEL = [('beginner', 'Beginner'), ('intermediate', 'Intermediate'), ('advanced', 'Advanced'), ('expert', 'Expert')]
@@ -46,7 +47,7 @@ class Provider(models.Model):
 
     def clean(self):
         if self.trn and (not self.trn.isdigit() or len(self.trn) != 15):
-            raise ValidationError({'trn': 'TRN must be 15 digits.'})
+            raise ValidationError({'trn': tr('TRN must be 15 digits.')})
 
     def __str__(self):
         return self.name
@@ -70,9 +71,9 @@ class Trainer(models.Model):
 
     def clean(self):
         if self.trainer_type == 'internal' and not self.employee_id:
-            raise ValidationError({'employee_id': 'Pick the employee for an internal trainer.'})
+            raise ValidationError({'employee_id': tr('Pick the employee for an internal trainer.')})
         if self.trainer_type == 'external' and not self.name:
-            raise ValidationError({'name': 'Enter the external trainer name.'})
+            raise ValidationError({'name': tr('Enter the external trainer name.')})
 
     def __str__(self):
         return self.name or f"Employee #{self.employee_id}"
@@ -198,7 +199,7 @@ class SessionCost(models.Model):
 
     def clean(self):
         if self.amount is not None and self.amount < Decimal('0'):
-            raise ValidationError({'amount': 'Amount cannot be negative.'})
+            raise ValidationError({'amount': tr('Amount cannot be negative.')})
 
 
 class Skill(models.Model):
@@ -225,12 +226,12 @@ class SkillLevel(models.Model):
 
     def clean(self):
         if self.level is not None and not 1 <= self.level <= 5:
-            raise ValidationError({'level': 'Level must be 1-5.'})
+            raise ValidationError({'level': tr('Level must be 1-5.')})
 
 
 def _level_ok(v, field):
     if v is not None and not 1 <= int(v) <= 5:
-        raise ValidationError({field: 'Level must be 1-5.'})
+        raise ValidationError({field: tr('Level must be 1-5.')})
 
 
 class CourseSkill(models.Model):

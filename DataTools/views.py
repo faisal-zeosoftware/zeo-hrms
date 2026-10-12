@@ -22,6 +22,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 from rest_framework.views import APIView
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 MAX_ROWS = 5000
 NATURAL_KEYS = ('emp_code', 'branch_code', 'dept_code', 'desgntn_code', 'ctgry_code', 'code', 'username', 'email',
@@ -168,7 +169,7 @@ def convert_row(ser, row):
             for v in vals:
                 pk = _resolve_link(model, v)
                 if pk is None:
-                    problems.append(f'{f.label or key}: “{str(v).strip()}” not found')
+                    problems.append(tr('{0}: “{1}” not found', f.label or key, str(v).strip()))
                 else:
                     ids.append(pk)
             data[key] = ids if many else (ids[0] if ids else None)
@@ -227,14 +228,36 @@ def extra_fields(model):
     if model._meta.model_name == 'emp_master':
         try:
             from EmpManagement.models import Emp_CustomField
-            from .forms import _mandatory_map
+            from .forms import _mandatory_map, field_meta
             req = _mandatory_map('employee')
+            meta = field_meta('employee')
             for c in Emp_CustomField.objects.all():
+                m = meta.get(c.emp_custom_field, {})
+                if m.get('alias_of'):   # v1.16.0: merged into a built-in field – imported through that column only
+                    continue
                 f = {'key': f'ecf:{c.emp_custom_field}', 'label': c.emp_custom_field, 'required': bool(req.get(c.emp_custom_field)),
-                     'many': False, 'type': X_TYPES.get(c.data_type or 'text', 'text'), 'help': '', 'designer': True}
+                     'many': False, 'type': X_TYPES.get(c.data_type or 'text', 'text'), 'help': m.get('help_text', ''), 'designer': True,
+                     'example': (m.get('rules') or {}).get('example', '')}
                 opts = c.dropdown_values or c.radio_values or (c.checkbox_values if c.data_type in ('multiselect',) else None)
                 if c.data_type in ('dropdown', 'radio', 'multiselect') and opts:
                     f.update(type='choice', choices=[{'value': o, 'label': o} for o in opts])
+                out.append(f)
+        except Exception:
+            pass
+    if model._meta.label == 'OrganisationManager.Asset':
+        # v1.16.0: asset custom fields (the asset form's one designer): 'acf:<name>'
+        try:
+            from OrganisationManager.models import AssetCustomField
+            from .onedesign import asset_meta, asset_field_json
+            meta = asset_meta()
+            for c in AssetCustomField.objects.all():
+                j = asset_field_json(c, meta)
+                if j['alias_of']:
+                    continue
+                f = {'key': f'acf:{c.custom_field}', 'label': c.custom_field, 'required': j['required'], 'many': j['type'] == 'multiselect',
+                     'type': X_TYPES.get(j['type'], 'text'), 'help': j['help_text'], 'designer': True, 'example': j['example']}
+                if j['type'] in ('dropdown', 'radio', 'multiselect') and j['options']:
+                    f.update(type='choice', choices=[{'value': o, 'label': o} for o in j['options']])
                 out.append(f)
         except Exception:
             pass
@@ -248,6 +271,8 @@ def split_extras(row):
             x[k[2:]] = v
         elif str(k).startswith('ecf:'):
             ecf[k[4:]] = v
+        elif str(k).startswith('acf:'):   # v1.16.0: asset custom fields travel with the employee-style extras
+            ecf['acf:' + k[4:]] = v
         else:
             base[k] = v
     return base, x, ecf
@@ -265,6 +290,21 @@ def check_extras(model, x, ecf):
             _, err = clean_value(d, v)
             if err:
                 errors.append(err)
+    acf = {k[4:]: v for k, v in (ecf or {}).items() if str(k).startswith('acf:')}
+    ecf = {k: v for k, v in (ecf or {}).items() if not str(k).startswith('acf:')}
+    if acf and model._meta.label == 'OrganisationManager.Asset':
+        from OrganisationManager.models import AssetCustomField
+        from .onedesign import asset_typed
+        by = {c.custom_field.lower(): c for c in AssetCustomField.objects.all()}
+        for name, v in acf.items():
+            c = by.get(str(name).strip().lower())
+            if c is None:
+                errors.append(tr('There is no custom field called “{0}”.', name))
+                continue
+            try:
+                asset_typed(c, v)
+            except ValueError as e:
+                errors.append(str(e))
     if ecf and model._meta.model_name == 'emp_master':
         # v1.12.0: the same typed checks as the employee screens (type, options, rules, mandatory)
         from .forms import models_for, check_row
@@ -273,7 +313,7 @@ def check_extras(model, x, ecf):
         given = {lower.get(str(k).strip().lower(), k): v for k, v in (ecf or {}).items()}
         for name, v in given.items():
             if name not in lower.values():
-                errors.append(f'There is no custom field called “{name}”.')
+                errors.append(tr('There is no custom field called “{0}”.', name))
                 continue
             try:
                 check_row(V, name, v, current=dict(given))
@@ -288,6 +328,16 @@ def save_extras(request, model, obj_id, x, ecf):
         from Chatter.tracking import model_key
         from Chatter.views import save_values
         save_values(request, model_key(model), obj_id, x, partial=True)
+    acf = {k[4:]: v for k, v in (ecf or {}).items() if str(k).startswith('acf:')}
+    ecf = {k: v for k, v in (ecf or {}).items() if not str(k).startswith('acf:')}
+    if acf and model._meta.label == 'OrganisationManager.Asset':
+        from OrganisationManager.models import AssetCustomField, AssetCustomFieldValue
+        from .onedesign import asset_typed
+        by = {c.custom_field.lower(): c for c in AssetCustomField.objects.all()}
+        for name, v in acf.items():
+            c = by.get(str(name).strip().lower())
+            if c is not None and v not in (None, ''):
+                AssetCustomFieldValue.objects.update_or_create(asset_id=obj_id, custom_field=c, defaults={'field_value': asset_typed(c, v)})
     if ecf:
         from EmpManagement.models import Emp_CustomFieldValue, emp_master
         emp = emp_master.objects.filter(pk=obj_id).first()
@@ -315,9 +365,9 @@ class FieldsView(APIView):
         endpoint = request.query_params.get('endpoint', '')
         func, cls, path = _view_for(endpoint)
         if not cls:
-            return Response({'detail': 'This list cannot be imported.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': tr('This list cannot be imported.')}, status=status.HTTP_400_BAD_REQUEST)
         if not _check_access.can_add(request, cls):
-            return Response({'detail': 'You do not have permission to add these records.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'detail': tr('You do not have permission to add these records.')}, status=status.HTTP_403_FORBIDDEN)
         from AccessControl.access import view_model
         return Response({'endpoint': path, 'fields': writable_fields(cls, request) + extra_fields(view_model(cls()))})
 
@@ -331,13 +381,13 @@ class ImportView(APIView):
         dry = bool(request.data.get('dry_run', True))
         func, cls, path = _view_for(endpoint)
         if not cls:
-            return Response({'detail': 'This list cannot be imported.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': tr('This list cannot be imported.')}, status=status.HTTP_400_BAD_REQUEST)
         if not isinstance(rows, list) or not rows:
-            return Response({'detail': 'The file has no rows.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': tr('The file has no rows.')}, status=status.HTTP_400_BAD_REQUEST)
         if len(rows) > MAX_ROWS:
-            return Response({'detail': f'Import up to {MAX_ROWS} rows at a time.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': tr('Import up to {0} rows at a time.', MAX_ROWS)}, status=status.HTTP_400_BAD_REQUEST)
         if not _check_access.can_add(request, cls):
-            return Response({'detail': 'You do not have permission to add these records.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'detail': tr('You do not have permission to add these records.')}, status=status.HTTP_403_FORBIDDEN)
         schema = request.query_params.get('schema', '')
         factory = APIRequestFactory()
         results, seen = [], {}
@@ -356,7 +406,7 @@ class ImportView(APIView):
                 if v:
                     if (f, v) in seen:
                         from .duplicates import pretty
-                        problems.append(f'{pretty(f)}: “{data[f]}” is also on row {seen[(f, v)]}')
+                        problems.append(tr('{0}: “{1}” is also on row {2}', pretty(f), data[f], seen[(f, v)]))
                     else:
                         seen[(f, v)] = i
             if problems:
@@ -449,11 +499,11 @@ class FormSettingsView(APIView):
         from AccessControl.access import ctx
         c = ctx(request)
         if not (c.admin or c.codes & {'change_emp_customfield', 'add_emp_customfield'}):
-            return Response({'detail': 'Only HR administrators can change the form designer.'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'detail': tr('Only HR administrators can change the form designer.')}, status=status.HTTP_403_FORBIDDEN)
         form = request.query_params.get('form', 'employee')[:60]
         data = request.data.get('data') if isinstance(request.data, dict) else None
         if not isinstance(data, dict):
-            return Response({'detail': 'Send {"data": {...}}.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': tr('Send {"data": {...}}.')}, status=status.HTTP_400_BAD_REQUEST)
         if form == 'employee':
             data = {str(k)[:80]: (v if v is None else str(v)[:2000]) for k, v in data.items() if _re.search(DESIGNER_KEY, str(k))}
         row, _ = FormSetting.objects.get_or_create(form=form)

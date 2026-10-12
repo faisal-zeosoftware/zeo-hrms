@@ -1,6 +1,7 @@
 # ZEO HRMS v1.13.1 – Python packages (tested with Python 3.13 / 3.12, PostgreSQL 16, Redis 7)
 # Install: pip install -r requirements.txt
 amqp==5.4.1
+arabic-reshaper==3.0.1   # v1.15.0: Arabic letters joined in PDFs (payslip, HR letters)
 asgiref==3.12.1
 billiard==4.3.1
 celery==5.6.3
@@ -43,8 +44,10 @@ pillow==12.3.0
 prompt_toolkit==3.0.53
 psycopg2-binary==2.9.13
 pycparser==3.0
+pypdf==6.19.0            # v1.16.0: text of uploaded PDF documents ("Fill from document")
 PyJWT==2.15.1
 python-crontab==3.4.0
+python-bidi==0.6.11      # v1.15.0: right-to-left order of Arabic lines in PDFs
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
 pytz==2026.5

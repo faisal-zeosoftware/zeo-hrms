@@ -19,16 +19,27 @@ def standard_hours(employee, start, end):
     """Planned hours from the shifts (net of unpaid break); working days without a shift use the rule's
     default hours or 8 h. Returns (hours, days_with_shift) – hours None when nothing could be planned."""
     from calendars.utils import get_employee_weekend_days, get_employee_holidays
+    from PayrollManagement.perf import memo, active
     rule = E.rule_for(employee)
     try:
-        wk = set(get_employee_weekend_days(employee))
-        hol = set(get_employee_holidays(employee, start, end))
+        from PayrollManagement.perf import employee_weekend_days, employee_holidays   # v1.16.0 (D15): one read per run
+        wk = set(memo(('weekend_days', employee.pk), lambda: employee_weekend_days(employee)))
+        hol = set(memo(('holidays', employee.pk, start, end), lambda: employee_holidays(employee, start, end)))
     except Exception:
         wk, hol = set(), set()
+    # v1.16.0 (D15): one shift book for the whole period – the resolver built a new one for every day (~10 queries a day);
+    # inside a payroll run one book serves every employee. book.get(employee, day) == resolver.shift_for(employee, day).
+    book = None
+    if E._resolver() is not None:
+        try:
+            from ShiftPlanner.resolver import Book
+            book = memo(('shift_book', start, end), lambda: Book(start, end)) if active() else Book(start, end, [employee.pk])
+        except Exception:
+            book = None
     total, shift_days, d = 0, 0, start
     any_shift = False
     while d <= end:
-        sh = E.shift_info(employee, d, rule)
+        sh = E.shift_info(employee, d, rule, book=book)
         if sh and sh.get('off'):
             d += timedelta(days=1)
             continue

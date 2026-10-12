@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 
 from . import services as S
 from .models import BILLING_TYPES, CostRateSetting, MemberRate, ProjectFinance, TaskPlan, TimesheetExtra
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 def _pm():
@@ -41,9 +42,9 @@ def _dec(v, field, allow_none=False):
     try:
         d = Decimal(str(v))
     except (InvalidOperation, ValueError):
-        raise ValueError(f'{field}: not a number.')
+        raise ValueError(tr('{0}: not a number.', field))
     if d < 0:
-        raise ValueError(f'{field}: cannot be negative.')
+        raise ValueError(tr('{0}: cannot be negative.', field))
     return d
 
 
@@ -65,15 +66,15 @@ def _target_employee(request, for_write=False):
     Emp = _emp_model()
     emp = Emp.objects.filter(pk=eid).first() if str(eid).isdigit() else None
     if emp is None:
-        return None, bad('Employee not found.', status.HTTP_404_NOT_FOUND)
+        return None, bad(tr('Employee not found.'), status.HTTP_404_NOT_FOUND)
     if for_write:
         if not (c.admin or ('change_timesheet' in c.codes and emp.emp_branch_id_id in (c.branches or []))):
-            return None, bad('You can only fill in your own timesheet.', status.HTTP_403_FORBIDDEN)
+            return None, bad(tr('You can only fill in your own timesheet.'), status.HTTP_403_FORBIDDEN)
         return emp, None
     if c.admin or emp.emp_reporting_manager_id == c.user.id or S.visible_timesheets(request).filter(employee=emp).exists() \
             or ('view_timesheet' in c.codes and emp.emp_branch_id_id in (c.branches or [])):
         return emp, None
-    return None, bad('You may not see this employee\'s timesheet.', status.HTTP_403_FORBIDDEN)
+    return None, bad(tr('You may not see this employee\'s timesheet.'), status.HTTP_403_FORBIDDEN)
 
 
 def entry_json(ts, e=None):
@@ -99,7 +100,7 @@ class MyProjectsView(APIView):
         if err:
             return err
         if emp is None:
-            return Response({'projects': [], 'detail': 'Your user is not linked to an employee.'})
+            return Response({'projects': [], 'detail': tr('Your user is not linked to an employee.')})
         return Response({'employee_id': emp.pk, 'projects': S.assignable_projects(emp)})
 
 
@@ -125,7 +126,7 @@ class WeekView(APIView):
         if err:
             return err
         if emp is None:
-            return bad('Your user is not linked to an employee.')
+            return bad(tr('Your user is not linked to an employee.'))
         d = parse_date(request.query_params.get('week') or '') or S.local_today()
         grid = S.week_grid(emp, S.week_start(d))
         grid['today'] = S.local_today().isoformat()
@@ -146,7 +147,7 @@ class WeekSaveView(APIView):
         if err:
             return err
         if emp is None:
-            return bad('Your user is not linked to an employee.')
+            return bad(tr('Your user is not linked to an employee.'))
         d = parse_date(str(request.data.get('week') or '')) or S.local_today()
         start = S.week_start(d)
         days = {start + timedelta(days=i) for i in range(7)}
@@ -157,14 +158,14 @@ class WeekSaveView(APIView):
                 for row in request.data.get('rows') or []:
                     project = Project.objects.filter(pk=row.get('project')).first()
                     if project is None:
-                        errors.append({'row': row.get('project'), 'detail': 'Project not found.'})
+                        errors.append({'row': row.get('project'), 'detail': tr('Project not found.')})
                         continue
                     task = Task.objects.filter(pk=row.get('task')).first() if row.get('task') else None
                     billable = S.parse_bool(row.get('billable'))
                     for cell in row.get('cells') or []:
                         day = parse_date(str(cell.get('date') or ''))
                         if day not in days:
-                            errors.append({'date': cell.get('date'), 'detail': 'Date is outside the week.'})
+                            errors.append({'date': cell.get('date'), 'detail': tr('Date is outside the week.')})
                             continue
                         try:
                             hours = S.q2(_dec(cell.get('hours'), 'hours'))
@@ -181,11 +182,11 @@ class WeekSaveView(APIView):
                                     S.sync_extra(t, billable)
                             continue
                         if locked:
-                            errors.append({'date': str(day), 'project': project.title, 'detail': 'Submitted or approved time cannot be changed.'})
+                            errors.append({'date': str(day), 'project': project.title, 'detail': tr('Submitted or approved time cannot be changed.')})
                             continue
                         if len(existing) > 1:
                             errors.append({'date': str(day), 'project': project.title,
-                                           'detail': 'This day has several entries – change them in the timesheet list.'})
+                                           'detail': tr('This day has several entries – change them in the timesheet list.')})
                             continue
                         msg = S.validate_entry(emp, project, task, day, hours, exclude_id=existing[0].pk if existing else None)
                         if msg:
@@ -211,7 +212,7 @@ class WeekSaveView(APIView):
                 if errors:
                     raise _Rollback()
         except _Rollback:
-            return Response({'detail': 'Nothing was saved: ' + ' | '.join(f"{e.get('date', '')} {e['detail']}".strip() for e in errors),
+            return Response({'detail': tr('Nothing was saved: ') + ' | '.join(f"{e.get('date', '')} {e['detail']}".strip() for e in errors),
                              'errors': errors}, status=status.HTTP_400_BAD_REQUEST)
         grid = S.week_grid(emp, start)
         grid['changed'] = changed
@@ -230,7 +231,7 @@ class EntryBillableView(APIView):
         _, _, TimeSheet = _pm()
         flag = S.parse_bool(request.data.get('billable'))
         if flag is None:
-            return bad('billable must be true or false.')
+            return bad(tr('billable must be true or false.'))
         done = []
         for ts in TimeSheet.objects.filter(pk__in=request.data.get('ids') or []).select_related('employee'):
             if not S.can_edit_entry(request, ts):
@@ -270,7 +271,7 @@ class TimerView(APIView):
     def get(self, request):
         emp = _me(request)
         if emp is None:
-            return Response({'running': False, 'detail': 'Your user is not linked to an employee.'})
+            return Response({'running': False, 'detail': tr('Your user is not linked to an employee.')})
         return Response(_timer_json(_running(emp)))
 
 
@@ -282,12 +283,12 @@ class TimerStartView(APIView):
         Project, Task, TimeSheet = _pm()
         emp = _me(request)
         if emp is None:
-            return bad('Your user is not linked to an employee.')
+            return bad(tr('Your user is not linked to an employee.'))
         if _running(emp):
-            return bad('A timer is already running. Stop it first.', status.HTTP_409_CONFLICT, timer=_timer_json(_running(emp)))
+            return bad(tr('A timer is already running. Stop it first.'), status.HTTP_409_CONFLICT, timer=_timer_json(_running(emp)))
         project = Project.objects.filter(pk=request.data.get('project')).first()
         if project is None:
-            return bad('Pick a project.')
+            return bad(tr('Pick a project.'))
         task = Task.objects.filter(pk=request.data.get('task')).first() if request.data.get('task') else None
         today = S.local_today()
         msg = S.validate_entry(emp, project, task, today, S.D0)
@@ -311,20 +312,20 @@ class TimerStopView(APIView):
         _, _, TimeSheet = _pm()
         emp = _me(request)
         if emp is None:
-            return bad('Your user is not linked to an employee.')
+            return bad(tr('Your user is not linked to an employee.'))
         e = _running(emp)
         if e is None:
-            return bad('No timer is running.')
+            return bad(tr('No timer is running.'))
         ts = TimeSheet.objects.select_related('project', 'task', 'employee').get(pk=e.timesheet_id)
         now = timezone.now()
         hours = S.q2(Decimal((now - e.start_at).total_seconds()) / Decimal(3600)) if e.start_at else S.D0
         warnings = []
         if hours > S.LONG_TIMER_HOURS and not S.parse_bool(request.data.get('confirm_long')):
-            warnings.append(f'The timer ran {hours} h; it was cut to 12 h. Correct the entry if needed.')
+            warnings.append(tr('The timer ran {0} h; it was cut to 12 h. Correct the entry if needed.', hours))
             hours = S.LONG_TIMER_HOURS
         left = S.MAX_DAY_HOURS - S.day_hours(emp.pk, ts.date, exclude_id=ts.pk)
         if hours > left:
-            warnings.append(f'Only {left} h were left for {ts.date}; the entry was cut to that.')
+            warnings.append(tr('Only {0} h were left for {1}; the entry was cut to that.', left, ts.date))
             hours = max(left, S.D0)
         with transaction.atomic():
             ts.time_spent = S.to_hhmm(hours)
@@ -346,7 +347,7 @@ class SubmitView(APIView):
         _, _, TimeSheet = _pm()
         emp = _me(request)
         if emp is None:
-            return bad('Your user is not linked to an employee.')
+            return bad(tr('Your user is not linked to an employee.'))
         qs = TimeSheet.objects.filter(employee=emp)
         ids = request.data.get('ids')
         if ids:
@@ -354,14 +355,14 @@ class SubmitView(APIView):
         else:
             d = parse_date(str(request.data.get('week') or ''))
             if not d:
-                return bad('Give the week (any date in it) or the entry ids.')
+                return bad(tr('Give the week (any date in it) or the entry ids.'))
             start = S.week_start(d)
             qs = qs.filter(date__gte=start, date__lte=start + timedelta(days=6))
         entries = list(qs.select_related('project', 'task', 'employee'))
         if not entries:
-            return bad('There is nothing to submit.')
+            return bad(tr('There is nothing to submit.'))
         done, skipped = S.submit(entries)
-        return Response({'submitted': done, 'skipped': skipped, 'detail': f'{len(done)} entr{"y" if len(done) == 1 else "ies"} submitted for approval.'})
+        return Response({'submitted': done, 'skipped': skipped, 'detail': tr('{0} entr{1} submitted for approval.', len(done), "y" if len(done) == 1 else "ies")})
 
 
 class ApprovalListView(APIView):
@@ -402,12 +403,12 @@ class ApproveView(APIView):
         _, _, TimeSheet = _pm()
         ids = request.data.get('ids') or []
         if not ids:
-            return bad('Pick the entries to approve.')
+            return bad(tr('Pick the entries to approve.'))
         entries = list(TimeSheet.objects.filter(pk__in=ids).select_related('project', 'task', 'employee'))
         with transaction.atomic():
             done, skipped = S.approve(entries, request.user, request)
         if not done:
-            return bad('Nothing was approved.', status.HTTP_403_FORBIDDEN if skipped and all('may not' in s['reason'] for s in skipped) else 400,
+            return bad(tr('Nothing was approved.'), status.HTTP_403_FORBIDDEN if skipped and all('may not' in s['reason'] for s in skipped) else 400,
                        skipped=skipped)
         return Response({'approved': done, 'skipped': skipped})
 
@@ -420,14 +421,14 @@ class RejectView(APIView):
         ids = request.data.get('ids') or []
         reason = (request.data.get('reason') or '').strip()
         if not ids:
-            return bad('Pick the entries to reject.')
+            return bad(tr('Pick the entries to reject.'))
         if not reason:
-            return bad('Give the reason for the rejection.')
+            return bad(tr('Give the reason for the rejection.'))
         entries = list(TimeSheet.objects.filter(pk__in=ids).select_related('project', 'task', 'employee'))
         with transaction.atomic():
             done, skipped = S.reject(entries, request.user, reason, request)
         if not done:
-            return bad('Nothing was rejected.', status.HTTP_403_FORBIDDEN if skipped and all('may not' in s['reason'] for s in skipped) else 400,
+            return bad(tr('Nothing was rejected.'), status.HTTP_403_FORBIDDEN if skipped and all('may not' in s['reason'] for s in skipped) else 400,
                        skipped=skipped)
         return Response({'rejected': done, 'skipped': skipped})
 
@@ -475,14 +476,14 @@ class FinanceView(APIView):
     def get(self, request, pk):
         p = self._project(request, pk)
         if not S.can_see_finance(request, p):
-            return bad('Only the project manager or finance users can see the project finances.', status.HTTP_403_FORBIDDEN)
+            return bad(tr('Only the project manager or finance users can see the project finances.'), status.HTTP_403_FORBIDDEN)
         return Response(_finance_json(request, p))
 
     def put(self, request, pk):
         _, Task, _ = _pm()
         p = self._project(request, pk)
         if not S.can_edit_finance(request, p):
-            return bad('Only the project manager or finance users can change the project finances.', status.HTTP_403_FORBIDDEN)
+            return bad(tr('Only the project manager or finance users can change the project finances.'), status.HTTP_403_FORBIDDEN)
         data = request.data
         try:
             with transaction.atomic():
@@ -494,7 +495,7 @@ class FinanceView(APIView):
                             setattr(f, k, _dec(fd.get(k), k.replace('_', ' ')))
                     if 'billing_type' in fd:
                         if fd['billing_type'] not in dict(BILLING_TYPES):
-                            raise ValueError('billing type: pick fixed, time_and_material or non_billable.')
+                            raise ValueError(tr('billing type: pick fixed, time_and_material or non_billable.'))
                         f.billing_type = fd['billing_type']
                     if 'customer_name' in fd:
                         f.customer_name = (fd.get('customer_name') or '')[:200]
@@ -505,7 +506,7 @@ class FinanceView(APIView):
                 for r in data.get('member_rates') or []:
                     eid = int(r.get('employee_id') or 0)
                     if eid not in member_ids:
-                        raise ValueError(f'employee {eid} is not on this project.')
+                        raise ValueError(tr('employee {0} is not on this project.', eid))
                     m, _ = MemberRate.objects.get_or_create(project_id=p.pk, employee_id=eid)
                     m.role = (r.get('role') or '')[:100]
                     m.bill_rate = _dec(r.get('bill_rate'), 'bill rate', allow_none=True)
@@ -515,7 +516,7 @@ class FinanceView(APIView):
                 for r in data.get('task_plans') or []:
                     tid = int(r.get('task_id') or 0)
                     if tid not in task_ids:
-                        raise ValueError(f'task {tid} is not part of this project.')
+                        raise ValueError(tr('task {0} is not part of this project.', tid))
                     t, _ = TaskPlan.objects.get_or_create(task_id=tid)
                     t.planned_hours = _dec(r.get('planned_hours'), 'planned hours')
                     b = S.parse_bool(r.get('billable'))
@@ -534,7 +535,7 @@ class ProjectSummaryView(APIView):
     def get(self, request, pk):
         p = get_object_or_404(S.visible_projects(request), pk=pk)
         if not S.can_see_finance(request, p):
-            return bad('Only the project manager or finance users can see the project costs.', status.HTTP_403_FORBIDDEN)
+            return bad(tr('Only the project manager or finance users can see the project costs.'), status.HTTP_403_FORBIDDEN)
         d_from, d_to = _dates(request)
         return Response(S.project_summary(p, d_from, d_to))
 
@@ -548,7 +549,7 @@ class EmployeeSummaryView(APIView):
         if err:
             return err
         if emp is None:
-            return bad('Your user is not linked to an employee.')
+            return bad(tr('Your user is not linked to an employee.'))
         d_from, d_to = _dates(request)
         c = S._ctx(request)
         projects = None
@@ -567,7 +568,7 @@ class CostRateView(APIView):
 
     def get(self, request, pk):
         if not S.has(request, 'view_projectfinance', 'view_employeesalarystructure'):
-            return bad('Only finance users can see cost rates.', status.HTTP_403_FORBIDDEN)
+            return bad(tr('Only finance users can see cost rates.'), status.HTTP_403_FORBIDDEN)
         emp = get_object_or_404(_emp_model(), pk=pk)
         setting = CostRateSetting.get()
         monthly = S.monthly_fixed_pay(emp.pk, None, setting)
@@ -588,20 +589,20 @@ class SettingsView(APIView):
 
     def put(self, request):
         if not S.has(request, 'change_costratesetting'):
-            return bad('Only an administrator can change the cost rate settings.', status.HTTP_403_FORBIDDEN)
+            return bad(tr('Only an administrator can change the cost rate settings.'), status.HTTP_403_FORBIDDEN)
         s = CostRateSetting.objects.order_by('id').first() or CostRateSetting()
         try:
             if 'hours_per_day' in request.data:
                 h = _dec(request.data.get('hours_per_day'), 'hours per day')
                 if not (0 < h <= 24):
-                    raise ValueError('hours per day: between 0 and 24.')
+                    raise ValueError(tr('hours per day: between 0 and 24.'))
                 s.hours_per_day = h
             if 'overhead_percent' in request.data:
                 s.overhead_percent = _dec(request.data.get('overhead_percent'), 'overhead')
             if 'include_allowance_categories' in request.data:
                 v = request.data.get('include_allowance_categories') or []
                 if not isinstance(v, list):
-                    raise ValueError('include allowance categories: a list.')
+                    raise ValueError(tr('include allowance categories: a list.'))
                 s.include_allowance_categories = [str(x) for x in v]
         except ValueError as exc:
             return bad(str(exc))

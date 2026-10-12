@@ -68,7 +68,8 @@ def fallback_chain(emp):
     yield 'branch_hr', holder('branch_hr', emp)
     yield 'company_hr', holder('company_hr', emp)
     U = M('UserManagement', 'CustomUser')
-    yield 'admin', U.objects.filter(is_active=True, is_superuser=True).order_by('pk').first()
+    from django.db import connection   # v1.22.0: an administrator of this company, not of any company
+    yield 'admin', U.objects.filter(is_active=True, is_superuser=True, tenants__schema_name=connection.schema_name).order_by('pk').first()
 
 
 def resolve(level, emp, exclude_ids=()):

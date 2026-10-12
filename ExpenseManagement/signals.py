@@ -13,6 +13,13 @@ def _mark_expenses_paid(sender, instance, created, **kwargs):
     if not created or not getattr(instance, 'payroll_run_id', None):
         return
     try:
+        # v1.15.1: only when a salary component of the employee pays them (formula with expense_reimbursement_amount);
+        # before, reports were marked reimbursed by every payslip although nothing paid them
+        from django.apps import apps
+        ESS = apps.get_model('PayrollManagement', 'EmployeeSalaryStructure')
+        if not ESS.objects.filter(employee_id=instance.employee_id, is_active=True, component__component_value_type='variable',
+                                  component__formula__icontains='expense_reimbursement_amount').exists():
+            return
         from .services import mark_paid_by_payslip
         mark_paid_by_payslip(instance)
     except Exception:

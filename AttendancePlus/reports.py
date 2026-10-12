@@ -2,6 +2,7 @@
 `def r_x(run): return columns, rows`). Registered at the end of DashboardManagement/reports.py."""
 from . import engine as E
 from . import models as M
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 def _R():
@@ -16,7 +17,7 @@ def _t(v):
 def _days(run, **flt):
     R = _R()
     if run.date_from and run.date_to and (run.date_to - run.date_from).days > 92:
-        raise ValueError('Choose at most 3 months.')
+        raise ValueError(tr('Choose at most 3 months.'))
     emps = {e.pk: e for e in run.all_employees}
     qs = M.AttendanceDay.objects.filter(employee_id__in=list(emps), **flt).filter(run.in_period('date')).order_by('date', 'employee_id')
     return R, emps, qs

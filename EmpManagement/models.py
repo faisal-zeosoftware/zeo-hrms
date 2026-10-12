@@ -143,8 +143,11 @@ class emp_master(models.Model):
         if create_or_reactivate_user_required:
             user_model = get_user_model()
             username = self.emp_code
-            email = self.emp_personal_email
-            password = 'admin'  # ⚠️ Consider generating secure password
+            email = self.emp_personal_email or self.emp_company_email
+            # v1.18.0: every new self-service login got the password "admin"; now a random temporary password, e-mailed to
+            # the employee (must be changed at the first login; "Forgot password" works too)
+            import secrets
+            password = secrets.token_urlsafe(9)
             schema_name = connection.schema_name
 
             try:
@@ -157,6 +160,14 @@ class emp_master(models.Model):
             try:
                 # Check if a user already exists for this employee code
                 user = user_model.objects.filter(username=username).first()
+                # v1.18.0: employee codes repeat between companies (EMP1001 …). A login of ANOTHER company with the same code
+                # was taken over (re-linked) for this employee; now the new employee gets a login of their own
+                if user and company_instance is not None and not user.tenants.filter(pk=company_instance.pk).exists():
+                    base, n = f"{username}.{schema_name}"[:140], 2
+                    username = base
+                    while user_model.objects.filter(username=username).exists():
+                        username, n = f"{base}{n}", n + 1
+                    user = None
 
                 if user:
                     # Reactivate instead of creating duplicate
@@ -187,6 +198,15 @@ class emp_master(models.Model):
                     user.must_change_password = True
                     user.save()
                     logger.info(f"User {user.username} created and linked to employee {self.emp_code}.")
+                    try:   # v1.18.0: the temporary password goes to the employee only
+                        if email:
+                            from django.core.mail import send_mail
+                            send_mail('Your ZEO HRMS login',
+                                      f'Dear {self.emp_first_name},\n\nYour self-service login was created.\nUser name: {user.username}\n'
+                                      f'Temporary password: {password}\n\nYou will be asked to choose your own password at the first login.',
+                                      None, [email], fail_silently=True)
+                    except Exception:
+                        logger.exception('welcome e-mail failed')
             except Exception as e:
                 logger.error(f"Error handling user for {self.emp_code}: {e}")
                 raise
@@ -1523,7 +1543,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         if approval_type == 'no_approval':
             # Approval.approver is mandatory: record the requester (or a company admin) as the auto-approver
             approver = (instance.created_by or getattr(instance.employee, 'users', None)
-                        or get_user_model().objects.filter(is_superuser=True).first())
+                        or get_user_model().objects.filter(is_superuser=True, tenants__schema_name=__import__('django.db').db.connection.schema_name).first())   # v1.22.0: of this company
             Approval.objects.create(
                 general_request=instance,
                 approver=approver,

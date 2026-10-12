@@ -22,6 +22,7 @@ from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -216,14 +217,14 @@ def validate_request(req):
     errors = []
     emp, lt = req.employee, req.leave_type
     if req.end_date < req.start_date:
-        raise ValidationError('The end date is before the start date.')
+        raise ValidationError(tr('The end date is before the start date.'))
     LR = M('calendars', 'employee_leave_request')
     clash = LR.objects.filter(employee=emp, status__in=ACTIVE_STATUSES, start_date__lte=req.end_date, end_date__gte=req.start_date)
     if req.pk:
         clash = clash.exclude(pk=req.pk)
     c = clash.select_related('leave_type').first()
     if c:
-        errors.append(f'{emp.emp_first_name} already has {c.leave_type.name} {c.document_number or ""} from {c.start_date:%d/%m/%Y} to {c.end_date:%d/%m/%Y} ({c.status}).')
+        errors.append(tr('{0} already has {1} {2} from {3:%d/%m/%Y} to {4:%d/%m/%Y} ({5}).', emp.emp_first_name, c.leave_type.name, c.document_number or "", c.start_date, c.end_date, c.status))
     errors += leave_type_problems(req)
     line = line_for(emp, lt.pk)
     if line is None:
@@ -234,35 +235,38 @@ def validate_request(req):
     today = date.today()
     days = leave_days(emp, req.start_date, req.end_date, line.count_days, bool(req.dis_half_day))
     if line.gender != 'B' and (emp.emp_gender or '') != line.gender:
-        errors.append(f'{lt.name} is only for {"female" if line.gender == "F" else "male"} employees.')
+        errors.append(tr('{0} is only for {1} employees.', lt.name, "female" if line.gender == "F" else "male"))
     svc = months_of_service(emp, req.start_date)
     if line.min_service_months and svc < line.min_service_months:
-        errors.append(f'{lt.name} needs {line.min_service_months} months of service; {emp.emp_first_name} will have {svc} on {req.start_date:%d/%m/%Y}.')
+        errors.append(tr('{0} needs {1} months of service; {2} will have {3} on {4:%d/%m/%Y}.', lt.name, line.min_service_months, emp.emp_first_name, svc, req.start_date))
     if line.first_year_uae and svc < 6:
-        errors.append(f'{lt.name} can be taken after 6 months of service (UAE Labour Law); {emp.emp_first_name} will have {svc} months.')
+        errors.append(tr('{0} can be taken after 6 months of service (UAE Labour Law); {1} will have {2} months.', lt.name, emp.emp_first_name, svc))
     conf = emp.emp_date_of_confirmation
     if line.after_probation and conf and req.start_date < conf:
-        errors.append(f'{lt.name} is available after probation ({conf:%d/%m/%Y}). During probation use unpaid leave.')
-    if line.notice_days and req.pk is None and (req.start_date - today).days < line.notice_days:
-        errors.append(f'{lt.name} must be requested {line.notice_days} days in advance (from {today + timedelta(days=line.notice_days):%d/%m/%Y}).')
+        errors.append(tr('{0} is available after probation ({1:%d/%m/%Y}). During probation use unpaid leave.', lt.name, conf))
+    # v1.18.0: the notice period is for the employee's own requests; HR entering leave on the employee's behalf (emergency
+    # leave, leave taken before it was recorded) was refused with "must be requested 14 days in advance"
+    by_hr = bool(getattr(req, 'created_by_id', None)) and req.created_by_id != getattr(emp, 'users_id', None)
+    if line.notice_days and req.pk is None and not by_hr and (req.start_date - today).days < line.notice_days:
+        errors.append(tr('{0} must be requested {1} days in advance (from {2:%d/%m/%Y}).', lt.name, line.notice_days, today + timedelta(days=line.notice_days)))
     if line.max_per_request and days > line.max_per_request:
-        errors.append(f'{lt.name} is at most {line.max_per_request:g} days per request; this request is {days:g} days.')
+        errors.append(tr('{0} is at most {1:g} days per request; this request is {2:g} days.', lt.name, line.max_per_request, days))
     y0, y1 = leave_year(policy, req.start_date)
     if line.max_per_year:
         used = used_in(emp.pk, lt.pk, y0, y1, exclude_id=req.pk)
         if used + days > line.max_per_year:
-            errors.append(f'{lt.name} is at most {line.max_per_year:g} days a leave year; {used:g} already taken or requested, {max(line.max_per_year - used, 0):g} left.')
+            errors.append(tr('{0} is at most {1:g} days a leave year; {2:g} already taken or requested, {3:g} left.', lt.name, line.max_per_year, used, max(line.max_per_year - used, 0)))
     if line.max_times_in_service:
         n = LR.objects.filter(employee=emp, leave_type=lt, status__in=ACTIVE_STATUSES).exclude(pk=req.pk).count()
         if n >= line.max_times_in_service:
-            errors.append(f'{lt.name} can be taken {line.max_times_in_service} time(s) in service; already taken.')
+            errors.append(tr('{0} can be taken {1} time(s) in service; already taken.', lt.name, line.max_times_in_service))
     if line.requires_document and not req.lv_document:
-        errors.append(f'{lt.name} needs a supporting document (e.g. medical report, certificate) – attach it to the request.')
+        errors.append(tr('{0} needs a supporting document (e.g. medical report, certificate) – attach it to the request.', lt.name))
     if line.accrual in ('monthly', 'yearly', 'earned') and lt.type != 'unpaid' and not (line.allow_negative or lt.negative):
         bal = float(balance_row(emp.pk, lt.pk).balance or 0)
         pending = used_in(emp.pk, lt.pk, date(1900, 1, 1), date(2999, 12, 31), exclude_id=req.pk, statuses=('pending',))
         if days > bal - pending + 1e-9:
-            errors.append(f'Not enough {lt.name}: balance {bal:g} days' + (f', {pending:g} days waiting for approval' if pending else '') + f', this request {days:g} days.')
+            errors.append(tr('Not enough {0}: balance {1:g} days', lt.name, bal) + (tr(', {0:g} days waiting for approval', pending) if pending else '') + tr(', this request {0:g} days.', days))
     if errors:
         raise ValidationError(errors)
 
@@ -738,19 +742,31 @@ def check_encashment(enc):
     errs = []
     emp, lt_id, days = enc.employee, enc.leave_type_id, float(enc.encashment_days or 0)
     if days <= 0:
-        errs.append('Days to encash must be more than 0.')
+        errs.append(tr('Days to encash must be more than 0.'))
     bal = float(balance_row(emp.pk, lt_id).balance or 0)
     if days > bal + 1e-9:
-        errs.append(f'Only {bal:g} days in the balance.')
+        errs.append(tr('Only {0:g} days in the balance.', bal))
+    else:   # v1.18.0: two open requests could each pass the balance check and encash the same days twice
+        LE = M('PayrollManagement', 'LeaveEncashment')
+        others = LE.objects.filter(employee=emp, leave_type_id=lt_id, status__in=('draft', 'pending'))
+        if enc.pk:
+            others = others.exclude(pk=enc.pk)
+        open_days = sum(float(x.encashment_days or 0) for x in others)
+        if open_days and days + open_days > bal + 1e-9:
+            errs.append(tr('{0:g} days are already in another encashment request waiting for approval; only {1:g} days are left to encash.',
+                           open_days, max(bal - open_days, 0)))
     line = line_for(emp, lt_id)
     if line is not None:
         if not line.encashable:
-            errs.append(f'The policy {line.policy.name} does not allow encashing this leave type.')
+            errs.append(tr('The policy {0} does not allow encashing this leave type.', line.policy.name))
         if line.encash_max_per_year:
             LE = M('PayrollManagement', 'LeaveEncashment')
             y0, y1 = leave_year(line.policy, date.today())
             done = sum(float(x.encashment_days) for x in LE.objects.filter(employee=emp, leave_type_id=lt_id, status__in=('approved', 'processed'),
                                                                           approved_at__date__gte=y0, approved_at__date__lte=y1).exclude(pk=enc.pk))
+            # v1.18.0: requests still waiting for approval count too (two open requests could each stay under the limit)
+            waiting = LE.objects.filter(employee=emp, leave_type_id=lt_id, status__in=('draft', 'pending'))
+            done += sum(float(x.encashment_days) for x in (waiting.exclude(pk=enc.pk) if enc.pk else waiting))
             if done + days > line.encash_max_per_year:
-                errs.append(f'At most {line.encash_max_per_year:g} days can be encashed a leave year; {done:g} already encashed.')
+                errs.append(tr('At most {0:g} days can be encashed a leave year; {1:g} already encashed.', line.encash_max_per_year, done))
     return errs

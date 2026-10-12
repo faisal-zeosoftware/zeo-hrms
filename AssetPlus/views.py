@@ -34,6 +34,7 @@ from . import services as S
 from .models import (AllocationExtra, AssetDamage, AssetDisposal, AssetEvent, AssetFile, AssetLoss, AssetPlusSettings, AssetProfile,
                      AssetReturn, AssetTransfer, AssetTypeConfig, ClearanceWaiver, MaintenanceRecord, MaintenanceSchedule,
                      RecoveryInstalment, SharedAllocation)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 R = {
     'master_view': ('view_asset', 'view_assetprofile'),
@@ -62,6 +63,7 @@ R = {
     'clearance_change': ('change_assetallocation', 'change_endofservice'),
     'waive': ('waive_assetclearance',),
     'settings': ('change_assetplussettings', 'change_assettype'),
+    'verify': ('verify_asset', 'change_asset'),
 }
 
 
@@ -113,11 +115,11 @@ class CompanyMember(BasePermission):
     def has_permission(self, request, view):
         u = request.user
         if not u or not u.is_authenticated:
-            self.message = 'Please log in.'
+            self.message = tr('Please log in.')
             return False
         sch = _schema(request)
         if not sch or sch == 'public':
-            self.message = 'Choose a company.'
+            self.message = tr('Choose a company.')
             return False
         return u.is_superuser or u.tenants.filter(schema_name=sch).exists()
 
@@ -177,12 +179,12 @@ class In:
         v = self.d.get(k)
         if v in (None, '', 'null', 'None'):
             if required:
-                raise S.AssetError(f'{label or k.replace("_", " ").capitalize()} is required.', k)
+                raise S.AssetError(tr('{0} is required.', label or k.replace("_", " ").capitalize()), k)
             return None
         try:
             return int(v)
         except (TypeError, ValueError):
-            raise S.AssetError(f'{label or k.replace("_", " ").capitalize()} must be a number.', k)
+            raise S.AssetError(tr('{0} must be a number.', label or k.replace("_", " ").capitalize()), k)
 
     def n(self, k, default=None, label=None):
         v = self.d.get(k)
@@ -191,20 +193,20 @@ class In:
         try:
             return Decimal(str(v))
         except (InvalidOperation, ValueError):
-            raise S.AssetError(f'{label or k.replace("_", " ").capitalize()} must be a number.', k)
+            raise S.AssetError(tr('{0} must be a number.', label or k.replace("_", " ").capitalize()), k)
 
     def dt(self, k, required=False, label=None):
         v = self.d.get(k)
         if v in (None, '', 'null'):
             if required:
-                raise S.AssetError(f'{label or k.replace("_", " ").capitalize()} is required.', k)
+                raise S.AssetError(tr('{0} is required.', label or k.replace("_", " ").capitalize()), k)
             return None
         try:
             r = parse_date(str(v)[:10])
         except ValueError:
             r = None
         if r is None:
-            raise S.AssetError(f'{label or k.replace("_", " ").capitalize()} must be a date (YYYY-MM-DD).', k)
+            raise S.AssetError(tr('{0} must be a date (YYYY-MM-DD).', label or k.replace("_", " ").capitalize()), k)
         return r
 
     def b(self, k, default=False):
@@ -288,16 +290,16 @@ def get_asset(request, pk, key='master_view', ess_ok=False):
     A = S.Asset()
     a = A.objects.select_related('asset_type').filter(pk=pk).first()
     if a is None:
-        raise S.AssetError('Asset not found.', status=404)
+        raise S.AssetError(tr('Asset not found.'), status=404)
     if can(request, key):
         vis = visible_asset_ids(request)
         if vis is not None and a.pk not in vis:
-            raise S.AssetError('Asset not found.', status=404)
+            raise S.AssetError(tr('Asset not found.'), status=404)
         return a
     if ess_ok and a.pk in ess_asset_ids(request):
         return a
     if ess_ok:
-        raise S.AssetError('Asset not found.', status=404)
+        raise S.AssetError(tr('Asset not found.'), status=404)
     raise Denied()
 
 
@@ -306,18 +308,18 @@ def check_branch(request, branch_id, field='branch_id'):
         return
     br = user_branches(request)
     if not S.M('OrganisationManager', 'brnch_mstr').objects.filter(pk=branch_id).exists():
-        raise S.AssetError('This branch does not exist.', field)
+        raise S.AssetError(tr('This branch does not exist.'), field)
     if br is not None and branch_id not in br:
-        raise S.AssetError('You can only use your own branches.', field, status=403)
+        raise S.AssetError(tr('You can only use your own branches.'), field, status=403)
 
 
 def check_employee(request, emp_id, field='employee'):
     e = S.emp(emp_id)
     if e is None:
-        raise S.AssetError('Choose an existing employee.', field)
+        raise S.AssetError(tr('Choose an existing employee.'), field)
     br = user_branches(request)
     if br is not None and e.emp_branch_id_id not in br:
-        raise S.AssetError('This employee is in a branch you do not manage.', field, status=403)
+        raise S.AssetError(tr('This employee is in a branch you do not manage.'), field, status=403)
     return e
 
 
@@ -357,6 +359,8 @@ def asset_row(request, a, p=None, emp_alloc=None, shared=None, open_maint=None, 
         'depreciation_method': p.depreciation_method, 'depreciation_start': dstr(p.depreciation_start), 'useful_life_months': p.useful_life_months,
         'declining_rate': num(p.declining_rate) if p.declining_rate is not None else None,
         'meter_reading': r1(p.meter_reading), 'notes': p.notes,
+        'last_verified_on': dstr(p.last_verified_on), 'last_verified_result': p.last_verified_result,   # v1.18.0
+        'last_verified_label': S.VERIFY_RESULTS.get(p.last_verified_result, ''), 'verification_due': dstr(S.verification_next_due(p, a)),
         'holder': hold, 'in_maintenance': bool(open_maint) if open_maint is not None else (st == 'maintenance'),
         'disposal': disposal,
     }
@@ -365,14 +369,31 @@ def asset_row(request, a, p=None, emp_alloc=None, shared=None, open_maint=None, 
     return row
 
 
-def custom_fields_of(asset):
+def _type_fields(asset_type_id):
+    """v1.16.0: the asset type's custom fields plus the fields for every asset type (asset_type empty), in the designer's order;
+    fields merged into a built-in asset field are left out (DataTools.onedesign)."""
+    from django.db.models import Q
+    from DataTools.onedesign import asset_meta, asset_field_json
     CF = S.M('OrganisationManager', 'AssetCustomField')
+    meta = asset_meta()
+    out = []
+    for f in CF.objects.filter(Q(asset_type_id=asset_type_id) | Q(asset_type__isnull=True)).order_by('id'):
+        j = asset_field_json(f, meta)
+        if not j['alias_of']:
+            out.append((f, j))
+    out.sort(key=lambda x: (x[1]['section'], x[1]['order'], x[0].id))
+    return out, meta
+
+
+def custom_fields_of(asset):
     CV = S.M('OrganisationManager', 'AssetCustomFieldValue')
     vals = {v.custom_field_id: v.field_value for v in CV.objects.filter(asset=asset)} if asset and asset.pk else {}
     out = []
-    for f in CF.objects.filter(asset_type_id=asset.asset_type_id).order_by('id'):
-        out.append({'id': f.id, 'name': f.custom_field, 'type': f.data_type or 'text',
-                    'options': f.dropdown_values or f.radio_values or f.checkbox_values or [], 'value': vals.get(f.id)})
+    for f, j in _type_fields(asset.asset_type_id)[0]:
+        out.append({'id': f.id, 'name': f.custom_field, 'type': j['type'], 'options': f.dropdown_values or f.radio_values or f.checkbox_values or [],
+                    'value': vals.get(f.id), 'required': j['required'], 'section': j['section'], 'order': j['order'],
+                    'help_text': j['help_text'], 'placeholder': j['placeholder'], 'example': j['example'], 'rules': j['rules'],
+                    'all_types': f.asset_type_id is None})
     return out
 
 
@@ -383,18 +404,27 @@ def validate_custom_value(field, value):
         return None
     t = field.data_type or 'text'
     name = field.custom_field
+    if t not in ('text', 'date', 'dropdown', 'radio', 'checkbox'):
+        # v1.16.0: the other field types of the one asset designer (number, e-mail, multi-select …) and the field rules
+        from DataTools.onedesign import asset_typed
+        try:
+            return asset_typed(field, value, required=False)
+        except ValueError as e:
+            raise S.AssetError(str(e), 'custom_fields')
     if t == 'date':
         if parse_date(str(value)[:10]) is None:
-            raise S.AssetError(f'{name}: enter a date (YYYY-MM-DD).', 'custom_fields')
+            raise S.AssetError(tr('{0}: enter a date (YYYY-MM-DD).', name), 'custom_fields')
         return str(value)[:10]
     if t == 'dropdown' or t == 'radio':
         opts = [str(o) for o in ((field.dropdown_values if t == 'dropdown' else field.radio_values) or [])]
         if str(value) not in opts:
-            raise S.AssetError(f'{name}: choose one of {", ".join(opts) or "(no options set)"}.', 'custom_fields')
+            raise S.AssetError(tr('{0}: choose one of {1}.', name, ", ".join(opts) or "(no options set)"), 'custom_fields')
         return str(value)
     if t == 'checkbox':
         opts = [str(o) for o in (field.checkbox_values or [])]
         vals = value
+        if isinstance(value, bool):   # v1.16.0: a Yes / No field sent as true / false
+            vals = ['Yes' if value else 'No']
         if isinstance(value, str):
             try:
                 vals = json.loads(value) if value.startswith('[') else [x.strip() for x in value.split(',') if x.strip()]
@@ -402,18 +432,21 @@ def validate_custom_value(field, value):
                 vals = [x.strip() for x in value.split(',') if x.strip()]
         if not isinstance(vals, (list, tuple)):
             vals = [vals]
+        low = {o.lower(): o for o in opts}
+        vals = [low.get(str(v).lower(), {'true': 'Yes', 'false': 'No'}.get(str(v).lower(), v)) for v in vals]
         bad = [str(v) for v in vals if str(v) not in opts]
         if bad:
-            raise S.AssetError(f'{name}: {", ".join(bad)} is not an option ({", ".join(opts)}).', 'custom_fields')
+            raise S.AssetError(tr('{0}: {1} is not an option ({2}).', name, ", ".join(bad), ", ".join(opts)), 'custom_fields')
         return ','.join(str(v) for v in vals)
     v = str(value)
     if len(v) > 2000:
-        raise S.AssetError(f'{name}: keep the text under 2000 characters.', 'custom_fields')
+        raise S.AssetError(tr('{0}: keep the text under 2000 characters.', name), 'custom_fields')
     return v
 
 
-def save_custom_values(asset, values):
-    """values: {field id or name: value}. One value per field (old duplicates are removed)."""
+def save_custom_values(asset, values, create=False):
+    """values: {field id or name: value}. One value per field (old duplicates are removed).
+    v1.16.0: create=True (a new asset whose form sent its custom fields) – fields ticked Mandatory in the designer must be filled."""
     import json
     if values in (None, ''):
         return {}
@@ -421,19 +454,18 @@ def save_custom_values(asset, values):
         try:
             values = json.loads(values)
         except ValueError:
-            raise S.AssetError('Custom fields must be sent as JSON.', 'custom_fields')
+            raise S.AssetError(tr('Custom fields must be sent as JSON.'), 'custom_fields')
     if isinstance(values, list):
         values = {str(x.get('id') or x.get('name')): x.get('value') for x in values if isinstance(x, dict)}
-    CF = S.M('OrganisationManager', 'AssetCustomField')
     CV = S.M('OrganisationManager', 'AssetCustomFieldValue')
-    fields = list(CF.objects.filter(asset_type_id=asset.asset_type_id))
+    fields = [f for f, _ in _type_fields(asset.asset_type_id)[0]]   # v1.16.0: + fields for every asset type
     by = {str(f.id): f for f in fields}
     by.update({f.custom_field: f for f in fields})
     changes = {}
     for k, v in values.items():
         f = by.get(str(k))
         if f is None:
-            raise S.AssetError(f'"{k}" is not a field of the asset type {asset.asset_type.name}.', 'custom_fields')
+            raise S.AssetError(tr('"{0}" is not a field of the asset type {1}.', k, asset.asset_type.name), 'custom_fields')
         clean = validate_custom_value(f, v)
         rows = list(CV.objects.filter(asset=asset, custom_field=f).order_by('id'))
         old = rows[0].field_value if rows else None
@@ -447,6 +479,12 @@ def save_custom_values(asset, values):
             CV.objects.create(asset=asset, custom_field=f, field_value=clean)
         if (old or None) != (clean or None):
             changes[f.custom_field] = {'label': f.custom_field, 'old': old or '', 'new': clean or ''}
+    if create:
+        meta = _type_fields(asset.asset_type_id)
+        have = {v.custom_field_id for v in CV.objects.filter(asset=asset).exclude(field_value__isnull=True).exclude(field_value='')}
+        missing = [f.custom_field for f, jj in meta[0] if jj['required'] and f.id not in have]
+        if missing:
+            raise S.AssetError(tr('Fill in: {0}.', ', '.join(missing)), 'custom_fields')
     return changes
 
 
@@ -470,7 +508,7 @@ def apply_profile(request, p, a, inp, creating=False):
     if inp.has('asset_code') and inp.s('asset_code'):
         code = inp.s('asset_code').upper()
         if AssetProfile.objects.filter(asset_code=code).exclude(pk=p.pk).exists():
-            raise S.AssetError(f'The asset code {code} is already used.', 'asset_code')
+            raise S.AssetError(tr('The asset code {0} is already used.', code), 'asset_code')
         p.asset_code = code
     if inp.has('branch_id'):
         b = inp.i('branch_id')
@@ -481,58 +519,58 @@ def apply_profile(request, p, a, inp, creating=False):
         if len(br) == 1:
             p.branch_id = br[0]
         else:
-            raise S.AssetError('Choose the branch of the asset.', 'branch_id')
+            raise S.AssetError(tr('Choose the branch of the asset.'), 'branch_id')
     if inp.has('department_id'):
         d = inp.i('department_id')
         if d and not S.M('OrganisationManager', 'dept_master').objects.filter(pk=d).exists():
-            raise S.AssetError('This department does not exist.', 'department_id')
+            raise S.AssetError(tr('This department does not exist.'), 'department_id')
         p.department_id = d
     if inp.has('purchase_cost'):
         v = inp.n('purchase_cost', Decimal(0))
         if v < 0:
-            raise S.AssetError('The purchase cost cannot be negative.', 'purchase_cost')
+            raise S.AssetError(tr('The purchase cost cannot be negative.'), 'purchase_cost')
         p.purchase_cost = S.money(v)
     if inp.has('currency'):
         c = inp.s('currency').upper() or 'AED'
         if len(c) != 3 or not c.isalpha():
-            raise S.AssetError('Use a 3-letter currency code such as AED.', 'currency')
+            raise S.AssetError(tr('Use a 3-letter currency code such as AED.'), 'currency')
         p.currency = c
     for k in ('warranty_start', 'warranty_end', 'insurance_expiry', 'depreciation_start'):
         if inp.has(k):
             setattr(p, k, inp.dt(k))
     if p.warranty_start and p.warranty_end and p.warranty_end < p.warranty_start:
-        raise S.AssetError('The warranty ends before it starts.', 'warranty_end')
+        raise S.AssetError(tr('The warranty ends before it starts.'), 'warranty_end')
     if inp.has('warranty_reminder_days'):
         v = inp.i('warranty_reminder_days')
         if v is not None and not (0 <= v <= 365):
-            raise S.AssetError('Remind between 0 and 365 days before the warranty ends.', 'warranty_reminder_days')
+            raise S.AssetError(tr('Remind between 0 and 365 days before the warranty ends.'), 'warranty_reminder_days')
         p.warranty_reminder_days = v
     if inp.has('depreciation_method'):
         m = inp.s('depreciation_method') or 'straight_line'
         if m not in ('none', 'straight_line', 'declining'):
-            raise S.AssetError('Choose no depreciation, straight line or declining balance.', 'depreciation_method')
+            raise S.AssetError(tr('Choose no depreciation, straight line or declining balance.'), 'depreciation_method')
         p.depreciation_method = m
     if inp.has('useful_life_months'):
         v = inp.i('useful_life_months')
         p.useful_life_months = v or 0
     if p.depreciation_method != 'none' and not (1 <= (p.useful_life_months or 0) <= 600):
-        raise S.AssetError('Useful life must be between 1 and 600 months.', 'useful_life_months')
+        raise S.AssetError(tr('Useful life must be between 1 and 600 months.'), 'useful_life_months')
     if inp.has('salvage_value'):
         v = inp.n('salvage_value', Decimal(0))
         if v < 0:
-            raise S.AssetError('The salvage value cannot be negative.', 'salvage_value')
+            raise S.AssetError(tr('The salvage value cannot be negative.'), 'salvage_value')
         p.salvage_value = S.money(v)
     if S.money(p.salvage_value) > S.money(p.purchase_cost):
-        raise S.AssetError('The salvage value cannot be more than the purchase cost.', 'salvage_value')
+        raise S.AssetError(tr('The salvage value cannot be more than the purchase cost.'), 'salvage_value')
     if inp.has('declining_rate'):
         v = inp.n('declining_rate')
         if v is not None and not (0 < v <= 100):
-            raise S.AssetError('The declining rate is a % per year between 0 and 100.', 'declining_rate')
+            raise S.AssetError(tr('The declining rate is a % per year between 0 and 100.'), 'declining_rate')
         p.declining_rate = v
     if inp.has('meter_reading'):
         v = inp.n('meter_reading')
         if v is not None and v < 0:
-            raise S.AssetError('The meter reading cannot be negative.', 'meter_reading')
+            raise S.AssetError(tr('The meter reading cannot be negative.'), 'meter_reading')
         p.meter_reading = v
     changes = {}
     for k, o in old.items():
@@ -552,43 +590,43 @@ def validate_base(inp, a, creating):
         t = inp.i('asset_type', required=True, label='Asset type')
         at = AT.objects.filter(pk=t).first()
         if not at:
-            raise S.AssetError('Choose an existing asset type.', 'asset_type')
+            raise S.AssetError(tr('Choose an existing asset type.'), 'asset_type')
         if not creating and a.asset_type_id != at.pk and S.M('OrganisationManager', 'AssetCustomFieldValue').objects.filter(asset=a).exists():
-            raise S.AssetError('This asset has custom field values of its type. Clear them before changing the type.', 'asset_type')
+            raise S.AssetError(tr('This asset has custom field values of its type. Clear them before changing the type.'), 'asset_type')
         a.asset_type = at
     if creating or inp.has('name'):
         n = inp.s('name')
         if not n:
-            raise S.AssetError('Name is required.', 'name')
+            raise S.AssetError(tr('Name is required.'), 'name')
         if len(n) > 100:
-            raise S.AssetError('Keep the name under 100 characters.', 'name')
+            raise S.AssetError(tr('Keep the name under 100 characters.'), 'name')
         a.name = n
     if creating or inp.has('serial_number'):
         sn = inp.s('serial_number')
         if not sn:
-            raise S.AssetError('Serial number is required.', 'serial_number')
+            raise S.AssetError(tr('Serial number is required.'), 'serial_number')
         if len(sn) > 100:
-            raise S.AssetError('Keep the serial number under 100 characters.', 'serial_number')
+            raise S.AssetError(tr('Keep the serial number under 100 characters.'), 'serial_number')
         if A.objects.filter(serial_number__iexact=sn).exclude(pk=a.pk).exists():
-            raise S.AssetError(f'Another asset already has the serial number {sn}.', 'serial_number')
+            raise S.AssetError(tr('Another asset already has the serial number {0}.', sn), 'serial_number')
         a.serial_number = sn
     if inp.has('model'):
         m = inp.s('model')
         if len(m) > 100:
-            raise S.AssetError('Keep the model under 100 characters.', 'model')
+            raise S.AssetError(tr('Keep the model under 100 characters.'), 'model')
         a.model = m
     if creating or inp.has('purchase_date'):
         d = inp.dt('purchase_date', required=True, label='Purchase date')
         if d > S.today():
-            raise S.AssetError('The purchase date cannot be in the future.', 'purchase_date')
+            raise S.AssetError(tr('The purchase date cannot be in the future.'), 'purchase_date')
         a.purchase_date = d
     if inp.has('condition'):
         c = inp.s('condition')
         if c not in ('healthy', 'minor_damage', 'major_damage'):
-            raise S.AssetError('Choose the condition: healthy, minor damage or major damage.', 'condition')
+            raise S.AssetError(tr('Choose the condition: healthy, minor damage or major damage.'), 'condition')
         a.condition = c
     if inp.has('status') and inp.s('status') and inp.s('status') != (a.status if a.pk else 'available'):
-        raise S.AssetError('The status changes through allocation, maintenance, loss and disposal – it cannot be edited here.', 'status')
+        raise S.AssetError(tr('The status changes through allocation, maintenance, loss and disposal – it cannot be edited here.'), 'status')
 
 
 def history_rows(qs):
@@ -606,7 +644,7 @@ def save_files(request, asset_id, kind, record_type='', record_id=None, key='fil
     out = []
     for f in request.FILES.getlist(key):
         if f.size > 15 * 1024 * 1024:
-            raise S.AssetError(f'{f.name} is larger than 15 MB.', key)
+            raise S.AssetError(tr('{0} is larger than 15 MB.', f.name), key)
         out.append(AssetFile.objects.create(asset_id=asset_id, kind=kind, record_type=record_type, record_id=record_id, file=f, name=f.name[:255],
                                             uploaded_by_id=request.user.pk))
     return out
@@ -700,7 +738,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
         validate_base(inp, a, True)
         st = inp.s('status') or 'available'
         if st != 'available':
-            raise S.AssetError('A new asset starts as available. Allocate it afterwards.', 'status')
+            raise S.AssetError(tr('A new asset starts as available. Allocate it afterwards.'), 'status')
         p = AssetProfile(asset_id=0, asset_code='', currency=AssetPlusSettings.get().currency)
         cfg = S.type_config(a.asset_type_id)
         p.depreciation_method, p.useful_life_months = cfg.depreciation_method, cfg.useful_life_months or 36
@@ -721,7 +759,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
         prof.barcode = p.barcode or prof.asset_code
         prof.created_by_id = request.user.pk
         prof.save()
-        save_custom_values(a, inp.d.get('custom_fields'))
+        save_custom_values(a, inp.d.get('custom_fields'), create=True)
         for f in request.FILES.getlist('photos'):
             AssetFile.objects.create(asset_id=a.pk, kind='photo', file=f, name=f.name[:255], uploaded_by_id=request.user.pk)
         return Response(self.retrieve(request, a.pk).data, status=status.HTTP_201_CREATED)
@@ -732,7 +770,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
         need(request, 'master_change')
         a = get_asset(request, pk)
         if a.status == 'disposed':
-            raise S.AssetError('A disposed asset cannot be changed.')
+            raise S.AssetError(tr('A disposed asset cannot be changed.'))
         inp = In(request)
         old_type = a.asset_type_id
         validate_base(inp, a, False)
@@ -758,7 +796,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
                 or MaintenanceRecord.objects.filter(asset_id=a.pk).exists() or AssetDamage.objects.filter(asset_id=a.pk).exists()
                 or AssetLoss.objects.filter(asset_id=a.pk).exists() or S.M('OrganisationManager', 'AssetRequest').objects.filter(requested_asset=a).exists())
         if used:
-            raise S.AssetError('This asset has a history (allocations, requests, maintenance …). Dispose of it instead of deleting it.')
+            raise S.AssetError(tr('This asset has a history (allocations, requests, maintenance …). Dispose of it instead of deleting it.'))
         aid = a.pk
         a.delete()
         for m in (AssetProfile, AssetFile, AssetEvent, MaintenanceSchedule, AssetDisposal, AssetTransfer):
@@ -776,7 +814,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
         eid = inp.i('employee') or inp.i('employee_id')
         if target == 'employee':
             if not eid:
-                raise S.AssetError('Choose the employee who receives the asset.', 'employee')
+                raise S.AssetError(tr('Choose the employee who receives the asset.'), 'employee')
             check_employee(request, eid)
         branch_id = inp.i('branch_id')
         check_branch(request, branch_id)
@@ -787,7 +825,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
                          department_id=inp.i('department_id'), custodian_employee_id=cust, assigned_date=inp.dt('assigned_date'),
                          expected_return_date=inp.dt('expected_return_date'), accessories=inp.s('accessories'),
                          handover_condition=inp.s('handover_condition'), handover_note=inp.s('handover_note'), handover_file=inp.f('handover_file'))
-        return Response({'detail': 'Asset allocated.', 'allocation_id': res.pk if target == 'employee' else None,
+        return Response({'detail': tr('Asset allocated.'), 'allocation_id': res.pk if target == 'employee' else None,
                          'shared_id': res.pk if target != 'employee' else None, 'asset': self.retrieve(request, a.pk).data}, status=201)
 
     @action(detail=True, methods=['post'], url_path='return')
@@ -800,13 +838,13 @@ class AssetViewSet(Base, viewsets.ViewSet):
         if inp.i('return_request'):
             rr = AssetReturn.objects.filter(pk=inp.i('return_request'), asset_id=a.pk, status='requested').first()
             if not rr:
-                raise S.AssetError('The return request is not open.', 'return_request')
+                raise S.AssetError(tr('The return request is not open.'), 'return_request')
         r = S.complete_return(a, request.user, return_date=inp.dt('return_date'), condition=inp.s('condition') or 'healthy',
                               accessories_returned=inp.b('accessories_returned', True), missing_items=inp.s('missing_items'),
                               damage_found=inp.b('damage_found'), damage_description=inp.s('damage_description'),
                               damage_estimate=inp.n('damage_estimate', Decimal(0)), data_wiped=inp.b('data_wiped'), notes=inp.s('notes'), return_request=rr)
         save_files(request, a.pk, 'return', 'return', r.pk)
-        return Response({'detail': 'Asset returned.' + (f' Damage {AssetDamage.objects.get(pk=r.damage_id).number} was recorded for approval.' if r.damage_id else ''),
+        return Response({'detail': tr('Asset returned.') + (tr(' Damage {0} was recorded for approval.', AssetDamage.objects.get(pk=r.damage_id).number) if r.damage_id else ''),
                          'return': return_row(r), 'damage_id': r.damage_id})
 
     @action(detail=True, methods=['post'])
@@ -819,9 +857,9 @@ class AssetViewSet(Base, viewsets.ViewSet):
         if ess:
             h = S.holder(a.pk)
             if not e or not h or h.get('employee_id') != e.pk:
-                raise Denied('You can only transfer an asset that is with you.')
+                raise Denied(tr('You can only transfer an asset that is with you.'))
             if (inp.s('to_type') or 'employee') != 'employee':
-                raise Denied('In self-service you can only hand an asset to a colleague. Ask HR for other transfers.')
+                raise Denied(tr('In self-service you can only hand an asset to a colleague. Ask HR for other transfers.'))
         to_type = inp.s('to_type') or 'employee'
         to_emp = inp.i('to_employee_id') or inp.i('to_employee')
         if to_type == 'employee' and to_emp and not ess:
@@ -856,7 +894,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
         if not hr:
             h = S.holder(a.pk)
             if not e or not h or h.get('employee_id') != e.pk:
-                raise Denied('You can only report damage on an asset that is with you.')
+                raise Denied(tr('You can only report damage on an asset that is with you.'))
         eid = inp.i('employee') if hr else e.pk
         if hr and eid:
             check_employee(request, eid)
@@ -876,7 +914,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
         if not hr:
             h = S.holder(a.pk)
             if not e or not h or h.get('employee_id') != e.pk:
-                raise Denied('You can only report an asset that is with you.')
+                raise Denied(tr('You can only report an asset that is with you.'))
         eid = inp.i('employee') if hr else e.pk
         if hr and eid:
             check_employee(request, eid)
@@ -884,6 +922,20 @@ class AssetViewSet(Base, viewsets.ViewSet):
                           place=inp.s('place'), police_report_no=inp.s('police_report_no'), police_report_file=inp.f('police_report_file'),
                           source='hr' if hr else 'ess')
         return Response(incident_row(request, l, 'loss'), status=201)
+
+    @action(detail=True, methods=['post'])
+    @guard
+    def verify(self, request, pk=None):
+        """v1.18.0: periodic physical verification – {result: found|not_found|damaged|wrong_location, location, note, verified_on}."""
+        need(request, 'verify')
+        a = get_asset(request, pk)
+        inp = In(request)
+        res = inp.s('result') or 'found'
+        if res not in S.VERIFY_RESULTS:
+            raise S.AssetError(tr('Result is found, not found, damaged or wrong location.'), 'result')
+        p = S.verify_asset(a, request.user, result=res, location=inp.s('location'), note=inp.s('note'), on=inp.dt('verified_on'))
+        return Response({'asset': a.pk, 'last_verified_on': p.last_verified_on, 'result': p.last_verified_result,
+                         'next_due': S.verification_next_due(p, a)})
 
     @action(detail=True, methods=['post'])
     @guard
@@ -920,9 +972,9 @@ class AssetViewSet(Base, viewsets.ViewSet):
             need(request, 'master_change')
             kind = request.data.get('kind') or 'document'
             if kind not in dict(AssetFile.KINDS):
-                raise S.AssetError('Choose the kind of file.', 'kind')
+                raise S.AssetError(tr('Choose the kind of file.'), 'kind')
             if not request.FILES.getlist('files'):
-                raise S.AssetError('Choose a file to upload.', 'files')
+                raise S.AssetError(tr('Choose a file to upload.'), 'files')
             rows = save_files(request, a.pk, kind)
             S.log_event(a.pk, 'file_added', f'{len(rows)} {dict(AssetFile.KINDS)[kind].lower()} file(s) added: ' + ', '.join(r.name for r in rows), request.user)
             return Response([file_row(request, f) for f in rows], status=201)
@@ -938,7 +990,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
         a = get_asset(request, pk)
         f = AssetFile.objects.filter(pk=file_id, asset_id=a.pk).first()
         if not f:
-            raise S.AssetError('File not found.', status=404)
+            raise S.AssetError(tr('File not found.'), status=404)
         name = f.name
         f.file.delete(save=False)
         f.delete()
@@ -962,7 +1014,7 @@ class AssetViewSet(Base, viewsets.ViewSet):
             code = code.split('|')[0][6:]
         p = AssetProfile.objects.filter(Q(asset_code__iexact=code) | Q(barcode__iexact=code)).first()
         if not p:
-            raise S.AssetError('No asset has this code.', status=404)
+            raise S.AssetError(tr('No asset has this code.'), status=404)
         return self.retrieve(request, p.asset_id)
 
     @action(detail=False, methods=['get'])
@@ -1073,14 +1125,14 @@ class AllocationViewSet(Base, viewsets.ViewSet):
         need(request, 'alloc_change')
         a = S.Allocation().objects.select_related('asset', 'employee').filter(pk=pk).first()
         if not a:
-            raise S.AssetError('Allocation not found.', status=404)
+            raise S.AssetError(tr('Allocation not found.'), status=404)
         get_asset(request, a.asset_id, 'alloc_view')
         x, _ = AllocationExtra.objects.get_or_create(allocation_id=a.pk, defaults={'asset_id': a.asset_id, 'employee_id': a.employee_id, 'ack_status': 'not_required'})
         inp = In(request)
         if inp.has('expected_return_date'):
             d = inp.dt('expected_return_date')
             if d and a.assigned_date and d < a.assigned_date:
-                raise S.AssetError('The expected return date is before the allocation date.', 'expected_return_date')
+                raise S.AssetError(tr('The expected return date is before the allocation date.'), 'expected_return_date')
             x.expected_return_date = d
             x.return_reminded_on = None
         for k in ('accessories', 'handover_note'):
@@ -1100,7 +1152,7 @@ class AllocationViewSet(Base, viewsets.ViewSet):
         a = S.Allocation().objects.select_related('asset', 'employee').filter(pk=pk).first()
         e = my_emp(request)
         if not a or not e or a.employee_id != e.pk:
-            raise S.AssetError('Allocation not found.', status=404)
+            raise S.AssetError(tr('Allocation not found.'), status=404)
         x, _ = AllocationExtra.objects.get_or_create(allocation_id=a.pk, defaults={'asset_id': a.asset_id, 'employee_id': a.employee_id})
         inp = In(request)
         S.acknowledge(x, request.user, accept=inp.b('accept', True), notes=inp.s('notes'))
@@ -1136,7 +1188,7 @@ def scoped(request, qs, key, emp_field='employee_id'):
 
 def no_self_approval(request, requested_by_id):
     if requested_by_id and requested_by_id == request.user.pk and not is_admin(request):
-        raise Denied('You cannot approve a request you raised yourself.')
+        raise Denied(tr('You cannot approve a request you raised yourself.'))
 
 
 class TransferViewSet(Base, viewsets.ViewSet):
@@ -1154,14 +1206,14 @@ class TransferViewSet(Base, viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         t = scoped(request, AssetTransfer.objects.all(), 'transfer_view', ['from_employee_id', 'to_employee_id', 'requested_by_employee_id']).filter(pk=pk).first()
         if not t:
-            raise S.AssetError('Transfer not found.', status=404)
+            raise S.AssetError(tr('Transfer not found.'), status=404)
         return Response(transfer_row(t))
 
     def _get(self, request, pk, key):
         need(request, key)
         t = scoped(request, AssetTransfer.objects.all(), key).filter(pk=pk).first()
         if not t:
-            raise S.AssetError('Transfer not found.', status=404)
+            raise S.AssetError(tr('Transfer not found.'), status=404)
         return t
 
     @action(detail=True, methods=['post'])
@@ -1181,7 +1233,7 @@ class TransferViewSet(Base, viewsets.ViewSet):
         t = self._get(request, pk, 'transfer_approve')
         inp = In(request)
         if not inp.s('note'):
-            raise S.AssetError('Give the reason for rejecting.', 'note')
+            raise S.AssetError(tr('Give the reason for rejecting.'), 'note')
         S.decide_transfer(t, request.user, False, inp.s('note'))
         t.refresh_from_db()
         return Response(transfer_row(t))
@@ -1191,9 +1243,9 @@ class TransferViewSet(Base, viewsets.ViewSet):
     def cancel(self, request, pk=None):
         t = AssetTransfer.objects.filter(pk=pk).first()
         if not t or (t.requested_by_id != request.user.pk and not can(request, 'transfer_approve')):
-            raise S.AssetError('Transfer not found.', status=404)
+            raise S.AssetError(tr('Transfer not found.'), status=404)
         if t.status != 'pending':
-            raise S.AssetError('Only a transfer waiting for approval can be cancelled.')
+            raise S.AssetError(tr('Only a transfer waiting for approval can be cancelled.'))
         t.status = 'cancelled'
         t.save(update_fields=['status'])
         S.log_event(t.asset_id, 'transfer_cancelled', f'Transfer {t.number} cancelled', request.user, t.from_employee_id, ('transfer', t.pk))
@@ -1245,7 +1297,7 @@ class MaintenanceViewSet(Base, viewsets.ViewSet):
         need(request, 'maint_view')
         r = scoped(request, MaintenanceRecord.objects.all(), 'maint_view').filter(pk=pk).first()
         if not r:
-            raise S.AssetError('Maintenance record not found.', status=404)
+            raise S.AssetError(tr('Maintenance record not found.'), status=404)
         row = maint_row(r)
         row['files'] = [file_row(request, f) for f in AssetFile.objects.filter(record_type='maintenance', record_id=r.pk)]
         return Response(row)
@@ -1255,9 +1307,9 @@ class MaintenanceViewSet(Base, viewsets.ViewSet):
         need(request, 'maint_change')
         r = scoped(request, MaintenanceRecord.objects.all(), 'maint_change').filter(pk=pk).first()
         if not r:
-            raise S.AssetError('Maintenance record not found.', status=404)
+            raise S.AssetError(tr('Maintenance record not found.'), status=404)
         if r.status != 'open':
-            raise S.AssetError('A completed maintenance record cannot be changed.')
+            raise S.AssetError(tr('A completed maintenance record cannot be changed.'))
         inp = In(request)
         for k in ('vendor', 'description'):
             if inp.has(k):
@@ -1265,7 +1317,7 @@ class MaintenanceViewSet(Base, viewsets.ViewSet):
         if inp.has('cost'):
             c = inp.n('cost', Decimal(0))
             if c < 0:
-                raise S.AssetError('The cost cannot be negative.', 'cost')
+                raise S.AssetError(tr('The cost cannot be negative.'), 'cost')
             r.cost = S.money(c)
         r.save()
         return Response(maint_row(r))
@@ -1276,7 +1328,7 @@ class MaintenanceViewSet(Base, viewsets.ViewSet):
         need(request, 'maint_change')
         r = scoped(request, MaintenanceRecord.objects.all(), 'maint_change').filter(pk=pk).first()
         if not r:
-            raise S.AssetError('Maintenance record not found.', status=404)
+            raise S.AssetError(tr('Maintenance record not found.'), status=404)
         inp = In(request)
         r = S.close_maintenance(r, request.user, end_date=inp.dt('end_date'), cost=inp.n('cost'), downtime_hours=inp.n('downtime_hours'),
                                 result=inp.s('result') or 'fixed', result_notes=inp.s('result_notes'), reading=inp.n('reading'), cancel=inp.b('cancel'))
@@ -1299,17 +1351,17 @@ class ScheduleViewSet(Base, viewsets.ViewSet):
     def _apply(self, request, s, inp, creating):
         if creating or inp.has('title'):
             if not inp.s('title'):
-                raise S.AssetError('Give the plan a title, e.g. "Oil change".', 'title')
+                raise S.AssetError(tr('Give the plan a title, e.g. "Oil change".'), 'title')
             s.title = inp.s('title')[:150]
         if creating or inp.has('interval_type'):
             t = inp.s('interval_type') or 'days'
             if t not in ('days', 'km', 'hours'):
-                raise S.AssetError('Repeat every N days, kilometres or running hours.', 'interval_type')
+                raise S.AssetError(tr('Repeat every N days, kilometres or running hours.'), 'interval_type')
             s.interval_type = t
         if creating or inp.has('interval_value'):
             v = inp.i('interval_value', required=True, label='Interval')
             if v < 1:
-                raise S.AssetError('The interval must be at least 1.', 'interval_value')
+                raise S.AssetError(tr('The interval must be at least 1.'), 'interval_value')
             s.interval_value = v
         for k in ('last_done_date', 'next_due_date'):
             if inp.has(k):
@@ -1319,14 +1371,14 @@ class ScheduleViewSet(Base, viewsets.ViewSet):
         if inp.has('remind_days_before'):
             v = inp.i('remind_days_before')
             if v is not None and not (0 <= v <= 365):
-                raise S.AssetError('Remind between 0 and 365 days before.', 'remind_days_before')
+                raise S.AssetError(tr('Remind between 0 and 365 days before.'), 'remind_days_before')
             s.remind_days_before = v or 0
         if inp.has('vendor'):
             s.vendor = inp.s('vendor')
         if inp.has('estimated_cost'):
             c = inp.n('estimated_cost', Decimal(0))
             if c < 0:
-                raise S.AssetError('The cost cannot be negative.', 'estimated_cost')
+                raise S.AssetError(tr('The cost cannot be negative.'), 'estimated_cost')
             s.estimated_cost = S.money(c)
         if inp.has('active'):
             s.active = inp.b('active', True)
@@ -1339,7 +1391,7 @@ class ScheduleViewSet(Base, viewsets.ViewSet):
         inp = In(request)
         a = get_asset(request, inp.i('asset', required=True, label='Asset'))
         if a.status == 'disposed':
-            raise S.AssetError('This asset has been disposed.', 'asset')
+            raise S.AssetError(tr('This asset has been disposed.'), 'asset')
         s = MaintenanceSchedule(asset_id=a.pk)
         self._apply(request, s, inp, True)
         s.save()
@@ -1351,7 +1403,7 @@ class ScheduleViewSet(Base, viewsets.ViewSet):
         need(request, 'maint_change')
         s = scoped(request, MaintenanceSchedule.objects.all(), 'maint_change').filter(pk=pk).first()
         if not s:
-            raise S.AssetError('Maintenance plan not found.', status=404)
+            raise S.AssetError(tr('Maintenance plan not found.'), status=404)
         self._apply(request, s, In(request), False)
         s.save()
         return Response(schedule_row(s))
@@ -1361,7 +1413,7 @@ class ScheduleViewSet(Base, viewsets.ViewSet):
         need(request, 'maint_change')
         s = scoped(request, MaintenanceSchedule.objects.all(), 'maint_change').filter(pk=pk).first()
         if not s:
-            raise S.AssetError('Maintenance plan not found.', status=404)
+            raise S.AssetError(tr('Maintenance plan not found.'), status=404)
         S.log_event(s.asset_id, 'schedule_removed', f'Maintenance plan "{s.title}" removed', request.user)
         s.delete()
         return Response(status=204)
@@ -1392,7 +1444,7 @@ class ReturnViewSet(Base, viewsets.ViewSet):
         e = my_emp(request)
         aid = inp.i('asset', required=True, label='Asset')
         if not e:
-            raise Denied('Only employees can ask for a return. HR records returns from the asset page.')
+            raise Denied(tr('Only employees can ask for a return. HR records returns from the asset page.'))
         a = get_asset(request, aid, ess_ok=True)
         r = S.request_return(a, request.user, e.pk, inp.s('note'), inp.dt('preferred_date'))
         return Response(return_row(r), status=201)
@@ -1403,7 +1455,7 @@ class ReturnViewSet(Base, viewsets.ViewSet):
         need(request, 'alloc_change')
         r = scoped(request, AssetReturn.objects.all(), 'alloc_change').filter(pk=pk, status='requested').first()
         if not r:
-            raise S.AssetError('Open return request not found.', status=404)
+            raise S.AssetError(tr('Open return request not found.'), status=404)
         a = get_asset(request, r.asset_id, 'alloc_change')
         inp = In(request)
         r = S.complete_return(a, request.user, return_date=inp.dt('return_date'), condition=inp.s('condition') or 'healthy',
@@ -1418,7 +1470,7 @@ class ReturnViewSet(Base, viewsets.ViewSet):
         r = AssetReturn.objects.filter(pk=pk, status='requested').first()
         e = my_emp(request)
         if not r or not ((e and r.employee_id == e.pk) or can(request, 'alloc_change')):
-            raise S.AssetError('Open return request not found.', status=404)
+            raise S.AssetError(tr('Open return request not found.'), status=404)
         r.status = 'cancelled'
         r.save(update_fields=['status'])
         S.log_event(r.asset_id, 'return_cancelled', f'Return request {r.number} cancelled', request.user, r.employee_id, ('return', r.pk))
@@ -1465,7 +1517,7 @@ class _IncidentViewSet(Base, viewsets.ViewSet):
     def _one(self, request, pk):
         o = self._qs(request).filter(pk=pk).first()
         if not o:
-            raise S.AssetError('Record not found.', status=404)
+            raise S.AssetError(tr('Record not found.'), status=404)
         return o
 
     @guard
@@ -1506,7 +1558,7 @@ class _IncidentViewSet(Base, viewsets.ViewSet):
         if data.get('instalments') not in (None, ''):
             data['instalments'] = inp.i('instalments')
         if not approve and not inp.s('note'):
-            raise S.AssetError('Give the reason for rejecting.', 'note')
+            raise S.AssetError(tr('Give the reason for rejecting.'), 'note')
         fn = S.decide_damage if self.kind == 'damage' else S.decide_loss
         o = fn(o, request.user, approve, data)
         return Response(incident_row(request, o, self.kind))
@@ -1528,7 +1580,7 @@ class _IncidentViewSet(Base, viewsets.ViewSet):
         need(request, self.approve_key)
         o = self._one(request, pk)
         if o.status != 'recovering':
-            raise S.AssetError('Only a record being recovered can be settled in cash.')
+            raise S.AssetError(tr('Only a record being recovered can be settled in cash.'))
         left = RecoveryInstalment.objects.filter(source_type=self.kind, source_id=o.pk, status='pending')
         amt = S.money(left.aggregate(s=Sum('amount'))['s'] or 0)
         left.update(status='cancelled', done_on=S.today())
@@ -1565,7 +1617,7 @@ class LossViewSet(_IncidentViewSet):
         inp = In(request)
         st = inp.s('investigation_status')
         if st not in dict(AssetLoss.INVESTIGATION) or st == 'closed_found':
-            raise S.AssetError('Choose open, under investigation or closed – not found. Use "Mark as found" when the asset is back.', 'investigation_status')
+            raise S.AssetError(tr('Choose open, under investigation or closed – not found. Use "Mark as found" when the asset is back.'), 'investigation_status')
         o.investigation_status = st
         if inp.s('notes'):
             o.investigation_notes = ((o.investigation_notes + '\n') if o.investigation_notes else '') + inp.s('notes')
@@ -1612,18 +1664,18 @@ class DisposalViewSet(Base, viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         d = self._qs(request).filter(pk=pk).first()
         if not d:
-            raise S.AssetError('Disposal not found.', status=404)
+            raise S.AssetError(tr('Disposal not found.'), status=404)
         return Response(disposal_row(d))
 
     def _decide(self, request, pk, approve):
         need(request, 'disposal_approve')
         d = self._qs(request).filter(pk=pk).first()
         if not d:
-            raise S.AssetError('Disposal not found.', status=404)
+            raise S.AssetError(tr('Disposal not found.'), status=404)
         no_self_approval(request, d.requested_by_id)
         note = In(request).s('note')
         if not approve and not note:
-            raise S.AssetError('Give the reason for rejecting.', 'note')
+            raise S.AssetError(tr('Give the reason for rejecting.'), 'note')
         d = S.decide_disposal(d, request.user, approve, note)
         return Response(disposal_row(d))
 
@@ -1642,7 +1694,7 @@ class DisposalViewSet(Base, viewsets.ViewSet):
     def cancel(self, request, pk=None):
         d = self._qs(request).filter(pk=pk, status='pending').first()
         if not d or (d.requested_by_id != request.user.pk and not can(request, 'disposal_approve')):
-            raise S.AssetError('Pending disposal not found.', status=404)
+            raise S.AssetError(tr('Pending disposal not found.'), status=404)
         d.status = 'cancelled'
         d.save(update_fields=['status'])
         S.log_event(d.asset_id, 'disposal_cancelled', f'Disposal {d.number} cancelled', request.user, None, ('disposal', d.pk))
@@ -1735,7 +1787,7 @@ class ClearanceView(Base, APIView):
         if act == 'waive':
             need(request, 'waive')
             if not inp.s('reason'):
-                raise S.AssetError('Give the reason for releasing the clearance.', 'reason')
+                raise S.AssetError(tr('Give the reason for releasing the clearance.'), 'reason')
             ClearanceWaiver.objects.create(employee_id=e.pk, reason=inp.s('reason'), waived_by_id=request.user.pk)
             for i in S.clearance(e.pk)['items']:
                 if i.get('asset_id'):
@@ -1747,9 +1799,9 @@ class ClearanceView(Base, APIView):
             need(request, 'clearance_change')
             amt = S.settle_in_final_settlement(e.pk, request.user)
             if not amt:
-                raise S.AssetError('There is no recovery left to move to the final settlement.')
+                raise S.AssetError(tr('There is no recovery left to move to the final settlement.'))
         else:
-            raise S.AssetError('Unknown action. Use waive, unwaive or settle.', 'action')
+            raise S.AssetError(tr('Unknown action. Use waive, unwaive or settle.'), 'action')
         return self.get(request, emp_id)
 
 
@@ -1807,8 +1859,11 @@ class TypeConfigView(Base, APIView):
                          'depreciation_method': c.depreciation_method, 'useful_life_months': c.useful_life_months, 'salvage_percent': str(c.salvage_percent),
                          'maintenance_interval_days': c.maintenance_interval_days, 'assets': t.assets.count(),
                          'custom_fields': [{'id': c.id, 'custom_field': c.custom_field, 'data_type': c.data_type or 'text',
-                                            'options': c.dropdown_values or c.radio_values or c.checkbox_values or []}
-                                           for c in t.custom_fields.order_by('id')]})
+                                            'options': c.dropdown_values or c.radio_values or c.checkbox_values or [],
+                                            # v1.16.0: designer settings, + the fields for every asset type
+                                            'required': j['required'], 'section': j['section'], 'order': j['order'], 'help_text': j['help_text'],
+                                            'placeholder': j['placeholder'], 'example': j['example'], 'rules': j['rules'], 'all_types': c.asset_type_id is None}
+                                           for c, j in _type_fields(t.pk)[0]]})
         return Response(rows)
 
     @guard
@@ -1819,27 +1874,27 @@ class TypeConfigView(Base, APIView):
         if inp.has('code_prefix'):
             pre = inp.s('code_prefix').upper()
             if not pre or not pre.replace('-', '').isalnum() or len(pre) > 12:
-                raise S.AssetError('Use 1–12 letters or digits for the prefix, e.g. LAP.', 'code_prefix')
+                raise S.AssetError(tr('Use 1–12 letters or digits for the prefix, e.g. LAP.'), 'code_prefix')
             c.code_prefix = pre
         if inp.has('next_number'):
             n = inp.i('next_number')
             if not n or n < 1:
-                raise S.AssetError('The next number must be 1 or more.', 'next_number')
+                raise S.AssetError(tr('The next number must be 1 or more.'), 'next_number')
             c.next_number = n
         if inp.has('depreciation_method'):
             m = inp.s('depreciation_method')
             if m not in ('none', 'straight_line', 'declining'):
-                raise S.AssetError('Choose no depreciation, straight line or declining balance.', 'depreciation_method')
+                raise S.AssetError(tr('Choose no depreciation, straight line or declining balance.'), 'depreciation_method')
             c.depreciation_method = m
         if inp.has('useful_life_months'):
             n = inp.i('useful_life_months')
             if not n or not (1 <= n <= 600):
-                raise S.AssetError('Useful life must be between 1 and 600 months.', 'useful_life_months')
+                raise S.AssetError(tr('Useful life must be between 1 and 600 months.'), 'useful_life_months')
             c.useful_life_months = n
         if inp.has('salvage_percent'):
             v = inp.n('salvage_percent', Decimal(0))
             if not (0 <= v <= 100):
-                raise S.AssetError('Salvage is a % between 0 and 100.', 'salvage_percent')
+                raise S.AssetError(tr('Salvage is a % between 0 and 100.'), 'salvage_percent')
             c.salvage_percent = v
         if inp.has('maintenance_interval_days'):
             c.maintenance_interval_days = inp.i('maintenance_interval_days')
@@ -1851,7 +1906,7 @@ class SettingsView(Base, APIView):
     def _out(self, s):
         return {'currency': s.currency, 'code_padding': s.code_padding, 'warranty_reminder_days': s.warranty_reminder_days,
                 'require_acknowledgement': s.require_acknowledgement, 'block_final_settlement': s.block_final_settlement,
-                'max_instalments': s.max_instalments}
+                'max_instalments': s.max_instalments, 'verification_days': s.verification_days}
 
     @guard
     def get(self, request):
@@ -1865,13 +1920,13 @@ class SettingsView(Base, APIView):
         if inp.has('currency'):
             c = inp.s('currency').upper()
             if len(c) != 3 or not c.isalpha():
-                raise S.AssetError('Use a 3-letter currency code such as AED.', 'currency')
+                raise S.AssetError(tr('Use a 3-letter currency code such as AED.'), 'currency')
             s.currency = c
-        for k, lo, hi in (('code_padding', 1, 8), ('warranty_reminder_days', 0, 365), ('max_instalments', 1, 60)):
+        for k, lo, hi in (('code_padding', 1, 8), ('warranty_reminder_days', 0, 365), ('max_instalments', 1, 60), ('verification_days', 0, 1095)):
             if inp.has(k):
                 v = inp.i(k)
                 if v is None or not (lo <= v <= hi):
-                    raise S.AssetError(f'{k.replace("_", " ").capitalize()} must be between {lo} and {hi}.', k)
+                    raise S.AssetError(tr('{0} must be between {1} and {2}.', k.replace("_", " ").capitalize(), lo, hi), k)
                 setattr(s, k, v)
         for k in ('require_acknowledgement', 'block_final_settlement'):
             if inp.has(k):

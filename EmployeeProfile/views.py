@@ -27,6 +27,7 @@ from . import validators as V
 from .models import BankExtra, DependentExtra, EmergencyContact, EmployeeCodeSetting, EmployeeIdentity, EmploymentInfo, QualificationExtra
 from .serializers import (BankExtraSerializer, CodeSettingSerializer, DependentExtraSerializer, EmergencySerializer, EmploymentSerializer,
                           IdentitySerializer, QualificationExtraSerializer)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -45,11 +46,11 @@ class Member(BasePermission):
     def has_permission(self, request, view):
         u = request.user
         if not u or not u.is_authenticated:
-            self.message = 'Please log in.'
+            self.message = tr('Please log in.')
             return False
         sch = _schema(request)
         if not sch or sch == 'public':
-            self.message = 'Choose a company.'
+            self.message = tr('Choose a company.')
             return False
         return u.is_superuser or u.tenants.filter(schema_name=sch).exists()
 
@@ -80,7 +81,7 @@ def _date(v, field):
     try:
         return serializers.DateField().to_internal_value(v)
     except serializers.ValidationError:
-        raise ValidationError({field: 'Enter a valid date (YYYY-MM-DD).'})
+        raise ValidationError({field: tr('Enter a valid date (YYYY-MM-DD).')})
 
 
 def _ids(v):
@@ -138,7 +139,7 @@ class MyProfileView(Base):
     def get(self, request):
         emp = S.my_employee(request)
         if emp is None:
-            return Response({'detail': 'Your login is not linked to an employee.'}, status=404)
+            return Response({'detail': tr('Your login is not linked to an employee.')}, status=404)
         return Response(profile_json(request, emp, False))
 
 
@@ -177,7 +178,7 @@ class DocSyncView(Base):
             return err
         o = S.identity_for(emp.pk)
         if o is None:
-            return Response({'detail': 'This employee has no identity details yet.'}, status=400)
+            return Response({'detail': tr('This employee has no identity details yet.')}, status=400)
         return Response({'document_sync': S.sync_documents(o, emp, request.user)})
 
 
@@ -217,7 +218,7 @@ class EmergencyDetailView(Base):
     def _get(self, request, pk, write):
         c = EmergencyContact.objects.filter(pk=pk).first()
         if c is None:
-            return None, None, deny('Emergency contact not found.', 404)
+            return None, None, deny(tr('Emergency contact not found.'), 404)
         emp, err = _emp(request, c.employee_id, write=write)
         return c, emp, err
 
@@ -254,7 +255,7 @@ class _ExtraView(Base):
         P = M(*self.parent.split('.'))
         row = P.objects.filter(pk=pk).first() if str(pk).isdigit() else None
         if row is None:
-            return None, None, deny('Record not found.', 404)
+            return None, None, deny(tr('Record not found.'), 404)
         emp, err = _emp(request, getattr(row, self.parent_fk + '_id'), write=write)
         return row, emp, err
 
@@ -310,17 +311,22 @@ class IbanCheckView(Base):
         except ValueError as e:
             return Response({'ok': False, 'message': str(e)})
         if not v:
-            return Response({'ok': False, 'message': 'Enter the IBAN.'})
-        return Response({'ok': True, 'iban': v, 'bank_code': v[4:7], 'message': 'The IBAN is valid.'})
+            return Response({'ok': False, 'message': tr('Enter the IBAN.')})
+        return Response({'ok': True, 'iban': v, 'bank_code': v[4:7], 'message': tr('The IBAN is valid.')})
 
 
 class EidCheckView(Base):
     def post(self, request):
         try:
-            v = V.clean_emirates_id((request.data or {}).get('emirates_id'))
+            v = V.clean_national_id((request.data or {}).get('emirates_id'))   # v1.14.0: format of the company's country pack
         except ValueError as e:
             return Response({'ok': False, 'message': str(e)})
-        return Response({'ok': bool(v), 'emirates_id': v, 'message': 'The Emirates ID is valid.' if v else 'Enter the Emirates ID.'})
+        try:
+            from CountryPack.services import label
+            name = label('national_id')
+        except ImportError:
+            name = 'Emirates ID'
+        return Response({'ok': bool(v), 'emirates_id': v, 'message': tr('The {0} is valid.', name) if v else tr('Enter the {0}.', name)})
 
 
 # ------------------------------------------------------------------ generic change (HR) – same code path as self-service
@@ -392,7 +398,7 @@ class ProbationActionView(Base):
             if short:
                 out['warning'] = f'The last working day is less than {S.PROBATION_NOTICE_DAYS} days away – UAE law asks for {S.PROBATION_NOTICE_DAYS} days’ written notice.'
             return Response(out)
-        return deny('Unknown action.', 404)
+        return deny(tr('Unknown action.'), 404)
 
 
 class ProbationDueView(Base):
@@ -400,7 +406,7 @@ class ProbationDueView(Base):
 
     def get(self, request):
         if not S.is_hr(request):
-            return deny('This list is for HR users.')
+            return deny(tr('This list is for HR users.'))
         try:
             days = max(0, min(366, int(request.query_params.get('days') or 30)))
         except ValueError:
@@ -436,7 +442,7 @@ def _can_code(request, branch_id):
 class CodeSettingsView(Base):
     def get(self, request):
         if not S.is_hr(request):
-            return deny('This page is for HR users.')
+            return deny(tr('This page is for HR users.'))
         qs = EmployeeCodeSetting.objects.all()
         allowed = S.user_branches(request)
         if allowed is not None:
@@ -457,7 +463,7 @@ class CodeSettingDetailView(Base):
     def put(self, request, pk):
         o = EmployeeCodeSetting.objects.filter(pk=pk).first()
         if o is None:
-            return deny('Numbering rule not found.', 404)
+            return deny(tr('Numbering rule not found.'), 404)
         msg = _can_code(request, o.branch_id)
         if msg:
             return deny(msg)
@@ -474,7 +480,7 @@ class CodeSettingDetailView(Base):
     def delete(self, request, pk):
         o = EmployeeCodeSetting.objects.filter(pk=pk).first()
         if o is None:
-            return deny('Numbering rule not found.', 404)
+            return deny(tr('Numbering rule not found.'), 404)
         msg = _can_code(request, o.branch_id)
         if msg:
             return deny(msg)
@@ -522,7 +528,7 @@ class CompletenessView(Base):
                 return err
             return Response(S.completeness(emp))
         if not S.is_hr(request):
-            return deny('This list is for HR users.')
+            return deny(tr('This list is for HR users.'))
         out = []
         for e in S.emp_qs(request).filter(Q(is_active=True) | Q(is_active__isnull=True)).select_related('emp_nationality').order_by('emp_code'):
             c = S.completeness(e)
@@ -572,7 +578,7 @@ class IdentityImportView(Base):
 
     def post(self, request):
         if not S.is_hr(request, write=True):
-            return deny('You may not change employee identity details.')
+            return deny(tr('You may not change employee identity details.'))
         body = request.data if isinstance(request.data, dict) else {'rows': request.data}
         rows = body.get('rows') or []
         dry = str(body.get('dry_run', request.query_params.get('dry_run', ''))).lower() in ('1', 'true', 'yes')
@@ -600,7 +606,7 @@ class IdentityImportView(Base):
                 if k == 'passport_country':
                     c = C.objects.filter(Q(country_name__iexact=str(v).strip()) | Q(country_code__iexact=str(v).strip())).first()
                     if c is None:
-                        errors['passport_country'] = f'No country "{v}".'
+                        errors['passport_country'] = tr('No country "{0}".', v)
                     else:
                         data['passport_country_id'] = c.pk
                     continue
@@ -612,7 +618,7 @@ class IdentityImportView(Base):
                 v = str(data.get(k) or '').replace('-', '').upper()
                 if v:
                     if (k, v) in seen and seen[(k, v)] != emp.pk:
-                        errors[k] = f'The same number is on row {seen[(k, v, "row")]} for another employee.'
+                        errors[k] = tr('The same number is on row {0} for another employee.', seen[(k, v, "row")])
                     seen[(k, v)] = emp.pk
                     seen[(k, v, 'row')] = i
             if not errors:

@@ -318,9 +318,33 @@ class Non_EssUserListSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'is_ess', 'is_staff', 'is_superuser', 'tenants']
 
 class UserListSerializer(serializers.ModelSerializer):
+    # v1.22.0 branch rights: the user's branches ("User branch access", else the linked employee's branch)
+    branches = serializers.SerializerMethodField()
+    branch_names = serializers.SerializerMethodField()
+
     class Meta:
         model = CustomUser
-        fields = ['id', 'username', 'email', 'is_ess', 'is_staff', 'is_superuser', 'tenants']
+        fields = ['id', 'username', 'email', 'last_login', 'is_ess', 'is_staff', 'is_superuser', 'tenants', 'branches', 'branch_names']
+        read_only_fields = ['branches', 'branch_names']
+
+    def _branches(self, obj):
+        bmap = self.context.get('branch_map')
+        if bmap is None:
+            schema_name = self.context.get('schema_name')
+            if not schema_name:
+                from django.db import connection
+                schema_name = connection.schema_name if connection.schema_name != 'public' else None
+            if not schema_name:
+                return []
+            from .views import user_branch_map
+            bmap = user_branch_map(schema_name, [obj.pk])
+        return bmap.get(obj.pk, [])
+
+    def get_branches(self, obj):
+        return [{'id': b, 'name': n} for b, n in self._branches(obj)]
+
+    def get_branch_names(self, obj):
+        return ', '.join(n for _, n in self._branches(obj) if n)
 
 class DomainSerializer(serializers.ModelSerializer):
     class Meta:

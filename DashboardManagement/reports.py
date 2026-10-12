@@ -18,7 +18,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.apps import apps
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -156,7 +156,7 @@ class Run:
                 self.date_from, self.date_to = today, today + timedelta(days=90)
             elif default == 'next30':
                 self.date_from, self.date_to = today, today + timedelta(days=30)
-        self.today = today
+        self.today = _date(q.get('as_of')) or today   # v1.20.2: provisions (gratuity, leave) as of a date, e.g. the month end
         allowed = self.c.branches  # None = every branch
         picked = [int(x) for x in re.findall(r'\d+', q.get('branch', '') or '')]
         if allowed is None:
@@ -350,13 +350,19 @@ def _expiry_status(d, today):
 
 def r_documents(run):
     rows = []
-    for d in M('EmpManagement', 'Emp_Documents').objects.filter(run.emp_q('emp_id')).select_related('emp_id__emp_branch_id', 'emp_id__emp_dept_id', 'emp_id__emp_desgntn_id', 'emp_id__emp_ctgry_id', 'document_type'):
+    qs = M('EmpManagement', 'Emp_Documents').objects.filter(run.emp_q('emp_id')).select_related('emp_id__emp_branch_id', 'emp_id__emp_dept_id', 'emp_id__emp_desgntn_id', 'emp_id__emp_ctgry_id', 'document_type')
+    from .documents import current_doc_ids   # v1.17.0 (audit C1): a renewed / superseded copy is not "Expired"
+    cur = current_doc_ids(qs.values_list('emp_id_id', flat=True).distinct())
+    for d in qs:
         days, st = _expiry_status(d.emp_doc_expiry_date, run.today)
+        if d.id not in cur:
+            st = 'Replaced'
         rows.append({**emp_cols(d.emp_id), 'type': str(d.document_type or ''), 'number': d.emp_doc_number or '', 'issued': d.emp_doc_issued_date,
-                     'expiry': d.emp_doc_expiry_date, 'days_left': days, 'status': st, 'active': nice(bool(d.is_active)), **src(d)})
+                     'expiry': d.emp_doc_expiry_date, 'days_left': days, 'status': st, 'active': nice(bool(d.is_active)),
+                     'current': 'Yes' if d.id in cur else 'No', **src(d)})
     rows.sort(key=lambda r: (r['days_left'] == '', r['days_left'] if r['days_left'] != '' else 0))
     return EMP_COLS + [('type', 'Document type', 'text'), ('number', 'Number', 'text'), ('issued', 'Issued', 'date'), ('expiry', 'Expiry', 'date'),
-                       ('days_left', 'Days left', 'number'), ('status', 'Status', 'text'), ('active', 'Active', 'text')], rows
+                       ('days_left', 'Days left', 'number'), ('status', 'Status', 'text'), ('active', 'Active', 'text'), ('current', 'Current document', 'text')], rows
 
 
 # ------------------------------------------------------------------ leave
@@ -524,8 +530,9 @@ def r_leave_liability(run):
         bal[b['employee_id']] += float(b['balance'] or 0)
     rows = []
     for e in emps:
-        daily = basic.get(e.id, 0) * 12 / 365
-        daily_g = gross.get(e.id, 0) * 12 / 365
+        # v1.18.0: basic ÷ 30 a day – the basis of the leave pay in the final settlement and of leave encashment (was × 12 ÷ 365)
+        daily = basic.get(e.id, 0) / 30
+        daily_g = gross.get(e.id, 0) / 30
         rows.append({**emp_cols(e), 'balance': round(bal.get(e.id, 0), 2), 'basic': money(basic.get(e.id, 0)), 'daily': round(daily, 2),
                      'liability': round(daily * bal.get(e.id, 0), 2), 'gross': money(gross.get(e.id, 0)), 'daily_gross': round(daily_g, 2),
                      'liability_gross': round(daily_g * bal.get(e.id, 0), 2), **src(e),
@@ -761,17 +768,93 @@ def gratuity_uae(years, basic):
     return round(days, 2), round(min(amount, basic * 24), 2)
 
 
+def gratuity_for(e, years, basic, wage=None):
+    """v1.14.0: (days, amount) by the country rule set of the employee's branch (CountryPack); UAE = gratuity_uae, unchanged."""
+    try:
+        from CountryPack.services import gratuity_breakdown
+        g = gratuity_breakdown(years, basic, 'termination', getattr(e, 'emp_branch_id_id', None), wage_monthly=wage)
+        return g['days'], g['amount']
+    except Exception:  # pragma: no cover - without the app: UAE labour law as before
+        return gratuity_uae(years, basic)
+
+
 def r_gratuity(run):
     emps = list(run.employees)
     basic = basic_by_employee([e.id for e in emps])
     rows = []
+    unpaid = _unpaid_service_days([e.id for e in emps], run.today)
+    try:
+        from PayrollManagement.signals import is_uae_national
+    except ImportError:
+        is_uae_national = lambda e: False
+    try:
+        from CountryPack.services import gratuity_service_years
+    except ImportError:
+        gratuity_service_years = None
+    wage = wage_by_employee([e.id for e in emps])
+    try:
+        from PayrollManagement.signals import last_working_day
+    except ImportError:
+        last_working_day = None
     for e in emps:
-        yrs = years_between(e.emp_joined_date, run.today) or 0
-        days, amount = gratuity_uae(yrs, basic.get(e.id, 0))
-        rows.append({**emp_cols(e), 'joined': e.emp_joined_date, 'years': yrs, 'basic': money(basic.get(e.id, 0)), 'days': days, 'amount': amount, **src(e),
+        # v1.18.0: service by calendar years less unpaid leave / absence (Art. 51); UAE nationals are under the GPSSA pension
+        # v1.20.2: counted as the country rule set says (anniversary years or days ÷ 365), kept to 4 decimals (2 lost up to 0.005 years)
+        # v1.20.2: an employee who has left (or is leaving) is counted to the last working day, not past it
+        end = run.today
+        if last_working_day:
+            lwd = last_working_day(e)
+            if lwd and lwd < end:
+                end = lwd
+        if e.emp_joined_date and gratuity_service_years and e.emp_joined_date <= end:
+            yrs = round(float(gratuity_service_years(e.emp_joined_date, end, unpaid.get(e.id, 0), e.emp_branch_id_id)), 4)
+        else:
+            yrs = years_between(e.emp_joined_date, run.today) or 0
+        nat = is_uae_national(e)
+        days, amount = (0, 0) if nat else gratuity_for(e, yrs, basic.get(e.id, 0), wage.get(e.id))
+        rows.append({**emp_cols(e), 'joined': e.emp_joined_date, 'years': yrs, 'unpaid': unpaid.get(e.id, 0), 'basic': money(basic.get(e.id, 0)), 'days': days,
+                     'amount': amount, 'basis': 'UAE national – GPSSA pension' if nat else ('Under 1 year' if yrs < 1 else 'Labour law'), **src(e),
                      '_cell': {'basic': drill('salary', {'employee': full_name(e)})}})
-    return EMP_COLS + [('joined', 'Joining date', 'date'), ('years', 'Service (years)', 'number'), ('basic', 'Monthly basic (AED)', 'number'),
-                       ('days', 'Gratuity days', 'number'), ('amount', 'Gratuity accrued (AED)', 'number')], rows
+    return EMP_COLS + [('joined', 'Joining date', 'date'), ('years', 'Eligible service (years)', 'number'), ('unpaid', 'Unpaid days', 'number'),
+                       ('basic', 'Monthly basic (AED)', 'number'), ('days', 'Gratuity days', 'number'), ('amount', 'Gratuity accrued (AED)', 'number'),
+                       ('basis', 'Basis', 'text')], rows
+
+
+def _unpaid_service_days(emp_ids, until):
+    """{employee id: days of unpaid leave + days absent without leave up to `until`} – not service for the gratuity.
+    v1.20.2: also the unpaid days the payroll itself deducted (attendance calendar, unpaid fraction – a half unpaid day = 0.5) and
+    the unpaid days before ZEO went live (Employee → Employment); a day is counted once whichever record holds it.
+    Half an unpaid day (unpaid_fraction 0.5) counts as half a day."""
+    out = defaultdict(float)
+    seen = defaultdict(set)
+    try:
+        # absence without leave and unpaid leave only – a half-paid day (e.g. maternity at half pay) is still service
+        for r in M('calendars', 'AttendanceCalendar').objects.filter(employee_id__in=emp_ids, date__lte=until, unpaid_fraction__gt=0).filter(
+                Q(status='Absent') | Q(leave_type__type='unpaid')).values_list('employee_id', 'date', 'unpaid_fraction'):
+            out[r[0]] += float(r[2])
+            seen[r[0]].add(r[1])
+    except LookupError:
+        pass
+    for r in M('calendars', 'employee_leave_request').objects.filter(employee_id__in=emp_ids, status='approved', leave_type__type='unpaid', start_date__lte=until):
+        if not seen[r.employee_id] or not r.start_date or not r.end_date:
+            out[r.employee_id] += float(r.approved_days or r.number_of_days or 0)
+            continue
+        d = r.start_date
+        while d <= min(r.end_date, until):
+            if d not in seen[r.employee_id]:
+                out[r.employee_id] += 1
+            d += timedelta(days=1)
+    try:
+        for row in M('AttendancePlus', 'AttendanceDay').objects.filter(employee_id__in=emp_ids, status='absent', date__lte=until).values_list('employee_id', 'date'):
+            if row[1] not in seen[row[0]]:
+                out[row[0]] += 1
+    except LookupError:
+        pass
+    try:
+        for eid, n in M('EmployeeProfile', 'EmploymentInfo').objects.filter(employee_id__in=emp_ids, unpaid_days_before_golive__gt=0).values_list('employee_id', 'unpaid_days_before_golive'):
+            out[eid] += float(n)
+    except Exception:
+        pass
+    return out
 
 
 # ------------------------------------------------------------------ exit, requests, assets
@@ -906,9 +989,11 @@ def r_certificates(run):
             'course', 'employee__emp_branch_id', 'employee__emp_dept_id', 'employee__emp_desgntn_id', 'employee__emp_ctgry_id'):
         days, st = _expiry_status(c.expiry_date, run.today)
         rows.append({**emp_cols(c.employee), 'title': c.title or str(c.course or ''), 'number': c.certificate_number or '', 'issued_by': c.issued_by or '',
-                     'issued': c.issued_on, 'expiry': c.expiry_date, 'days_left': days, 'status': st, **src(c)})
+                     'issued': c.issued_on, 'expiry': c.expiry_date, 'days_left': days, 'status': st, **src(c),
+                     'expiring_60': 'Yes' if c.status == 'expiring' else 'No'})   # v1.17.1: not renewed, expiring within 60 days (HR Learning card)
     return EMP_COLS + [('title', 'Certificate', 'text'), ('number', 'Number', 'text'), ('issued_by', 'Issued by', 'text'), ('issued', 'Issued on', 'date'),
-                       ('expiry', 'Expiry', 'date'), ('days_left', 'Days left', 'number'), ('status', 'Status', 'text')], rows
+                       ('expiry', 'Expiry', 'date'), ('days_left', 'Days left', 'number'), ('status', 'Status', 'text'),
+                       ('expiring_60', 'Expiring in 60 days', 'text')], rows, {'filters': ['status', 'expiring_60', 'branch']}
 
 
 def r_timesheets(run):
@@ -927,9 +1012,24 @@ MARITAL = {'M': 'Married', 'S': 'Single', 'D': 'Divorced', 'divorced': 'Divorced
 
 
 def is_national(e):
-    """UAE national (Emirati) – GPSSA pension and Emiratisation."""
+    """UAE national (Emirati) – GPSSA pension and Emiratisation. v1.14.0: national of the company's country pack."""
     n = str(getattr(e, 'emp_nationality', '') or '').upper()
-    return 'EMIRAT' in n or n in ('UAE', 'UNITED ARAB EMIRATES')
+    try:
+        from CountryPack.services import is_national as _nat
+        return _nat(n)
+    except Exception:  # pragma: no cover - without the app: UAE as before
+        return 'EMIRAT' in n or n in ('UAE', 'UNITED ARAB EMIRATES')
+
+
+def wage_by_employee(emp_ids):
+    """v1.20.2: monthly wage per employee – the fixed additions of the active salary structure shown on the payslip (basic and
+    allowances; no overtime, inputs or hidden provisions)."""
+    out = defaultdict(float)
+    for r in M('PayrollManagement', 'EmployeeSalaryStructure').objects.filter(employee_id__in=emp_ids, is_active=True).select_related('component'):
+        c = r.component
+        if c.component_type == 'addition' and c.component_value_type == 'fixed' and c.show_in_payslip and not (c.formula or '').strip():
+            out[r.employee_id] += float(r.amount or 0)
+    return {e: out.get(e, 0) for e in emp_ids}
 
 
 def gross_by_employee(emp_ids):
@@ -1321,9 +1421,20 @@ def employer_cost(p, struct_basic=0.0):
     yrs = years_between(p.employee.emp_joined_date, m1) or 0
     daily = basic * 12 / 365
     gratuity = daily * (21 if yrs < 5 else 30) / 12
+    uae_pension = True
+    try:  # v1.14.0: another country's rule set (branch / company) → its accrual; GPSSA only for UAE companies
+        from CountryPack import services as CP
+        if not CP.uses_uae_gratuity(p.employee.emp_branch_id_id):
+            g = CP.gratuity_breakdown(yrs, basic, 'termination', p.employee.emp_branch_id_id)
+            gratuity = g['daily'] * g['per_year_days'] / 12
+        uae_pension = CP.is_ae()
+    except Exception:
+        pass
+    if uae_pension and is_national(p.employee):
+        gratuity = 0          # v1.18.0: Emiratis – GPSSA pension (below) instead of a gratuity accrual
     leave = daily * 30 / 12
     contributory = sum(money(c.amount) for c in comps if c.component.payroll_category in PENSION_CATS and c.component.component_type != 'deduction') or basic
-    pension = contributory * PENSION_EMPLOYER if is_national(p.employee) else 0
+    pension = contributory * PENSION_EMPLOYER if uae_pension and is_national(p.employee) else 0
     gross = money(p.gross_salary)
     return {'basic': round(basic, 2), 'gross': gross, 'gratuity': round(gratuity, 2), 'leave_accrual': round(leave, 2), 'pension': round(pension, 2),
             'cost': round(gross + gratuity + leave + pension, 2)}
@@ -1336,10 +1447,11 @@ def r_payroll_cost(run):
     for p in slips:
         pr = p.payroll_run
         rows.append({**emp_cols(p.employee), 'run': pr.name, 'period': date(pr.year, pr.month, 1).strftime('%b %Y'), 'net': money(p.net_salary),
-                     **employer_cost(p, sb.get(p.employee_id, 0)), **src(p)})
+                     **employer_cost(p, sb.get(p.employee_id, 0)), **src(p), 'run_status': nice(pr.status)})   # v1.16.0 run_status: CEO drill filter
     return EMP_COLS + [('run', 'Payroll run', 'text'), ('period', 'Period', 'text'), ('basic', 'Basic (AED)', 'number'), ('gross', 'Gross (AED)', 'number'),
                        ('net', 'Net (AED)', 'number'), ('gratuity', 'Gratuity accrual (AED)', 'number'), ('leave_accrual', 'Leave salary accrual (AED)', 'number'),
-                       ('pension', 'Employer pension – GPSSA (AED)', 'number'), ('cost', 'Total employer cost (AED)', 'number')], rows, \
+                       ('pension', 'Employer pension – GPSSA (AED)', 'number'), ('cost', 'Total employer cost (AED)', 'number'),
+                       ('run_status', 'Run status', 'text')], rows, \
         {'notes': ['Employer cost = gross + gratuity accrual (21 days’ basic a year, 30 after 5 years) + leave salary accrual (30 days’ basic a year) '
                    '+ GPSSA employer share 12.5% for UAE nationals.']}
 
@@ -1695,7 +1807,7 @@ REPORTS = {
     'wps': ('WPS salary file data', 'Payroll', 'Salary lines in the WPS SIF (EDR) order, with a check for missing Person ID or IBAN.', r_wps, 'month', ['view_payslip', 'view_payrollrun']),
     'salary': ('Salary by employee', 'Payroll', 'Current monthly salary components per employee.', r_salary, None, ['view_employeesalarystructure', 'view_payslip']),
     'salary-revisions': ('Salary revisions', 'Payroll', 'Every salary change with old and new amount.', r_salary_revisions, 'year', ['view_salaryrevisionhistory', 'view_employeesalarystructure']),
-    'gratuity': ('Gratuity accrual', 'Payroll', 'End-of-service gratuity accrued to date (UAE labour law: 21 / 30 days’ basic per year, capped at 2 years’ basic).', r_gratuity, None, ['view_employeesalarystructure', 'view_payslip']),
+    'gratuity': ('Gratuity accrual', 'Payroll', 'End-of-service gratuity accrued up to the “as of” date, by the country rule set (UAE: 21 / 30 days’ basic per year, capped at 2 years’ pay); unpaid leave and absence are not service.', r_gratuity, None, ['view_employeesalarystructure', 'view_payslip']),
     'leave-liability': ('Leave liability', 'Payroll', 'Value of unused annual leave: balance × daily basic.', r_leave_liability, None, ['view_employeesalarystructure', 'view_payslip']),
     'loans': ('Loans outstanding', 'Payroll', 'Loans with amount, repaid, outstanding and instalments left.', r_loans, None, ['view_loanapplication']),
     'advances': ('Advance salary', 'Payroll', 'Advance salary requests and their status.', r_advances, None, ['view_advancesalaryrequest']),
@@ -1744,6 +1856,23 @@ except Exception:  # pragma: no cover - the reports work without it
     pass
 
 
+# v1.22.0: the reports of CRM, Property, Maintenance, HSE and Projects (hidden while the app is not active – Settings → Apps)
+try:
+    from ZeoApps.reports import all_reports as _app_reports
+    REPORTS.update(_app_reports())
+except Exception:  # pragma: no cover
+    import logging as _lg
+    _lg.getLogger(__name__).exception('add-on reports not loaded')
+
+
+def _apps_hidden():
+    try:
+        from ZeoApps.reports import hidden_keys
+        return hidden_keys(REPORTS.keys())
+    except Exception:
+        return set()
+
+
 def _org_hidden():
     try:
         from django.apps import apps as _apps
@@ -1779,9 +1908,59 @@ class ReportListView(APIView):
         from AccessControl.access import ctx
         c = ctx(request)
         hidden = _org_hidden()
+        hidden = hidden | _country_hidden() | _apps_hidden()   # v1.22.0
         out = [{'key': k, 'title': v[0], 'section': v[1], 'description': v[2], 'period': v[4], 'perms': v[5]}
                for k, v in REPORTS.items() if _allowed(c, v[5]) and k not in hidden]
-        return Response({'reports': out})
+        return Response({'reports': _lang_list(_country_list(out), request)})
+
+
+# v1.14.0: country packs – the WPS SIF report only where the feature is on, captions of the company's country
+COUNTRY_FEATURE_REPORTS = {'wps': 'wps_sif'}
+
+
+def _country_hidden():
+    try:
+        from CountryPack.services import feature
+        return {k for k, f in COUNTRY_FEATURE_REPORTS.items() if not feature(f)}
+    except Exception:
+        return set()
+
+
+def _country_list(out):
+    try:
+        from CountryPack.services import localize, report_replacements
+        pairs = report_replacements()
+        if pairs:
+            for r in out:
+                r['title'], r['description'] = localize(r['title'], pairs), localize(r['description'], pairs)
+    except Exception:
+        pass
+    return out
+
+
+def _country_report(data):
+    try:
+        from CountryPack.services import localize_report
+        return localize_report(data)
+    except Exception:
+        return data
+
+
+# v1.15.0: language packs – after the country step: captions through the packs, names through the translated master data
+def _lang_list(out, request):
+    try:
+        from Translations.reports import localize_list
+        return localize_list(out, request)
+    except Exception:
+        return out
+
+
+def _lang_report(data, request):
+    try:
+        from Translations.reports import localize_report
+        return localize_report(data, request)
+    except Exception:
+        return data
 
 
 class ReportView(APIView):
@@ -1796,6 +1975,11 @@ class ReportView(APIView):
         c = ctx(request)
         if not _allowed(c, codes):
             return Response({'detail': 'You may not run this report.'}, status=status.HTTP_403_FORBIDDEN)
+        if key in _apps_hidden():   # v1.22.0
+            return Response({'detail': 'This app is not active in the company (Settings → Apps).'}, status=status.HTTP_400_BAD_REQUEST)
+        if key in _country_hidden():
+            from CountryPack.services import WPS_SIF_OFF
+            return Response({'detail': WPS_SIF_OFF}, status=status.HTTP_400_BAD_REQUEST)
         run = Run(request, {'period': period})
         if (run.date_from and run.date_to) and run.date_to < run.date_from:
             return Response({'detail': 'The end date is before the start date.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1820,9 +2004,18 @@ class ReportView(APIView):
                 vals = [r.get(k) for r in rows if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool)]
                 if vals:
                     totals[k] = round(sum(vals), 2)
-        return Response({'key': key, 'title': title, 'section': section, 'description': description, 'period': shown,
-                         'has_period': period is not None, 'columns': columns, 'rows': rows, 'totals': totals, 'count': len(rows),
-                         'notes': [n for n in (extra.get('notes') or []) if n]})
+        return Response(_lang_report(_country_report({'key': key, 'title': title, 'section': section, 'description': description, 'period': shown,
+                                          'has_period': period is not None, 'as_of': run_as_of(request) if key in AS_OF_REPORTS else None,   # v1.20.2
+                                          'columns': columns, 'rows': rows, 'totals': totals, 'count': len(rows),
+                                          'notes': [n for n in (extra.get('notes') or []) if n],
+                                          'filters': [f for f in (extra.get('filters') or []) if any(c['key'] == f for c in columns)]}), request))   # v1.16.0 filter row
+
+
+AS_OF_REPORTS = ('gratuity',)   # v1.20.2: snapshot reports that can be run as of a date (e.g. the last month end)
+
+
+def run_as_of(request):
+    return (_date(request.query_params.get('as_of')) or date.today()).isoformat()
 
 
 def _run_report(request, key):
@@ -1855,12 +2048,27 @@ class ReportEmailView(APIView):
         if not to:
             return Response({'detail': 'Your user has no e-mail address. Add one in Users first.'}, status=status.HTTP_400_BAD_REQUEST)
         buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow([c['label'] for c in data['columns']])
-        for row in data['rows']:
-            w.writerow(['' if row.get(c['key']) is None else row.get(c['key']) for c in data['columns']])
-        period = f" ({data['period']['from']} to {data['period']['to']})" if data.get('period') else ''
-        body = (f"{data['title']}{period}\n{data['description']}\n\n{data['count']} rows – the full list is attached.\n"
+        # v1.16.0: the screen sends the list as it shows it (filters, sort, visible columns, a column per group level);
+        # the report is still run above, so only users who may run it can send it – and only to their own address
+        shown = request.data.get('csv') if isinstance(request.data, dict) else None
+        if isinstance(shown, str) and shown.strip() and len(shown) <= 5 * 1024 * 1024:
+            buf.write(shown.lstrip('\ufeff'))
+            try:
+                data = dict(data, count=int(request.data.get('rows')))
+            except (TypeError, ValueError):
+                pass
+        else:
+            w = csv.writer(buf)
+            w.writerow([c['label'] for c in data['columns']])
+            for row in data['rows']:
+                w.writerow(['' if row.get(c['key']) is None else row.get(c['key']) for c in data['columns']])
+        try:  # v1.15.0: the e-mail text in the user's language (English when Translations is missing)
+            from Translations.i18n import tr as _tr
+        except ImportError:
+            def _tr(text, *args, **kw):
+                return text.format(*args)
+        period = _tr(' ({0} to {1})', data['period']['from'], data['period']['to']) if data.get('period') else ''
+        body = (f"{data['title']}{period}\n{data['description']}\n\n" + _tr('{0} rows – the full list is attached.', data['count']) + "\n"
                 + ''.join(f"\n{c['label']}: {data['totals'][c['key']]:,}" for c in data['columns'] if c['key'] in data['totals']))
         try:
             cfg = M('EmpManagement', 'EmailConfiguration').objects.filter(is_active=True).first()
@@ -1962,9 +2170,37 @@ if apps.is_installed('AssetPlus'):
     REPORT_MODELS.update(_ASSET_REPORT_MODELS)
 
 
+# v1.18.0: WPS payment status and final settlements from PayrollPlus
+if apps.is_installed('PayrollPlus'):
+    from PayrollPlus.reports import REPORTS as _PP_REPORTS, REPORT_MODELS as _PP_REPORT_MODELS
+    REPORTS.update(_PP_REPORTS)
+    REPORT_MODELS.update(_PP_REPORT_MODELS)
+
+
 # v1.13.0: employee master reports from EmployeeProfile (identity expiry, probation due with extensions – replaces the
 # plain "Probation due", employees without emergency contact, master data completeness, employee history)
 if apps.is_installed('EmployeeProfile'):
     from EmployeeProfile.reports import REPORTS as _PROFILE_REPORTS, REPORT_MODELS as _PROFILE_REPORT_MODELS
     REPORTS.update(_PROFILE_REPORTS)
     REPORT_MODELS.update(_PROFILE_REPORT_MODELS)
+
+
+# v1.16.0 (dashx): attendance reports read the daily results AND the attendance entries the same way (attendance_data);
+# proper payroll register, by department, by component, bank / WPS transfer, month over month, payslip status.
+# Same keys as before where a report existed (attendance, attendance-summary, absence, payroll-register) so links keep working.
+from .att_reports import REPORTS as _DX_ATT, REPORT_MODELS as _DX_ATT_M  # noqa: E402
+from .pay_reports import REPORTS as _DX_PAY, REPORT_MODELS as _DX_PAY_M  # noqa: E402
+REPORTS.update(_DX_ATT)
+REPORTS.update(_DX_PAY)
+REPORT_MODELS.update(_DX_ATT_M)
+REPORT_MODELS.update(_DX_PAY_M)
+
+
+# v1.17.0 (dash17): approvals queue + documents and visas expiry (HR operations dashboard); the Management dashboard's
+# reports open for users with the CEO dashboard right.
+from .ops_reports import register as _dash17_register  # noqa: E402
+_dash17_register(REPORTS, REPORT_MODELS)
+
+# v1.17.1 (dash171): policy acknowledgements, expense reports / advances, leavers to clear; the approvals queue opens the newer modules' records
+from .dash171 import register as _dash171_register  # noqa: E402
+_dash171_register(REPORTS, REPORT_MODELS)

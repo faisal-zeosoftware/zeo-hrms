@@ -23,9 +23,12 @@ class company(TenantMixin):
         ('FIN', 'Finance'),
         ('EDU', 'Education'),
         ('MFG', 'Manufacturing'),
+        ('CON', 'Construction and engineering'),   # v1.21.0 (HSE construction pack)
+        ('OG', 'Oil and gas'),                      # v1.21.0 (HSE oil and gas pack)
+        ('PM', 'Property management'),              # v1.21.0 (CRM / Property / Maintenance property pack)
         ('RET', 'Retail'),
-        ('OTH', 'Other'),
-    ]
+        ('OTH', 'General'),                         # v1.21.0: was "Other" – the apps use their general setup
+    ]   # choices only: no table change (the column is a 10-character text)
     name        = models.CharField(max_length=100)
     schema_name = models.SlugField(unique=True, blank=True, null=True)  # Ensure unique schemas
     paid_until  = models.DateField(auto_now_add=True)

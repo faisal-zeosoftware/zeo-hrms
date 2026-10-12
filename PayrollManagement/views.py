@@ -62,6 +62,7 @@ from calendars.models import leave_type, emp_leave_balance
 from PayrollManagement.models import EmployeeSalaryStructure, LeaveEncashment
 from PayrollManagement.utils import  evaluate_formula
 from PayrollManagement.signals import get_formula_variables
+from AccessControl.access import limit_by_branch, check_branch, allowed_branches, run_in_branches, deny_branch  # v1.22.0 branch rights
 
 
 
@@ -164,9 +165,9 @@ class BenefitLiabilityAPIView(APIView):
                 "%Y-%m-%d"
             ).date()
 
-        employees = emp_master.objects.filter(
+        employees = limit_by_branch(request, emp_master.objects.filter(
             is_active=True
-        )
+        ), branch_path='emp_branch_id')  # v1.22.0 branch rights
 
         results = []
 
@@ -343,7 +344,7 @@ class PayslipComponentViewSet(viewsets.ModelViewSet):
 
 
 class PayrollRunViewSet(viewsets.ModelViewSet):
-    queryset = PayrollRun.objects.all()
+    queryset = PayrollRun.objects.all().order_by('-year', '-month', '-id')   # v1.20.2: newest payroll first
     serializer_class = PayrollRunSerializer
     def perform_create(self, serializer):
         with transaction.atomic():
@@ -383,7 +384,37 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                     branch=branch,
                     document_number=document_number,
                 )
+            try:   # v1.18.0: who prepared the run (segregation of duties)
+                from PayrollPlus.services import record_prepared
+                record_prepared(payroll, self.request.user)
+            except ImportError:
+                pass
+
+    def perform_update(self, serializer):
+        # v1.18.0: segregation of duties – the preparer may not approve / release the run; who approved / paid is recorded
+        old = str(serializer.instance.status or '').lower()
+        new = str(serializer.validated_data.get('status', old) or '').lower()
+        try:
+            from PayrollPlus import services as _pp
+        except ImportError:
+            _pp = None
+        if _pp and new != old:
+            try:
+                _pp.check_run_status_change(serializer.instance, new, self.request.user)
+            except _pp.Refused as ex:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(ex.message)
+        run = serializer.save()
+        if _pp and new != old:
+            _pp.record_status_change(run, new, self.request.user, str(self.request.data.get('payment_ref') or ''))
  
+    def perform_destroy(self, instance):
+        # v1.16.0 (D16): a paid run is closed (salaries transferred, WPS file made) – it stays as the record of the payment
+        if str(instance.status or '').lower() == 'paid':
+            from rest_framework.exceptions import ValidationError as _DRFValidationError
+            raise _DRFValidationError({'detail': 'This payroll run is paid and closed. It cannot be deleted.'})
+        super().perform_destroy(instance)
+
     def _resolve_document_number(self, branch):
         try:
             doc_config = DocumentNumbering.objects.get(
@@ -1046,6 +1077,19 @@ class LoanApprovalviewset(viewsets.ModelViewSet):
         })
 class SIFDataView(APIView):
     def post(self, request):
+        try:  # v1.14.0: the UAE WPS SIF file only where the country pack has it (Settings → Country settings)
+            from CountryPack.services import WPS_SIF_OFF, feature
+            if not feature('wps_sif'):
+                return Response({"error": WPS_SIF_OFF, "detail": WPS_SIF_OFF}, status=status.HTTP_400_BAD_REQUEST)
+        except ImportError:
+            pass
+        # v1.22.0 branch rights: only runs of the user's branches
+        _branches = allowed_branches(request)
+        if _branches is not None:
+            _rid = request.data.get('payroll_run_id')
+            _run = PayrollRun.objects.filter(pk=_rid).first() if str(_rid or '').isdigit() else None
+            if _run is not None and not run_in_branches(_branches, _run):
+                deny_branch()
         serializer = SIFSerializer(data=request.data)
         if serializer.is_valid():
             try:
@@ -1092,6 +1136,18 @@ class SIFDataView(APIView):
 
             employer_unique_id = tenant.employer_unique_id.zfill(13) if tenant and tenant.employer_unique_id else '0' * 13
             bank_routing_code = tenant.bank_routing_code if tenant and tenant.bank_routing_code else '0' * 9
+            # v1.20.2: a file for one branch that is its own establishment uses that branch's employer ID and bank (Payroll controls)
+            _br = serializer.validated_data.get('branch_ids') or []
+            if len(_br) == 1:
+                try:
+                    from PayrollPlus.models import BranchWPS
+                    _bw = BranchWPS.objects.filter(branch_id=_br[0]).first()
+                    if _bw and _bw.employer_unique_id:
+                        employer_unique_id = _bw.employer_unique_id.zfill(13)
+                    if _bw and _bw.bank_routing_code:
+                        bank_routing_code = _bw.bank_routing_code
+                except Exception:
+                    pass
 
             # Handle total_salary
             salary_value = total_salary
@@ -1148,6 +1204,19 @@ def _actionable(view, request, ids):
     return ok, len(ids) - len(ok)
 
 
+def _segregation(approval, user):
+    """v1.18.0: the user who prepared the payroll run may not approve its payslips (PayrollPlus controls)."""
+    try:
+        from PayrollPlus import services as _pp
+    except ImportError:
+        return
+    try:
+        _pp.check_payslip_approver(approval.request, user)
+    except _pp.Refused as ex:
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied(ex.message)
+
+
 class PayslipApprovalViewSet(viewsets.ModelViewSet):
     queryset = PayslipApproval.objects.all()
     serializer_class = PayslipApprovalSerializer
@@ -1158,6 +1227,7 @@ class PayslipApprovalViewSet(viewsets.ModelViewSet):
         note = request.data.get('note')
         if approval.status != 'Pending':
             raise ValidationError("This approval has already been processed.")
+        _segregation(approval, request.user)
         approval.approve(note=note)
         return Response({'status': 'approved'}, status=status.HTTP_200_OK)
 
@@ -1185,10 +1255,21 @@ class PayslipApprovalViewSet(viewsets.ModelViewSet):
 
         # v1.7.0: only steps this user may act on (approver / delegate / admin, not own payslip); count before approving
         approvals, skipped = _actionable(self, request, ids)
+        from rest_framework.exceptions import PermissionDenied
+        done, own = 0, 0
         for approval in approvals:
+            try:
+                _segregation(approval, request.user)
+            except PermissionDenied:     # v1.18.0: payslips of a run this user prepared are left for another approver
+                own += 1
+                continue
             approval.approve(note=note)
+            done += 1
+        if approvals and not done and own:
+            raise PermissionDenied('You prepared this payroll – somebody else must approve its payslips (segregation of duties).')
 
-        return Response({'status': f"{len(approvals)} requests approved." + (f" {skipped} skipped: not yours to approve." if skipped else '')}, status=status.HTTP_200_OK)
+        return Response({'status': f"{done} requests approved." + (f" {skipped} skipped: not yours to approve." if skipped else '')
+                         + (f" {own} skipped: you prepared the payroll." if own else '')}, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'])
     def bulk_reject(self, request):
@@ -1952,6 +2033,7 @@ class CalculateLeaveEncashmentAPIView(APIView):
             employee = emp_master.objects.get(id=employee_id)
         except emp_master.DoesNotExist:
             return Response({"error": "Employee not found."}, status=status.HTTP_404_NOT_FOUND)
+        check_branch(request, employee_id=employee.pk)  # v1.22.0 branch rights
 
         from calendars.models import leave_type, emp_leave_balance
         try:

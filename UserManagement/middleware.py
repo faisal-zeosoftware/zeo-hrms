@@ -111,6 +111,9 @@ class SchemaMiddleware(MiddlewareMixin):
             if not schema_name:
                 from django.http import HttpResponse
                 return HttpResponse('Device not registered', content_type='text/plain', status=401)
+        if not schema_name and app_name == 'language':
+            # v1.15.0: language list / login-page pack before a company is chosen – public schema
+            return self.get_response(request)
         if not schema_name:
             return JsonResponse({"error": "Schema name is required"}, status=400)
 

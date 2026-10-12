@@ -10,9 +10,10 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from .models import (ZERO, AllocationExtra, AssetDamage, AssetDisposal, AssetEvent, AssetLoss, AssetPlusSettings, AssetProfile,
+from .models import (ZERO, AllocationExtra, AssetDamage, AssetFile, AssetDisposal, AssetEvent, AssetLoss, AssetPlusSettings, AssetProfile,
                      AssetReturn, AssetTransfer, AssetTypeConfig, ClearanceWaiver, MaintenanceRecord, MaintenanceSchedule,
                      RecoveryInstalment, SharedAllocation)
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 CENT = Decimal('0.01')
@@ -203,6 +204,39 @@ def open_shared(asset_id):
     return SharedAllocation.objects.filter(asset_id=asset_id, returned_date__isnull=True).order_by('-id').first()
 
 
+def wanted_status(asset):
+    """v1.15.1 – the one rule for Asset.status: it follows the allocations. An open employee allocation or an open
+    location / department allocation = 'assigned', none = 'available'. 'maintenance' and 'disposed' are set by their
+    own processes and are kept."""
+    if asset.status in ('maintenance', 'disposed'):
+        return asset.status
+    return 'assigned' if (open_allocation(asset.pk) or open_shared(asset.pk)) else 'available'
+
+
+def sync_status(asset_id):
+    """Puts Asset.status in line with the allocations (queryset update: no signals, no history event).
+    Returns (old, new) when it changed, else None."""
+    A = Asset()
+    a = A.objects.filter(pk=asset_id).first()
+    if a is None:
+        return None
+    w = wanted_status(a)
+    if w != a.status:
+        A.objects.filter(pk=asset_id).update(status=w)
+        return (a.status, w)
+    return None
+
+
+def status_mismatches():
+    """[(asset, current, wanted)] for every asset whose status does not follow its allocations."""
+    out = []
+    for a in Asset().objects.all().order_by('id'):
+        w = wanted_status(a)
+        if w != a.status:
+            out.append((a, a.status, w))
+    return out
+
+
 def holder(asset_id):
     a = open_allocation(asset_id)
     if a:
@@ -317,14 +351,14 @@ def allocate(asset, user, *, employee_id=None, target_type='employee', branch_id
             raise AssetError(why, 'asset')
     assigned_date = assigned_date or today()
     if expected_return_date and expected_return_date < assigned_date:
-        raise AssetError('The expected return date is before the allocation date.', 'expected_return_date')
+        raise AssetError(tr('The expected return date is before the allocation date.'), 'expected_return_date')
     settings = AssetPlusSettings.get()
     if target_type == 'employee':
         e = emp(employee_id)
         if e is None:
-            raise AssetError('Choose the employee who receives the asset.', 'employee')
+            raise AssetError(tr('Choose the employee who receives the asset.'), 'employee')
         if e.is_active is False:
-            raise AssetError(f'{person(e)} is not an active employee.', 'employee')
+            raise AssetError(tr('{0} is not an active employee.', person(e)), 'employee')
         with quiet():
             alloc = Allocation()(asset=asset, employee=e, assigned_date=assigned_date)
             alloc.save()
@@ -339,17 +373,17 @@ def allocate(asset, user, *, employee_id=None, target_type='employee', branch_id
             log_event(asset.pk, 'allocated', f'Given to {person(e)} on {assigned_date:%d %b %Y}'
                       + (f', expected back {expected_return_date:%d %b %Y}' if expected_return_date else ''),
                       user, e.pk, ('allocation', alloc.pk))
-        notify(e, f'{asset.name} has been allocated to you. Please confirm you received it in My assets.' if settings.require_acknowledgement
-               else f'{asset.name} has been allocated to you.')
+        notify(e, tmsg('{0} has been allocated to you. Please confirm you received it in My assets.', asset.name) if settings.require_acknowledgement
+               else tmsg('{0} has been allocated to you.', asset.name))
         return alloc
     if target_type not in ('location', 'department'):
-        raise AssetError('Allocate to an employee, a location or a department.', 'target_type')
+        raise AssetError(tr('Allocate to an employee, a location or a department.'), 'target_type')
     if target_type == 'location' and not (branch_id or location):
-        raise AssetError('Choose the branch or type the location.', 'location')
+        raise AssetError(tr('Choose the branch or type the location.'), 'location')
     if target_type == 'department' and not department_id:
-        raise AssetError('Choose the department.', 'department_id')
+        raise AssetError(tr('Choose the department.'), 'department_id')
     if custodian_employee_id and not emp(custodian_employee_id):
-        raise AssetError('The custodian employee does not exist.', 'custodian_employee_id')
+        raise AssetError(tr('The custodian employee does not exist.'), 'custodian_employee_id')
     s = SharedAllocation.objects.create(asset_id=asset.pk, target_type=target_type, branch_id=branch_id or None, location=location or '',
                                         department_id=department_id or None, custodian_employee_id=custodian_employee_id or None,
                                         assigned_date=assigned_date, expected_return_date=expected_return_date, note=handover_note or '',
@@ -369,10 +403,10 @@ def allocate(asset, user, *, employee_id=None, target_type='employee', branch_id
 @transaction.atomic
 def acknowledge(extra, user, accept=True, notes=''):
     if extra.ack_status in ('accepted', 'disputed'):
-        raise AssetError('You have already confirmed this asset.')
+        raise AssetError(tr('You have already confirmed this asset.'))
     a = Allocation().objects.filter(pk=extra.allocation_id).first()
     if not a or a.returned_date:
-        raise AssetError('This allocation is closed.')
+        raise AssetError(tr('This allocation is closed.'))
     extra.ack_status = 'accepted' if accept and not notes else 'disputed'
     extra.ack_at = timezone.now()
     extra.ack_condition_notes = notes or ''
@@ -381,7 +415,7 @@ def acknowledge(extra, user, accept=True, notes=''):
     log_event(extra.asset_id, 'acknowledged', 'Receipt confirmed by the employee' + (f' – remarks: {notes}' if notes else ''), user,
               extra.employee_id, ('allocation', extra.allocation_id))
     if notes:
-        notify_hr(asset_branch(a.asset), f'{person(a.employee)} confirmed receiving {a.asset.name} with remarks: {notes[:120]}')
+        notify_hr(asset_branch(a.asset), tmsg('{0} confirmed receiving {1} with remarks: {2}', person(a.employee), a.asset.name, notes[:120]))
     return extra
 
 
@@ -390,13 +424,13 @@ def acknowledge(extra, user, accept=True, notes=''):
 def request_return(asset, user, employee_id, note='', preferred_date=None):
     a = open_allocation(asset.pk)
     if not a or a.employee_id != employee_id:
-        raise AssetError('This asset is not with you.')
+        raise AssetError(tr('This asset is not with you.'))
     if AssetReturn.objects.filter(allocation_id=a.pk, status='requested').exists():
-        raise AssetError('A return is already requested for this asset.')
+        raise AssetError(tr('A return is already requested for this asset.'))
     r = AssetReturn.objects.create(number=next_number(AssetReturn, 'RET'), asset_id=asset.pk, allocation_id=a.pk, employee_id=employee_id,
                                    requested_by_id=getattr(user, 'pk', None), request_note=note or '', preferred_date=preferred_date)
     log_event(asset.pk, 'return_requested', f'Return requested by {person(a.employee)}' + (f': {note}' if note else ''), user, employee_id, ('return', r.pk))
-    notify_hr(asset_branch(asset), f'{person(a.employee)} wants to return {asset.name} ({r.number}).')
+    notify_hr(asset_branch(asset), tmsg('{0} wants to return {1} ({2}).', person(a.employee), asset.name, r.number))
     return r
 
 
@@ -405,22 +439,28 @@ def complete_return(asset, user, *, return_date=None, condition='healthy', acces
                     damage_description='', damage_estimate=0, data_wiped=False, notes='', return_request=None):
     asset = Asset().objects.select_for_update().get(pk=asset.pk)
     if condition not in ('healthy', 'minor_damage', 'major_damage'):
-        raise AssetError('Choose the condition: healthy, minor damage or major damage.', 'condition')
+        raise AssetError(tr('Choose the condition: healthy, minor damage or major damage.'), 'condition')
     if not accessories_returned and not missing_items:
-        raise AssetError('List the items that were not returned.', 'missing_items')
+        raise AssetError(tr('List the items that were not returned.'), 'missing_items')
     if damage_found and not damage_description:
-        raise AssetError('Describe the damage found.', 'damage_description')
-    if condition != 'healthy' and not damage_found:
-        damage_found = True
-        damage_description = damage_description or f'Returned with {condition.replace("_", " ")}.'
+        raise AssetError(tr('Describe the damage found.'), 'damage_description')
     a = open_allocation(asset.pk)
     s = None if a else open_shared(asset.pk)
+    known = None
+    if condition != 'healthy' and not damage_found:
+        # v1.18.0: damage already reported and decided during this allocation is not reported a second time at the return
+        known = AssetDamage.objects.filter(Q(allocation_id=a.pk) | Q(allocation_id__isnull=True, employee_id=a.employee_id,
+                                                                        damage_date__gte=a.assigned_date or date(1900, 1, 1)),
+                                           asset_id=asset.pk, status__in=('closed', 'recovering')).order_by('-id').first() if a else None
+        if known is None:
+            damage_found = True
+            damage_description = damage_description or f'Returned with {condition.replace("_", " ")}.'
     if not a and not s:
-        raise AssetError('This asset is not allocated to anyone.')
+        raise AssetError(tr('This asset is not allocated to anyone.'))
     return_date = return_date or today()
     since = a.assigned_date if a else s.assigned_date
     if since and return_date < since:
-        raise AssetError('The return date is before the allocation date.', 'return_date')
+        raise AssetError(tr('The return date is before the allocation date.'), 'return_date')
     r = return_request or AssetReturn.objects.filter(asset_id=asset.pk, status='requested').first()
     if r is None:
         r = AssetReturn(number=next_number(AssetReturn, 'RET'), asset_id=asset.pk, requested_by_id=getattr(user, 'pk', None))
@@ -445,6 +485,9 @@ def complete_return(asset, user, *, return_date=None, condition='healthy', acces
     if not accessories_returned:
         bits.append(f'missing: {missing_items}')
     log_event(asset.pk, 'returned', ', '.join(bits), user, r.employee_id, ('return', r.pk))
+    if known is not None and not damage_found:
+        r.damage_id = known.pk
+        r.save(update_fields=['damage_id'])
     if damage_found:
         d = report_damage(asset, user, employee_id=r.employee_id, allocation_id=r.allocation_id, damage_date=return_date,
                           description=damage_description, severity='major' if condition == 'major_damage' else 'minor',
@@ -478,15 +521,15 @@ def party_label(obj, prefix):
 def request_transfer(asset, user, *, to_type, to_employee_id=None, to_branch_id=None, to_location='', to_department_id=None,
                      transfer_date=None, reason='', requested_by_employee_id=None):
     if not (reason or '').strip():
-        raise AssetError('Give the reason for the transfer.', 'reason')
+        raise AssetError(tr('Give the reason for the transfer.'), 'reason')
     st = effective_status(asset)
     if st in ('disposed', 'lost', 'maintenance'):
         raise AssetError(BLOCK_MSG[st].replace('given out', 'transferred'), 'asset')
     if AssetTransfer.objects.filter(asset_id=asset.pk, status='pending').exists():
-        raise AssetError('A transfer of this asset is already waiting for approval.', 'asset')
+        raise AssetError(tr('A transfer of this asset is already waiting for approval.'), 'asset')
     h = holder(asset.pk)
     if not h:
-        raise AssetError('This asset is in the store. Use Allocate to give it out.', 'asset')
+        raise AssetError(tr('This asset is in the store. Use Allocate to give it out.'), 'asset')
     t = AssetTransfer(asset_id=asset.pk, transfer_date=transfer_date or today(), reason=reason.strip(), requested_by_id=getattr(user, 'pk', None),
                       requested_by_employee_id=requested_by_employee_id)
     t.from_type = h['type']
@@ -495,32 +538,32 @@ def request_transfer(asset, user, *, to_type, to_employee_id=None, to_branch_id=
     t.from_location = h.get('location') or ''
     t.from_department_id = h.get('department_id') if h['type'] == 'department' else None
     if to_type not in ('employee', 'location', 'department', 'store'):
-        raise AssetError('Transfer to an employee, a location, a department or back to the store.', 'to_type')
+        raise AssetError(tr('Transfer to an employee, a location, a department or back to the store.'), 'to_type')
     t.to_type = to_type
     if to_type == 'employee':
         e = emp(to_employee_id)
         if not e:
-            raise AssetError('Choose the employee who receives the asset.', 'to_employee_id')
+            raise AssetError(tr('Choose the employee who receives the asset.'), 'to_employee_id')
         if e.is_active is False:
-            raise AssetError(f'{person(e)} is not an active employee.', 'to_employee_id')
+            raise AssetError(tr('{0} is not an active employee.', person(e)), 'to_employee_id')
         if h['type'] == 'employee' and e.pk == h.get('employee_id'):
-            raise AssetError('The asset is already with this employee.', 'to_employee_id')
+            raise AssetError(tr('The asset is already with this employee.'), 'to_employee_id')
         t.to_employee_id, t.to_branch_id = e.pk, e.emp_branch_id_id
     elif to_type == 'location':
         if not (to_branch_id or to_location):
-            raise AssetError('Choose the branch or type the location.', 'to_location')
+            raise AssetError(tr('Choose the branch or type the location.'), 'to_location')
         t.to_branch_id, t.to_location = to_branch_id or None, to_location or ''
     elif to_type == 'department':
         if not to_department_id:
-            raise AssetError('Choose the department.', 'to_department_id')
+            raise AssetError(tr('Choose the department.'), 'to_department_id')
         t.to_department_id, t.to_branch_id = to_department_id, to_branch_id or None
     if h.get('since') and t.transfer_date < h['since']:
-        raise AssetError('The transfer date is before the current allocation date.', 'transfer_date')
+        raise AssetError(tr('The transfer date is before the current allocation date.'), 'transfer_date')
     t.number = next_number(AssetTransfer, 'TRF')
     t.save()
     log_event(asset.pk, 'transfer_requested', f'Transfer {t.number} requested: {_party("from", t)} → {_party("to", t)} – {t.reason}', user,
               t.from_employee_id, ('transfer', t.pk))
-    notify_hr(asset_branch(asset), f'Transfer {t.number} of {asset.name} waits for approval.')
+    notify_hr(asset_branch(asset), tmsg('Transfer {0} of {1} waits for approval.', t.number, asset.name))
     return t
 
 
@@ -528,7 +571,7 @@ def request_transfer(asset, user, *, to_type, to_employee_id=None, to_branch_id=
 def decide_transfer(t, user, approve, note=''):
     t = AssetTransfer.objects.select_for_update().get(pk=t.pk)
     if t.status != 'pending':
-        raise AssetError('This transfer is not waiting for approval.')
+        raise AssetError(tr('This transfer is not waiting for approval.'))
     t.decided_by_id, t.decided_at, t.decision_note = getattr(user, 'pk', None), timezone.now(), note or ''
     asset = Asset().objects.get(pk=t.asset_id)
     if not approve:
@@ -536,7 +579,7 @@ def decide_transfer(t, user, approve, note=''):
         t.save()
         log_event(asset.pk, 'transfer_rejected', f'Transfer {t.number} rejected' + (f': {note}' if note else ''), user, t.from_employee_id, ('transfer', t.pk))
         if t.from_employee_id:
-            notify(emp(t.from_employee_id), f'Transfer {t.number} of {asset.name} was rejected.')
+            notify(emp(t.from_employee_id), tmsg('Transfer {0} of {1} was rejected.', t.number, asset.name))
         return t
     execute_transfer(t, asset, user)
     return t
@@ -545,9 +588,9 @@ def decide_transfer(t, user, approve, note=''):
 def execute_transfer(t, asset, user):
     h = holder(asset.pk)
     if not h:
-        raise AssetError('The asset is no longer allocated – the transfer cannot be done.')
+        raise AssetError(tr('The asset is no longer allocated – the transfer cannot be done.'))
     if h['type'] != t.from_type or (t.from_employee_id and h.get('employee_id') != t.from_employee_id):
-        raise AssetError('The asset has changed hands since the transfer was requested. Reject this transfer and request a new one.')
+        raise AssetError(tr('The asset has changed hands since the transfer was requested. Reject this transfer and request a new one.'))
     st = effective_status(asset)
     if st in ('maintenance', 'disposed', 'lost'):
         raise AssetError(BLOCK_MSG[st].replace('given out', 'transferred'))
@@ -575,7 +618,7 @@ def execute_transfer(t, asset, user):
     log_event(asset.pk, 'transferred', f'Transferred {_party("from", t)} → {_party("to", t)} on {t.transfer_date:%d %b %Y} ({t.number})', user,
               t.to_employee_id or t.from_employee_id, ('transfer', t.pk))
     for eid in {t.from_employee_id, t.to_employee_id} - {None}:
-        notify(emp(eid), f'{asset.name} has been transferred ({t.number}).')
+        notify(emp(eid), tmsg('{0} has been transferred ({1}).', asset.name, t.number))
 
 
 # ------------------------------------------------------------------ maintenance
@@ -619,17 +662,17 @@ def start_maintenance(asset, user, *, kind='breakdown', description='', vendor='
     asset = Asset().objects.select_for_update().get(pk=asset.pk)
     st = effective_status(asset)
     if st in ('disposed', 'lost'):
-        raise AssetError(f'A {STATUS_LABEL[st].lower()} asset cannot be sent for maintenance.', 'asset')
+        raise AssetError(tr('A {0} asset cannot be sent for maintenance.', STATUS_LABEL[st].lower()), 'asset')
     if MaintenanceRecord.objects.filter(asset_id=asset.pk, status='open').exists():
-        raise AssetError('This asset is already in maintenance. Complete the open record first.', 'asset')
+        raise AssetError(tr('This asset is already in maintenance. Complete the open record first.'), 'asset')
     if not (description or '').strip():
-        raise AssetError('Describe the work to be done.', 'description')
+        raise AssetError(tr('Describe the work to be done.'), 'description')
     if kind not in dict(MaintenanceRecord.KIND):
-        raise AssetError('Choose preventive, breakdown or inspection.', 'kind')
+        raise AssetError(tr('Choose preventive, breakdown or inspection.'), 'kind')
     if schedule_id and not MaintenanceSchedule.objects.filter(pk=schedule_id, asset_id=asset.pk).exists():
-        raise AssetError('The maintenance plan does not belong to this asset.', 'schedule')
+        raise AssetError(tr('The maintenance plan does not belong to this asset.'), 'schedule')
     if money(cost) < 0:
-        raise AssetError('The cost cannot be negative.', 'cost')
+        raise AssetError(tr('The cost cannot be negative.'), 'cost')
     r = MaintenanceRecord.objects.create(number=next_number(MaintenanceRecord, 'MNT'), asset_id=asset.pk, schedule_id=schedule_id or None,
                                          damage_id=damage_id or None, kind=kind, vendor=vendor or '', description=description.strip(),
                                          start_date=start_date or today(), cost=money(cost), reading=reading, status_before=asset.status,
@@ -648,17 +691,17 @@ def start_maintenance(asset, user, *, kind='breakdown', description='', vendor='
 def close_maintenance(r, user, *, end_date=None, cost=None, downtime_hours=None, result='fixed', result_notes='', reading=None, cancel=False):
     r = MaintenanceRecord.objects.select_for_update().get(pk=r.pk)
     if r.status != 'open':
-        raise AssetError('This maintenance record is already closed.')
+        raise AssetError(tr('This maintenance record is already closed.'))
     asset = Asset().objects.select_for_update().get(pk=r.asset_id)
     end_date = end_date or today()
     if end_date < r.start_date:
-        raise AssetError('The end date is before the start date.', 'end_date')
+        raise AssetError(tr('The end date is before the start date.'), 'end_date')
     if cost is not None:
         if money(cost) < 0:
-            raise AssetError('The cost cannot be negative.', 'cost')
+            raise AssetError(tr('The cost cannot be negative.'), 'cost')
         r.cost = money(cost)
     if result and result not in dict(MaintenanceRecord.RESULT):
-        raise AssetError('Choose the result: fixed, could not be fixed, part replaced or no fault found.', 'result')
+        raise AssetError(tr('Choose the result: fixed, could not be fixed, part replaced or no fault found.'), 'result')
     r.end_date = end_date
     r.downtime_hours = Decimal(str(downtime_hours)) if downtime_hours not in (None, '') else Decimal((end_date - r.start_date).days * 24)
     r.result, r.result_notes = ('' if cancel else (result or 'fixed')), result_notes or ''
@@ -700,24 +743,56 @@ def _validate_recovery(responsibility, recovery_amount, method, instalments, emp
     s = AssetPlusSettings.get()
     amt = money(recovery_amount)
     if responsibility not in dict(AssetDamage._meta.get_field('responsibility').choices):
-        raise AssetError('Choose who is responsible: company, employee, shared or third party.', 'responsibility')
+        raise AssetError(tr('Choose who is responsible: company, employee, shared or third party.'), 'responsibility')
     if method not in dict(AssetDamage._meta.get_field('recovery_method').choices):
-        raise AssetError('Choose how it is recovered: none, payroll, cash or waived.', 'recovery_method')
+        raise AssetError(tr('Choose how it is recovered: none, payroll, cash or waived.'), 'recovery_method')
     if amt < 0:
-        raise AssetError('The recovery amount cannot be negative.', 'recovery_amount')
+        raise AssetError(tr('The recovery amount cannot be negative.'), 'recovery_amount')
     if responsibility in ('company', 'third_party') and amt > 0 and method in ('payroll', 'cash'):
-        raise AssetError('Only an employee can be charged. Set the responsibility to employee or shared, or the amount to 0.', 'recovery_amount')
+        raise AssetError(tr('Only an employee can be charged. Set the responsibility to employee or shared, or the amount to 0.'), 'recovery_amount')
     if cap is not None and cap > 0 and amt > cap:
-        raise AssetError(f'The recovery amount is more than the cost / value ({cap}).', 'recovery_amount')
+        raise AssetError(tr('The recovery amount is more than the cost / value ({0}).', cap), 'recovery_amount')
     if amt > 0 and method in ('payroll', 'cash') and not employee_id:
-        raise AssetError('Choose the employee to recover from.', 'employee')
+        raise AssetError(tr('Choose the employee to recover from.'), 'employee')
     if method == 'payroll' and amt > 0:
         n = int(instalments or 0)
         if n < 1 or n > (s.max_instalments or 12):
-            raise AssetError(f'Instalments must be between 1 and {s.max_instalments or 12}.', 'instalments')
+            raise AssetError(tr('Instalments must be between 1 and {0}.', s.max_instalments or 12), 'instalments')
         if not first_month:
-            raise AssetError('Choose the first payroll month of the deduction.', 'first_deduction_month')
+            raise AssetError(tr('Choose the first payroll month of the deduction.'), 'first_deduction_month')
     return amt
+
+
+DAMAGE_DAYS_CAP = 5   # UAE Decree-Law 33/2021 art. 25: a deduction for damage is at most 5 days' wage a month
+
+
+def _payroll_recovery_rules(obj, kind, user):
+    """v1.18.0 – a salary deduction for a damaged / lost asset is never automatic: it needs the outcome of the investigation and the
+    lawful basis in the decision note, evidence on the record (photo, report, return check list), somebody other than the person who
+    reported it to decide, and each monthly instalment within 5 days' basic wage."""
+    note = (obj.decision_note or '').strip()
+    if len(note) < 10:
+        raise AssetError(tr('A salary deduction needs the investigation outcome and the lawful basis in the decision note.'), 'note')
+    has_file = AssetFile.objects.filter(asset_id=obj.asset_id, record_type=kind, record_id=obj.pk).exists()
+    if not has_file and kind == 'damage' and getattr(obj, 'return_id', None):
+        has_file = True   # the return inspection check list (condition, damage found, received by) is the evidence
+    if not has_file and kind == 'loss' and getattr(obj, 'police_report_no', ''):
+        has_file = True
+    if not has_file:
+        raise AssetError(tr('Attach the evidence (photo, report or inspection) to the record before a salary deduction is approved.'), 'files')
+    if obj.reported_by_id and user is not None and obj.reported_by_id == user.pk and not getattr(user, 'is_superuser', False):
+        raise AssetError(tr('You reported this – somebody else must approve a salary deduction.'), 'decision')
+    e = emp(obj.employee_id)
+    basic = Decimal('0')
+    if e is not None:
+        ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
+        basic = sum((Decimal(str(r.amount or 0)) for r in ESS.objects.filter(employee=e, is_active=True, component__payroll_category='basic')), Decimal('0'))
+    if basic > 0:
+        cap = (basic / 30 * DAMAGE_DAYS_CAP).quantize(CENT, rounding=ROUND_HALF_UP)
+        n = max(int(obj.instalments or 1), 1)
+        if money(obj.recovery_amount) / n > cap:
+            need_n = int((money(obj.recovery_amount) / cap).to_integral_value(rounding='ROUND_CEILING'))
+            raise AssetError(tr('Each monthly deduction can be at most 5 days\' wage ({0}); use at least {1} instalments.', cap, need_n), 'instalments')
 
 
 def _plan(obj, kind):
@@ -739,32 +814,32 @@ def _plan(obj, kind):
 def report_damage(asset, user, *, employee_id=None, allocation_id=None, damage_date=None, description='', severity='minor', repair_cost=0,
                   source='hr', return_id=None):
     if not (description or '').strip():
-        raise AssetError('Describe the damage.', 'description')
+        raise AssetError(tr('Describe the damage.'), 'description')
     if severity not in dict(AssetDamage.SEVERITY):
-        raise AssetError('Choose the severity: minor, major or beyond repair.', 'severity')
+        raise AssetError(tr('Choose the severity: minor, major or beyond repair.'), 'severity')
     if effective_status(asset) == 'disposed':
-        raise AssetError('This asset has been disposed.', 'asset')
+        raise AssetError(tr('This asset has been disposed.'), 'asset')
     if money(repair_cost) < 0:
-        raise AssetError('The repair cost cannot be negative.', 'repair_cost')
+        raise AssetError(tr('The repair cost cannot be negative.'), 'repair_cost')
     damage_date = damage_date or today()
     if damage_date > today():
-        raise AssetError('The damage date cannot be in the future.', 'damage_date')
-    if employee_id is None and allocation_id is None:
+        raise AssetError(tr('The damage date cannot be in the future.'), 'damage_date')
+    if allocation_id is None:   # v1.18.0: also when HR names the employee – the record belongs to the current allocation
         a = open_allocation(asset.pk)
-        if a:
+        if a and (employee_id is None or a.employee_id == employee_id):
             employee_id, allocation_id = a.employee_id, a.pk
     d = AssetDamage.objects.create(number=next_number(AssetDamage, 'DMG'), asset_id=asset.pk, employee_id=employee_id, allocation_id=allocation_id,
                                    damage_date=damage_date, description=description.strip(), severity=severity, repair_cost=money(repair_cost),
                                    source=source, return_id=return_id, reported_by_id=getattr(user, 'pk', None),
                                    responsibility='employee' if source in ('ess', 'return') and employee_id else 'company')
     log_event(asset.pk, 'damaged', f'Damage {d.number} reported ({d.get_severity_display().lower()}): {d.description}', user, employee_id, ('damage', d.pk))
-    notify_hr(asset_branch(asset), f'Damage {d.number} on {asset.name} waits for approval.')
+    notify_hr(asset_branch(asset), tmsg('Damage {0} on {1} waits for approval.', d.number, asset.name))
     return d
 
 
 def _decide_incident(obj, kind, user, approve, data):
     if obj.status != 'reported':
-        raise AssetError('This record is not waiting for approval.')
+        raise AssetError(tr('This record is not waiting for approval.'))
     obj.decided_by_id, obj.decided_at, obj.decision_note = getattr(user, 'pk', None), timezone.now(), (data.get('note') or '')
     if not approve:
         obj.status = 'rejected'
@@ -782,11 +857,13 @@ def _decide_incident(obj, kind, user, approve, data):
     if kind == 'damage':
         if data.get('repair_cost') not in (None, ''):
             if money(data['repair_cost']) < 0:
-                raise AssetError('The repair cost cannot be negative.', 'repair_cost')
+                raise AssetError(tr('The repair cost cannot be negative.'), 'repair_cost')
             obj.repair_cost = money(data['repair_cost'])
         cap = money(obj.repair_cost) if obj.repair_cost else None
     obj.recovery_amount = _validate_recovery(obj.responsibility, obj.recovery_amount, obj.recovery_method, obj.instalments, obj.employee_id,
                                              obj.first_deduction_month, cap)
+    if obj.recovery_method == 'payroll' and obj.recovery_amount > 0:
+        _payroll_recovery_rules(obj, kind, user)
     if obj.recovery_method != 'payroll':
         obj.instalments = 1
     if obj.recovery_amount > 0 and obj.recovery_method == 'payroll':
@@ -818,8 +895,8 @@ def decide_damage(d, user, approve, data):
               + (f', recover {d.recovery_amount} by {d.get_recovery_method_display().lower()}' + (f' in {d.instalments} instalment(s) from {d.first_deduction_month:%b %Y}' if d.status == 'recovering' else '')
                  if d.recovery_amount else ''), user, d.employee_id, ('damage', d.pk))
     if d.employee_id and d.recovery_amount:
-        notify(emp(d.employee_id), f'Damage {d.number} on {asset.name}: {d.recovery_amount} will be recovered'
-               + (f' from your salary in {d.instalments} instalment(s).' if d.status == 'recovering' else '.'))
+        notify(emp(d.employee_id), tmsg('Damage {0} on {1}: {2} will be recovered', d.number, asset.name, d.recovery_amount)
+               + (tmsg(' from your salary in {0} instalment(s).', d.instalments) if d.status == 'recovering' else '.'))
     return d
 
 
@@ -829,16 +906,16 @@ def report_loss(asset, user, *, employee_id=None, loss_date=None, kind='lost', d
     asset = Asset().objects.select_for_update().get(pk=asset.pk)
     st = effective_status(asset)
     if st in ('disposed', 'lost'):
-        raise AssetError(f'This asset is already {STATUS_LABEL[st].lower()}.', 'asset')
+        raise AssetError(tr('This asset is already {0}.', STATUS_LABEL[st].lower()), 'asset')
     if kind not in dict(AssetLoss.KIND):
-        raise AssetError('Choose lost or stolen.', 'kind')
+        raise AssetError(tr('Choose lost or stolen.'), 'kind')
     if not (description or '').strip():
-        raise AssetError('Describe what happened.', 'description')
+        raise AssetError(tr('Describe what happened.'), 'description')
     loss_date = loss_date or today()
     if loss_date > today():
-        raise AssetError('The date cannot be in the future.', 'loss_date')
+        raise AssetError(tr('The date cannot be in the future.'), 'loss_date')
     if MaintenanceRecord.objects.filter(asset_id=asset.pk, status='open').exists():
-        raise AssetError('The asset is in maintenance. Complete or cancel the maintenance record first.', 'asset')
+        raise AssetError(tr('The asset is in maintenance. Complete or cancel the maintenance record first.'), 'asset')
     a = open_allocation(asset.pk)
     s = None if a else open_shared(asset.pk)
     if employee_id is None:
@@ -864,7 +941,7 @@ def report_loss(asset, user, *, employee_id=None, loss_date=None, kind='lost', d
     prof.save(update_fields=['extra_status'])
     log_event(asset.pk, 'lost', f'{l.get_kind_display()} on {loss_date:%d %b %Y} ({l.number})' + (f' at {place}' if place else '')
               + (f', police report {police_report_no}' if police_report_no else '') + f': {l.description}', user, employee_id, ('loss', l.pk))
-    notify_hr(asset_branch(asset, prof), f'{asset.name} reported {kind} ({l.number}) – waits for approval.')
+    notify_hr(asset_branch(asset, prof), tmsg('{0} reported {1} ({2}) – waits for approval.', asset.name, kind, l.number))
     return l
 
 
@@ -888,8 +965,8 @@ def decide_loss(l, user, approve, data):
     log_event(asset.pk, 'loss_approved', f'Loss {l.number} approved – responsibility {l.get_responsibility_display().lower()}'
               + (f', recover {l.recovery_amount} by {l.get_recovery_method_display().lower()}' if l.recovery_amount else ''), user, l.employee_id, ('loss', l.pk))
     if l.employee_id and l.recovery_amount:
-        notify(emp(l.employee_id), f'Loss {l.number} of {asset.name}: {l.recovery_amount} will be recovered'
-               + (f' from your salary in {l.instalments} instalment(s).' if l.status == 'recovering' else '.'))
+        notify(emp(l.employee_id), tmsg('Loss {0} of {1}: {2} will be recovered', l.number, asset.name, l.recovery_amount)
+               + (tmsg(' from your salary in {0} instalment(s).', l.instalments) if l.status == 'recovering' else '.'))
     return l
 
 
@@ -897,10 +974,10 @@ def decide_loss(l, user, approve, data):
 def mark_found(l, user, found_on=None, note=''):
     l = AssetLoss.objects.select_for_update().get(pk=l.pk)
     if l.status == 'rejected' or l.found_on:
-        raise AssetError('This loss record is already closed.')
+        raise AssetError(tr('This loss record is already closed.'))
     asset = Asset().objects.select_for_update().get(pk=l.asset_id)
     if asset.status == 'disposed':
-        raise AssetError('The asset was written off. Reverse the disposal first.')
+        raise AssetError(tr('The asset was written off. Reverse the disposal first.'))
     l.found_on = found_on or today()
     l.investigation_status = 'closed_found'
     l.investigation_notes = ((l.investigation_notes + '\n') if l.investigation_notes else '') + (note or 'Asset found.')
@@ -984,29 +1061,29 @@ def unmark_payslip(payslip_id):
 def request_disposal(asset, user, *, method, disposal_date=None, value=0, buyer='', reason=''):
     st = effective_status(asset)
     if st == 'disposed':
-        raise AssetError('This asset is already disposed.', 'asset')
+        raise AssetError(tr('This asset is already disposed.'), 'asset')
     if open_allocation(asset.pk) or open_shared(asset.pk):
-        raise AssetError('The asset is still allocated. Return it before disposing of it.', 'asset')
+        raise AssetError(tr('The asset is still allocated. Return it before disposing of it.'), 'asset')
     if MaintenanceRecord.objects.filter(asset_id=asset.pk, status='open').exists():
-        raise AssetError('The asset is in maintenance. Complete or cancel the maintenance record first.', 'asset')
+        raise AssetError(tr('The asset is in maintenance. Complete or cancel the maintenance record first.'), 'asset')
     if AssetDisposal.objects.filter(asset_id=asset.pk, status='pending').exists():
-        raise AssetError('A disposal of this asset is already waiting for approval.', 'asset')
+        raise AssetError(tr('A disposal of this asset is already waiting for approval.'), 'asset')
     if method not in dict(AssetDisposal.METHOD):
-        raise AssetError('Choose sale, scrap, donation or write-off.', 'method')
+        raise AssetError(tr('Choose sale, scrap, donation or write-off.'), 'method')
     if not (reason or '').strip():
-        raise AssetError('Give the reason for the disposal.', 'reason')
+        raise AssetError(tr('Give the reason for the disposal.'), 'reason')
     value = money(value)
     if value < 0:
-        raise AssetError('The value cannot be negative.', 'value')
+        raise AssetError(tr('The value cannot be negative.'), 'value')
     if method in ('donate', 'write_off') and value > 0:
-        raise AssetError('A donation or write-off has no sale value – set the value to 0.', 'value')
+        raise AssetError(tr('A donation or write-off has no sale value – set the value to 0.'), 'value')
     if method == 'sale' and value <= 0:
-        raise AssetError('Enter the sale price.', 'value')
+        raise AssetError(tr('Enter the sale price.'), 'value')
     if method == 'sale' and not (buyer or '').strip():
-        raise AssetError('Enter the buyer.', 'buyer')
+        raise AssetError(tr('Enter the buyer.'), 'buyer')
     disposal_date = disposal_date or today()
     if disposal_date < asset.purchase_date:
-        raise AssetError('The disposal date is before the purchase date.', 'disposal_date')
+        raise AssetError(tr('The disposal date is before the purchase date.'), 'disposal_date')
     prof = ensure_profile(asset)
     bv = book_value(prof, asset, disposal_date)
     d = AssetDisposal.objects.create(number=next_number(AssetDisposal, 'DSP'), asset_id=asset.pk, method=method, disposal_date=disposal_date,
@@ -1014,7 +1091,7 @@ def request_disposal(asset, user, *, method, disposal_date=None, value=0, buyer=
                                      requested_by_id=getattr(user, 'pk', None))
     log_event(asset.pk, 'disposal_requested', f'Disposal {d.number} requested ({d.get_method_display().lower()}, value {value}, book value {bv}): {d.reason}',
               user, None, ('disposal', d.pk))
-    notify_hr(asset_branch(asset, prof), f'Disposal {d.number} of {asset.name} waits for approval.')
+    notify_hr(asset_branch(asset, prof), tmsg('Disposal {0} of {1} waits for approval.', d.number, asset.name))
     return d
 
 
@@ -1022,7 +1099,7 @@ def request_disposal(asset, user, *, method, disposal_date=None, value=0, buyer=
 def decide_disposal(d, user, approve, note=''):
     d = AssetDisposal.objects.select_for_update().get(pk=d.pk)
     if d.status != 'pending':
-        raise AssetError('This disposal is not waiting for approval.')
+        raise AssetError(tr('This disposal is not waiting for approval.'))
     asset = Asset().objects.select_for_update().get(pk=d.asset_id)
     d.decided_by_id, d.decided_at, d.decision_note = getattr(user, 'pk', None), timezone.now(), note or ''
     if not approve:
@@ -1031,7 +1108,7 @@ def decide_disposal(d, user, approve, note=''):
         log_event(asset.pk, 'disposal_rejected', f'Disposal {d.number} rejected' + (f': {note}' if note else ''), user, None, ('disposal', d.pk))
         return d
     if open_allocation(asset.pk) or open_shared(asset.pk):
-        raise AssetError('The asset was allocated again. Return it before approving the disposal.')
+        raise AssetError(tr('The asset was allocated again. Return it before approving the disposal.'))
     prof = ensure_profile(asset)
     d.book_value = book_value(prof, asset, d.disposal_date)
     d.gain_loss = money(d.value) - d.book_value
@@ -1099,8 +1176,8 @@ def eos_guard(eos, old_status):
     c = clearance(emp_id)
     if c['blocked']:
         from rest_framework.exceptions import ValidationError
-        raise ValidationError({'status': 'Final settlement is blocked by the asset clearance: ' + '; '.join(i['text'] for i in c['items'])
-                               + '. Return or recover them in Assets → Exit clearance, or record a waiver there.'})
+        raise ValidationError({'status': tr('Final settlement is blocked by the asset clearance: ') + '; '.join(i['text'] for i in c['items'])
+                               + tr('. Return or recover them in Assets → Exit clearance, or record a waiver there.')})
 
 
 # ------------------------------------------------------------------ notifications
@@ -1109,6 +1186,11 @@ def notify(e, message):
         return
     try:
         N = M('OrganisationManager', 'AssetNotification')
+        try:  # v1.15.0: in the reader's language
+            from Translations.i18n import for_reader
+            message = for_reader(message, None, e)
+        except Exception:
+            pass
         N.objects.create(recipient_employee=e, recipient_user=e.users if e.users_id else None, message=message[:255])
     except Exception:
         log.exception('asset notification failed')
@@ -1118,7 +1200,7 @@ def hr_users(branch_id=None):
     """Users of the company who manage assets (change_asset) for the branch (or all branches)."""
     from tenant_users.tenants.models import UserTenantPermissions
     ids = set()
-    for utp in UserTenantPermissions.objects.filter(groups__permissions__codename='change_asset').distinct().select_related('profile'):
+    for utp in _company_perms().filter(groups__permissions__codename='change_asset').distinct().select_related('profile'):
         ids.add(utp.profile_id)
     if branch_id:
         UBA = M('OrganisationManager', 'UserBranchAccess')
@@ -1131,8 +1213,13 @@ def hr_users(branch_id=None):
 def notify_hr(branch_id, message):
     try:
         N = M('OrganisationManager', 'AssetNotification')
+        try:
+            from Translations.i18n import for_reader
+        except ImportError:
+            def for_reader(text, user=None, employee=None):
+                return text
         for u in hr_users(branch_id):
-            N.objects.create(recipient_user=u, message=message[:255])
+            N.objects.create(recipient_user=u, message=for_reader(message, u)[:255])  # v1.15.0: each reader's language
     except Exception:
         log.exception('asset HR notification failed')
 
@@ -1152,7 +1239,7 @@ def daily_reminders(on=None):
         key = f'{s.next_due_date or s.next_due_reading}'
         if due and s.reminded_for != key:
             when = f'on {s.next_due_date:%d %b %Y}' if s.next_due_date else f'at {s.next_due_reading} {s.get_interval_type_display().lower()}'
-            notify_hr(asset_branch(a, p), f'Maintenance "{s.title}" of {a.name} is {"overdue" if due == "overdue" else "due"} ({when}).')
+            notify_hr(asset_branch(a, p), tmsg('Maintenance "{0}" of {1} is {2} ({3}).', s.title, a.name, "overdue" if due == "overdue" else "due", when))
             s.reminded_for = key
             s.save(update_fields=['reminded_for'])
             out['maintenance'] += 1
@@ -1161,7 +1248,7 @@ def daily_reminders(on=None):
         if on <= p.warranty_end <= on + timedelta(days=days) and p.warranty_reminded_for != p.warranty_end:
             a = A.objects.filter(pk=p.asset_id).exclude(status='disposed').first()
             if a:
-                notify_hr(asset_branch(a, p), f'Warranty of {a.name} ({p.asset_code}) ends on {p.warranty_end:%d %b %Y}.')
+                notify_hr(asset_branch(a, p), tmsg('Warranty of {0} ({1}) ends on {2:%d %b %Y}.', a.name, p.asset_code, p.warranty_end))
                 out['warranty'] += 1
             p.warranty_reminded_for = p.warranty_end
             p.save(update_fields=['warranty_reminded_for'])
@@ -1169,16 +1256,60 @@ def daily_reminders(on=None):
         if on <= p.insurance_expiry <= on + timedelta(days=settings.warranty_reminder_days) and p.insurance_reminded_for != p.insurance_expiry:
             a = A.objects.filter(pk=p.asset_id).exclude(status='disposed').first()
             if a:
-                notify_hr(asset_branch(a, p), f'Insurance of {a.name} ({p.asset_code}) expires on {p.insurance_expiry:%d %b %Y}.')
+                notify_hr(asset_branch(a, p), tmsg('Insurance of {0} ({1}) expires on {2:%d %b %Y}.', a.name, p.asset_code, p.insurance_expiry))
                 out['insurance'] += 1
             p.insurance_reminded_for = p.insurance_expiry
             p.save(update_fields=['insurance_reminded_for'])
     for x in AllocationExtra.objects.filter(expected_return_date__lt=on, return_reminded_on__isnull=True):
         a = Allocation().objects.filter(pk=x.allocation_id, returned_date__isnull=True).select_related('asset', 'employee').first()
         if a:
-            notify(a.employee, f'{a.asset.name} was due back on {x.expected_return_date:%d %b %Y}. Please return it.')
-            notify_hr(asset_branch(a.asset), f'{a.asset.name} is overdue from {person(a.employee)} (due {x.expected_return_date:%d %b %Y}).')
+            notify(a.employee, tmsg('{0} was due back on {1:%d %b %Y}. Please return it.', a.asset.name, x.expected_return_date))
+            notify_hr(asset_branch(a.asset), tmsg('{0} is overdue from {1} (due {2:%d %b %Y}).', a.asset.name, person(a.employee), x.expected_return_date))
             out['overdue_returns'] += 1
         x.return_reminded_on = on
         x.save(update_fields=['return_reminded_on'])
     return out
+
+
+# ------------------------------------------------------------------ v1.18.0: periodic physical verification
+VERIFY_RESULTS = {'found': 'Found – as recorded', 'not_found': 'Not found', 'damaged': 'Found – damaged', 'wrong_location': 'Found – other location'}
+
+
+def verification_next_due(profile, asset=None):
+    """Next physical check: last verification + interval; an asset never verified is counted from its purchase date (so the
+    existing register is due for its first count), else from the day it was registered."""
+    days = M('AssetPlus', 'AssetPlusSettings').get().verification_days
+    if not days:
+        return None
+    base = profile.last_verified_on or getattr(asset, 'purchase_date', None) or (profile.created_at.date() if profile.created_at else today())
+    return base + timedelta(days=days)
+
+
+def verify_asset(asset, user, *, result='found', location='', note='', on=None):
+    """Record a physical check of the asset. A missing or damaged asset is only recorded and flagged here – HR / the asset
+    custodian then reports the loss or damage, which goes through its own approval (no automatic deduction)."""
+    p = ensure_profile(asset, user)
+    p.last_verified_on = on or today()
+    p.last_verified_by_id = getattr(user, 'pk', None)
+    p.last_verified_result = result
+    changes = {}
+    if result == 'wrong_location' and location and location != p.location:
+        changes['location'] = [p.location, location]
+        p.location = location[:150]
+    p.save()
+    h = holder(asset.pk) or {}
+    log_event(asset.pk, 'verified', f'Verified on {p.last_verified_on:%d/%m/%Y}: {VERIFY_RESULTS[result]}' + (f' – {note}' if note else ''),
+              user=user, employee_id=h.get('employee_id'), changes=changes)
+    if result in ('not_found', 'damaged'):
+        try:
+            notify_hr(asset_branch(asset, p), f'Asset {p.asset_code} {asset.name}: {VERIFY_RESULTS[result].lower()} at the periodic verification – '
+                                              f'report the {"loss" if result == "not_found" else "damage"} if confirmed.')
+        except Exception:
+            pass
+    return p
+
+
+
+def _company_perms():   # v1.22.0: only the users of the open company (see AccessControl.access.company_perms)
+    from AccessControl.access import company_perms
+    return company_perms()

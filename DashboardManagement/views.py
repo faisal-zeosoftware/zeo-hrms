@@ -12,7 +12,12 @@ class EssDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        return Response(services.ess_summary(request.user))
+        from django.utils import timezone
+        from .period import resolve
+        a, b, preset = resolve(request.query_params, timezone.localdate())   # v1.16.0 dashboard period
+        data = services.ess_summary(request.user, a, b)
+        data['period'] = {'from': a, 'to': b, 'preset': preset}
+        return Response(data)
 
 
 class TeamDashboardView(APIView):
@@ -21,7 +26,12 @@ class TeamDashboardView(APIView):
 
     def get(self, request):
         scope = request.query_params.get('scope') or ('company' if services.is_admin(request.user) else 'team')
-        return Response(services.team_summary(request.user, scope, request.query_params.get('department') or None))
+        from django.utils import timezone
+        from .period import resolve
+        a, b, preset = resolve(request.query_params, timezone.localdate())   # v1.16.0 dashboard period
+        data = services.team_summary(request.user, scope, request.query_params.get('department') or None, a, b)
+        data['period']['preset'] = preset
+        return Response(data)
 
 
 class DrillView(APIView):
@@ -30,7 +40,7 @@ class DrillView(APIView):
 
     def get(self, request):
         metric = request.query_params.get('metric', '')
-        return Response(services.drill(request.user, metric, request.query_params))
+        return Response(services.drill(request.user, metric, request.query_params, request))
 
 
 class Employee360View(APIView):
@@ -54,5 +64,31 @@ class OverviewView(APIView):
     def get(self, request):
         from .overview import my_space, overview
         data = overview(request)
-        data['me'] = my_space(request)
+        _localize_links(data, request)
+        if not request.query_params.get('card') and request.query_params.get('me') != '0':   # v1.16.0: ?card=<key>&from&to reloads one card
+            data['me'] = my_space(request)   # v1.17.0: ?me=0 – the HR operations view (the user's own items are on My dashboard)
         return Response(data)
+
+
+def _localize_links(data, request):
+    """v1.16.0: department / branch … names in the drill-down filters of the dashboard links in the request language,
+    the way the report rows are translated (Translations.reports), so a click still finds its rows in Arabic."""
+    try:
+        from urllib.parse import parse_qsl, urlencode
+        from Translations.reports import _lang, _name
+    except ImportError:
+        return
+    lang = _lang(request)
+    if not lang:
+        return
+
+    def fix(link):
+        if not isinstance(link, str) or '/report-options/r/' not in link or '?' not in link:
+            return link
+        path, q = link.split('?', 1)
+        pairs = [(k, '|'.join(_name(k[2:], x, lang, request) for x in v.split('|')) if k.startswith('f_') else v) for k, v in parse_qsl(q)]
+        return path + '?' + urlencode(pairs)
+    for c in data.get('cards') or []:
+        c['route'] = fix(c.get('route'))
+        for k in (c.get('kpis') or []) + (c.get('items') or []):
+            k['link'] = fix(k.get('link'))

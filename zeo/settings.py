@@ -67,7 +67,7 @@ if not SECRET_KEY:
 DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = ['80.65.208.178', 'localhost', '127.0.0.1','discharge-doctrine-superman.ngrok-free.dev']
+ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
 
 SHARED_APPS = [
     'django_tenants',
@@ -91,6 +91,7 @@ SHARED_APPS = [
     'django_celery_beat',
     'oauth2_provider',
     'corsheaders',
+    'LanguagePack',      # v1.15.0 language packs (public schema only)
 ]
 
 TENANT_APPS = [
@@ -118,6 +119,17 @@ TENANT_APPS = [
     'AssetPlus',         # v1.12.0 asset life cycle
     'EmployeeProfile',   # v1.13.0 employee master extras (UAE identity, emergency contacts, employment / probation, code numbering)
     'SelfService',       # v1.13.0 employee self service (change requests, HR letters, complaints, field policy)
+    'ZeoProjects',       # v1.20.0 Projects app (ZEO Projects add-on 1.15.0): customers, tickets with SLA, AMC, delivery, customer portal
+    'ZeoApps',           # v1.21.0 apps of the company: which apps are active (HRMS, Projects, CRM, Property, Maintenance, HSE) and their industry
+    'ZeoHSE',            # v1.21.0 HSE app (ZEO HSE add-on 1.17.0): risk, permits to work, incidents, inspections, CAPA, industry packs
+    'ZeoCRM',            # v1.21.0 CRM app (ZEO apps add-on 1.18.0): contacts, pipelines, opportunities, viewings, offers, listings
+    'ZeoProperty',       # v1.21.0 Property app: buildings, units, owners, leases, sales, billing, cheques, tenant / owner / buyer portals
+    'ZeoMaintenance',    # v1.21.0 Maintenance app: work orders, quotes, preventive plans, inspections
+    'CountryPack',       # v1.14.0 country packs (captions, features, rules and defaults per company country)
+    'Translations',      # v1.15.0 translated master data, messages / PDFs in the user's language
+    'AISettings',        # v1.16.0 AI settings (built-in free by default, optional external) + document reader
+    'SavedViews',        # v1.16.0 saved list views
+    'PayrollPlus',       # v1.18.0 payroll controls, leave-encashment approval steps, final settlement
     'django.contrib.admin',
 
 ]
@@ -164,14 +176,11 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:4200",  # Angular app running locally
-    "http://80.65.208.178:4200",  # Example for your frontend URL
-#    "http://80.65.208.178",  # Your server IP if accessing directly
+CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
 
-]
-
+FORMAT_MODULE_PATH = ['LanguagePack.formats']   # v1.15.0
 CORS_ALLOW_HEADERS = [
+    'x-language',        # v1.15.0
     'content-type',
     'Authorization',  # Add this if you're using authorization headers
 ]
@@ -197,8 +206,12 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'UserManagement.middleware.SchemaMiddleware',  # Your custom schema middleware
+    'LanguagePack.middleware.LanguageMiddleware',   # v1.15.0 request language: X-Language > user > company default > en
     'UserManagement.middleware.TenantTimezoneMiddleware',  # Your timezone middleware
     'Chatter.tracking.CurrentRequestMiddleware',  # change history: who made each change
+    'ZeoProjects.middleware.PortalGuardMiddleware',  # v1.20.0 customer portal users may only use the portal API
+    'ZeoProperty.middleware.PortalGuardMiddleware',  # v1.21.0 tenant / owner / buyer portal users may only use the portal API
+    'ZeoApps.middleware.HRMSActiveMiddleware',  # v1.22.0 a switched-off HRMS answers 409
 ]
 
 
@@ -254,7 +267,6 @@ DATABASES = {
         'PORT': '5432',
     }
 }
-
 
 
 
@@ -350,6 +362,12 @@ CELERY_TIMEZONE = 'Asia/Kolkata'  # or your specific timezone
 CELERY_ENABLE_UTC = True  # Ensure UTC is enabled if needed
 
 CELERY_BEAT_SCHEDULE = {
+    'zeoprojects-sla-check': {'task': 'ZeoProjects.tasks.sla_check', 'schedule': crontab(minute='*/15')},   # v1.20.0
+    'zeoprojects-mailbox': {'task': 'ZeoProjects.tasks.check_mailboxes', 'schedule': crontab(minute='*/5')},
+    'zeoprojects-daily': {'task': 'ZeoProjects.tasks.daily', 'schedule': crontab(hour=7, minute=35)},
+    'zeohse-sweep': {'task': 'ZeoHSE.tasks.sweep', 'schedule': crontab(minute='*/15')},          # v1.21.0 HSE permits
+    'zeohse-daily': {'task': 'ZeoHSE.tasks.daily', 'schedule': crontab(hour=7, minute=40)},        # v1.21.0 HSE daily jobs
+    'zeoapps-daily': {'task': 'ZeoApps.tasks.daily', 'schedule': crontab(hour=7, minute=45)},      # v1.21.0 CRM / Property / Maintenance daily jobs
     'schedule-document-expiry-notifications-for-all-tenants': {
         'task': 'EmpManagement.tasks.send_document_expiry_notifications_for_all_tenants',
         'schedule': crontab(hour=12, minute=00) 

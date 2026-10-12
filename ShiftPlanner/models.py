@@ -177,3 +177,28 @@ class ShiftNotice(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class OnCallDuty(models.Model):
+    """v1.18.0 – on-call (standby) duty: the employee is reachable outside the roster and may be called in.
+    Paid through payroll formulas (on_call_days, on_call_hours, on_call_callout_hours) once approved."""
+    KINDS = [('standby', 'Standby (on call at home)'), ('on_site', 'On call on site')]
+    STATUS = [('pending', 'Waiting for approval'), ('approved', 'Approved'), ('rejected', 'Rejected')]
+    employee_id = models.IntegerField(db_index=True)
+    date = models.DateField(db_index=True)
+    kind = models.CharField(max_length=10, choices=KINDS, default='standby')
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    hours = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text='hours on call')
+    callout_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text='hours actually called in to work')
+    note = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=10, choices=STATUS, default='pending')
+    decided_by_id = models.IntegerField(null=True, blank=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=255, blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', 'employee_id']
+        unique_together = [('employee_id', 'date')]

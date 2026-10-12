@@ -17,7 +17,8 @@ A field's rules are a small dict:
 import datetime
 import re
 
-RULE_KEYS = ('default', 'min', 'max', 'min_length', 'max_length', 'regex', 'regex_message', 'visible_on', 'show_if', 'ess_read_only')
+RULE_KEYS = ('default', 'min', 'max', 'min_length', 'max_length', 'regex', 'regex_message', 'visible_on', 'show_if', 'ess_read_only',
+             'example')   # v1.16.0: example shown by the field help next to the focused field
 VISIBLE = ('create', 'edit', 'view', 'list', 'export', 'ess')
 SHOW_OPS = ('eq', 'ne', 'in', 'filled', 'empty')
 NUMERIC = ('integer', 'decimal', 'currency', 'percent', 'rating')
@@ -82,9 +83,10 @@ def clean_rules(raw, field_type='text'):
     if vis not in (None, ''):
         if isinstance(vis, str):
             vis = [x.strip() for x in vis.split(',') if x.strip()]
-        if not isinstance(vis, list) or any(x not in VISIBLE for x in vis):
+        if not isinstance(vis, list) or any(x not in VISIBLE + ('none',) for x in vis):
             return {}, f'“Show on” can only list: {", ".join(VISIBLE)}.'
-        out['visible_on'] = [x for x in VISIBLE if x in vis]
+        # v1.16.0: ['none'] = a field merged into a built-in field (DataTools.onedesign) – shown nowhere
+        out['visible_on'] = ['none'] if 'none' in vis else [x for x in VISIBLE if x in vis]
     si = raw.get('show_if')
     if si not in (None, '', {}):
         if not isinstance(si, dict) or not str(si.get('field') or '').strip():
@@ -93,6 +95,9 @@ def clean_rules(raw, field_type='text'):
         if op not in SHOW_OPS:
             return {}, f'“Show only if” can only use: {", ".join(SHOW_OPS)}.'
         out['show_if'] = {'field': str(si['field']).strip()[:100], 'op': op, 'value': si.get('value')}
+    ex = raw.get('example')
+    if ex not in (None, ''):   # v1.16.0: "Example" of the designer – shown by the field help
+        out['example'] = str(ex).strip()[:255]
     if raw.get('ess_read_only') is not None:
         out['ess_read_only'] = str(raw.get('ess_read_only')).strip().lower() in TRUE
     return out, None

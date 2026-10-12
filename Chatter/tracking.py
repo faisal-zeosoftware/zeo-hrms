@@ -80,11 +80,22 @@ def _snapshot(instance):
     return snap
 
 
-def _display(field, raw):
+def _display(field, raw, instance=None):
     """Readable value: linked records by their name, choices by their label."""
     if raw in (None, ''):
         return None
     if field.is_relation and field.many_to_one:
+        # v1.16.0 (D15): during a payroll run the linked record the code just saved is already in memory (payslip,
+        # component, employee …) – use it instead of reading it again (~25 queries per employee in a run)
+        if instance is not None:
+            try:
+                from PayrollManagement.perf import active
+                if active():
+                    cached = field.get_cached_value(instance, None)
+                    if cached is not None and cached.pk == raw:
+                        return str(cached)
+            except Exception:
+                pass
         try:
             obj = field.related_model._default_manager.filter(pk=raw).first()
             return str(obj) if obj is not None else f'#{raw}'
@@ -153,12 +164,12 @@ def _post_save(sender, instance, created=False, raw=False, **kwargs):
         if created or old is None:
             for k, v in new.items():
                 if v not in (None, '', [], {}):
-                    changes[k] = {'label': _label(fields[k]), 'old': None, 'new': _display(fields[k], v)}
+                    changes[k] = {'label': _label(fields[k]), 'old': None, 'new': _display(fields[k], v, instance)}
             action = 'created'
         else:
             for k, v in new.items():
                 if _plain(old.get(k)) != _plain(v):
-                    changes[k] = {'label': _label(fields[k]), 'old': _display(fields[k], old.get(k)), 'new': _display(fields[k], v)}
+                    changes[k] = {'label': _label(fields[k]), 'old': _display(fields[k], old.get(k)), 'new': _display(fields[k], v, instance)}
             if not changes:
                 return
             action = 'updated'

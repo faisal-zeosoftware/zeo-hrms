@@ -55,6 +55,12 @@ def _mark_encashments_paid(sender, instance, created, **kwargs):
     if not created or not instance.payroll_run_id:
         return
     try:
+        # v1.15.1: only when the employee's salary has a component that pays them (formula with leave_encashment_amount);
+        # before, encashments were marked paid by every payslip although no component paid them
+        ESS = apps.get_model('PayrollManagement', 'EmployeeSalaryStructure')
+        if not ESS.objects.filter(employee_id=instance.employee_id, is_active=True, component__component_value_type='variable',
+                                  component__formula__icontains='leave_encashment_amount').exists():
+            return
         LE = apps.get_model('PayrollManagement', 'LeaveEncashment')
         run = instance.payroll_run
         end = run.attendance_end_date or date(run.year, run.month, 28)

@@ -14,6 +14,7 @@ from decimal import Decimal
 
 from django.apps import apps
 from django.db import transaction
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -142,7 +143,7 @@ def settle(rj, treatment, leave_type_id=None, user=None, note='', count='working
     from .models import RejoinSettlement
     from LeavePolicy import engine
     if RejoinSettlement.objects.filter(rejoining_id=rj.pk).exists():
-        raise ValueError('This rejoining is already settled.')
+        raise ValueError(tr('This rejoining is already settled.'))
     p = plan(rj, treatment, leave_type_id, count)
     if p['problems']:
         raise ValueError(' '.join(p['problems']))
@@ -157,7 +158,7 @@ def settle(rj, treatment, leave_type_id=None, user=None, note='', count='working
         old = float(req.approved_days or req.number_of_days or 0)
         new_end = rj.rejoining_date - timedelta(days=1)
         if new_end < req.start_date:
-            raise ValueError('The employee came back before the leave started – cancel the leave instead.')
+            raise ValueError(tr('The employee came back before the leave started – cancel the leave instead.'))
         req.end_date = new_end
         new = float(req.calculate_leave_days())
         back = round(old - new, 2)

@@ -29,4 +29,7 @@ urlpatterns = [
     path('api/template/<str:kind>/', V.TemplateView.as_view()),
     path('api/reports/roster/', V.RosterReport.as_view()),
     path('api/reports/requests/', V.RequestsReport.as_view()),
+    path('api/on-call/', V.OnCallView.as_view()),   # v1.18.0
+    path('api/on-call/<int:pk>/', V.OnCallAction.as_view()),
+    path('api/on-call/<int:pk>/<str:action>/', V.OnCallAction.as_view()),
 ]

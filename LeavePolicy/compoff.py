@@ -9,6 +9,7 @@ from django.apps import apps
 from django.db.models import Q, Sum
 
 from . import engine
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -40,7 +41,7 @@ def credit(emp, days, ref=None, note='', user_id=None, on=None):
     """Add compensatory days to the balance with a ledger line (ref = the allocation or request)."""
     t = comp_type(emp)
     if t is None:
-        raise ValueError('No compensatory leave type: create a leave type with "Compensatory" switched on.')
+        raise ValueError(tr('No compensatory leave type: create a leave type with "Compensatory" switched on.'))
     engine.post(emp.pk, t.pk, on or date.today(), 'accrual', days, ref=ref, note=note or 'Compensatory off', user_id=user_id, move_balance=True)
     return t
 

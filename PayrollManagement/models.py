@@ -393,7 +393,7 @@ class Payslip(models.Model):
 
         # -------- REJECT CHECK --------
         if self.approvals.filter(status__iexact='Rejected').exists():
-            self.status = 'Rejected'
+            self.status = 'rejected'   # v1.15.1: the status list value (screens look for 'rejected'); was 'Rejected'
             self.save(update_fields=['status'])
             return
 
@@ -436,10 +436,11 @@ class Payslip(models.Model):
                 level=next_level.level
             ).exists():
 
+                approver, step_role = own_payslip_approver(self, approver, next_level.role)
                 PayslipApproval.objects.create(
                     request=self,
                     approver=approver,
-                    role=next_level.role,
+                    role=step_role,
                     level=next_level.level,
                     status='Pending',
                     employee=self.employee
@@ -566,7 +567,7 @@ class PayslipApproval(models.Model):
             'rejection_reason'
         ])
 
-        self.request.status = 'Rejected'
+        self.request.status = 'rejected'   # v1.15.1: the status list value (screens look for 'rejected'); was 'Rejected'
 
         # ✅ FIXED
         self.request.rejection_reason = rejection_reason
@@ -575,6 +576,19 @@ class PayslipApproval(models.Model):
             'status',
             'rejection_reason'
         ])
+
+
+def own_payslip_approver(payslip, approver, role):
+    """v1.18.0: an approver never approves his / her own payslip (the approval check refuses it), so the step stayed pending
+    forever and the whole payroll run could not be approved (e.g. the HR manager's own payslip at the HR manager level).
+    That step goes to the employee's reporting manager instead (or stays with the company administrator when there is none)."""
+    emp = getattr(payslip, 'employee', None)
+    if approver is None or emp is None or getattr(emp, 'users_id', None) != getattr(approver, 'pk', None):
+        return approver, role
+    mgr = getattr(emp, 'emp_reporting_manager', None)
+    if mgr is not None and mgr.pk != approver.pk:
+        return mgr, f'{role or "Approver"} (own payslip – reporting manager)'[:100]
+    return None, f'{role or "Approver"} (own payslip – company administrator)'[:100]
 
 
 @receiver(post_save, sender=Payslip)
@@ -652,10 +666,11 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
         if not first_level.approver:
             return
 
+        step_approver, step_role = own_payslip_approver(instance, first_level.approver, first_level.role)
         PayslipApproval.objects.create(
             request=instance,
-            approver=first_level.approver,
-            role=first_level.role,
+            approver=step_approver,
+            role=step_role,
             level=first_level.level,
             status='Pending',
             employee=instance.employee

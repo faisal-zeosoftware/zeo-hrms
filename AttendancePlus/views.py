@@ -18,6 +18,7 @@ from . import serializers as SER
 from . import services as S
 from .access import (APPermission, branch_ok, c, can_see_employee, hr_employee_ids, hr_for_employee, is_hr, me,
                      team_ids, visible_employee_ids)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 def refused(exc):
@@ -67,7 +68,7 @@ class APViewSet(viewsets.ModelViewSet):
         if self.branch_field:
             b = serializer.validated_data.get(self.branch_field, getattr(serializer.instance, self.branch_field, None))
             if not branch_ok(self.request, b):
-                raise PermissionDenied('You can only set this up for your own branches.')
+                raise PermissionDenied(tr('You can only set this up for your own branches.'))
 
     def perform_create(self, serializer):
         self._check_branch(serializer)
@@ -79,7 +80,7 @@ class APViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         if self.branch_field and not branch_ok(self.request, getattr(instance, self.branch_field)):
-            raise PermissionDenied('You can only delete records of your own branches.')
+            raise PermissionDenied(tr('You can only delete records of your own branches.'))
         instance.delete()
 
 
@@ -89,6 +90,16 @@ class RuleViewSet(APViewSet):
     serializer_class = SER.RuleSerializer
     filter_params = {'scope': 'scope', 'active': 'is_active', 'branch': 'branch_id'}
     branch_field = 'branch_id'
+
+    def get_queryset(self):
+        # v1.22.0 branch rights: rules without a branch (company / department / category / employee) pass the branch
+        # filter; employee rules must also belong to an employee of the user's branches
+        qs = super().get_queryset()
+        x = c(self.request)
+        if not x.admin and x.branches is not None:
+            from AccessControl.access import emp_ids_in_branches
+            qs = qs.exclude(Q(scope='employee') & ~Q(employee_id__in=emp_ids_in_branches(x.branches)))
+        return qs
 
     def _check_branch(self, serializer):
         """Branch-restricted HR: branch rules of their branches and employee rules of their employees only;
@@ -102,14 +113,14 @@ class RuleViewSet(APViewSet):
             return
         if scope == 'employee' and g('employee_id') and hr_for_employee(self.request, g('employee_id')):
             return
-        raise PermissionDenied('You can only set up rules for your own branches or their employees. '
-                               'Company, department and category rules are set up by HR for all branches.')
+        raise PermissionDenied(tr('You can only set up rules for your own branches or their employees. '
+                               'Company, department and category rules are set up by HR for all branches.'))
 
     def perform_destroy(self, instance):
         x = c(self.request)
         if not (x.admin or x.branches is None or (instance.scope == 'branch' and branch_ok(self.request, instance.branch_id))
                 or (instance.scope == 'employee' and instance.employee_id and hr_for_employee(self.request, instance.employee_id))):
-            raise PermissionDenied('You can only delete rules of your own branches.')
+            raise PermissionDenied(tr('You can only delete rules of your own branches.'))
         instance.delete()
 
     @action(detail=False, methods=['get'])
@@ -117,7 +128,7 @@ class RuleViewSet(APViewSet):
         """The rule and the shift that apply to an employee on a day (for the rules screen / ESS)."""
         emp_id = request.query_params.get('employee') or (me(request) and me(request).id)
         if not emp_id or not can_see_employee(request, emp_id):
-            raise PermissionDenied('You can only look at your own or your team\'s rules.')
+            raise PermissionDenied(tr('You can only look at your own or your team\'s rules.'))
         e = _emp(emp_id)
         day = E.as_date(request.query_params.get('date') or E.today())
         r = E.rule_for(e)
@@ -154,7 +165,7 @@ class DeviceViewSet(APViewSet):
     def new_key(self, request, pk=None):
         d = self.get_object()
         if not branch_ok(request, d.branch_id):
-            raise PermissionDenied('You can only change devices of your own branches.')
+            raise PermissionDenied(tr('You can only change devices of your own branches.'))
         d.api_key = M.new_token()
         d.save(update_fields=['api_key'])
         return Response(SER.DeviceSerializer(d).data)
@@ -171,7 +182,7 @@ class KioskViewSet(APViewSet):
     def new_token(self, request, pk=None):
         k = self.get_object()
         if not branch_ok(request, k.branch_id):
-            raise PermissionDenied('You can only change kiosks of your own branches.')
+            raise PermissionDenied(tr('You can only change kiosks of your own branches.'))
         k.token = M.new_token()
         k.save(update_fields=['token'])
         return Response(SER.KioskSerializer(k).data)
@@ -192,16 +203,16 @@ class PunchViewSet(APViewSet):
         """HR manual punch for an employee (source = manual)."""
         emp_id = request.data.get('employee_id')
         if not emp_id or not hr_for_employee(request, emp_id):
-            raise PermissionDenied('Only HR of the employee\'s branch can add punches for an employee.')
+            raise PermissionDenied(tr('Only HR of the employee\'s branch can add punches for an employee.'))
         try:
             ts = S._parse_dt(request.data.get('ts'))
         except S.Refused as exc:
             return refused(exc)
         if not ts:
-            raise ValidationError({'ts': 'Give the punch date and time.'})
+            raise ValidationError({'ts': tr('Give the punch date and time.')})
         kind = request.data.get('kind') or 'auto'
         if kind not in dict(M.PUNCH_KINDS):
-            raise ValidationError({'kind': 'Unknown punch type.'})
+            raise ValidationError({'kind': tr('Unknown punch type.')})
         p, created = E.add_punch(_emp(emp_id), ts, kind, 'manual', user_id=request.user.id, note=request.data.get('note') or '',
                                  check=False)
         return Response(SER.PunchSerializer(p).data, status=201 if created else 200)
@@ -215,16 +226,16 @@ class PunchViewSet(APViewSet):
         e = x.emp
         if target and (e is None or str(target) != str(e.id)):
             if not hr_for_employee(request, target):
-                raise PermissionDenied('You can only punch for yourself.')
+                raise PermissionDenied(tr('You can only punch for yourself.'))
             e = _emp(target)
         if e is None:
-            raise PermissionDenied('Your login is not linked to an employee.')
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
         kind = request.data.get('kind') or 'auto'
         if kind not in dict(M.PUNCH_KINDS):
-            raise ValidationError({'kind': 'Unknown punch type.'})
+            raise ValidationError({'kind': tr('Unknown punch type.')})
         method = (request.data.get('source') or request.data.get('method') or 'web').lower()
         if method not in ('web', 'mobile', 'biometric', 'qr'):
-            raise ValidationError({'source': 'Use web, mobile, biometric or qr here (kiosks and devices have their own endpoints).'})
+            raise ValidationError({'source': tr('Use web, mobile, biometric or qr here (kiosks and devices have their own endpoints).')})
         kiosk = None
         rule = E.rule_for(e)
         lat, lng = request.data.get('lat') or request.data.get('latitude'), request.data.get('lng') or request.data.get('longitude')
@@ -258,7 +269,7 @@ class PunchViewSet(APViewSet):
         except (S.Refused, E.PunchError) as exc:
             return refused(exc)
         day = M.AttendanceDay.objects.filter(employee_id=e.id, date=p.work_date).first()
-        return Response({'detail': f"{dict(M.PUNCH_KINDS).get(p.resolved_kind or p.kind)} recorded at {E.local(p.ts):%H:%M}.",
+        return Response({'detail': tr('{0} recorded at {1:%H:%M}.', dict(M.PUNCH_KINDS).get(p.resolved_kind or p.kind), E.local(p.ts)),
                          'punch': SER.PunchSerializer(p).data, 'day': SER.DaySerializer(day).data if day else None},
                         status=201 if created else 200)
 
@@ -270,10 +281,10 @@ class PunchViewSet(APViewSet):
         e = x.emp
         if target and (e is None or str(target) != str(e.id)):
             if not can_see_employee(request, target):
-                raise PermissionDenied('You can only see your own attendance.')
+                raise PermissionDenied(tr('You can only see your own attendance.'))
             e = _emp(target)
         if e is None:
-            raise PermissionDenied('Your login is not linked to an employee.')
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
         rule = E.rule_for(e)
         day = E.work_date_for(e, E.now(), rule)
         ps = E.resolve_kinds(list(M.Punch.objects.filter(employee_id=e.id, work_date=day, is_void=False).order_by('ts')))
@@ -302,21 +313,21 @@ class PunchViewSet(APViewSet):
         e = me(request)
         if target and (e is None or str(target) != str(e.id)):
             if not hr_for_employee(request, target):
-                raise PermissionDenied('You can only see your own QR badge.')
+                raise PermissionDenied(tr('You can only see your own QR badge.'))
             e = _emp(target)
         if e is None:
-            raise PermissionDenied('Your login is not linked to an employee.')
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
         return Response({'employee_id': e.id, 'employee_code': e.emp_code, 'qr': S.employee_qr(e)})
 
     @action(detail=False, methods=['post'])
     def reset_qr(self, request):
         emp_id = request.data.get('employee')
         if not emp_id or not hr_for_employee(request, emp_id):
-            raise PermissionDenied('Only HR can cancel QR badges.')
+            raise PermissionDenied(tr('Only HR can cancel QR badges.'))
         k = S.employee_key(int(emp_id))
         k.qr_version += 1
         k.save(update_fields=['qr_version', 'updated_at'])
-        return Response({'detail': 'The old QR badge no longer works. Print the new one.', 'qr': S.employee_qr(_emp(emp_id))})
+        return Response({'detail': tr('The old QR badge no longer works. Print the new one.'), 'qr': S.employee_qr(_emp(emp_id))})
 
     @action(detail=False, methods=['post'])
     def set_pin(self, request):
@@ -324,21 +335,21 @@ class PunchViewSet(APViewSet):
         e = me(request)
         if target and (e is None or str(target) != str(e.id)):
             if not hr_for_employee(request, target):
-                raise PermissionDenied('You can only set your own kiosk PIN.')
+                raise PermissionDenied(tr('You can only set your own kiosk PIN.'))
             e = _emp(target)
         if e is None:
-            raise PermissionDenied('Your login is not linked to an employee.')
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
         try:
             S.set_pin(e.id, request.data.get('pin'))
         except S.Refused as exc:
             return refused(exc)
-        return Response({'detail': 'Kiosk PIN saved.'})
+        return Response({'detail': tr('Kiosk PIN saved.')})
 
     @action(detail=True, methods=['post'])
     def void(self, request, pk=None):
         p = self.get_object()
         if not hr_for_employee(request, p.employee_id):
-            raise PermissionDenied('Only HR can remove punches.')
+            raise PermissionDenied(tr('Only HR can remove punches.'))
         p.is_void = True
         p.void_reason = (request.data.get('reason') or 'Removed by HR')[:255]
         p.save(update_fields=['is_void', 'void_reason'])
@@ -350,14 +361,14 @@ class PunchViewSet(APViewSet):
         """Bulk import punches from CSV / Excel (columns employee_code, date, time, type).
         ?preview=1 (default) only checks the file; commit=1 saves the valid rows."""
         if not is_hr(request):
-            raise PermissionDenied('Only HR can import punches.')
+            raise PermissionDenied(tr('Only HR can import punches.'))
         f = request.FILES.get('file')
         if not f:
-            raise ValidationError({'file': 'Choose a CSV or Excel file with columns employee_code, date, time, type.'})
+            raise ValidationError({'file': tr('Choose a CSV or Excel file with columns employee_code, date, time, type.')})
         try:
             rows = S.read_rows(f)
         except Exception:
-            raise ValidationError({'file': 'The file could not be read. Save it as CSV (UTF-8) or .xlsx.'})
+            raise ValidationError({'file': tr('The file could not be read. Save it as CSV (UTF-8) or .xlsx.')})
         commit = str(request.data.get('commit') or request.query_params.get('commit') or '').lower() in ('1', 'true', 'yes')
         res = S.import_punches(rows, commit=commit, user_id=request.user.id, allowed_ids=hr_employee_ids(request))
         tot = {k: sum(1 for r in res if r['status'] == k) for k in ('ok', 'duplicate', 'error', 'imported')}
@@ -375,7 +386,7 @@ class DayViewSet(APViewSet):
     self_service_actions = {'my_month'}
 
     def create(self, request, *args, **kwargs):
-        raise PermissionDenied('Daily results are calculated from punches. Use Recalculate or add a punch / correction.')
+        raise PermissionDenied(tr('Daily results are calculated from punches. Use Recalculate or add a punch / correction.'))
 
     @action(detail=False, methods=['get'])
     def my_month(self, request):
@@ -384,10 +395,10 @@ class DayViewSet(APViewSet):
         e = me(request)
         if target and (e is None or str(target) != str(e.id)):
             if not can_see_employee(request, target):
-                raise PermissionDenied('You can only see your own attendance.')
+                raise PermissionDenied(tr('You can only see your own attendance.'))
             e = _emp(target)
         if e is None:
-            raise PermissionDenied('Your login is not linked to an employee.')
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
         t = E.today()
         y, mth = int(request.query_params.get('year') or t.year), int(request.query_params.get('month') or t.month)
         start = t.replace(year=y, month=mth, day=1)
@@ -412,7 +423,7 @@ class DayViewSet(APViewSet):
         day = E.as_date(request.query_params.get('date') or E.today())
         ids = visible_employee_ids(request)
         if ids is not None and not is_hr(request) and not team_ids(request):
-            raise PermissionDenied('The daily board is for HR and managers.')
+            raise PermissionDenied(tr('The daily board is for HR and managers.'))
         emps = emp_master.objects.filter(is_active=True)
         if ids is not None:
             emps = emps.filter(id__in=ids)
@@ -450,18 +461,18 @@ class DayViewSet(APViewSet):
         """HR: recalculate one employee (or all visible) for a date range (max 62 days)."""
         from EmpManagement.models import emp_master
         if not is_hr(request):
-            raise PermissionDenied('Only HR can recalculate attendance.')
+            raise PermissionDenied(tr('Only HR can recalculate attendance.'))
         a = E.as_date(request.data.get('from') or request.data.get('date') or E.today())
         b = E.as_date(request.data.get('to') or a)
         if b < a or (b - a).days > 62:
-            raise ValidationError({'to': 'Pick a range of up to 62 days.'})
+            raise ValidationError({'to': tr('Pick a range of up to 62 days.')})
         if b > E.today():       # v1.12.0: days after today are calculated when they come (no empty future rows)
             b = E.today()
         emp_id = request.data.get('employee')
         ids = hr_employee_ids(request)
         if emp_id:
             if ids is not None and int(emp_id) not in ids:
-                raise PermissionDenied('This employee is not in your branches.')
+                raise PermissionDenied(tr('This employee is not in your branches.'))
             emps = emp_master.objects.filter(pk=emp_id)
         else:
             emps = emp_master.objects.filter(is_active=True)
@@ -474,7 +485,7 @@ class DayViewSet(APViewSet):
                 E.recompute_day(e, d)
                 d += timedelta(days=1)
                 n += 1
-        return Response({'detail': f'Recalculated {n} employee-days.', 'count': n})
+        return Response({'detail': tr('Recalculated {0} employee-days.', n), 'count': n})
 
 
 # ----------------------------------------------------------------------------- corrections
@@ -520,10 +531,10 @@ class CorrectionViewSet(APViewSet):
         by_hr = False
         if target and (e is None or str(target) != str(e.id)):
             if not hr_for_employee(request, target):
-                raise PermissionDenied('You can only request corrections for yourself.')
+                raise PermissionDenied(tr('You can only request corrections for yourself.'))
             e, by_hr = _emp(target), True
         if e is None:
-            raise PermissionDenied('Your login is not linked to an employee.')
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
         try:
             cr = S.new_correction(e, request.data, request.user, by_hr=by_hr, attachment=request.FILES.get('attachment'))
         except S.Refused as exc:
@@ -540,19 +551,19 @@ class CorrectionViewSet(APViewSet):
         x = c(request)
         if stage == 'manager':
             if not (x.admin or e.emp_reporting_manager_id == request.user.id):
-                raise PermissionDenied('Only the employee\'s reporting manager can approve at this stage.')
+                raise PermissionDenied(tr('Only the employee\'s reporting manager can approve at this stage.'))
             if x.emp and x.emp.id == e.id and not x.admin:
-                raise PermissionDenied('You cannot approve your own correction.')
+                raise PermissionDenied(tr('You cannot approve your own correction.'))
             fn = S.manager_decide
         else:
             if not hr_for_employee(request, e.id):
-                raise PermissionDenied('Only HR of the employee\'s branch can give the final approval.')
+                raise PermissionDenied(tr('Only HR of the employee\'s branch can give the final approval.'))
             if x.emp and x.emp.id == e.id and not x.admin:
-                raise PermissionDenied('You cannot approve your own correction.')
+                raise PermissionDenied(tr('You cannot approve your own correction.'))
             fn = S.hr_decide
         note = request.data.get('note') or request.data.get('reason') or ''
         if not approve and len(str(note).strip()) < 3:
-            raise ValidationError({'note': 'Write why the correction is rejected.'})
+            raise ValidationError({'note': tr('Write why the correction is rejected.')})
         try:
             cr = fn(cr, request.user, approve, note)
         except S.Refused as exc:
@@ -580,9 +591,9 @@ class CorrectionViewSet(APViewSet):
         cr = self._obj(pk)
         e = me(request)
         if not (e and e.id == cr.employee_id) and not hr_for_employee(request, cr.employee_id):
-            raise PermissionDenied('You can only cancel your own requests.')
+            raise PermissionDenied(tr('You can only cancel your own requests.'))
         if cr.status not in ('manager', 'hr'):
-            return Response({'detail': 'Only requests waiting for approval can be cancelled.'}, status=400)
+            return Response({'detail': tr('Only requests waiting for approval can be cancelled.')}, status=400)
         cr.status = 'cancelled'
         cr.save(update_fields=['status', 'updated_at'])
         return Response(self.get_serializer(cr).data)
@@ -656,7 +667,7 @@ class KioskPunchView(TokenView):
         except (S.Refused, E.PunchError) as exc:
             return refused(exc)
         name = ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x)
-        return Response({'detail': f"{name}: {dict(M.PUNCH_KINDS).get(p.resolved_kind or p.kind)} at {E.local(p.ts):%H:%M}.",
+        return Response({'detail': tr('{0}: {1} at {2:%H:%M}.', name, dict(M.PUNCH_KINDS).get(p.resolved_kind or p.kind), E.local(p.ts)),
                          'employee': name, 'kind': p.resolved_kind or p.kind, 'time': E.local(p.ts).strftime('%H:%M')},
                         status=201 if created else 200)
 
@@ -668,12 +679,12 @@ class DevicePushView(TokenView):
         key = request.META.get('HTTP_X_DEVICE_KEY') or request.data.get('api_key')
         d = M.Device.objects.filter(api_key=key, is_active=True).first() if key else None
         if not d:
-            return Response({'detail': 'Unknown or inactive device key.'}, status=401)
+            return Response({'detail': tr('Unknown or inactive device key.')}, status=401)
         rows = []
         for r in request.data.get('punches') or []:
             rows.append((r.get('pin') or r.get('employee_code') or '', r.get('time') or r.get('timestamp') or '', r.get('type') or r.get('status') or ''))
         if not rows:
-            return Response({'detail': 'Send a list "punches" with pin, time (YYYY-MM-DD HH:MM:SS) and type.'}, status=400)
+            return Response({'detail': tr('Send a list "punches" with pin, time (YYYY-MM-DD HH:MM:SS) and type.')}, status=400)
         return Response(S.device_punches(d, rows, S.client_ip(request)))
 
 

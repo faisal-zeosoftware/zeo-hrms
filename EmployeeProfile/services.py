@@ -24,6 +24,7 @@ from .models import (BankExtra, DependentExtra, EmergencyContact, EmployeeCodeSe
                      ProbationExtension, QualificationExtra)
 from .serializers import (BankExtraSerializer, DependentExtraSerializer, EmergencySerializer, IdentitySerializer,
                           QualificationExtraSerializer, emp_label)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -553,6 +554,7 @@ def employment_json(emp, info=None):
         'confirmed_on': info.confirmed_on, 'failed_on': info.failed_on, 'decision_note': info.decision_note,
         'decided_by_name': users.get(info.decided_by_id, ''),
         'date_of_leaving': info.date_of_leaving, 'leaving_reason': info.leaving_reason, 'leaving_source': info.leaving_source,
+        'unpaid_days_before_golive': info.unpaid_days_before_golive,
         'is_active': bool(emp.is_active), 'extensions': ext, 'limits': used,
         'can_decide': info.probation_status in ('on_probation', 'extended') and info.status not in LEAVING_STATUSES,
     }
@@ -699,7 +701,11 @@ def _is_national(emp, ident):
     if ident is not None and ident.visa_type == 'national':
         return True
     n = (str(emp.emp_nationality or '')).lower()
-    return 'emirati' in n or n in ('uae', 'united arab emirates')
+    try:  # v1.14.0: national of the company's country pack (AE: Emirati)
+        from CountryPack.services import is_national
+        return is_national(n)
+    except ImportError:
+        return 'emirati' in n or n in ('uae', 'united arab emirates')
 
 
 def completeness(emp, ident=None, has_contact=None, has_bank=None, cache=None):
@@ -720,10 +726,26 @@ def completeness(emp, ident=None, has_contact=None, has_bank=None, cache=None):
         ('Passport number', g('passport_no')), ('Passport expiry', g('passport_expiry_date')),
         ('Emirates ID', g('emirates_id')), ('Emirates ID expiry', g('emirates_id_expiry_date')),
     ]
-    if not national:
+    cp = None
+    try:  # v1.14.0: the company's country pack decides the identity fields (AE: as before)
+        from CountryPack.services import current_pack
+        cp = current_pack()
+    except ImportError:
+        pass
+    if cp is not None and cp['pack'] != 'AE':
+        lb, ft = cp['labels'], cp['features']
+        checks = checks[:-2] + ([(lb['national_id'], g('emirates_id')), (lb['national_id_expiry'], g('emirates_id_expiry_date'))] if ft['national_id'] else [])
+        if not national:
+            checks += [(lab, v) for on, lab, v in (
+                (ft['residence_visa'], 'Visa number', g('visa_number')), (ft['residence_visa'], 'Visa expiry', g('visa_expiry_date')),
+                (ft['work_permit'], lb['work_permit'], g('labour_card_no') or g('work_permit_no')),
+                (ft['wps_sif'], f"{lb['labour_authority']} person ID ({lb['wps']})", emp.person_id)) if on]
+        checks += [('Medical insurance card', g('insurance_card_no')), ('Emergency contact', has_contact), ('Bank IBAN', has_bank)]
+    elif not national:
         checks += [('Visa number', g('visa_number')), ('Visa expiry', g('visa_expiry_date')), ('Labour card / work permit', g('labour_card_no') or g('work_permit_no')),
                    ('MOHRE person ID (WPS)', emp.person_id)]
-    checks += [('Medical insurance card', g('insurance_card_no')), ('Emergency contact', has_contact), ('Bank IBAN (WPS)', has_bank)]
+    if cp is None or cp['pack'] == 'AE':
+        checks += [('Medical insurance card', g('insurance_card_no')), ('Emergency contact', has_contact), ('Bank IBAN (WPS)', has_bank)]
     ok = [c for c in checks if c[1] not in (None, '', False)]
     missing = [c[0] for c in checks if c[1] in (None, '', False)]
     return {'score': round(100 * len(ok) / len(checks)), 'filled': len(ok), 'total': len(checks), 'missing': missing}
@@ -837,7 +859,60 @@ def profile_groups():
     ]
     if not apps.is_installed('LearningPlus'):
         groups = [g for g in groups if g['key'] != 'skills']
-    return groups
+    return _country_groups(groups)
+
+
+def _country_groups(groups):
+    """v1.14.0: captions and fields of the company's country pack (AE: unchanged). Fields of a switched-off feature are left out."""
+    try:
+        from CountryPack.services import current_pack
+        cp = current_pack()
+    except ImportError:
+        return groups
+    if cp['pack'] == 'AE' and not cp['overridden']['labels'] and not cp['overridden']['features']:
+        return groups
+    lb, ft, ae = cp['labels'], cp['features'], cp['pack'] == 'AE'
+    nid = lb['national_id']
+    fix = {   # key -> (feature or None, new label or None, extra)
+        'emirates_id': ('national_id', nid, {'placeholder': '784-YYYY-NNNNNNN-N' if ae else ('10 digits, starts with 1 or 2' if cp['pack'] == 'SA' else '')}),
+        'emirates_id_issue_date': ('national_id', f'{nid} issue date', {}),
+        'emirates_id_expiry_date': ('national_id', lb['national_id_expiry'] if not ae else f'{nid} expiry date', {}),
+        'visa_uid': ('residence_visa', lb['visa_uid'], {}), 'visa_file_no': ('residence_visa', lb['visa_file_no'] if not ae else None, {}),
+        'labour_card_no': ('work_permit', f"{lb['work_permit']} number", {}),
+        'labour_card_issue_date': ('work_permit', f"{lb['work_permit']} issue date", {}),
+        'labour_card_expiry_date': ('work_permit', f"{lb['work_permit']} expiry date", {}),
+        'mohre_contract_type': ('labour_contract', f"{lb['labour_contract']} type", {}),
+        'mohre_contract_no': ('labour_contract', f"{lb['labour_contract']} number", {}),
+        'emp_state_id': ('states', lb['state'] if not ae else None, {}),
+        'wps_agent': ('wps', f"{lb['wps']} agent ID", {}),
+        'route_code': (None, lb['routing_code'] if not ae else None, {}),
+    }
+    if not ae:   # UAE-only fields and captions
+        fix.update({'labour_card_no': ('_off', None, {}), 'labour_card_issue_date': ('_off', None, {}), 'labour_card_expiry_date': ('_off', None, {}),
+                    'work_permit_no': ('work_permit', lb['work_permit_no'], {}), 'work_permit_expiry_date': ('work_permit', lb['work_permit_expiry'], {}),
+                    'driving_licence_emirate': ('_off', None, {}), 'iban_number': (None, None, {'placeholder': ''}),
+                    'attested': (None, 'Attested (Ministry of Foreign Affairs)', {})})
+    out = []
+    for g in groups:
+        g = dict(g)
+        if g['key'] == 'identity' and not ae:
+            g['label'] = 'Identity'
+        fields = []
+        for f in g['fields']:
+            rule = fix.get(f['key'])
+            if g['key'] == 'family' and f['key'] == 'emirates_id_expiry_date':
+                rule = ('national_id', lb['national_id_expiry'], {})
+            if rule:
+                feat, lab, extra = rule
+                if feat == '_off' or (feat and not ft.get(feat, True)):
+                    continue
+                f = dict(f, **extra)
+                if lab:
+                    f['label'] = lab
+            fields.append(f)
+        g['fields'] = fields
+        out.append(g)
+    return out
 
 
 GROUP_KEYS = {g: None for g in ('personal', 'contact', 'address', 'identity', 'emergency', 'family', 'bank', 'qualifications', 'experience', 'skills', 'documents')}
@@ -847,7 +922,7 @@ def group_fields(group):
     for g in profile_groups():
         if g['key'] == group:
             return [f['key'] for f in g['fields']]
-    raise ValidationError({'group': f'Unknown group "{group}".'})
+    raise ValidationError({'group': tr('Unknown group "{0}".', group)})
 
 
 # ---- core serializers for the existing tables (same checks as the HR screens)
@@ -858,12 +933,12 @@ class _FamilyCore(serializers.ModelSerializer):
 
     def validate_ef_date_of_birth(self, v):
         if v and v > date.today():
-            raise serializers.ValidationError('The date of birth cannot be in the future.')
+            raise serializers.ValidationError(tr('The date of birth cannot be in the future.'))
         return v
 
     def validate_ef_company_expence(self, v):
         if v is not None and v < 0:
-            raise serializers.ValidationError('The amount cannot be negative.')
+            raise serializers.ValidationError(tr('The amount cannot be negative.'))
         return v
 
 
@@ -888,7 +963,7 @@ class _QualCore(serializers.ModelSerializer):
 
     def validate_emp_qf_year(self, v):
         if v and v > date.today():
-            raise serializers.ValidationError('The completion date cannot be in the future.')
+            raise serializers.ValidationError(tr('The completion date cannot be in the future.'))
         return v
 
 
@@ -903,9 +978,9 @@ class _JobCore(serializers.ModelSerializer):
         f = attrs.get('emp_jh_from_date', getattr(inst, 'emp_jh_from_date', None))
         t = attrs.get('emp_jh_end_date', getattr(inst, 'emp_jh_end_date', None))
         if f and t and t < f:
-            raise serializers.ValidationError({'emp_jh_end_date': 'The end date must be after the start date.'})
+            raise serializers.ValidationError({'emp_jh_end_date': tr('The end date must be after the start date.')})
         if t and t > date.today():
-            raise serializers.ValidationError({'emp_jh_end_date': 'Previous employment cannot end in the future.'})
+            raise serializers.ValidationError({'emp_jh_end_date': tr('Previous employment cannot end in the future.')})
         return attrs
 
 
@@ -932,7 +1007,7 @@ class _SkillCore(serializers.ModelSerializer):
 
     def validate_level(self, v):
         if v is None or not 1 <= int(v) <= 5:
-            raise serializers.ValidationError('Level must be 1 to 5.')
+            raise serializers.ValidationError(tr('Level must be 1 to 5.'))
         return v
 
 
@@ -974,7 +1049,7 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
 
     if group in EMP_GROUPS:
         if action == 'delete':
-            raise ValidationError({'detail': 'These details cannot be deleted.'})
+            raise ValidationError({'detail': tr('These details cannot be deleted.')})
         from EmpManagement.serializer import EmpSerializer
         ser = EmpSerializer(employee, data=data, partial=True, context={})
         ser.is_valid(raise_exception=True)
@@ -987,7 +1062,7 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
 
     if group == 'identity':
         if action == 'delete':
-            raise ValidationError({'detail': 'Identity details cannot be deleted – clear the fields instead.'})
+            raise ValidationError({'detail': tr('Identity details cannot be deleted – clear the fields instead.')})
         inst = identity_for(employee.pk)
         ser = IdentitySerializer(inst, data=data, partial=True, context={'employee_id': employee.pk})
         ser.is_valid(raise_exception=True)
@@ -1005,10 +1080,10 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
         if record_id:
             inst = EmergencyContact.objects.filter(pk=record_id, employee_id=employee.pk).first()
             if inst is None:
-                raise ValidationError({'detail': 'Emergency contact not found.'})
+                raise ValidationError({'detail': tr('Emergency contact not found.')})
         if action == 'delete':
             if inst is None:
-                raise ValidationError({'detail': 'Choose the contact to delete.'})
+                raise ValidationError({'detail': tr('Choose the contact to delete.')})
             return lambda: (inst.delete(), {'deleted': True})[1]
         ser = EmergencySerializer(inst, data=data, partial=inst is not None)
         ser.is_valid(raise_exception=True)
@@ -1024,22 +1099,22 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
 
     if group == 'skills':
         if not apps.is_installed('LearningPlus'):
-            raise ValidationError({'group': 'Skills are not available.'})
+            raise ValidationError({'group': tr('Skills are not available.')})
         ES = M('LearningPlus', 'EmployeeSkill')
         inst = None
         if record_id:
             inst = ES.objects.filter(pk=record_id, employee_id=employee.pk).first()
             if inst is None:
-                raise ValidationError({'detail': 'Skill not found.'})
+                raise ValidationError({'detail': tr('Skill not found.')})
         if action == 'delete':
             if inst is None:
-                raise ValidationError({'detail': 'Choose the skill to delete.'})
+                raise ValidationError({'detail': tr('Choose the skill to delete.')})
             return lambda: (inst.delete(), {'deleted': True})[1]
         ser = _core(_SkillCore, ES)(inst, data=data, partial=inst is not None)
         ser.is_valid(raise_exception=True)
         sk = ser.validated_data.get('skill')
         if sk is not None and ES.objects.filter(employee_id=employee.pk, skill=sk).exclude(pk=getattr(inst, 'pk', None)).exists():
-            raise ValidationError({'skill': 'This skill is already on the profile – change its level instead.'})
+            raise ValidationError({'skill': tr('This skill is already on the profile – change its level instead.')})
 
         def run():
             obj = ser.save(employee_id=employee.pk, **({} if inst else {'source': 'manual', 'date': date.today()}))
@@ -1053,10 +1128,10 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
         if record_id:
             inst = Model.objects.filter(pk=record_id, **{fk: employee}).first()
             if inst is None:
-                raise ValidationError({'detail': 'Record not found for this employee.'})
+                raise ValidationError({'detail': tr('Record not found for this employee.')})
         if action == 'delete':
             if inst is None:
-                raise ValidationError({'detail': 'Choose the record to delete.'})
+                raise ValidationError({'detail': tr('Choose the record to delete.')})
 
             def run_del():
                 with transaction.atomic():
@@ -1102,7 +1177,7 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
                     out.update({k: v for k, v in extra_ser(ex).data.items() if k not in ('id',)})
             return out
         return run
-    raise ValidationError({'group': f'Unknown group "{group}".'})
+    raise ValidationError({'group': tr('Unknown group "{0}".', group)})
 
 
 def validate_change(employee, group, record_id, data, action=None):

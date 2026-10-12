@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from celery import shared_task
 from django_tenants.utils import get_tenant_model, schema_context
+from Translations.i18n import msg as tmsg  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 
@@ -24,8 +25,8 @@ def send_reminders(on=None):
         emp = S.emp_by_id(e.employee_id)
         if emp is None or S.leave_on(emp.pk, on):
             continue
-        n = notify.send(employee=emp, kind='reminder', ref=f'reminder:{on.isoformat()}', title='Shift reminder',
-                        message=f'Reminder: tomorrow ({on:%a %d %b}) you work {S.shift_label(shifts.get(e.shift_id))}.')
+        n = notify.send(employee=emp, kind='reminder', ref=f'reminder:{on.isoformat()}', title=tmsg('Shift reminder'),
+                        message=tmsg('Reminder: tomorrow ({0:%a %d %b}) you work {1}.', on, S.shift_label(shifts.get(e.shift_id))))
         sent += 1 if n is not None else 0
     return sent
 

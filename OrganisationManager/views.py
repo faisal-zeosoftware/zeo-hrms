@@ -11,6 +11,7 @@ from docx import Document
 from django_tenants.utils import schema_context
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from AccessControl.access import limit_by_branch, BranchReportMixin  # v1.22.0 branch rights
 from .models import (brnch_mstr,dept_master,DocumentNumbering,
                      desgntn_master,ctgry_master,FiscalPeriod,FiscalYear,CompanyPolicy,Announcement,
                      AnnouncementComment,AnnouncementView,Asset, AssetAllocation,AssetRequest,AssetCustomField,AssetType,
@@ -623,21 +624,76 @@ class CompanyFiscalData(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
         
 
+# v1.18.0: approval screens for people who approve without an HR right (line managers, department heads, named approvers).
+# The approval APIs already return the steps of the user; the menu only showed the screens to holders of the view right.
+# The rights list of the user gets automatic codes "approver_<model>" (has an approval step of that kind) and "role_line_manager".
+APPROVER_MODELS = (('calendars', 'LeaveApproval'), ('PayrollManagement', 'PayslipApproval'), ('OrganisationManager', 'AssetApproval'),
+                   ('EmpManagement', 'ResignationApproval'), ('PayrollManagement', 'LoanApproval'), ('PayrollManagement', 'AdvanceSalaryApproval'),
+                   ('PayrollManagement', 'AirticketApproval'), ('calendars', 'LateinEarlyoutApproval'), ('EmpManagement', 'DocumentApproval'),
+                   ('EmpManagement', 'Approval'))
+
+
+def approver_codes(user):
+    from django.apps import apps as _apps
+    out = []
+    for app, name in APPROVER_MODELS:
+        try:
+            m = _apps.get_model(app, name)
+        except LookupError:
+            continue
+        try:
+            if m.objects.filter(approver=user).exists():
+                out.append(f'approver_{m._meta.model_name}')
+        except Exception:
+            continue
+    try:
+        E = _apps.get_model('EmpManagement', 'emp_master')
+        if E.objects.filter(emp_reporting_manager=user, is_active=True).exists():
+            out.append('role_line_manager')
+    except Exception:
+        pass
+    return out
+
+
 class permissionviewset(viewsets.ModelViewSet):
     queryset = UserTenantPermissions.objects.all()
     serializer_class = PermissionSerializer
     def get_serializer_class(self):
         return PermissionSerializer
 
+    def list(self, request, *args, **kwargs):
+        resp = super().list(request, *args, **kwargs)
+        try:
+            user = request.user
+            data = resp.data.get('results') if isinstance(resp.data, dict) else resp.data
+            if user.is_authenticated and not user.is_superuser and isinstance(data, list):
+                codes = approver_codes(user)
+                if codes:
+                    row = next((r for r in data if str(r.get('profile')) == str(user.pk)), None)
+                    if row is None:
+                        row = {'profile': user.pk, 'is_superuser': False, 'groups': []}
+                        data.append(row)
+                    groups = list(row.get('groups') or [])
+                    groups.append({'id': 0, 'name': 'Approver (automatic)', 'permissions': [{'codename': c, 'name': c} for c in codes]})
+                    row['groups'] = groups
+        except Exception:
+            pass
+        return resp
+
     def get_queryset(self):
         user = self.request.user
         if user.is_authenticated:
-            if user.is_superuser:
-                # Superusers see all user permissions
-                return UserTenantPermissions.objects.all()
+            from django.db import connection
+            fast = UserTenantPermissions.objects.select_related('profile').prefetch_related('groups__permissions', 'user_permissions')
+            mine = self.request.query_params.get('me') in ('1', 'true')
+            if user.is_superuser and not mine:
+                # Superusers see the permissions of the users of this company (v1.22.0: not of every company – that
+                # listed thousands of rows and the menu waited minutes for it)
+                sch = getattr(connection, 'schema_name', 'public')
+                return fast.filter(profile__tenants__schema_name=sch).distinct() if sch != 'public' else fast
             else:
                 # Regular users only see their assigned permissions
-                return UserTenantPermissions.objects.filter(profile_id=user.id)
+                return fast.filter(profile_id=user.id)
         return UserTenantPermissions.objects.none() 
     # def get_queryset(self):
     # def get_queryset(self):
@@ -646,9 +702,43 @@ class permissionviewset(viewsets.ModelViewSet):
 
     # serializer_class = PermissionSerializer
 
+STANDARD_GROUP_NAMES = ('HR Manager', 'Payroll Manager')
+STANDARD_GROUP_PREFIXES = ('Projects – ', 'CRM – ', 'Property – ', 'Maintenance – ', 'HSE – ')
+
+
+def company_group_ids():
+    """v1.22.0: the permission groups of the current company – standard role groups, groups made in it, groups of its users."""
+    from django.db import connection
+    from django.db.models import Q
+    try:
+        from ZeoApps.models import CompanyGroup
+        mine = set(CompanyGroup.objects.values_list('group_id', flat=True))
+    except Exception:
+        mine = set()
+    q = Q(name__in=STANDARD_GROUP_NAMES) | Q(pk__in=mine) | Q(user__profile__tenants__schema_name=connection.schema_name)
+    for p in STANDARD_GROUP_PREFIXES:
+        q |= Q(name__startswith=p)
+    return set(Group.objects.filter(q).values_list('pk', flat=True))
+
+
 class Groupviewset(viewsets.ModelViewSet):
     queryset = Group.objects.all()
     serializer_class = GroupSerializer
+
+    def get_queryset(self):
+        from django.db import connection
+        qs = super().get_queryset()
+        if getattr(connection, 'schema_name', 'public') == 'public':
+            return qs
+        return qs.filter(pk__in=company_group_ids()).order_by('name')   # v1.22.0: not the groups of other companies
+
+    def perform_create(self, serializer):
+        g = serializer.save()
+        try:
+            from ZeoApps.models import CompanyGroup
+            CompanyGroup.objects.get_or_create(group_id=g.pk)
+        except Exception:
+            pass
 
 class permviewset(viewsets.ModelViewSet):
     queryset = Permission.objects.all().order_by('id')
@@ -1002,6 +1092,17 @@ class AnnouncementCommentViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
 from django.db import transaction
+def _branch_assets(request, qs):
+    """v1.22.0 branch rights: assets have no branch and stay shared, except an asset currently handed out to an
+    employee of another branch (company admins: unchanged)."""
+    from AccessControl.access import allowed_branches
+    mine = allowed_branches(request)
+    if mine is None:
+        return qs
+    elsewhere = AssetAllocation.objects.filter(returned_date__isnull=True).exclude(employee__emp_branch_id__in=mine).values('asset_id')
+    return qs.exclude(id__in=elsewhere)
+
+
 class AssetTypeViewSet(viewsets.ModelViewSet):
     queryset = AssetType.objects.all()
     serializer_class = AssetTypeSerializer
@@ -1011,6 +1112,9 @@ class AssetMasterViewSet(viewsets.ModelViewSet):
     queryset = Asset.objects.all()
     serializer_class = AssetSerializer
     permission_classes = [AssetMasterPermission]
+
+    def get_queryset(self):
+        return _branch_assets(self.request, super().get_queryset())  # v1.22.0 branch rights
 class _AssetSelfServiceAccess(permissions.BasePermission):
     """v1.12.0: these two viewsets had no permission classes (and the project default is empty).
     Logged in; reading is limited to the user's own rows by the central access layer unless they hold view_<model>;
@@ -1454,7 +1558,7 @@ class AssetCustomFieldViewSet(viewsets.ModelViewSet):   # v1.12.0: was defined t
     serializer_class = AssetCustomFieldSerializer
 
 
-class AssetReportViewset(viewsets.ModelViewSet):
+class AssetReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = AssetReport.objects.all()
     serializer_class = AssetReportSerializer
     
@@ -1500,7 +1604,7 @@ class AssetReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
 
-            assets = Asset.objects.all()
+            assets = _branch_assets(request, Asset.objects.all())  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, assets)
             file_path = report_file(file_name, 'AssetReport')  # Use 'file_name' provided by the user
@@ -1527,9 +1631,9 @@ class AssetReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'std_report'
+            file_name = self._std_name('std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            asset = Asset.objects.all()
+            asset = Asset.objects.all() if self._branches() is None else _branch_assets(self.request, Asset.objects.all())  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, asset)
             file_path = report_file(file_name, 'AssetReport')
@@ -1554,7 +1658,7 @@ class AssetReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = AssetReport.objects.get(file_name='std_report')
+            report = AssetReport.objects.get(file_name=self._std_name('std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except AssetReport.DoesNotExist:
@@ -1631,7 +1735,7 @@ class AssetReportViewset(viewsets.ModelViewSet):
                 selected_fields = []  # No data in the report
 
         # Fetch employees data from emp_master
-        employees = Asset.objects.all()
+        employees = _branch_assets(request, Asset.objects.all())  # v1.22.0 branch rights
 
         # Get unique values for selected_fields
         unique_values = self.get_unique_values_for_fields(employees, selected_fields, report_content)
@@ -1733,7 +1837,7 @@ class AssetReportViewset(viewsets.ModelViewSet):
                 if custom_field_value and custom_field_value not in [val.lower() for val in custom_field_values]:
                     return False
         return True
-class AssetTransactionReportViewset(viewsets.ModelViewSet):
+class AssetTransactionReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = AssetTransactionReport.objects.all()
     serializer_class = AssetTransactionReportSerializer
 
@@ -1788,7 +1892,7 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
             
-            generalreport = AssetAllocation.objects.all()
+            generalreport = limit_by_branch(request, AssetAllocation.objects.all(), branch_path='employee__emp_branch_id')  # v1.22.0 branch rights
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,generalreport)
@@ -1811,9 +1915,9 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'assetTransaction_std_report'
+            file_name = self._std_name('assetTransaction_std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            generalreport = AssetAllocation.objects.all()
+            generalreport = self._scoped(AssetAllocation.objects.all(), 'employee__emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, generalreport)
             file_path = report_file(file_name, 'AssetTransactionReport')
@@ -1835,7 +1939,7 @@ class AssetTransactionReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = AssetTransactionReport.objects.get(file_name='assetTransaction_std_report')
+            report = AssetTransactionReport.objects.get(file_name=self._std_name('assetTransaction_std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except AssetTransactionReport.DoesNotExist:
@@ -2020,7 +2124,7 @@ class FolderViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def root_folders(self, request):
         """Return top-level folders (where parent is null)."""
-        folders = Folder.objects.filter(parent__isnull=True)
+        folders = self.filter_queryset(Folder.objects.filter(parent__isnull=True))  # v1.22.0 branch rights: same row rules as the list
         serializer = self.get_serializer(folders, many=True)
         return Response(serializer.data)
 
@@ -2047,7 +2151,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         if not folder_id:
             return Response({"error": "folder_id parameter is required"}, status=400)
 
-        docs = Document.objects.filter(folder_id=folder_id)
+        docs = self.filter_queryset(Document.objects.filter(folder_id=folder_id))  # v1.22.0 branch rights: same row rules as the list
         serializer = self.get_serializer(docs, many=True)
         return Response(serializer.data)
     
@@ -2110,20 +2214,11 @@ class UserAccessibleBranchListAPIView(APIView):
     # permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-
-        #  SUPERUSER → All branches
-        if user.is_superuser:
-            branches = brnch_mstr.objects.all()
-
-        #  NORMAL USER → Only assigned branches
-        else:
-            access = UserBranchAccess.objects.filter(user=user).first()
-
-            if access:
-                branches = access.branch.all()
-            else:
-                branches = brnch_mstr.objects.none()
+        # v1.22.0 branch rights: exactly the branches the access layer allows – all for company admins; else every
+        # "User branch access" row (not only the first) with the employee's own branch as fallback
+        from AccessControl.access import allowed_branches
+        mine = allowed_branches(request)
+        branches = brnch_mstr.objects.all() if mine is None else brnch_mstr.objects.filter(id__in=mine)
 
         serializer = BranchSerializer(branches, many=True)
         return Response(serializer.data)

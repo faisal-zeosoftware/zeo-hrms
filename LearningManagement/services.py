@@ -29,7 +29,7 @@ def ld_users(employee=None):
     from django.db import connection
     from tenant_users.tenants.models import UserTenantPermissions
     schema = connection.schema_name
-    utps = (UserTenantPermissions.objects.filter(groups__permissions__codename='change_nomination', profile__is_active=True,
+    utps = (_company_perms().filter(groups__permissions__codename='change_nomination', profile__is_active=True,
                                                  profile__tenants__schema_name=schema).select_related('profile').distinct())
     users = [p.profile for p in utps]
     branch = getattr(employee, 'emp_branch_id_id', None) if employee is not None else None
@@ -42,7 +42,7 @@ def ld_users(employee=None):
                 out.append(u)
         users = out
     if not users:
-        users = [p.profile for p in UserTenantPermissions.objects.filter(is_superuser=True, profile__is_active=True,
+        users = [p.profile for p in _company_perms().filter(is_superuser=True, profile__is_active=True,
                                                                           profile__tenants__schema_name=schema).select_related('profile').distinct()]
     seen, out = set(), []
     for u in users:
@@ -237,3 +237,9 @@ def summary():
         'training_cost': float(sum(((s.effective_cost or 0) * s.confirmed_count() for s in
                                     TrainingSession.objects.filter(status='completed').select_related('course')), 0)),
     }
+
+
+
+def _company_perms():   # v1.22.0: only the users of the open company (see AccessControl.access.company_perms)
+    from AccessControl.access import company_perms
+    return company_perms()

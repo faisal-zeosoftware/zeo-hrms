@@ -8,6 +8,7 @@ from rest_framework import serializers
 from . import validators as V
 from .models import (BankExtra, DependentExtra, EmergencyContact, EmployeeCodeSetting, EmployeeIdentity, EmploymentInfo,
                      QualificationExtra)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 M = apps.get_model
 
@@ -17,6 +18,16 @@ def _run(fn, value, *a):
         return fn(value, *a)
     except ValueError as e:
         raise serializers.ValidationError(str(e))
+
+
+def _cp(errors):
+    """v1.14.0: the company country's captions in the messages ("Emirates ID" → "Iqama / National ID" …; AE unchanged)."""
+    try:
+        from CountryPack.services import localize, report_replacements
+        pairs = report_replacements()
+        return {k: localize(v, pairs) if isinstance(v, str) else v for k, v in errors.items()} if pairs else errors
+    except ImportError:
+        return errors
 
 
 def emp_label(emp):
@@ -30,7 +41,7 @@ def _country_ok(v, label='country'):
     if v in (None, ''):
         return None
     if not M('Core', 'cntry_mstr').objects.filter(pk=v).exists():
-        raise serializers.ValidationError(f'Choose a {label} from the list.')
+        raise serializers.ValidationError(tr('Choose a {0} from the list.', label))
     return v
 
 
@@ -38,7 +49,7 @@ def _nationality_ok(v):
     if v in (None, ''):
         return None
     if not M('Core', 'Nationality').objects.filter(pk=v).exists():
-        raise serializers.ValidationError('Choose a nationality from the list.')
+        raise serializers.ValidationError(tr('Choose a nationality from the list.'))
     return v
 
 
@@ -67,7 +78,7 @@ class IdentitySerializer(serializers.ModelSerializer):
     def validate_arabic_name(self, v):
         v = (v or '').strip()
         if v and not any('؀' <= ch <= 'ۿ' for ch in v):
-            raise serializers.ValidationError('Write the Arabic name in Arabic letters.')
+            raise serializers.ValidationError(tr('Write the Arabic name in Arabic letters.'))
         return v
 
     def validate_passport_no(self, v):
@@ -77,7 +88,7 @@ class IdentitySerializer(serializers.ModelSerializer):
         return _country_ok(v, 'passport country')
 
     def validate_emirates_id(self, v):
-        return _run(V.clean_emirates_id, v)
+        return _run(V.clean_national_id, v)   # v1.14.0: Emirates ID format for AE, Iqama for SA, free for others
 
     def validate_visa_uid(self, v):
         return _run(V.clean_digits, v, 'The UID number', 5, 15)
@@ -124,7 +135,7 @@ class IdentitySerializer(serializers.ModelSerializer):
         for k, label in (('work_permit_expiry_date', 'work permit'), ('insurance_expiry_date', 'insurance card')):
             d = attrs.get(k)
             if d and d.year < 1950:
-                errors[k] = f'Check the {label} expiry date.'
+                errors[k] = tr('Check the {0} expiry date.', label)
         # numbers need their dates (the expiry alerts work on them)
         for num, i, e, label in (('passport_no', 'passport_issue_date', 'passport_expiry_date', 'passport'),
                                  ('emirates_id', 'emirates_id_issue_date', 'emirates_id_expiry_date', 'Emirates ID')):
@@ -133,13 +144,12 @@ class IdentitySerializer(serializers.ModelSerializer):
         if any(k in attrs for k in ('mohre_contract_type', 'mohre_contract_start', 'mohre_contract_end')):
             t, s, en = now('mohre_contract_type'), now('mohre_contract_start'), now('mohre_contract_end')
             if s and en and en <= s:
-                errors['mohre_contract_end'] = 'The contract end date must be after the start date.'
+                errors['mohre_contract_end'] = tr('The contract end date must be after the start date.')
             if t == 'limited' and s and not en:
-                errors['mohre_contract_end'] = 'A limited (fixed-term) contract needs an end date.'
+                errors['mohre_contract_end'] = tr('A limited (fixed-term) contract needs an end date.')
             if t == 'unlimited' and en:
-                errors['mohre_contract_end'] = 'An unlimited contract has no end date – clear it or choose Limited.'
-            if s and en and (en - s).days > 3 * 366 + 1 and t == 'limited':
-                errors['mohre_contract_end'] = 'A limited contract runs for at most 3 years – check the end date (renew it afterwards).'
+                errors['mohre_contract_end'] = tr('An unlimited contract has no end date – clear it or choose Limited.')
+            # v1.18.0: no 3-year maximum any more – Federal Decree-Law 14 of 2022 removed the cap on fixed-term contracts
         if 'visa_type' in attrs and attrs['visa_type'] == 'national':
             for k in ('visa_number', 'visa_uid', 'visa_file_no'):
                 if now(k):
@@ -155,9 +165,9 @@ class IdentitySerializer(serializers.ModelSerializer):
                 continue
             other = EmployeeIdentity.objects.filter(**{k + '__iexact': v}).exclude(employee_id=emp_id).first()
             if other:
-                errors[k] = f'{label} {v} is already used by employee {emp_label(Emp.objects.filter(pk=other.employee_id).first()) or other.employee_id}.'
+                errors[k] = tr('{0} {1} is already used by employee {2}.', label, v, emp_label(Emp.objects.filter(pk=other.employee_id).first()) or other.employee_id)
         if errors:
-            raise serializers.ValidationError(errors)
+            raise serializers.ValidationError(_cp(errors))
         return attrs
 
 
@@ -170,19 +180,19 @@ class EmergencySerializer(serializers.ModelSerializer):
     def validate_name(self, v):
         v = (v or '').strip()
         if not v:
-            raise serializers.ValidationError('Enter the contact’s name.')
+            raise serializers.ValidationError(tr('Enter the contact’s name.'))
         return v
 
     def validate_relation(self, v):
         v = (v or '').strip()
         if not v:
-            raise serializers.ValidationError('Enter the relation (e.g. Spouse, Father, Friend).')
+            raise serializers.ValidationError(tr('Enter the relation (e.g. Spouse, Father, Friend).'))
         return v
 
     def validate_mobile(self, v):
         v = _run(V.clean_phone, v, 'Mobile number')
         if not v:
-            raise serializers.ValidationError('Enter the mobile number.')
+            raise serializers.ValidationError(tr('Enter the mobile number.'))
         return v
 
     def validate_alt_phone(self, v):
@@ -202,7 +212,7 @@ class DependentExtraSerializer(serializers.ModelSerializer):
         return _run(V.clean_passport, v)
 
     def validate_emirates_id(self, v):
-        return _run(V.clean_emirates_id, v)
+        return _run(V.clean_national_id, v)   # v1.14.0: Emirates ID format for AE, Iqama for SA, free for others
 
     def validate_visa_number(self, v):
         return _run(V.clean_code, v, 'Visa number', 4, 30, '/-')
@@ -215,7 +225,7 @@ class DependentExtraSerializer(serializers.ModelSerializer):
         for k in ('passport_expiry_date', 'emirates_id_expiry_date', 'visa_expiry_date'):
             d = attrs.get(k)
             if d and d.year < 1950:
-                errors[k] = 'Check this expiry date.'
+                errors[k] = tr('Check this expiry date.')
         inst = self.instance
 
         def now(k):
@@ -226,7 +236,7 @@ class DependentExtraSerializer(serializers.ModelSerializer):
             if (num in attrs or exp in attrs) and now(exp) and not now(num):
                 errors.setdefault(num, f'Enter the {label} number for this expiry date.')
         if errors:
-            raise serializers.ValidationError(errors)
+            raise serializers.ValidationError(_cp(errors))
         return attrs
 
 
@@ -239,7 +249,7 @@ class BankExtraSerializer(serializers.ModelSerializer):
     def validate_wps_agent(self, v):
         v = (v or '').strip()
         if v and len(v) > 60:
-            raise serializers.ValidationError('Use at most 60 characters.')
+            raise serializers.ValidationError(tr('Use at most 60 characters.'))
         return v
 
 
@@ -262,7 +272,7 @@ class QualificationExtraSerializer(serializers.ModelSerializer):
 
     def validate_attestation_date(self, v):
         if v and v > date.today():
-            raise serializers.ValidationError('The attestation date cannot be in the future.')
+            raise serializers.ValidationError(tr('The attestation date cannot be in the future.'))
         return v
 
     def validate_attachment(self, f):
@@ -270,9 +280,9 @@ class QualificationExtraSerializer(serializers.ModelSerializer):
             return f
         ext = os.path.splitext(getattr(f, 'name', '') or '')[1].lower()
         if ext not in ('.pdf', '.jpg', '.jpeg', '.png'):
-            raise serializers.ValidationError('Attach a PDF, JPG or PNG file.')
+            raise serializers.ValidationError(tr('Attach a PDF, JPG or PNG file.'))
         if getattr(f, 'size', 0) > 5 * 1024 * 1024:
-            raise serializers.ValidationError('The file is larger than 5 MB.')
+            raise serializers.ValidationError(tr('The file is larger than 5 MB.'))
         return f
 
     def validate(self, attrs):
@@ -288,7 +298,7 @@ class EmploymentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmploymentInfo
-        fields = ['status', 'date_of_leaving', 'leaving_reason']
+        fields = ['status', 'date_of_leaving', 'leaving_reason', 'unpaid_days_before_golive']   # v1.20.2: opening unpaid days
 
     def validate(self, attrs):
         inst = self.instance
@@ -299,22 +309,22 @@ class EmploymentSerializer(serializers.ModelSerializer):
 
         st, dol = now('status'), now('date_of_leaving')
         if st in self.LEAVING and not dol:
-            errors['date_of_leaving'] = 'Enter the date of leaving (last working day) for this status.'
+            errors['date_of_leaving'] = tr('Enter the date of leaving (last working day) for this status.')
         if st in ('active', 'probation'):
             if 'date_of_leaving' in attrs and attrs['date_of_leaving']:
-                errors['date_of_leaving'] = 'An active employee has no date of leaving – change the status first.'
+                errors['date_of_leaving'] = tr('An active employee has no date of leaving – change the status first.')
             attrs['date_of_leaving'] = None
             if 'leaving_reason' not in attrs:
                 attrs['leaving_reason'] = ''
         if st == 'probation' and inst is not None and inst.probation_status not in ('on_probation', 'extended'):
-            errors['status'] = 'The probation is already decided – use Active, or record a decision on the Employment tab.'
+            errors['status'] = tr('The probation is already decided – use Active, or record a decision on the Employment tab.')
         joined = self.context.get('joined')
         if dol and joined and dol < joined:
-            errors['date_of_leaving'] = 'The date of leaving cannot be before the joining date.'
+            errors['date_of_leaving'] = tr('The date of leaving cannot be before the joining date.')
         if st == 'on_notice' and dol and dol < date.today():
-            errors['status'] = 'The last working day has passed – choose Left, Terminated, Retired or Absconded.'
+            errors['status'] = tr('The last working day has passed – choose Left, Terminated, Retired or Absconded.')
         if errors:
-            raise serializers.ValidationError(errors)
+            raise serializers.ValidationError(_cp(errors))
         return attrs
 
 
@@ -341,33 +351,33 @@ class CodeSettingSerializer(serializers.ModelSerializer):
         if v in (None, ''):
             return None
         if not M('OrganisationManager', 'brnch_mstr').objects.filter(pk=v).exists():
-            raise serializers.ValidationError('Choose a branch from the list.')
+            raise serializers.ValidationError(tr('Choose a branch from the list.'))
         qs = EmployeeCodeSetting.objects.filter(branch_id=v)
         if self.instance is not None:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
-            raise serializers.ValidationError('This branch already has a numbering rule – edit that one.')
+            raise serializers.ValidationError(tr('This branch already has a numbering rule – edit that one.'))
         return v
 
     def validate_prefix(self, v):
         import re
         v = (v or '').strip()
         if v and not re.fullmatch(r'[A-Za-z0-9\-_/]{1,20}', v):
-            raise serializers.ValidationError('Use up to 20 letters, digits, - _ or /.')
+            raise serializers.ValidationError(tr('Use up to 20 letters, digits, - _ or /.'))
         return v
 
     def validate_padding(self, v):
         if v is None or not 1 <= int(v) <= 10:
-            raise serializers.ValidationError('Use 1 to 10 digits.')
+            raise serializers.ValidationError(tr('Use 1 to 10 digits.'))
         return v
 
     def validate_next_number(self, v):
         if v is None or int(v) < 1:
-            raise serializers.ValidationError('The next number must be 1 or more.')
+            raise serializers.ValidationError(tr('The next number must be 1 or more.'))
         return v
 
     def validate(self, attrs):
         if 'branch_id' not in attrs and self.instance is None:
             if EmployeeCodeSetting.objects.filter(branch_id__isnull=True).exists():
-                raise serializers.ValidationError({'branch_id': 'The company default already exists – edit it, or choose a branch.'})
+                raise serializers.ValidationError({'branch_id': tr('The company default already exists – edit it, or choose a branch.')})
         return attrs

@@ -13,6 +13,7 @@ import logging
 from django.apps import apps
 from django.db.models import ManyToManyField, Q
 from rest_framework import serializers
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +150,7 @@ def check(serializer, attrs):
                 continue
         where = find_duplicate(model, field, value, scope, branch_value, inst)
         if where is not None:
-            errors[field] = [f'{_label(model, field)} “{value.strip()}” already exists{where}.']
+            errors[field] = [tr('{0} “{1}” already exists{2}.', _label(model, field), value.strip(), where)]
     if errors:
         raise serializers.ValidationError(errors)
 

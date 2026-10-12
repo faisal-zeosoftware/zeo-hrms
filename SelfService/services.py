@@ -12,6 +12,7 @@ from AccessControl.ess_guard import HIDDEN, HR, REQUEST, SELF, policy_map
 
 from . import profile as P
 from .models import ChangeRequestAttachment, EssFieldPolicy, ProfileChangeRequest
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -71,7 +72,7 @@ def users_with(branch_id, codes, exclude=()):
     from tenant_users.tenants.models import UserTenantPermissions
     from OrganisationManager.models import UserBranchAccess
     out, admins = [], []
-    for utp in UserTenantPermissions.objects.select_related('profile').prefetch_related('groups__permissions'):
+    for utp in _company_perms().select_related('profile').prefetch_related('groups__permissions'):
         u = utp.profile
         if not u or not u.is_active or u.pk in exclude:
             continue
@@ -91,6 +92,11 @@ def users_with(branch_id, codes, exclude=()):
 
 
 def notify(user=None, employee=None, title='', message=''):
+    try:  # v1.15.0: in the reader's language
+        from Translations.i18n import for_reader
+        title, message = for_reader(title, user, employee), for_reader(message, user, employee)
+    except Exception:
+        pass
     try:
         from zeo.module_helpers import notify as _n
         _n(user=user, employee=employee, title=title[:100], message=message, notification_type='general')
@@ -152,13 +158,13 @@ def save_policies(rows, user):
     for r in rows:
         g, f, p = r.get('group'), r.get('field') or '', r.get('policy')
         if (g, f) not in known:
-            errors.append(f'{g}.{f}: unknown field.')
+            errors.append(tr('{0}.{1}: unknown field.', g, f))
             continue
         if p not in POLICIES:
-            errors.append(f'{g}.{f}: choose self, request, hr or hidden.')
+            errors.append(tr('{0}.{1}: choose self, request, hr or hidden.', g, f))
             continue
         if ((g, f) in LOCKED or (P.GROUP.get(g) or {}).get('read_only')) and p in (SELF, REQUEST):
-            errors.append(f'{g}.{f}: this field is kept by HR – it can only be "hr" or "hidden".')
+            errors.append(tr('{0}.{1}: this field is kept by HR – it can only be "hr" or "hidden".', g, f))
             continue
         default = DEFAULT_POLICY.get((g, f), DEFAULT_POLICY.get((g, ''), HR) if f else HR)
         if p == default:
@@ -183,24 +189,24 @@ def submit_change(request, emp, group, action, record_id, data, reason='', files
     """Employee proposes a change. Fields with policy self are applied at once; request fields create a change request;
     hr / hidden fields are refused. Returns {'applied': [...], 'request': ProfileChangeRequest|None}."""
     if group not in P.EDITABLE_GROUPS or not P.group_available(group):
-        raise ValidationError({'group': 'This part of your profile cannot be changed from self service.'})
+        raise ValidationError({'group': tr('This part of your profile cannot be changed from self service.')})
     if action not in ('create', 'update', 'delete'):
-        raise ValidationError({'action': 'Choose create, update or delete.'})
+        raise ValidationError({'action': tr('Choose create, update or delete.')})
     pm = policy_map()
     if group in ('personal', 'contact', 'address', 'identity'):
         if action != 'update':
-            raise ValidationError({'action': 'These details can only be changed, not added or removed.'})
+            raise ValidationError({'action': tr('These details can only be changed, not added or removed.')})
         record_id = None
     kind = (data or {}).get('kind') if group == 'skills' else None
     if action in ('update', 'delete') and group in P.RECORD_GROUPS:
         if not record_id or P.get_record(emp, group, record_id, kind) is None:
-            raise ValidationError({'record_id': 'This record was not found in your profile.'})
+            raise ValidationError({'record_id': tr('This record was not found in your profile.')})
     clean = _clean_data(group, data)
     if action == 'update' and group != 'skills':
         cur = P.old_values(emp, group, record_id, list(clean.keys()), kind)
         clean = {k: v for k, v in clean.items() if not _same(cur.get(k, None), v) or hasattr(v, 'read')}
     if action != 'delete' and not clean and not files:
-        raise ValidationError({'data': 'Nothing was changed.'})
+        raise ValidationError({'data': tr('Nothing was changed.')})
 
     direct, needs, refused = {}, {}, []
     if action in ('create', 'delete'):
@@ -229,7 +235,7 @@ def submit_change(request, emp, group, action, record_id, data, reason='', files
                 refused.append(k)
     if refused:
         names = ', '.join(refused)
-        raise ValidationError({'policy': f'These details are kept by HR and cannot be changed here: {names}. Ask HR if something is wrong.'})
+        raise ValidationError({'policy': tr('These details are kept by HR and cannot be changed here: {0}. Ask HR if something is wrong.', names)})
     if group == 'skills' and action == 'update':
         if set(direct) == {'kind'}:
             direct = {}
@@ -238,7 +244,7 @@ def submit_change(request, emp, group, action, record_id, data, reason='', files
     if files and not needs and action != 'delete':
         needs, direct = {**direct, **needs}, {}  # a new file (e.g. passport copy) is always checked by HR
     if action == 'update' and group in ('personal', 'contact', 'address', 'identity') and not needs and not direct:
-        raise ValidationError({'data': 'Nothing was changed.'})
+        raise ValidationError({'data': tr('Nothing was changed.')})
 
     applied, req = [], None
     user = request.user
@@ -263,10 +269,10 @@ def submit_change(request, emp, group, action, record_id, data, reason='', files
         except ValidationError:
             raise
         if action == 'update' and record_id is None and group in P.RECORD_GROUPS:
-            raise ValidationError({'record_id': 'Choose the record to change.'})
+            raise ValidationError({'record_id': tr('Choose the record to change.')})
         dup = ProfileChangeRequest.objects.filter(employee_id=emp.pk, group=group, record_id=record_id, action=action, status='pending')
         if action != 'create' and dup.exists():
-            raise ValidationError({'request': f'You already have a pending request ({dup.first().number}) for this – wait for HR or withdraw it first.'})
+            raise ValidationError({'request': tr('You already have a pending request ({0}) for this – wait for HR or withdraw it first.', dup.first().number)})
         with transaction.atomic():
             req = ProfileChangeRequest.objects.create(
                 number=next_number(ProfileChangeRequest, 'PCR'), employee_id=emp.pk, branch_id=emp.emp_branch_id_id, group=group,
@@ -276,8 +282,8 @@ def submit_change(request, emp, group, action, record_id, data, reason='', files
                 ChangeRequestAttachment.objects.create(request=req, file=f, name=getattr(f, 'name', '')[:200], uploaded_by_id=user.pk)
         chatter(req, f'Change request {req.number} created: {req.get_action_display().lower()} {P.GROUP[group]["label"].lower()}.', user)
         for u in users_with(emp.emp_branch_id_id, CR_HR, exclude=(user.pk,)):
-            notify(user=u, title='Profile change to review',
-                   message=f'{P.person(emp)} asked to {req.get_action_display().lower()} {P.GROUP[group]["label"].lower()} ({req.number}).')
+            notify(user=u, title=tmsg('Profile change to review'),
+                   message=tmsg('{0} asked to {1} {2} ({3}).', P.person(emp), req.get_action_display().lower(), P.GROUP[group]["label"].lower(), req.number))
     return {'applied': applied, 'record_id': record_id, 'request': req}
 
 
@@ -295,21 +301,21 @@ def _same(a, b):
 
 def decide_change(request, req, approve, note=''):
     if req.status != 'pending':
-        raise ValidationError({'status': f'This request is already {req.get_status_display().lower()}.'})
+        raise ValidationError({'status': tr('This request is already {0}.', req.get_status_display().lower())})
     emp = employee(req.employee_id)
     if emp is None:
-        raise ValidationError({'employee': 'The employee no longer exists.'})
+        raise ValidationError({'employee': tr('The employee no longer exists.')})
     if emp.users_id == request.user.pk:
-        raise ValidationError({'status': 'You cannot approve or reject your own change request.'})
+        raise ValidationError({'status': tr('You cannot approve or reject your own change request.')})
     if not approve and not (note or '').strip():
-        raise ValidationError({'decision_note': 'Give the reason for rejecting, so the employee knows what to fix.'})
+        raise ValidationError({'decision_note': tr('Give the reason for rejecting, so the employee knows what to fix.')})
     req.decided_by_id, req.decided_at, req.decision_note = request.user.pk, timezone.now(), (note or '')[:500]
     if not approve:
         req.status = 'rejected'
         req.save()
         chatter(req, f'Rejected by {uname(request.user.pk)}: {req.decision_note}', request.user)
-        notify(employee=emp, title='Profile change rejected',
-               message=f'HR rejected your change request {req.number} ({P.GROUP[req.group]["label"]}): {req.decision_note}')
+        notify(employee=emp, title=tmsg('Profile change rejected'),
+               message=tmsg('HR rejected your change request {0} ({1}): {2}', req.number, P.GROUP[req.group]["label"], req.decision_note))
         return req
     data = dict(req.new_values or {})
     att = req.attachments.first()
@@ -327,9 +333,9 @@ def decide_change(request, req, approve, note=''):
         req.status = 'pending'
         req.decided_by_id = req.decided_at = None
         detail = exc.message_dict if hasattr(exc, 'message_dict') else {'__all__': exc.messages}
-        raise ValidationError({'apply': 'The change could not be saved: ' + '; '.join(f'{k}: {" ".join(v) if isinstance(v, list) else v}' for k, v in detail.items())})
+        raise ValidationError({'apply': tr('The change could not be saved: ') + '; '.join(f'{k}: {" ".join(v) if isinstance(v, list) else v}' for k, v in detail.items())})
     chatter(req, f'Approved by {uname(request.user.pk)} and saved to the profile.' + (f' Note: {req.decision_note}' if req.decision_note else ''), request.user)
-    notify(employee=emp, title='Profile change approved', message=f'HR approved your change request {req.number} ({P.GROUP[req.group]["label"]}).')
+    notify(employee=emp, title=tmsg('Profile change approved'), message=tmsg('HR approved your change request {0} ({1}).', req.number, P.GROUP[req.group]["label"]))
     return req
 
 
@@ -456,3 +462,9 @@ def _unacked_policies(request, emp):
     except Exception:
         log.debug('policy count skipped', exc_info=True)
         return 0
+
+
+
+def _company_perms():   # v1.22.0: only the users of the open company (see AccessControl.access.company_perms)
+    from AccessControl.access import company_perms
+    return company_perms()

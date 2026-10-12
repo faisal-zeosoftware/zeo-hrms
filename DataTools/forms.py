@@ -28,6 +28,7 @@ from django.db.models.signals import pre_save, post_delete
 from rest_framework import serializers
 
 from .fieldrules import RULE_KEYS, clean_rules, is_empty, show_if_ok, visible_on
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ def set_mandatory(key, name, flag, user=None, old_name=None):
     row.save()
 
 
-LAYOUT_KEYS = ('order', 'section', 'help_text', 'placeholder')
+LAYOUT_KEYS = ('order', 'section', 'help_text', 'placeholder')   # v1.16.0: the example lives in rules['example']
 
 
 def _layout_map(key):
@@ -253,7 +254,7 @@ def check_row(V, name, value, parent=None, request=None, current=None, row_pk=No
     D, key = _vals[V]
     d = _definition_for(D, name)
     if d is None:
-        raise serializers.ValidationError({'emp_custom_field': [f'There is no custom field called “{name}”. Add it in the form designer first.']})
+        raise serializers.ValidationError({'emp_custom_field': [tr('There is no custom field called “{0}”. Add it in the form designer first.', name)]})
     meta = field_meta(key).get(d.emp_custom_field, {})
     rules = meta.get('rules') or {}
     others = dict(current or {})
@@ -262,13 +263,25 @@ def check_row(V, name, value, parent=None, request=None, current=None, row_pk=No
         others = {n: v for n, v in V.objects.filter(**{fk: parent}).exclude(pk=row_pk).values_list('emp_custom_field', 'field_value')}
     others[d.emp_custom_field] = value
     shown = show_if_ok(rules, others)
+    if meta.get('alias_of'):
+        # v1.16.0: merged into a built-in field – the old value may be sent back unchanged, a new one goes to the built-in field
+        old = None
+        if parent is not None:
+            old = V.objects.filter(**{_fk[V]: parent, 'emp_custom_field': d.emp_custom_field}).values_list('field_value', flat=True).first()
+        try:
+            new = typed_value(d, value, rules, False)
+        except serializers.ValidationError:
+            new = value
+        if (new or None) != (old or None) and not is_empty(value):
+            raise serializers.ValidationError({'field_value': [tr('{0} is now kept in the built-in field “{1}”. Enter the value there.', d.emp_custom_field, meta.get('alias_label') or '')]})
+        return d.emp_custom_field, old
     if _request_is_ess(request) and (rules.get('ess_read_only') or not visible_on(rules, 'ess')):   # read-only / hidden in self service
         old = None
         if parent is not None:
             old = V.objects.filter(**{_fk[V]: parent, 'emp_custom_field': d.emp_custom_field}).values_list('field_value', flat=True).first()
         new = typed_value(d, value, rules, False)
         if (new or None) != (old or None):
-            raise serializers.ValidationError({'field_value': [f'{d.emp_custom_field} is kept up to date by HR; you cannot change it.']})
+            raise serializers.ValidationError({'field_value': [tr('{0} is kept up to date by HR; you cannot change it.', d.emp_custom_field)]})
     return d.emp_custom_field, typed_value(d, value, rules, bool(meta.get('mandatory')) and shown)
 
 
@@ -323,7 +336,7 @@ def save_model_value(instance, super_save, *args, **kwargs):
     fk = _fk[V]
     if not instance.emp_custom_field:
         from django.core.exceptions import ValidationError as DjangoValidationError
-        raise DjangoValidationError({'emp_custom_field': ['Choose the custom field.']})
+        raise DjangoValidationError({'emp_custom_field': [tr('Choose the custom field.')]})
     instance.full_clean()
     existing = V.objects.filter(emp_custom_field=instance.emp_custom_field, **{fk: getattr(instance, fk + '_id')}).exclude(pk=instance.pk).first()
     if existing is not None and not instance.pk:
@@ -351,12 +364,17 @@ def _check_definition(serializer, D, attrs):
     if 'emp_custom_field' in attrs:
         name = str(attrs.get('emp_custom_field') or '').strip()
         if not name:
-            raise serializers.ValidationError({'emp_custom_field': ['Give the field a name.']})
+            raise serializers.ValidationError({'emp_custom_field': [tr('Give the field a name.')]})
         dup = D.objects.filter(emp_custom_field__iexact=name)
         if inst is not None:
             dup = dup.exclude(pk=inst.pk)
         if dup.exists():
-            raise serializers.ValidationError({'emp_custom_field': [f'A field called “{name}” already exists on this form.']})
+            raise serializers.ValidationError({'emp_custom_field': [tr('A field called “{0}” already exists on this form.', name)]})
+        # v1.16.0: one designer per form – not a second copy of a built-in field or of a generic extra field
+        from .onedesign import check_new_custom_field
+        msg = check_new_custom_field(key, name, exclude_name=getattr(inst, 'emp_custom_field', None))
+        if msg:
+            raise serializers.ValidationError({'emp_custom_field': [msg]})
         attrs['emp_custom_field'] = name
     t = attrs.get('data_type', getattr(inst, 'data_type', None)) or 'text'
     if inst is None and not attrs.get('data_type'):
@@ -372,9 +390,9 @@ def _check_definition(serializer, D, attrs):
             opts = [o.strip() for o in opts.split(',')]
         opts = [str(o).strip() for o in (opts or []) if str(o).strip()]
         if not opts:
-            raise serializers.ValidationError({src: ['Add at least one option.']})
+            raise serializers.ValidationError({src: [tr('Add at least one option.')]})
         if len({o.lower() for o in opts}) != len(opts):
-            raise serializers.ValidationError({src: ['Options must be different from each other.']})
+            raise serializers.ValidationError({src: [tr('Options must be different from each other.')]})
         attrs[src] = opts
     raw = _raw(serializer)
     cur = {}
@@ -388,7 +406,7 @@ def _check_definition(serializer, D, attrs):
         try:
             typed_value(_Probe(attrs, inst, t), dv, rules, False)
         except serializers.ValidationError as e:
-            raise serializers.ValidationError({'default': [f'Default value – {_msg(e)}']})
+            raise serializers.ValidationError({'default': [tr('Default value – {0}', _msg(e))]})
     # a new type / fewer options / new rules: the stored values that would no longer fit
     if inst is not None and str(raw.get('confirm')).lower() not in ('true', '1', 'yes'):
         probe = _Probe(attrs, inst, t)
@@ -403,8 +421,7 @@ def _check_definition(serializer, D, attrs):
                     bad.append({'value_id': pk, 'value': val, 'error': _msg(e)})
             if bad:
                 raise serializers.ValidationError({
-                    'confirm': [f'{len(bad)} record(s) have a value that does not fit the changed field. Send confirm=true to keep the change; '
-                                f'those values stay as they are until the records are edited.'],
+                    'confirm': [tr('{0} record(s) have a value that does not fit the changed field. Send confirm=true to keep the change; those values stay as they are until the records are edited.', len(bad))],
                     'affected': bad[:200]})
     serializer._zeo_rules = rules
 
@@ -432,7 +449,7 @@ def _check_value_row(serializer, V, attrs):
     fk = _fk[V]
     name = attrs.get('emp_custom_field', getattr(inst, 'emp_custom_field', None))
     if not str(name or '').strip():
-        raise serializers.ValidationError({'emp_custom_field': ['Choose the custom field.']})
+        raise serializers.ValidationError({'emp_custom_field': [tr('Choose the custom field.')]})
     parent = attrs.get(fk, getattr(inst, fk, None) if inst is not None else None)
     value = attrs.get('field_value', getattr(inst, 'field_value', None) if inst is not None else None)
     exact, val = check_row(V, name, value, parent=parent, request=_req(serializer), row_pk=getattr(inst, 'pk', None))
@@ -448,11 +465,11 @@ def _parse_custom(raw):
         try:
             cf = json.loads(cf)
         except ValueError:
-            raise serializers.ValidationError({'custom_fields': ['Send the custom fields as {"Field name": value}.']})
+            raise serializers.ValidationError({'custom_fields': [tr('Send the custom fields as {"Field name": value}.')]})
     if isinstance(cf, list):
         cf = {str(x.get('emp_custom_field')): x.get('field_value') for x in cf if isinstance(x, dict) and x.get('emp_custom_field')}
     if not isinstance(cf, dict):
-        raise serializers.ValidationError({'custom_fields': ['Send the custom fields as {"Field name": value}.']})
+        raise serializers.ValidationError({'custom_fields': [tr('Send the custom fields as {"Field name": value}.')]})
     return cf
 
 
@@ -470,7 +487,7 @@ def _check_employee(serializer, attrs):
         if create or col in attrs:
             v = attrs.get(col)
             if v is None or (isinstance(v, str) and not v.strip()):
-                errors[col] = [f'{data.get(label_key) or label} is required.']
+                errors[col] = [tr('{0} is required.', data.get(label_key) or label)]
     cf = _parse_custom(_raw(serializer))
     if cf is not None:
         D, V, fk = models_for('employee')
@@ -497,6 +514,8 @@ def _check_employee(serializer, attrs):
         req = _req(serializer)
         for n, d in defs.items():
             m = meta.get(n, {})
+            if m.get('alias_of'):
+                continue   # v1.16.0: merged into a built-in field – hidden on the form, its old value is left as it is
             rules = m.get('rules') or {}
             shown = show_if_ok(rules, current) and (visible_on(rules, 'create') if create else visible_on(rules, 'edit'))
             if n not in given:
@@ -588,7 +607,11 @@ def add_mandatory(serializer, instance, rep):
         rep['section'] = lay.get('section', '')
         rep['help_text'] = lay.get('help_text', '')
         rep['placeholder'] = lay.get('placeholder', '')
+        if lay.get('alias_of'):   # v1.16.0: merged into a built-in field (hidden on every form)
+            rep['alias_of'] = lay['alias_of']
+            rep['alias_label'] = lay.get('alias_label', '')
         rules = lay.get('rules') or {}
+        rep['example'] = rules.get('example', '')
         rep['rules'] = rules
         rep['default'] = rules.get('default', '')
         rep['options'] = (instance.dropdown_values or instance.radio_values or []) if (instance.data_type or 'text') in OPTION_TYPES else []

@@ -22,6 +22,12 @@ from rest_framework.views import APIView
 
 from . import reports as R
 
+try:  # v1.15.0 language packs: tile captions in the request language (English when the app is missing)
+    from Translations.i18n import tr
+except ImportError:  # pragma: no cover
+    def tr(text, *args, lang=None, **kw):
+        return text.format(*args, **kw) if (args or kw) else text
+
 logger = logging.getLogger(__name__)
 CEO_CODE = 'view_ceo_dashboard'
 
@@ -62,13 +68,20 @@ def ceo_summary(request):
     c = ctx(request)
     run = R.Run(request, {'period': None})
     today = run.today
-    d_to = min(run.date_to or today, today)
+    # v1.16.0: the dashboard period (?period= or ?from=&to=, default this month); the trend charts end with the period
+    from .period import resolve, label as p_label
+    from django.utils import timezone as _tz
+    d_from, d_to_p, preset = resolve(request.query_params, _tz.localdate())
+    d_to = min(d_to_p, today) if d_from <= today else d_to_p
     m_end = d_to.replace(day=1)
     months12 = R._months((m_end - timedelta(days=330)).replace(day=1), d_to)[-12:]
-    months6 = months12[-6:]
-    d_from = run.date_from or months12[0]
+    months6 = months12[-6:] if len(R._months(d_from, d_to)) <= 6 else R._months(d_from, d_to)[-24:]
+    p_months = R._months(d_from, d_to)
     span = {'from': d_from, 'to': d_to}
-    out = {'period': span, 'generated': today, 'tiles': [], 'sections': {}}
+    only = request.query_params.get('card') or None
+    plabel = p_label(d_from, d_to_p, today)
+    # v1.17.0 (audit L5): the period as asked (e.g. 1–31 Oct); figures are counted up to today
+    out = {'period': dict(span, to=d_to_p, counted_to=d_to, preset=preset, label=plabel), 'generated': today, 'tiles': [], 'sections': {}}
     Branch = _m('OrganisationManager.brnch_mstr')
     bq = Branch.objects.filter(br_is_active=True) if Branch else []
     if c.branches is not None and Branch:
@@ -77,6 +90,8 @@ def ceo_summary(request):
     out['branch'] = run.branches
 
     def safe(name, fn):
+        if only and only != name:
+            return
         try:
             fn()
         except Exception:
@@ -104,25 +119,38 @@ def ceo_summary(request):
             'by_branch': [{'label': k, 'value': v, 'drill': _drill('employees', {'branch': k, 'status': 'Active'})} for k, v in sorted(by_b.items(), key=lambda x: -x[1])],
             'by_department': [{'label': k, 'value': v, 'drill': _drill('employees', {'department': k, 'status': 'Active'})} for k, v in sorted(by_d.items(), key=lambda x: -x[1])],
             'trend': [{'label': t['month'], 'headcount': t['closing'], 'joined': t['joined'], 'left': t['left'], 'attrition': t['turnover'],
-                       'drill': _drill('joiners-leavers', None, m0, R.month_end(m0))} for t, m0 in zip(trend, months12)],
+                       'drill': _drill('joiners-leavers', None, m0, R.month_end(m0)),
+                       # v1.17.0 (audit M4): a headcount point opens the people employed at that month end (= the value)
+                       'drill_head': _drill('headcount-asof', None, m0, R.month_end(m0))}
+                      for t, m0 in zip(trend, months12)],
+            'drill_trend': R.drill('turnover-trend', None, **{'from': months12[0], 'to': R.month_end(months12[-1])}),   # the 12 months shown
             'joined': joined, 'exits': exits, 'attrition_12m': attr, 'left_12m': left_12, 'avg_headcount_12m': round(avg_12, 1),
             'nationals': sum(1 for e in emps if R.is_national(e)),
         }
-        prev_head = trend[-2]['closing'] if len(trend) > 1 else None
+        # v1.17.0: current headcount and the joiners / leavers of the period live on HR operations (one home per figure);
+        # Management keeps the 12-month trend, attrition and the nationals share.
+        nat = out['sections']['people']['nationals']
+        # v1.17.0 (audit L5): the sparkline is the 12-month attrition up to each month (its last point = the tile)
+        spark, cl, ca = [], 0, 0.0
+        for i, t in enumerate(trend):
+            cl += t['left']; ca += t['average']
+            spark.append(round(100 * cl / (ca / (i + 1)), 2) if ca else 0)
         out['tiles'] += [
-            {'key': 'headcount', 'label': 'Employees', 'value': head, 'unit': '', 'delta': _pct_delta(head, prev_head), 'delta_label': 'vs last month',
-             'spark': [t['closing'] for t in trend], 'drill': _drill('headcount', None, d_from, d_to)},
-            {'key': 'movement', 'label': 'Joiners / exits', 'value': f'{joined} / {exits}', 'unit': '', 'note': 'in the period',
-             'spark': [t['joined'] - t['left'] for t in trend], 'drill': _drill('joiners-leavers', None, d_from, d_to)},
-            {'key': 'attrition', 'label': 'Attrition (12 months)', 'value': attr, 'unit': '%', 'note': f'{left_12} leavers / avg {avg_12:.0f}', 'tone': 'bad' if attr > 15 else '',
-             'spark': [t['turnover'] for t in trend], 'drill': R.drill('turnover-trend', None, **{'from': months12[0], 'to': R.month_end(months12[-1])})},
+            {'key': 'attrition', 'label': tr('Attrition (12 months)'), 'value': attr, 'unit': '%',
+             'note': tr('{0} leaver / average headcount {1}' if left_12 == 1 else '{0} leavers / average headcount {1}', left_12, f'{avg_12:.0f}'),
+             'tone': 'bad' if attr > 15 else '', 'spark': spark, 'drill': R.drill('turnover-trend', None, **{'from': months12[0], 'to': R.month_end(months12[-1])}),
+             'timed': True, 'section': 'people'},
+            {'key': 'nationals', 'label': 'Emiratisation', 'value': round(100 * nat / head, 1) if head else 0, 'unit': '%', 'country': 'nationals_reports',
+             'note': tr('{0} of {1} employees', nat, head), 'note_zc': True, 'timed': False, 'section': 'people', 'nationals': nat,
+             # v1.17.0 (audit M5): opens the nationals themselves (count = the "{0}" of the note)
+             'drill': _drill('headcount-asof', {'national': 'Yes'}, today, today), 'measure': {'sum': None, 'field': 'nationals', 'count': True}},
         ]
     safe('people', people)
 
     # ---- payroll & labour cost (6 months)
     def pay():
         w = _window(run, months6[0], R.month_end(months6[-1]))
-        slips = R._payslips(w, components=True)
+        slips = [p for p in R._payslips(w, components=True) if p.payroll_run.status != 'pending']   # v1.15.1: processed runs only
         sb = R.basic_by_employee(list({p.employee_id for p in slips}))
         per = defaultdict(lambda: defaultdict(float))
         ot_paid = defaultdict(float)
@@ -144,31 +172,66 @@ def ceo_summary(request):
                    'drill': _drill('payroll-cost', None, m, R.month_end(m))} for m in months6]
         paid = [m for m in months if m['people']]
         last = paid[-1] if paid else None
-        prev = paid[-2] if len(paid) > 1 else None
+        in_p = [m for m in months if m['people'] and d_from.replace(day=1) <= m['month'] <= d_to]
+        if not in_p:   # months outside the trend window: read the period itself
+            wp = _window(run, d_from, d_to)
+            in_p = []
+            for p in R._payslips(wp, components=True):
+                if p.payroll_run.status == 'pending':
+                    continue
+                ec = R.employer_cost(p, 0)
+                in_p.append({'gross': ec['gross'], 'net': R.money(p.net_salary), 'cost': ec['cost'], 'people': 1})
+        pg = round(sum(m['gross'] for m in in_p), 2)
+        pn = round(sum(m['net'] for m in in_p), 2)
+        pc = round(sum(m['cost'] for m in in_p), 2)
+        ppl = sum(m['people'] for m in in_p)
+        per_emp = round(pc / ppl, 2) if ppl else 0
+        prev = None
+        if in_p and 'month' in in_p[0]:
+            first = in_p[0]['month']
+            prev = next((m for m in reversed(months) if m['people'] and m['month'] < first), None)
         all_emps = [e.id for e in emps]
         basic = R.basic_by_employee(all_emps)
-        grat_total = sum(R.gratuity_uae(R.years_between(e.emp_joined_date, today) or 0, basic.get(e.id, 0))[1] for e in emps)
+        grat_total = sum(R.gratuity_for(e, R.years_between(e.emp_joined_date, today) or 0, basic.get(e.id, 0))[1] for e in emps)
         bal = defaultdict(float)
-        for b in apps.get_model('calendars', 'emp_leave_balance').objects.filter(employee_id__in=all_emps, leave_type__leave_category='annual').values('employee_id', 'balance'):
-            bal[b['employee_id']] += float(b['balance'] or 0)
+        for b_ in apps.get_model('calendars', 'emp_leave_balance').objects.filter(employee_id__in=all_emps, leave_type__leave_category='annual').values('employee_id', 'balance'):
+            bal[b_['employee_id']] += float(b_['balance'] or 0)
         leave_liab = sum(basic.get(i, 0) * 12 / 365 * bal.get(i, 0) for i in all_emps)
         out['sections']['payroll'] = {'months': [dict(m, month=None) for m in months]}
         out['sections']['labour_cost'] = {'latest': dict(last, month=None) if last else None, 'gratuity_liability': round(grat_total, 2),
                                           'leave_liability': round(leave_liab, 2), 'per_employee': last['per_employee'] if last else 0,
                                           'drill_gratuity': _drill('gratuity'), 'drill_leave': _drill('leave-liability')}
         out['_ot_paid'] = ot_paid
+        done = {'run_status': 'Processed|Approved|Paid'}
+        n_m = len(in_p) if in_p and 'month' in in_p[0] else 1
         out['tiles'] += [
-            {'key': 'payroll', 'label': f"Payroll {last['label']}" if last else 'Payroll', 'value': last['gross'] if last else 0, 'unit': 'AED', 'money': True,
-             'note': f"net AED {last['net']:,.0f}" if last else 'no payroll yet', 'delta': _pct_delta(last['gross'], prev['gross']) if last and prev else None,
-             'delta_label': 'vs previous month', 'spark': [m['gross'] for m in months],
-             'drill': _drill('payroll-register', None, last['month'] if last else months6[0], R.month_end(last['month']) if last else d_to)},
-            {'key': 'labour_cost', 'label': 'Labour cost (monthly)', 'value': last['cost'] if last else 0, 'unit': 'AED', 'money': True,
-             'note': f"AED {last['per_employee']:,.0f} per employee" if last else '', 'delta': _pct_delta(last['cost'], prev['cost']) if last and prev else None,
-             'delta_label': 'vs previous month', 'spark': [m['cost'] for m in months],
-             'drill': _drill('payroll-cost', None, last['month'] if last else months6[0], R.month_end(last['month']) if last else d_to)},
-            {'key': 'liabilities', 'label': 'Gratuity + leave liability', 'value': round(grat_total + leave_liab, 2), 'unit': 'AED', 'money': True,
-             'note': f'gratuity {grat_total:,.0f} · leave {leave_liab:,.0f}', 'drill': _drill('gratuity')},
+            {'key': 'payroll', 'label': tr('Payroll (gross)'), 'value': pg, 'unit': 'AED', 'money': True, 'timed': True, 'section': 'payroll',
+             'note': tr('net {0} {1}', 'AED', f"{pn:,.0f}") if ppl else tr('no payroll in the period'),
+             'delta': _pct_delta(pg / n_m, prev['gross']) if prev and ppl else None, 'delta_label': tr('vs previous month'), 'spark': [m['gross'] for m in months],
+             'drill': _drill('payroll-register', done, d_from, d_to), 'measure': {'sum': 'gross'}},
+            {'key': 'labour_cost', 'label': tr('Labour cost'), 'value': pc, 'unit': 'AED', 'money': True, 'timed': True, 'section': 'payroll',
+             'note': tr('{0} {1} per employee', 'AED', f"{per_emp:,.0f}") if ppl else '',   # v1.17.0 (audit L5): same words as the chart
+             'delta': _pct_delta(pc / n_m, prev['cost']) if prev and ppl else None, 'delta_label': tr('vs previous month'), 'spark': [m['cost'] for m in months],
+             'drill': _drill('payroll-cost', done, d_from, d_to), 'measure': {'sum': 'cost'}},
+            {'key': 'liabilities', 'label': tr('Gratuity + leave liability'), 'value': round(grat_total + leave_liab, 2), 'unit': 'AED', 'money': True,
+             'note': tr('gratuity {0} · leave {1}', f'{grat_total:,.0f}', f'{leave_liab:,.0f}'), 'drill': _drill('gratuity'), 'timed': False, 'section': 'payroll',
+             'parts_money': [{'key': 'gratuity', 'value': round(grat_total, 2), 'drill': _drill('gratuity'), 'measure': {'sum': 'amount'}},   # v1.17.0
+                             {'key': 'leave', 'value': round(leave_liab, 2), 'drill': _drill('leave-liability'), 'measure': {'sum': 'liability'}}]},
         ]
+        # v1.17.0: labour cost per branch / department of the period – counted from the payroll cost report it opens
+        from .overview import Calc
+        cost_rows = Calc.match(Calc(request).rows('payroll-cost', d_from, d_to), done)
+        by_b, by_d = defaultdict(float), defaultdict(float)
+        for r in cost_rows:
+            by_b[r.get('branch') or ''] += float(r.get('cost') or 0)
+            by_d[r.get('department') or ''] += float(r.get('cost') or 0)
+        out['sections']['cost'] = {
+            'total': round(sum(by_b.values()), 2),
+            'by_branch': [{'label': k, 'value': round(v, 2), 'drill': _drill('payroll-cost', dict(done, branch=k), d_from, d_to), 'measure': {'sum': 'cost'}}
+                          for k, v in sorted(by_b.items(), key=lambda x: -x[1])],
+            'by_department': [{'label': k, 'value': round(v, 2), 'drill': _drill('payroll-cost', dict(done, department=k), d_from, d_to), 'measure': {'sum': 'cost'}}
+                              for k, v in sorted(by_d.items(), key=lambda x: -x[1])],
+        }
     safe('payroll', pay)
 
     # ---- overtime (6 months)
@@ -186,30 +249,67 @@ def ceo_summary(request):
         rows = [{'label': _lbl(m), 'hours': round(agg[m]['hours'], 2), 'cost': round(paid.get(m) or agg[m]['est'], 2), 'estimated': not paid.get(m),
                  'drill': _drill('overtime-pay', None, m, R.month_end(m))} for m in months6]
         out['sections']['overtime'] = {'months': rows}
-        cur = rows[-1]
-        out['tiles'].append({'key': 'overtime', 'label': f"Overtime {cur['label']}", 'value': cur['hours'], 'unit': 'h',
-                             'note': f"AED {cur['cost']:,.0f}{' (estimated)' if cur['estimated'] else ''}", 'delta': _pct_delta(cur['hours'], rows[-2]['hours']),
-                             'delta_label': 'vs previous month', 'spark': [r['hours'] for r in rows], 'drill': cur['drill']})
+        # v1.16.0: the tile is the period (overtime rows dated in it), its drill the overtime list of the period
+        ph, pe = 0.0, 0.0
+        for o in OT.objects.filter(employee_id__in=ids, date__gte=d_from, date__lte=d_to).values('employee_id', 'hours', 'ot_type'):
+            h = float(o['hours'] or 0)
+            ph += h
+            pe += h * R.ot_hourly(basic.get(o['employee_id'], 0)) * R.OT_FACTOR.get(o['ot_type'] or 'NORMAL', 1.25)
+        prev_rows = [r for r, m in zip(rows, months6) if m < d_from.replace(day=1)]
+        # v1.17.0: Management shows the overtime COST (pay due by law, from the overtime pay report the tile opens); hours in the note
+        from .overview import Calc
+        due = round(sum(float(r.get('due') or 0) for r in Calc(request).rows('overtime-pay', d_from, d_to)), 2)
+        out['tiles'].append({'key': 'overtime', 'label': tr('Overtime cost'), 'value': due, 'unit': 'AED', 'money': True, 'timed': True, 'section': 'overtime',
+                             'note': tr('{0} hours · pay due by law', f"{ph:,.1f}"),
+                             'delta': _pct_delta(due, prev_rows[-1]['cost']) if prev_rows and len(p_months) == 1 and prev_rows[-1]['cost'] else None,
+                             'delta_label': tr('vs previous month'), 'spark': [r['cost'] for r in rows], 'drill': _drill('overtime-pay', None, d_from, d_to),
+                             'measure': {'sum': 'due'}})
     safe('overtime', overtime)
+
+    # ---- v1.17.1 (dash171): expense claims approved in the period (from the expense reports list the tile opens)
+    def expenses():
+        ER = _m('ExpenseManagement.ExpenseReport')
+        if ER is None or not ER.objects.filter(status__in=('approved', 'reimbursed'), employee_id__in=run.all_employees.values('id')).exists():
+            return   # no approved expense claims of the user's branches at all: no tile
+        from .overview import Calc
+        f = {'status': 'Approved|Reimbursed'}
+        rows = Calc.match(Calc(request).rows('expense-reports', d_from, d_to), f)
+        total = round(sum(float(r.get('total') or 0) for r in rows), 2)
+        out['tiles'].append({'key': 'expenses', 'label': tr('Expense claims'), 'value': total, 'unit': 'AED', 'money': True, 'timed': True,
+                             'note': tr('{0} reports approved', len(rows)), 'drill': _drill('expense-reports', f, d_from, d_to) if rows else None,
+                             'measure': {'sum': 'total'}})   # a zero with nothing behind it opens nothing
+    safe('expenses', expenses)
 
     # ---- absence (6 months)
     def absence():
-        days = R.day_statuses(emps, months6[0], R.month_end(months6[-1]), today)
+        # v1.16.0: both attendance sources (attendance_data), like the attendance reports
+        from . import attendance_data as AD
+        lo = min(months6[0], d_from)
+        days = AD.days(emps, lo, max(R.month_end(months6[-1]), d_to), today)
         cnt = defaultdict(lambda: defaultdict(int))
+        pc = defaultdict(int)
         for lst in days.values():
             for d in lst:
                 cnt[d['date'].replace(day=1)][d['status']] += 1
+                if d_from <= d['date'] <= d_to:
+                    pc[d['status']] += 1
+
+        def worked(c_):
+            return c_['Present'] + c_['Missing punch'] + c_['Half day'] + c_['Absent'] + c_['Leave']
         rows = []
         for m in months6:
             c_ = cnt[m]
-            working = c_['Present'] + c_['Absent'] + c_['On Leave']
-            rows.append({'label': _lbl(m), 'absent': c_['Absent'], 'leave': c_['On Leave'], 'working': working,
-                         'rate': round(100 * c_['Absent'] / working, 1) if working else 0, 'leave_rate': round(100 * c_['On Leave'] / working, 1) if working else 0,
-                         'drill': _drill('absence', None, m, R.month_end(m))})
+            w = worked(c_)
+            rows.append({'label': _lbl(m), 'absent': c_['Absent'], 'leave': c_['Leave'], 'working': w,
+                         'rate': round(100 * c_['Absent'] / w, 1) if w else 0, 'leave_rate': round(100 * c_['Leave'] / w, 1) if w else 0,
+                         'drill': _drill('attendance-summary', None, m, min(R.month_end(m), today))})
         out['sections']['absence'] = {'months': rows}
-        cur = rows[-1]
-        out['tiles'].append({'key': 'absence', 'label': f"Absence rate {cur['label']}", 'value': cur['rate'], 'unit': '%', 'tone': 'bad' if cur['rate'] > 5 else '',
-                             'note': f"{cur['absent']} absent days · leave {cur['leave_rate']}%", 'spark': [r['rate'] for r in rows], 'drill': cur['drill']})
+        w = worked(pc)
+        rate = round(100 * pc['Absent'] / w, 1) if w else 0
+        out['tiles'].append({'key': 'absence', 'label': tr('Absence rate'), 'value': rate, 'unit': '%', 'tone': 'bad' if rate > 5 else '', 'timed': True,
+                             'section': 'absence', 'absent': pc['Absent'],
+                             'note': tr('{0} absent days · leave {1}%', pc['Absent'], round(100 * pc['Leave'] / w, 1) if w else 0), 'spark': [r['rate'] for r in rows],
+                             'drill': _drill('attendance-summary', None, d_from, d_to), 'measure': {'sum': 'absent', 'field': 'absent'}})
     safe('absence', absence)
 
     # ---- hiring
@@ -228,9 +328,7 @@ def ceo_summary(request):
                'time_to_hire': round(sum(vals) / len(vals), 1) if vals else None,
                'drill_open': R.drill('recruitment', {'open': 'Yes'}), 'drill_hires': R.drill('time-to-hire', None, **span)}
         out['sections']['hiring'] = sec
-        out['tiles'].append({'key': 'hiring', 'label': 'Open positions', 'value': sec['open_positions'], 'unit': '',
-                             'note': f"{sec['offers_out']} offers out · {sec['hires']} hired · {sec['time_to_hire'] if sec['time_to_hire'] is not None else '–'} days to hire",
-                             'drill': sec['drill_open']})
+        # v1.17.0: open positions are on HR operations (recruitment card); Management keeps hires and time to hire
     safe('hiring', hiring)
     out.pop('_ot_paid', None)
     return out
@@ -243,5 +341,16 @@ class CeoDashboardView(APIView):
     def get(self, request):
         from AccessControl.access import ctx
         if not can_view(ctx(request)):
-            return Response({'detail': 'The CEO dashboard is for company admins and users with the CEO dashboard right.'}, status=status.HTTP_403_FORBIDDEN)
-        return Response(ceo_summary(request))
+            return Response({'detail': tr('The CEO dashboard is for company admins and users with the CEO dashboard right.')}, status=status.HTTP_403_FORBIDDEN)
+        data = ceo_summary(request)
+        try:  # v1.14.0: the company currency instead of AED (country packs)
+            from CountryPack.services import swap_currency
+            data = swap_currency(data)
+        except Exception:
+            pass
+        try:  # v1.15.0: names (branch, department), months and drill-down filters in the request language (after the country step)
+            from Translations.reports import localize_ceo
+            data = localize_ceo(data, request)
+        except ImportError:
+            pass
+        return Response(data)

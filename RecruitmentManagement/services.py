@@ -196,9 +196,11 @@ def convert_to_employee(offer, user=None, emp_code=None, require_visa=True):
         emp_joined_date=offer.joining_date, emp_nationality=cand.nationality, emp_reporting_manager=offer.reporting_manager,
         emp_branch_id=offer.branch, emp_dept_id=offer.department, emp_desgntn_id=offer.designation,
         emp_ctgry_id=offer.category, work_location=offer.branch, visa_location=offer.branch,
-        emp_city=cand.current_location)
+        emp_city=cand.current_location,
+        is_ess=True)   # v1.18.0: the new joiner gets a self-service login (temporary password e-mailed) – before, none was made
     emp.save(authenticated_user=user)
     _create_salary_lines(emp, offer, user)
+    _contract_from_offer(emp, offer, user)
     offer.employee = emp
     offer.status = 'joined'
     offer.save(update_fields=['employee', 'status'])
@@ -207,6 +209,26 @@ def convert_to_employee(offer, user=None, emp_code=None, require_visa=True):
     notify(user=offer.reporting_manager, title="New joiner", notification_type='recruitment',
            message=f"{cand.full_name} joins as {offer.position_title} on {offer.joining_date} ({emp.emp_code}).")
     return emp
+
+
+def _contract_from_offer(emp, offer, user):
+    """v1.18.0: the MOHRE labour contract of the offer (limited, N years from the joining date) goes to the employee's UAE
+    identity, so its end date is followed in Documents and visas."""
+    try:
+        from EmployeeProfile import services as EP
+        from datetime import timedelta
+        data = {'mohre_contract_type': offer.contract_type or 'limited', 'mohre_contract_start': offer.joining_date}
+        if (offer.contract_type or 'limited') == 'limited' and offer.contract_years:
+            j = offer.joining_date
+            try:
+                end = j.replace(year=j.year + int(offer.contract_years))
+            except ValueError:   # 29 February
+                end = j.replace(year=j.year + int(offer.contract_years), day=28)
+            data['mohre_contract_end'] = end - timedelta(days=1)
+        EP.save_identity(emp, data, user)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('contract from the offer not saved')
 
 
 def _create_salary_lines(emp, offer, user):

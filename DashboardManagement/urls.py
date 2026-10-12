@@ -5,6 +5,8 @@ from .records import RecordView
 from .reports import ReportEmailView, ReportListView, ReportView
 from .ceo import CeoDashboardView
 from .unified_calendar import CalendarView
+from .layout import LayoutView   # v1.16.0
+from .home import HomeView   # v1.17.0
 from .views import DrillView, Employee360View, EssDashboardView, OverviewView, TeamDashboardView
 
 urlpatterns = [
@@ -17,6 +19,8 @@ urlpatterns = [
     path('api/overview/', OverviewView.as_view(), name='dashboard-overview'),
     path('api/assistant/', AssistantView.as_view(), name='assistant'),
     path('api/record/<str:label>/<int:pk>/', RecordView.as_view(), name='record'),
+    path('api/layout/<str:name>/', LayoutView.as_view(), name='dashboard-layout'),   # v1.16.0
+    path('api/home/', HomeView.as_view(), name='dashboard-home'),   # v1.17.0
     path('api/reports/', ReportListView.as_view(), name='report-list'),
     path('api/reports/<slug:key>/', ReportView.as_view(), name='report-run'),
     path('api/reports/<slug:key>/email/', ReportEmailView.as_view(), name='report-email'),

@@ -63,6 +63,17 @@ def _own(c, parent_model, parent_id):
     return parent_model.objects.filter(pk=parent_id, emp_id=c.emp).exists()
 
 
+def _branch_ok(c, parent_model, parent_id):
+    """v1.22.0 branch rights: the parent record's employee must be in the user's branches (HR users limited by branch)."""
+    if c.admin or c.branches is None or parent_id in (None, '') or not str(parent_id).isdigit():
+        return True
+    path = 'emp_branch_id' if parent_model._meta.model_name == 'emp_master' else 'emp_id__emp_branch_id'
+    rows = parent_model.objects.filter(pk=parent_id)
+    if not rows.exists():
+        return True   # unknown parent: left to the serializer validation
+    return rows.filter(**{f'{path}__in': c.branches}).exists()
+
+
 class CustomFieldValuePermission(permissions.BasePermission):
     message = 'You can only change custom fields of your own record.'
 
@@ -83,6 +94,11 @@ class CustomFieldValuePermission(permissions.BasePermission):
             return True
         c, model, pfield, ok = self._rights(request, view)
         if ok:
+            # v1.22.0 branch rights: HR users limited by branch may only write values of their branches' employees
+            data = request.data if hasattr(request.data, 'get') else {}
+            if pfield and not _branch_ok(c, model._meta.get_field(pfield).related_model, data.get(pfield)):
+                self.message = 'You can only work with your branches.'
+                return False
             return True
         if request.method == 'POST' and pfield:
             parent_model = model._meta.get_field(pfield).related_model
@@ -95,6 +111,13 @@ class CustomFieldValuePermission(permissions.BasePermission):
             return True
         c, model, pfield, ok = self._rights(request, view)
         if ok:
+            # v1.22.0 branch rights: the existing record and a new parent must both be in the user's branches
+            if pfield:
+                parent_model = model._meta.get_field(pfield).related_model
+                data = request.data if hasattr(request.data, 'get') else {}
+                if not (_branch_ok(c, parent_model, getattr(obj, pfield + '_id', None)) and _branch_ok(c, parent_model, data.get(pfield))):
+                    self.message = 'You can only work with your branches.'
+                    return False
             return True
         if not pfield:
             return False

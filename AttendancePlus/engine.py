@@ -21,6 +21,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from . import models as M
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 _local = threading.local()
@@ -89,7 +90,13 @@ SCOPE_RANK = {'employee': 5, 'category': 4, 'department': 3, 'branch': 2, 'compa
 def rule_for(employee):
     """Most specific active rule: employee > category > department > branch > company, then priority."""
     best, best_key = None, None
-    for r in M.AttendanceRule.objects.filter(is_active=True):
+    # v1.16.0 (D15): the active rules are read once per payroll run (PayrollManagement.perf); outside a run as before
+    try:
+        from PayrollManagement.perf import memo
+    except Exception:
+        def memo(key, factory):
+            return factory()
+    for r in memo(('attendance_rules',), lambda: list(M.AttendanceRule.objects.filter(is_active=True))):
         ok = (r.scope == 'company'
               or (r.scope == 'branch' and r.branch_id == employee.emp_branch_id_id)
               or (r.scope == 'department' and r.department_id == employee.emp_dept_id_id)
@@ -140,14 +147,16 @@ def _calendars_shift(employee, day):
     return None
 
 
-def shift_info(employee, day, rule=None):
+def shift_info(employee, day, rule=None, book=None):
     """{'shift_id','name','start','end','break_minutes','off','night_shift','grace_in','grace_out',
-    'min_hours','max_hours','half_day_hours','ot_after_minutes','source'} or None (no shift planned)."""
+    'min_hours','max_hours','half_day_hours','ot_after_minutes','source'} or None (no shift planned).
+    v1.16.0 (D15): `book` = a ShiftPlanner resolver.Book covering the day (book.get == shift_for) – callers that look at many
+    days pass one instead of the resolver building a new book for every day."""
     rule = rule or rule_for(employee)
     res = _resolver()
     if res is not None:
         try:
-            d = res.shift_for(employee, day)
+            d = book.get(employee, day) if book is not None else res.shift_for(employee, day)
         except Exception:
             log.warning('ShiftPlanner resolver failed – using calendars shifts', exc_info=True)
             d = 'fallback'
@@ -207,6 +216,10 @@ def is_off_day(employee, day, shift=None):
         pass
     if shift and shift.get('off'):
         return 'weekly_off', 'Off day (shift plan)'
+    # v1.18.0: a shift planned on the day in a published roster / a day change is a working day, also on a Saturday or Sunday
+    # (hospital rosters rotate the rest days) – the weekend calendar made every rostered weekend shift "weekend overtime"
+    if shift and not shift.get('off') and shift.get('source') in ('roster', 'override'):
+        return None, ''
     res = _resolver()
     if res is not None and shift is None:
         try:
@@ -751,7 +764,7 @@ def add_punch(employee, ts=None, kind='auto', source='web', *, device=None, kios
         if rule.min_minutes_between_punches and source not in ('device', 'import', 'correction'):
             last = M.Punch.objects.filter(employee_id=employee.id, is_void=False).order_by('-ts').first()
             if last and abs((ts - last.ts).total_seconds()) < rule.min_minutes_between_punches * 60 and kind in ('auto', last.kind):
-                raise PunchError(f'You punched less than {rule.min_minutes_between_punches} minute(s) ago. Wait a moment and try again.')
+                raise PunchError(tr('You punched less than {0} minute(s) ago. Wait a moment and try again.', rule.min_minutes_between_punches))
     day = work_date_for(employee, ts, rule)
     if kind == 'auto' and source not in ('device', 'import'):
         kind = next_kind(employee.id, day)
@@ -808,8 +821,8 @@ def notify_missing_punches():
             continue
         try:
             from zeo.module_helpers import notify
-            notify(employee=e, title='Missing punch – please request a correction',
-                   message=f'You have a clock-in without a clock-out on {d.date:%d %b %Y}. Open My attendance and request a correction.',
+            notify(employee=e, title=tmsg('Missing punch – please request a correction'),
+                   message=tmsg('You have a clock-in without a clock-out on {0:%d %b %Y}. Open My attendance and request a correction.', d.date),
                    notification_type='attendance')
         except Exception:
             pass

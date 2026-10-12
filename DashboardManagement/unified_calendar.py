@@ -299,7 +299,9 @@ class Cal:
             if self.in_range(e.emp_joined_date):
                 self.add('events', f'join-{e.id}', f'{S.emp_name(e)} · joins', e.emp_joined_date, employee=_who(e), link=rec(e), status='joining')
         DOC = _m('EmpManagement.Emp_Documents')
-        for d in DOC.objects.filter(emp_id_id__in=self.ids, emp_doc_expiry_date__gte=self.d_from, emp_doc_expiry_date__lte=self.d_to).select_related('emp_id', 'document_type'):
+        from .documents import current_doc_ids   # v1.17.0 (audit C1): renewed copies are not expiries
+        _cur = current_doc_ids(self.ids)
+        for d in DOC.objects.filter(id__in=_cur, emp_doc_expiry_date__gte=self.d_from, emp_doc_expiry_date__lte=self.d_to).select_related('emp_id', 'document_type'):
             typ = d.document_type.type_name if d.document_type_id else 'Document'
             self.add('events', f'doc-{d.id}', f'{typ} expires · {S.emp_name(d.emp_id)}', d.emp_doc_expiry_date, employee=_who(d.emp_id), link=rec(d),
                      status='expired' if d.emp_doc_expiry_date < self.today else 'expiry')

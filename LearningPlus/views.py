@@ -14,6 +14,7 @@ from . import models as M
 from . import serializers as S
 from . import services
 from .access import LPPermission, c, can_see_employee, employees_qs, is_hr, me, visible_employee_ids
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 def run(fn, *args, **kwargs):
@@ -21,6 +22,17 @@ def run(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except DjangoValidationError as exc:
         raise ValidationError({'detail': exc.messages})
+
+
+def _allowed_depts(request):
+    """v1.22.0 branch rights: None = every department; else departments of the user's branches (and shared ones without a branch)."""
+    from django.db.models import Q
+    from AccessControl.access import allowed_branches
+    mine = allowed_branches(request)
+    if mine is None:
+        return None
+    from OrganisationManager.models import dept_master
+    return list(dept_master.objects.filter(Q(branch__in=mine) | Q(branch__isnull=True)).values_list('id', flat=True).distinct())
 
 
 def _lm():
@@ -109,10 +121,10 @@ class CourseModuleViewSet(LPViewSet):
         target = request.data.get('employee') or request.data.get('employee_id')
         if target and (emp is None or int(target) != emp.id):
             if not is_hr(request):
-                raise PermissionDenied('You can only work on your own courses.')
+                raise PermissionDenied(tr('You can only work on your own courses.'))
             return _emp(target)
         if emp is None:
-            raise PermissionDenied('Your login is not linked to an employee.')
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
         return emp
 
     def _out(self, res):
@@ -160,10 +172,10 @@ class OnlineEnrolmentViewSet(LPViewSet):
         emp = _emp(ser.validated_data['employee_id'])
         own = me(request)
         if not is_hr(request) and not (own and own.id == emp.id) and emp.emp_reporting_manager_id != request.user.id:
-            raise PermissionDenied('You can enrol yourself or your team only.')
+            raise PermissionDenied(tr('You can enrol yourself or your team only.'))
         crs = get_object_or_404(_lm().Course, pk=ser.validated_data['course_id'])
         if not M.CourseModule.objects.filter(course_id=crs.id, is_active=True).exists():
-            raise ValidationError({'detail': 'This course has no online modules yet.'})
+            raise ValidationError({'detail': tr('This course has no online modules yet.')})
         en = services.enrol(crs, emp, request.user)
         return Response(S.OnlineEnrolmentSerializer(en).data, status=201)
 
@@ -174,17 +186,24 @@ class SessionAttendanceViewSet(LPViewSet):
     filter_params = {'session': 'session_id', 'session_id': 'session_id', 'nomination': 'nomination_id'}
 
     def scope(self, qs):
-        if is_hr(self.request):
+        ids = visible_employee_ids(self.request)   # v1.22.0 branch rights: HR limited by branch only sees their branches
+        if ids is None:
             return qs
-        ids = visible_employee_ids(self.request) or set()
         noms = _lm().Nomination.objects.filter(employee_id__in=ids).values_list('id', flat=True)
         return qs.filter(nomination_id__in=list(noms))
 
+    def _check_nom(self, nom_id):   # v1.22.0 branch rights: marks only for participants the user may see
+        ids = visible_employee_ids(self.request)
+        if ids is not None and nom_id and _lm().Nomination.objects.filter(pk=getattr(nom_id, 'pk', nom_id)).exclude(employee_id__in=ids).exists():
+            raise PermissionDenied(tr('You can only work with your branches.'))
+
     def perform_create(self, serializer):
+        self._check_nom(serializer.validated_data.get('nomination_id'))  # v1.22.0 branch rights
         obj = serializer.save()
         services.sync_attendance(obj.session_id)
 
     def perform_update(self, serializer):
+        self._check_nom(serializer.validated_data.get('nomination_id', serializer.instance.nomination_id))  # v1.22.0 branch rights
         obj = serializer.save()
         services.sync_attendance(obj.session_id)
 
@@ -192,16 +211,21 @@ class SessionAttendanceViewSet(LPViewSet):
     def sheet(self, request):
         s = get_object_or_404(_lm().TrainingSession.objects.select_related('course'), pk=request.query_params.get('session'))
         data = services.attendance_sheet(s)
-        if not is_hr(request):
-            ids = visible_employee_ids(request) or set()
+        ids = visible_employee_ids(request)   # v1.22.0 branch rights: also for HR users limited by branch
+        if ids is not None:
             data['rows'] = [r for r in data['rows'] if r['employee_id'] in ids]
         return Response(data)
 
     @action(detail=False, methods=['post'])
     def bulk(self, request):
         s = get_object_or_404(_lm().TrainingSession, pk=request.data.get('session'))
+        ids = visible_employee_ids(request)   # v1.22.0 branch rights: only marks of participants the user may see
+        if ids is not None:
+            noms = [int(r.get('nomination') or r.get('nomination_id') or 0) for r in (request.data.get('rows') or []) if isinstance(r, dict)]
+            if _lm().Nomination.objects.filter(id__in=noms).exclude(employee_id__in=ids).exists():
+                raise PermissionDenied(tr('You can only work with your branches.'))
         res = run(services.save_attendance, s, request.data.get('rows') or [])
-        return Response({'detail': f"{res['saved']} attendance mark(s) saved.", **res})
+        return Response({'detail': tr('{0} attendance mark(s) saved.', res['saved']), **res})
 
 
 class TrainingBudgetViewSet(LPViewSet):
@@ -210,10 +234,27 @@ class TrainingBudgetViewSet(LPViewSet):
     filter_params = {'year': 'year', 'department': 'department_id'}
     hr_only_list = True
 
+    # v1.22.0 branch rights: branch users see / change budgets of their branches' departments only
+    def scope(self, qs):
+        qs = super().scope(qs)
+        deps = _allowed_depts(self.request)
+        return qs if deps is None else qs.filter(department_id__in=deps)
+
+    def _check_dept(self, dept_id):
+        deps = _allowed_depts(self.request)
+        if deps is not None and (dept_id in (None, '') or int(getattr(dept_id, 'pk', dept_id)) not in deps):
+            raise PermissionDenied(tr('You can only work with your branches.'))
+
+    def perform_update(self, serializer):
+        self._check_dept(serializer.validated_data.get('department_id', serializer.instance.department_id))
+        serializer.save()
+
     def perform_create(self, serializer):
         d = serializer.validated_data
+        self._check_dept(d.get('department_id'))  # v1.22.0 branch rights
+
         if M.TrainingBudget.objects.filter(year=d['year'], department_id=d.get('department_id')).exists():
-            raise ValidationError({'detail': 'A budget for this year and department already exists.'})
+            raise ValidationError({'detail': tr('A budget for this year and department already exists.')})
         serializer.save()
 
 
@@ -261,7 +302,7 @@ class EmployeeSkillViewSet(LPViewSet):
 
     def _check(self, emp_id):
         if not can_see_employee(self.request, emp_id):
-            raise PermissionDenied('You can only record skills of yourself or your team.')
+            raise PermissionDenied(tr('You can only record skills of yourself or your team.'))
         own = me(self.request)
         return None if (own and own.id == int(emp_id) and not is_hr(self.request)) else self.request.user.id
 
@@ -294,9 +335,9 @@ class CalendarView(LPView):
             frm = date.fromisoformat(request.query_params.get('from') or today.replace(day=1).isoformat())
             to = date.fromisoformat(request.query_params.get('to') or (frm.replace(day=28)).isoformat())
         except ValueError:
-            raise ValidationError({'detail': 'from / to must be YYYY-MM-DD.'})
+            raise ValidationError({'detail': tr('from / to must be YYYY-MM-DD.')})
         if to < frm:
-            raise ValidationError({'detail': '"to" is before "from".'})
+            raise ValidationError({'detail': tr('"to" is before "from".')})
         hr = is_hr(request)
         ev = services.calendar_events(frm, to, employee=me(request), include_drafts=hr,
                                       include_cancelled=request.query_params.get('cancelled') == 'true',
@@ -312,10 +353,10 @@ class HistoryView(LPView):
         own = me(request)
         if not emp_id:
             if own is None:
-                raise ValidationError({'detail': 'Pick an employee.'})
+                raise ValidationError({'detail': tr('Pick an employee.')})
             emp_id = own.id
         if not can_see_employee(request, emp_id):
-            raise PermissionDenied('You can only see your own training history (or your team\'s).')
+            raise PermissionDenied(tr('You can only see your own training history (or your team\'s).'))
         return Response(services.history(_emp(emp_id)))
 
 
@@ -343,9 +384,9 @@ class CourseProgressView(LPView):
         crs = request.query_params.get('course')
         emp_id = request.query_params.get('employee') or (me(request).id if me(request) else None)
         if not crs or not emp_id:
-            raise ValidationError({'detail': 'course and employee are required.'})
+            raise ValidationError({'detail': tr('course and employee are required.')})
         if not can_see_employee(request, emp_id):
-            raise PermissionDenied('Not your record.')
+            raise PermissionDenied(tr('Not your record.'))
         return Response(services.course_progress(int(emp_id), int(crs)))
 
 
@@ -358,10 +399,10 @@ class MyLearningView(LPView):
         emp = me(request)
         if emp_id:
             if not can_see_employee(request, emp_id):
-                raise PermissionDenied('Not your record.')
+                raise PermissionDenied(tr('Not your record.'))
             emp = _emp(emp_id)
         if emp is None:
-            raise ValidationError({'detail': 'Your login is not linked to an employee.'})
+            raise ValidationError({'detail': tr('Your login is not linked to an employee.')})
         noms = []
         for n in m.Nomination.objects.filter(employee=emp).select_related('session__course').order_by('-session__start_date'):
             r = m.ParticipantResult.objects.filter(nomination=n).first()
@@ -393,19 +434,25 @@ class BudgetView(LPView):
 
     def get(self, request):
         if not is_hr(request):
-            raise PermissionDenied('Training budget is for L&D / HR.')
+            raise PermissionDenied(tr('Training budget is for L&D / HR.'))
         year = int(request.query_params.get('year') or timezone.localdate().year)
         deps = request.query_params.get('department')
-        return Response(services.budget_vs_actual(year, deps.split(',') if deps else None))
+        deps = deps.split(',') if deps else None
+        allowed = _allowed_depts(request)   # v1.22.0 branch rights: departments of the user's branches, actuals of their employees
+        emp_ids = None
+        if allowed is not None:
+            deps = [d for d in (deps or allowed) if str(d).isdigit() and int(d) in allowed] or [-1]
+            emp_ids = visible_employee_ids(request)
+        return Response(services.budget_vs_actual(year, deps, employee_ids=emp_ids))
 
 
 class EmployeeCostView(LPView):
     def get(self, request):
         emp_id = request.query_params.get('employee') or (me(request).id if me(request) else None)
         if not emp_id:
-            raise ValidationError({'detail': 'Pick an employee.'})
+            raise ValidationError({'detail': tr('Pick an employee.')})
         if not can_see_employee(request, emp_id):
-            raise PermissionDenied('Not your record.')
+            raise PermissionDenied(tr('Not your record.'))
         y = request.query_params.get('year')
         return Response(services.employee_costs(_emp(emp_id), int(y) if y else None))
 
@@ -416,7 +463,7 @@ class CertificateDocView(LPView):
     def get(self, request, pk):
         cert = get_object_or_404(_lm().Certificate.objects.select_related('employee', 'course'), pk=pk)
         if not can_see_employee(request, cert.employee_id):
-            raise PermissionDenied('You can only open your own certificates.')
+            raise PermissionDenied(tr('You can only open your own certificates.'))
         name = f"certificate-{(cert.certificate_number or str(cert.id)).replace('/', '-')}"
         if request.query_params.get('view') == 'html':
             return HttpResponse(services.certificate_html(cert), content_type='text/html; charset=utf-8')
@@ -430,13 +477,13 @@ class AlertsView(LPView):
 
     def post(self, request):
         if not is_hr(request):
-            raise PermissionDenied('Only L&D / HR can run alerts.')
+            raise PermissionDenied(tr('Only L&D / HR can run alerts.'))
         job = request.data.get('job', 'certificates')
         if job == 'nominations':
             n = services.escalate_nominations(int(request.data.get('days', 3)))
-            return Response({'detail': f'{n} nomination(s) escalated.', 'escalated': n})
+            return Response({'detail': tr('{0} nomination(s) escalated.', n), 'escalated': n})
         out = services.certificate_expiry_alerts()
-        return Response({'detail': f"{out['alerts']} certificate alert(s) sent, {out['needs_created']} renewal need(s) created.", **out})
+        return Response({'detail': tr('{0} certificate alert(s) sent, {1} renewal need(s) created.', out['alerts'], out['needs_created']), **out})
 
 
 class TrainerStatsView(LPView):

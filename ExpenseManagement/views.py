@@ -27,6 +27,7 @@ from rest_framework.views import APIView
 from . import services as S
 from .models import (ZERO, CostCenter, Expense, ExpenseAdvance, ExpenseApproval, ExpenseCategory, ExpensePolicy, ExpensePolicyLimit,
                      ExpenseReport, ExpenseSettings, Trip)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 
 # ------------------------------------------------------------------ access helpers
@@ -78,11 +79,11 @@ class CompanyMember(BasePermission):
     def has_permission(self, request, view):
         u = request.user
         if not u or not u.is_authenticated:
-            self.message = 'Please log in.'
+            self.message = tr('Please log in.')
             return False
         sch = _schema(request)
         if not sch or sch == 'public':
-            self.message = 'Choose a company.'
+            self.message = tr('Choose a company.')
             return False
         return u.is_superuser or u.tenants.filter(schema_name=sch).exists()
 
@@ -97,7 +98,7 @@ class SetupRights(CompanyMember):
             return True
         model = view.queryset.model._meta.model_name
         verb = {'POST': 'add', 'DELETE': 'delete'}.get(request.method, 'change')
-        self.message = f'You may not {verb} {view.queryset.model._meta.verbose_name}.'
+        self.message = tr('You may not {0} {1}.', verb, view.queryset.model._meta.verbose_name)
         return can(request, f'{verb}_{model}')
 
 
@@ -147,7 +148,7 @@ class CategoryViewSet(Base, viewsets.ModelViewSet):
 
     def destroy(self, request, *a, **k):
         if self.get_object().expenses.exists():
-            return Response({'detail': 'The category is used by expenses – set it inactive instead.'}, status=400)
+            return Response({'detail': tr('The category is used by expenses – set it inactive instead.')}, status=400)
         return super().destroy(request, *a, **k)
 
 
@@ -168,7 +169,7 @@ class LimitSerializer(serializers.ModelSerializer):
             if self.instance is not None:
                 dup = dup.exclude(pk=self.instance.pk)
             if dup.exists():
-                raise serializers.ValidationError(f'The policy already has a limit for {cat.name}.')
+                raise serializers.ValidationError(tr('The policy already has a limit for {0}.', cat.name))
         return data
 
 
@@ -183,7 +184,7 @@ class PolicySerializer(serializers.ModelSerializer):
         ok = set(S.ROLE_LABELS)
         bad = [r for r in (v or []) if r not in ok]
         if bad:
-            raise serializers.ValidationError(f'Unknown role(s): {", ".join(bad)}. Use {", ".join(sorted(ok))}.')
+            raise serializers.ValidationError(tr('Unknown role(s): {0}. Use {1}.', ", ".join(bad), ", ".join(sorted(ok))))
         return v
 
     def _limits(self, pol, rows):
@@ -219,11 +220,49 @@ class PolicyViewSet(Base, viewsets.ModelViewSet):
     serializer_class = PolicySerializer
     permission_classes = [SetupRights]
 
+    # v1.22.0 branch rights: branch users see policies of their branches and company-wide ones (branch_ids empty),
+    # and only change policies limited to their own branches
+    def get_queryset(self):
+        from AccessControl.access import allowed_branches
+        qs = super().get_queryset()
+        mine = allowed_branches(self.request)
+        if mine is None:
+            return qs
+        q = Q(branch_ids=[]) | Q(branch_ids__isnull=True)
+        for b in mine:
+            q |= Q(branch_ids__contains=[b]) | Q(branch_ids__contains=[str(b)])
+        return qs.filter(q)
+
+    def _check_branches(self, ids):
+        from AccessControl.access import allowed_branches, deny_branch
+        mine = allowed_branches(self.request)
+        if mine is None:
+            return
+        ids = [str(i) for i in (ids or [])]
+        if not ids or any(i not in {str(b) for b in mine} for i in ids):
+            deny_branch()
+
+    def perform_create(self, serializer):
+        self._check_branches(serializer.validated_data.get('branch_ids'))
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_branches(serializer.instance.branch_ids)
+        self._check_branches(serializer.validated_data.get('branch_ids', serializer.instance.branch_ids))
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_branches(instance.branch_ids)
+        instance.delete()
+
     @action(detail=False, methods=['get'])
     def mine(self, request):
         """The policy of the logged-in employee (or ?employee=<id> for HR) with mileage / per diem rates."""
         emp = my_emp(request)
         if request.query_params.get('employee') and can(request, 'view_expense', 'add_expense'):
+            from AccessControl.access import check_branch
+            if not (emp is not None and str(emp.pk) == str(request.query_params['employee'])):
+                check_branch(request, employee_id=request.query_params['employee'])  # v1.22.0 branch rights
             emp = S.employee(request.query_params['employee'])
         pol = S.policy_for(emp)
         return Response(PolicySerializer(pol).data if pol else {})
@@ -238,7 +277,7 @@ class LimitRights(CompanyMember):
         if request.method in ('GET', 'HEAD', 'OPTIONS'):
             return True
         verb = {'POST': 'add', 'DELETE': 'delete'}.get(request.method, 'change')
-        self.message = 'You may not change expense policies.'
+        self.message = tr('You may not change expense policies.')
         return can(request, f'{verb}_expensepolicylimit', 'change_expensepolicy')
 
 
@@ -288,7 +327,7 @@ class SettingsView(Base, APIView):
 
     def put(self, request):
         if not can(request, 'change_expensesettings', 'change_expensepolicy'):
-            return Response({'detail': 'You may not change the expense settings.'}, status=403)
+            return Response({'detail': tr('You may not change the expense settings.')}, status=403)
         s = ExpenseSettings.get()
         for k in ('payable_account', 'advance_account', 'default_expense_account'):
             if request.data.get(k):
@@ -348,16 +387,16 @@ class ScopedViewSet(Base, viewsets.ModelViewSet):
         want = data.get('employee_id') or data.get('employee')
         if want and (emp is None or str(want) != str(emp.pk)):
             if not self.hr('add'):
-                raise S.ExpenseError('You can only create records for yourself.', status=403)
+                raise S.ExpenseError(tr('You can only create records for yourself.'), status=403)
             other = S.employee(want)
             if other is None:
-                raise S.ExpenseError('Employee not found.')
+                raise S.ExpenseError(tr('Employee not found.'))
             b = branches(self.request)
             if b is not None and other.emp_branch_id_id not in b:
-                raise S.ExpenseError('You can only work with employees of your branches.', status=403)
+                raise S.ExpenseError(tr('You can only work with employees of your branches.'), status=403)
             return other
         if emp is None:
-            raise S.ExpenseError('Your login is not linked to an employee.', status=403)
+            raise S.ExpenseError(tr('Your login is not linked to an employee.'), status=403)
         return emp
 
     def can_edit(self, obj, states):
@@ -365,10 +404,10 @@ class ScopedViewSet(Base, viewsets.ModelViewSet):
         emp = my_emp(r)
         own = emp is not None and obj.employee_id == emp.pk
         if obj.status not in states:
-            raise S.ExpenseError(f'It is {obj.get_status_display().lower()} and cannot be changed now.')
+            raise S.ExpenseError(tr('It is {0} and cannot be changed now.', obj.get_status_display().lower()))
         if own or is_admin(r) or self.hr('change'):
             return True
-        raise S.ExpenseError('You can only change your own records.', status=403)
+        raise S.ExpenseError(tr('You can only change your own records.'), status=403)
 
     def handle_exception(self, exc):
         if isinstance(exc, S.ExpenseError):
@@ -458,7 +497,7 @@ class ExpenseViewSet(ScopedViewSet):
             setattr(inst, k, v)
         if rep is not None:
             if rep.employee_id != inst.employee_id or rep.status not in ('draft', 'sent_back'):
-                raise S.ExpenseError('The expense can only go into a draft or sent-back report of the same employee.')
+                raise S.ExpenseError(tr('The expense can only go into a draft or sent-back report of the same employee.'))
         if not inst.date:
             inst.date = date.today()
         S.prepare_expense(inst)
@@ -605,7 +644,7 @@ class ReportViewSet(ScopedViewSet):
         ids = data.pop('expense_ids', None)
         data.pop('employee_id', None)
         if data.get('trip') and data['trip'].employee_id != emp.pk:
-            raise S.ExpenseError('The trip belongs to another employee.')
+            raise S.ExpenseError(tr('The trip belongs to another employee.'))
         r = ExpenseReport.objects.create(number=S.next_number(ExpenseReport, 'ER'), employee_id=emp.pk, branch_id=emp.emp_branch_id_id,
                                          department_id=emp.emp_dept_id_id, created_by_id=request.user.pk, policy=S.policy_for(emp), **data)
         if ids:
@@ -651,7 +690,7 @@ class ReportViewSet(ScopedViewSet):
         self.can_edit(r, ('draft', 'sent_back'))
         e = r.expenses.filter(pk=request.data.get('expense_id')).first()
         if e is None:
-            raise S.ExpenseError('The expense is not in this report.')
+            raise S.ExpenseError(tr('The expense is not in this report.'))
         S.remove_expense(r, e)
         return Response(self.detail_data(r))
 
@@ -681,7 +720,7 @@ class ReportViewSet(ScopedViewSet):
     @action(detail=True, methods=['post'])
     def reimburse(self, request, pk=None):
         if not can(request, 'reimburse_expensereport', 'change_expensereport'):
-            return Response({'detail': 'You may not reimburse expense reports.'}, status=403)
+            return Response({'detail': tr('You may not reimburse expense reports.')}, status=403)
         r = self.get_object()
         on = parse_date(str(request.data.get('date') or '')) if request.data.get('date') else None
         return Response(self.detail_data(S.reimburse(r, request.data.get('via') or 'direct', request.data.get('reference') or '', on, request.user)))
@@ -766,7 +805,7 @@ class TripViewSet(ScopedViewSet):
     def close(self, request, pk=None):
         t = self.get_object()
         if t.status != 'approved':
-            raise S.ExpenseError('Only an approved trip can be closed.')
+            raise S.ExpenseError(tr('Only an approved trip can be closed.'))
         self.can_edit(t, ('approved',))
         t.status = 'closed'
         t.save(update_fields=['status'])
@@ -822,9 +861,9 @@ class AdvanceViewSet(ScopedViewSet):
         data = dict(ser.validated_data)
         data.pop('employee_id', None)
         if data.get('amount') is None or data['amount'] <= 0:
-            raise S.ExpenseError('The amount must be more than zero.')
+            raise S.ExpenseError(tr('The amount must be more than zero.'))
         if data.get('trip') and data['trip'].employee_id != emp.pk:
-            raise S.ExpenseError('The trip belongs to another employee.')
+            raise S.ExpenseError(tr('The trip belongs to another employee.'))
         adv = ExpenseAdvance.objects.create(number=S.next_number(ExpenseAdvance, 'ADV'), employee_id=emp.pk, branch_id=emp.emp_branch_id_id,
                                             created_by_id=request.user.pk, **data)
         return Response(self.get_serializer(adv).data, status=201)
@@ -856,7 +895,7 @@ class AdvanceViewSet(ScopedViewSet):
         from LeavePolicy.approvers import holder
         mgr = holder('reporting_manager', S.employee(adv.employee_id))
         if not (can(request, 'change_expenseadvance') or (mgr is not None and mgr.pk == request.user.pk)):
-            return Response({'detail': 'You may not approve this advance.'}, status=403)
+            return Response({'detail': tr('You may not approve this advance.')}, status=403)
         return Response(self.get_serializer(S.approve_advance(adv, request.user)).data)
 
     @action(detail=True, methods=['post'])
@@ -866,9 +905,9 @@ class AdvanceViewSet(ScopedViewSet):
             from LeavePolicy.approvers import holder
             mgr = holder('reporting_manager', S.employee(adv.employee_id))
             if mgr is None or mgr.pk != request.user.pk:
-                return Response({'detail': 'You may not reject this advance.'}, status=403)
+                return Response({'detail': tr('You may not reject this advance.')}, status=403)
         if adv.status not in ('requested', 'approved'):
-            raise S.ExpenseError('Only a requested or approved advance can be rejected.')
+            raise S.ExpenseError(tr('Only a requested or approved advance can be rejected.'))
         adv.status = 'rejected'
         adv.save(update_fields=['status'])
         return Response(self.get_serializer(adv).data)
@@ -876,7 +915,7 @@ class AdvanceViewSet(ScopedViewSet):
     @action(detail=True, methods=['post'])
     def pay(self, request, pk=None):
         if not can(request, 'change_expenseadvance'):
-            return Response({'detail': 'You may not pay advances.'}, status=403)
+            return Response({'detail': tr('You may not pay advances.')}, status=403)
         adv = self.get_object()
         on = parse_date(str(request.data.get('date'))) if request.data.get('date') else None
         return Response(self.get_serializer(S.pay_advance(adv, request.user, request.data.get('reference') or '', on)).data)
@@ -947,7 +986,7 @@ class ExportView(Base, APIView):
 
     def get(self, request):
         if not can(request, 'export_expensereport', 'view_expensereport', 'reimburse_expensereport'):
-            return Response({'detail': 'You may not export expense entries.'}, status=403)
+            return Response({'detail': tr('You may not export expense entries.')}, status=403)
         f, t = _range(request)
         data = S.journal(f, t, branches(request))
         if request.query_params.get('as') == 'csv':

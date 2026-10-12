@@ -80,7 +80,64 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
         # logger.info(f"User {user.username} has been deactivated by {request.user.username}")
         return Response({"message": "User has been deactivated successfully"}, status=status.HTTP_200_OK)
 
-class TenantUserListView(generics.ListAPIView):
+def user_branch_map(schema_name, user_ids):
+    """v1.22.0 branch rights: {user id: [(branch id, branch name), ...]} from "User branch access", falling back to the
+    branch of the user's employee."""
+    from OrganisationManager.models import UserBranchAccess
+    out = {}
+    user_ids = list(user_ids)
+    with schema_context(schema_name):
+        for uba in UserBranchAccess.objects.filter(user_id__in=user_ids).prefetch_related('branch'):
+            lst = out.setdefault(uba.user_id, [])
+            for b in uba.branch.all():
+                if (b.id, b.branch_name) not in lst:
+                    lst.append((b.id, b.branch_name))
+        for e in emp_master.objects.filter(users_id__in=[u for u in user_ids if not out.get(u)], emp_branch_id__isnull=False).select_related('emp_branch_id'):
+            if not out.get(e.users_id):
+                out[e.users_id] = [(e.emp_branch_id_id, e.emp_branch_id.branch_name)]
+    return out
+
+
+class BranchUserListMixin:
+    """v1.22.0 branch rights: branch-restricted back-office users only list users of their branches (by "User branch
+    access" or by their employee's branch) and themselves; ?branch=<id> lists the users of one branch."""
+
+    def scope_users(self, qs, schema_name):
+        from AccessControl.access import allowed_branches
+        mine = allowed_branches(self.request)
+        ids = None
+        if mine is not None:
+            all_ids = list(qs.values_list('id', flat=True))
+            bmap = user_branch_map(schema_name, all_ids)
+            allowed = {str(b) for b in mine}
+            ids = {u for u, brs in bmap.items() if any(str(b) in allowed for b, _ in brs)} | {self.request.user.pk}
+        br = self.request.GET.get('branch')
+        if br not in (None, ''):
+            if not str(br).isdigit():
+                return qs.none()
+            bmap = user_branch_map(schema_name, qs.values_list('id', flat=True))
+            in_branch = {u for u, brs in bmap.items() if any(b == int(br) for b, _ in brs)}
+            ids = in_branch if ids is None else (ids & in_branch)
+        return qs if ids is None else qs.filter(id__in=ids)
+
+    def get_serializer_context(self):
+        ctx_ = super().get_serializer_context()
+        ctx_['schema_name'] = self.request.GET.get('schema')
+        return ctx_
+
+    def list(self, request, *args, **kwargs):
+        # one query for the branches of all listed users (UserListSerializer.branches)
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        rows = page if page is not None else list(qs)
+        schema_name = request.GET.get('schema')
+        context = self.get_serializer_context()
+        context['branch_map'] = user_branch_map(schema_name, [u.pk for u in rows]) if schema_name else {}
+        ser = self.get_serializer_class()(rows, many=True, context=context)
+        return self.get_paginated_response(ser.data) if page is not None else Response(ser.data)
+
+
+class TenantUserListView(BranchUserListMixin, generics.ListAPIView):  # v1.22.0 branch rights
     permission_classes = [IsAuthenticated]
     serializer_class = UserListSerializer
 
@@ -95,10 +152,11 @@ class TenantUserListView(generics.ListAPIView):
         # Use schema_context to access the correct tenant's users
         with schema_context(schema_name):
             # Filter users based on schema_name and only show active users
-            return CustomUser.objects.filter(
+            qs = CustomUser.objects.filter(
                 tenants__schema_name=schema_name,
                 is_active=True)  # Filter for users that are active
             # ).exclude(is_ess=True)
+        return self.scope_users(qs, schema_name)  # v1.22.0 branch rights
 
 from django.contrib.auth import login
 
@@ -116,6 +174,16 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
         # Trigger the signal manually after the instance is saved
         add_company_to_superusers(sender=company, instance=instance, created=True)
+        # v1.21.0: the apps ticked on the company form ("hrms,projects,crm,…"); without the field every company starts as before
+        apps = self.request.data.get('apps')
+        if apps:
+            try:
+                from ZeoApps.services import setup_new_company
+                setup_new_company(instance, [a.strip() for a in str(apps).split(',') if a.strip()],
+                                  self.request.user if getattr(self.request.user, 'is_authenticated', False) else None)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception('apps of the new company %s', instance.schema_name)
     # permission_classes = [IsAuthenticated]
 
    
@@ -140,8 +208,8 @@ class UserDetailView(APIView):
         serializer = CustomUserSerializer(user)
         return Response(serializer.data)
 
-class NoEssUerListView(generics.ListAPIView):
-    # permission_classes = [IsAuthenticated]
+class NoEssUerListView(BranchUserListMixin, generics.ListAPIView):  # v1.22.0 branch rights
+    permission_classes = [IsAuthenticated]   # v1.22.0 branch rights: was open
     serializer_class = Non_EssUserListSerializer
 
     def get_queryset(self):
@@ -154,14 +222,15 @@ class NoEssUerListView(generics.ListAPIView):
 
         # Use schema_context to access the correct tenant's users
         with schema_context(schema_name):
-            return CustomUser.objects.filter(
+            qs = CustomUser.objects.filter(
                 tenants__schema_name=schema_name,
                 is_active=True
             ).filter(
                 Q(is_ess=False) | Q(is_ess__isnull=True)
             )
+        return self.scope_users(qs, schema_name)  # v1.22.0 branch rights
 
-class GroupPermTenantUserListView(generics.ListAPIView):
+class GroupPermTenantUserListView(BranchUserListMixin, generics.ListAPIView):  # v1.22.0 branch rights
     permission_classes = [IsAuthenticated]
     serializer_class = UserListSerializer
 
@@ -176,10 +245,11 @@ class GroupPermTenantUserListView(generics.ListAPIView):
         # Use schema_context to access the correct tenant's users
         with schema_context(schema_name):
             # Filter users based on schema_name and only show active users
-            return CustomUser.objects.filter(
+            qs = CustomUser.objects.filter(
                 tenants__schema_name=schema_name,
                 is_active=True  # Filter for users that are active
             )
+        return self.scope_users(qs, schema_name)  # v1.22.0 branch rights
 
 class ValidateCredentialsView(APIView):
     def post(self, request):

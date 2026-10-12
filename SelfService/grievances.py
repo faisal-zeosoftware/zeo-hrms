@@ -18,6 +18,7 @@ from django.utils import timezone
 from . import profile as P
 from . import services as S
 from .models import GRIEVANCE_CATEGORIES, Grievance, GrievanceMessage, GrievanceSetting
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 M = apps.get_model
 FLOW = {
@@ -75,13 +76,13 @@ def handler_cases(request):
 def submit(request, emp, data, files=()):
     cat = data.get('category')
     if cat not in CATS:
-        raise ValidationError({'category': 'Choose a category.'})
+        raise ValidationError({'category': tr('Choose a category.')})
     subject = (data.get('subject') or '').strip()
     desc = (data.get('description') or '').strip()
     if not subject:
-        raise ValidationError({'subject': 'Give your complaint a short subject.'})
+        raise ValidationError({'subject': tr('Give your complaint a short subject.')})
     if len(desc) < 10:
-        raise ValidationError({'description': 'Describe what happened (at least a sentence), so it can be looked into.'})
+        raise ValidationError({'description': tr('Describe what happened (at least a sentence), so it can be looked into.')})
     anon = str(data.get('anonymous', '')).lower() in ('1', 'true', 'yes', 'on')
     conf = str(data.get('confidential', 'true')).lower() not in ('0', 'false', 'no', 'off')
     st = settings_for(cat)
@@ -98,7 +99,7 @@ def submit(request, emp, data, files=()):
     for f in files or ():
         GrievanceMessage.objects.create(grievance=case, author_user_id=None if anon else request.user.pk, from_employee=True, attachment=f, text=getattr(f, 'name', ''))
     for u in recipients(case):
-        S.notify(user=u, title='New complaint to handle', message=f'A {CATS[cat].lower()} complaint {case.number} was submitted. It is due by {case.due_date:%d %b %Y}.')
+        S.notify(user=u, title=tmsg('New complaint to handle'), message=tmsg('A {0} complaint {1} was submitted. It is due by {2:%d %b %Y}.', CATS[cat].lower(), case.number, case.due_date))
     return case, token
 
 
@@ -112,9 +113,9 @@ def recipients(case):
 
 def transition(request, case, new_status, note='', outcome=''):
     if new_status not in FLOW.get(case.status, ()):
-        raise ValidationError({'status': f'A {case.status} case cannot move to {new_status}. Next steps: {", ".join(FLOW.get(case.status, ())) or "none"}.'})
+        raise ValidationError({'status': tr('A {0} case cannot move to {1}. Next steps: {2}.', case.status, new_status, ", ".join(FLOW.get(case.status, ())) or "none")})
     if new_status in ('resolved', 'closed') and not (outcome or case.outcome):
-        raise ValidationError({'outcome': 'Write the outcome before resolving or closing the case.'})
+        raise ValidationError({'outcome': tr('Write the outcome before resolving or closing the case.')})
     now = timezone.now()
     old = case.status
     case.status = new_status
@@ -140,19 +141,19 @@ def _tell_employee(case, message):
         return  # the employee follows an anonymous case with the token
     e = S.employee(case.employee_id)
     if e:
-        S.notify(employee=e, title='Update on your complaint', message=message)
+        S.notify(employee=e, title=tmsg('Update on your complaint'), message=message)
 
 
 def add_message(case, text, user=None, from_employee=False, internal=False, attachment=None):
     if not (text or '').strip() and attachment is None:
-        raise ValidationError({'text': 'Write a message or attach a file.'})
+        raise ValidationError({'text': tr('Write a message or attach a file.')})
     if case.status == 'closed':
-        raise ValidationError({'status': 'This case is closed – messages can no longer be added.'})
+        raise ValidationError({'status': tr('This case is closed – messages can no longer be added.')})
     m = GrievanceMessage.objects.create(grievance=case, author_user_id=None if (from_employee and case.anonymous) else getattr(user, 'pk', None),
                                         from_employee=from_employee, internal=bool(internal) and not from_employee, text=(text or '').strip(), attachment=attachment)
     if from_employee:
         for u in recipients(case):
-            S.notify(user=u, title='New message on a complaint', message=f'The employee replied on complaint {case.number}.')
+            S.notify(user=u, title=tmsg('New message on a complaint'), message=tmsg('The employee replied on complaint {0}.', case.number))
     elif not m.internal:
         _tell_employee(case, f'HR replied on your complaint {case.number}.')
     return m
@@ -160,13 +161,13 @@ def add_message(case, text, user=None, from_employee=False, internal=False, atta
 
 def feedback(case, rating, text=''):
     if case.status not in ('resolved', 'closed'):
-        raise ValidationError({'status': 'You can give feedback once the case is resolved.'})
+        raise ValidationError({'status': tr('You can give feedback once the case is resolved.')})
     try:
         r = int(rating)
     except (TypeError, ValueError):
         r = 0
     if not 1 <= r <= 5:
-        raise ValidationError({'feedback_rating': 'Rate the handling from 1 (poor) to 5 (very good).'})
+        raise ValidationError({'feedback_rating': tr('Rate the handling from 1 (poor) to 5 (very good).')})
     case.feedback_rating, case.feedback_text = r, (text or '')[:1000]
     case.save(update_fields=['feedback_rating', 'feedback_text', 'updated_at'])
     GrievanceMessage.objects.create(grievance=case, from_employee=True, event='feedback', text=f'Feedback: {r}/5. {case.feedback_text}'.strip())
@@ -192,7 +193,7 @@ def escalate_overdue(today=None):
         GrievanceMessage.objects.create(grievance=case, event='escalated', internal=True,
                                         text='Escalated: ' + ('not resolved by the due date.' if late else 'not acknowledged in time.'))
         for u in recipients(case):
-            S.notify(user=u, title='Complaint escalated', message=f'Complaint {case.number} is overdue ({"past due date" if late else "not acknowledged"}).')
+            S.notify(user=u, title=tmsg('Complaint escalated'), message=tmsg('Complaint {0} is overdue ({1}).', case.number, "past due date" if late else "not acknowledged"))
         n += 1
     return n
 

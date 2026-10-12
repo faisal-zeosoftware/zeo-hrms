@@ -18,7 +18,7 @@ def _hr_users(branch_id):
     from tenant_users.tenants.models import UserTenantPermissions
     UBA = apps.get_model('OrganisationManager', 'UserBranchAccess')
     out = set()
-    for utp in UserTenantPermissions.objects.prefetch_related('groups__permissions'):
+    for utp in _company_perms().prefetch_related('groups__permissions'):
         if utp.is_superuser:
             out.add(utp.profile_id)
             continue
@@ -95,3 +95,9 @@ def probation_reminders():
             except Exception:
                 log.exception('probation reminders for %s', t.schema_name)
     return out
+
+
+
+def _company_perms():   # v1.22.0: only the users of the open company (see AccessControl.access.company_perms)
+    from AccessControl.access import company_perms
+    return company_perms()

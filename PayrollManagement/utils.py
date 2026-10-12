@@ -41,11 +41,31 @@ def get_gratuity_variables(
 
     gratuity_days = Decimal("0.00")
 
-    rules = GratuityTable.objects.filter(
+    # v1.16.0 (D15): the table is read once per payroll run / component save (PayrollManagement.perf), as before otherwise
+    from .perf import memo as _memo
+    rules = _memo(('gratuity_rules',), lambda: list(GratuityTable.objects.filter(
         is_active=True
-    ).order_by("minimum_value")
+    ).order_by("minimum_value")))
 
-    if not rules.exists():
+    if not rules:
+        # v1.14.0: another country's rule set (branch / company country pack) → its formula; UAE keeps the code below
+        try:
+            from CountryPack import services as _cp
+            _branch = getattr(employee, 'emp_branch_id_id', None)
+            if not _cp.uses_uae_gratuity(_branch):
+                g = _cp.gratuity_breakdown(years_of_service, basic_salary, gratuity_type, _branch)
+                _q = lambda v: Decimal(str(v or 0))
+                liability = _q(g['amount'])
+                return {
+                    "daily_wage": _q(g['daily']) if g['daily'] else daily_wage,
+                    "per_year_days": _q(g['per_year_days']),
+                    "gratuity_days": _q(g['days']),
+                    "monthly_gratuity_accrual": (_q(g['daily']) * _q(g['per_year_days'])) / Decimal("12"),
+                    "total_gratuity_liability": liability,
+                    "max_gratuity": _q(g['cap']) if g['cap'] else liability,
+                }
+        except ImportError:
+            pass
         # v1.11.0: no gratuity table set up → UAE Labour Law (Art. 51): 21 days' basic a year for the first
         # 5 years, 30 days after; nothing is due before 1 year of service; capped at 2 years' basic.
         from types import SimpleNamespace as _NS
@@ -191,6 +211,16 @@ from calendars.models import EmployeeOvertime
 import io
 def generate_payslip_pdf(request, payslip):
     """Generate a PDF payslip for the given Payslip instance."""
+    try:  # v1.15.0: payslip in the reader's language (Arabic font, right to left); the English payslip below is unchanged
+        from Translations.i18n import current_lang
+        _lang = current_lang(request)
+        if _lang and _lang != 'en':
+            from Translations.payslip import payslip_pdf_response
+            return payslip_pdf_response(request, payslip, _lang)
+    except ImportError:
+        pass
+    except Exception:
+        logging.getLogger(__name__).exception('translated payslip failed – English payslip sent')
     buffer = io.BytesIO()
     pdf = SimpleDocTemplate(buffer, pagesize=letter)
     elements = []
@@ -453,6 +483,29 @@ def airticket_schedule_escalation(approval, level_rule):
         print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
 
 def get_ot_rate(employee, ot_type):
+    from .perf import memo, active
+    if not active():
+        return _get_ot_rate(employee, ot_type)
+    # v1.16.0 (D15): the active policies of the type are read once per run and matched here – same rule as the query in
+    # _get_ot_rate (a target list that is empty or holds the employee's value; the first matching policy by id)
+    vals = (employee.emp_branch_id_id, employee.emp_dept_id_id, employee.emp_desgntn_id_id, employee.emp_ctgry_id_id)
+    for rate, targets in memo(('ot_policies', ot_type), lambda: _ot_policy_table(ot_type)):
+        if all(not ids or (v is not None and v in ids) for ids, v in zip(targets, vals)):
+            return rate
+    return Decimal('0.00')
+
+
+def _ot_policy_table(ot_type):
+    """v1.16.0: [(rate, (branch ids, department ids, designation ids, category ids))] of the active policies, by id."""
+    OvertimePolicy = apps.get_model('calendars', 'OvertimePolicy')
+    out = []
+    for p in OvertimePolicy.objects.filter(ot_type=ot_type, is_active=True).order_by('pk').prefetch_related(
+            'branch', 'department', 'designation', 'category'):
+        out.append((p.rate_multiplier, tuple({x.pk for x in getattr(p, f).all()} for f in ('branch', 'department', 'designation', 'category'))))
+    return out
+
+
+def _get_ot_rate(employee, ot_type):
     OvertimePolicy = apps.get_model(
         'calendars', 'OvertimePolicy'
     )

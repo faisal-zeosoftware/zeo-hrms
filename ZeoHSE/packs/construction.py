@@ -1,0 +1,102 @@
+"""Construction and engineering pack – work permits, method statements, task risk assessments, subcontractors, lifting
+operations, excavation, working at height, site inspections and toolbox talks. Starting values: review before use."""
+from ._util import Q, steps
+
+PACK = {
+    'terms': {'site': 'Project site', 'area': 'Zone / level', 'contractor': 'Subcontractor', 'supervisor': 'Foreman / supervisor',
+              'risk_assessment': 'Task risk assessment (TRA)', 'permit': 'Work permit'},
+    'incident_categories': [
+        ('DROP', 'Dropped object', 'near_miss', False), ('FALL', 'Fall from height', 'injury', False),
+        ('COLL', 'Excavation collapse', 'property', False), ('LIFT', 'Lifting incident', 'property', False),
+        ('PLANT', 'Plant / equipment contact', 'injury', False),
+    ],
+    'approvals': [],
+    'permit_types': [
+        {'code': 'EXC', 'name': 'Excavation', 'color': '#92400e', 'max_hours': 12, 'requires_method_statement': True,
+         'description': 'Any excavation, trench or ground disturbance; underground services located before digging.',
+         'checklist': 'EXC-PTW', 'simops': ['LIFT'],
+         'approval_steps': steps(('supervisor', 'Foreman / supervisor'), ('site_manager', 'Construction manager'), ('permit_issuer', 'Permit issuer'))},
+        {'code': 'LIFT', 'name': 'Lifting operations', 'color': '#0f766e', 'max_hours': 12, 'requires_method_statement': True,
+         'description': 'Crane and hoist lifts; critical lifts need a lift plan approved by an appointed person.',
+         'checklist': 'LIFT-PTW', 'simops': ['EXC'],
+         'approval_steps': steps(('supervisor', 'Lifting supervisor'), ('site_manager', 'Appointed person / construction manager'), ('permit_issuer', 'Permit issuer'))},
+        {'code': 'CSE', 'name': 'Confined space entry', 'color': '#7c3aed', 'max_hours': 8, 'requires_gas_test': True,
+         'requires_isolation': True, 'requires_method_statement': True, 'gas_limits': {'O2': [19.5, 23.5], 'LEL': [0, 10], 'H2S': [0, 5], 'CO': [0, 25]}, 'gas_retest_hours': 2,
+         'description': 'Manholes, tanks, chambers, shafts – atmosphere tested, attendant posted, rescue ready.',
+         'checklist': 'CSE-PTW', 'approval_steps': steps(('gas_tester', 'Authorised gas tester'), ('supervisor', 'Supervisor'), ('permit_issuer', 'Permit issuer'), ('hse_officer', 'HSE officer'))},
+    ],
+    'forms': [
+        {'kind': 'permit_checklist', 'code': 'EXC-PTW', 'name': 'Excavation checklist', 'questions': [
+            Q('Services', 'Underground services located (drawings, cable detector, trial pits)', critical=True),
+            Q('Support', 'Shoring / battering / benching designed for the depth and soil', critical=True),
+            Q('Edges', 'Edge protection and barriers installed, spoil kept back from the edge', critical=True),
+            Q('Access', 'Safe ladder access every 7.5 m for trenches deeper than 1.2 m'),
+            Q('Plant', 'Plant kept away from the edge, stop blocks in place'),
+            Q('Inspection', 'Excavation inspected by a competent person at the start of each shift', critical=True),
+            Q('Depth', 'Planned depth (m)', type='number'),
+        ]},
+        {'kind': 'permit_checklist', 'code': 'LIFT-PTW', 'name': 'Lifting operation checklist', 'questions': [
+            Q('Plan', 'Lift plan prepared and approved (critical lifts)', critical=True),
+            Q('Equipment', 'Crane / hoist third-party certificate valid', critical=True),
+            Q('Equipment', 'Lifting accessories inspected and colour-coded', critical=True),
+            Q('Ground', 'Ground bearing and outrigger pads checked', critical=True),
+            Q('People', 'Operator, rigger and banksman certified', critical=True),
+            Q('Area', 'Exclusion zone set, no one under the load', critical=True),
+            Q('Weather', 'Wind speed within the crane limit'),
+            Q('Load', 'Load weight (t)', type='number'), Q('Load', 'Percentage of rated capacity (%)', type='number'),
+        ]},
+        {'kind': 'permit_checklist', 'code': 'CSE-PTW', 'name': 'Confined space entry checklist', 'questions': [
+            Q('Atmosphere', 'Space ventilated and atmosphere tested before entry', critical=True),
+            Q('Isolation', 'Pipes, valves and electrical supplies isolated', critical=True),
+            Q('People', 'Trained entrants and attendant at the entry point', critical=True),
+            Q('Rescue', 'Rescue equipment (tripod, harness, breathing apparatus) ready', critical=True),
+            Q('Monitoring', 'Continuous gas monitor worn by entrants', critical=True),
+            Q('Communication', 'Entry log and communication method agreed'),
+        ]},
+        {'kind': 'method_statement', 'code': 'MS-STANDARD', 'name': 'Method statement', 'questions': [
+            Q('Scope', 'Scope of work and location', type='text'), Q('Sequence', 'Step-by-step work sequence', type='text'),
+            Q('Resources', 'Plant, equipment and materials', type='text'), Q('People', 'Supervision and competent persons', type='text'),
+            Q('Controls', 'Hazards and controls (link the TRA)', type='text'), Q('Emergency', 'Emergency and rescue arrangements', type='text'),
+            Q('Environment', 'Waste and environmental controls', type='text'),
+        ]},
+        {'kind': 'inspection', 'code': 'INS-SCAFFOLD', 'name': 'Scaffold inspection', 'frequency': 'Before use and every 7 days', 'questions': [
+            Q('Base', 'Base plates and sole boards on firm ground', critical=True), Q('Structure', 'Standards plumb, ledgers and transoms complete'),
+            Q('Structure', 'Ties and bracing in place', critical=True), Q('Platform', 'Boards fully planked and secured'),
+            Q('Edge', 'Guardrails, mid-rails and toe boards fitted', critical=True), Q('Access', 'Ladder access secured, extends 1 m above platform'),
+            Q('Tag', 'Scaffold tag shows inspection date and status', critical=True),
+        ]},
+        {'kind': 'inspection', 'code': 'INS-EXCAVATION', 'name': 'Excavation daily inspection', 'frequency': 'Each shift', 'questions': [
+            Q('Support', 'Shoring intact, no signs of movement', critical=True), Q('Water', 'No water accumulation'),
+            Q('Edges', 'Barriers and edge protection in place', critical=True), Q('Access', 'Ladders in place and secured'),
+        ]},
+        {'kind': 'inspection', 'code': 'INS-LIFTGEAR', 'name': 'Lifting gear inspection', 'frequency': 'Before use / colour code period', 'questions': [
+            Q('Accessories', 'Slings, shackles and hooks undamaged, SWL marked', critical=True),
+            Q('Accessories', 'Current colour code applied'), Q('Crane', 'Limit switches and alarms working', critical=True),
+            Q('Crane', 'Daily pre-use checklist completed'),
+        ]},
+        {'kind': 'inspection', 'code': 'INS-SITE-DAILY', 'name': 'Site daily HSE inspection', 'frequency': 'Daily', 'questions': [
+            Q('Access', 'Site access, signage and induction control'), Q('Height', 'Open edges and floor openings protected', critical=True),
+            Q('Plant', 'Plant operators certified, banksman present'), Q('Housekeeping', 'Housekeeping and waste segregation'),
+            Q('Welfare', 'Drinking water, shaded rest areas, toilets'), Q('Fire', 'Fire points complete'),
+        ]},
+        {'kind': 'prequalification', 'code': 'PQ-SUBCON', 'name': 'Subcontractor HSE pre-qualification', 'questions': [
+            Q('Company', 'Valid trade licence', critical=True), Q('Company', 'Insurance (third party and workers) valid', critical=True),
+            Q('HSE', 'HSE policy and site HSE plan submitted'), Q('HSE', 'Incident statistics for the last 3 years', type='text'),
+            Q('People', 'Competency certificates for key workers'), Q('Plant', 'Third-party certificates for plant'),
+        ]},
+        {'kind': 'toolbox_talk', 'code': 'TBT-WAH', 'name': 'Working at height – fall prevention', 'questions': []},
+        {'kind': 'toolbox_talk', 'code': 'TBT-LIFT', 'name': 'Lifting operations and exclusion zones', 'questions': []},
+        {'kind': 'toolbox_talk', 'code': 'TBT-EXC', 'name': 'Excavation safety and buried services', 'questions': []},
+        {'kind': 'toolbox_talk', 'code': 'TBT-PLANT', 'name': 'Working around mobile plant', 'questions': []},
+    ],
+    'hazards': [
+        ('Work at height', 'Formwork / steel fixing at slab edge', 'Fall from height', 'Fatality, serious injury', 'Edge protection, harness with anchor, permit, rescue plan', 3, 5),
+        ('Work at height', 'Scaffold erection', 'Fall of persons / materials', 'Fatality, injury below', 'Competent scaffolders, harness, exclusion zone, tagging', 3, 5),
+        ('Excavation', 'Trenching for services', 'Collapse of sides', 'Burial, fatality', 'Shoring / battering, inspection each shift, edge protection', 2, 5),
+        ('Excavation', 'Digging near services', 'Striking buried cables / pipes', 'Electrocution, gas release', 'Service drawings, cable locator, trial pits, hand digging', 3, 5),
+        ('Lifting', 'Crane lifts', 'Load falls / crane overturns', 'Fatality', 'Lift plan, certified crane and gear, exclusion zone, wind limits', 2, 5),
+        ('Plant', 'Mobile plant movement', 'Person struck by plant', 'Fatality', 'Banksman, segregation, reversing alarms, high-visibility clothing', 3, 5),
+        ('Hot work', 'Welding on site', 'Fire', 'Burns, property damage', 'Hot work permit, fire watch, extinguisher, remove combustibles', 3, 4),
+        ('Health', 'Concrete cutting / drilling', 'Silica dust', 'Lung disease', 'Wet cutting, extraction, respirators', 3, 4),
+    ],
+}

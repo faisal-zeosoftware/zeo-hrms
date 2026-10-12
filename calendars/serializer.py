@@ -132,12 +132,14 @@ class HolidaySerializer(serializers.ModelSerializer):
 
 class HolidayCalandarSerializer(serializers.ModelSerializer):
     year = serializers.ChoiceField(choices=[(year, year) for year in range(2000, 2040)])
-    holiday_list = HolidaySerializer(many=True, read_only=True)
+    holiday_list = serializers.SerializerMethodField()   # v1.15.1: sorted by date
     holidays=HolidaySerializer(many=True,read_only=True,source="holiday_set")
     # holiday = HolidaySerializer(many=True,)
     class Meta:
         model = holiday_calendar
         fields = '__all__'
+    def get_holiday_list(self, obj):
+        return HolidaySerializer(obj.holiday_list.all().order_by('start_date', 'id'), many=True).data
     def validate(self, attrs):
         calendar_title=attrs.get("calendar_title")
         calendar=holiday_calendar.objects.filter(calendar_title=calendar_title)
@@ -396,6 +398,13 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 
         if instance.leave_type:
             rep['leave_type'] = instance.leave_type.name
+
+        if instance.status == 'pending':   # v1.18.0: roster / staffing conflict for the approvers
+            try:
+                from ShiftPlanner.services import leave_roster_conflicts
+                rep['roster_conflict'] = leave_roster_conflicts(instance)
+            except Exception:
+                pass
 
         return rep
 
@@ -1106,6 +1115,31 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
     class Meta:
         model = LVApprovalWorkflow
         fields = '__all__'
+
+    # v1.15.1: "for compensatory leave" on the Leave approval levels screen sends no leave type – the workflow is saved for
+    # the company's compensatory leave type and its levels are marked compensatory (before, saving failed: leave type required,
+    # so compensatory-off work requests never got an approver)
+    def _is_comp(self):
+        v = (getattr(self, 'initial_data', None) or {}).get('is_compensatory')
+        return v is True or str(v).lower() in ('true', '1', 'yes')
+
+    def to_internal_value(self, data):
+        if self._is_comp() and not data.get('request_type'):
+            t = leave_type.objects.filter(is_compensatory=True).order_by('branch_id', 'id').first()
+            if t is not None:
+                data = data.copy() if hasattr(data, 'copy') else dict(data)
+                data['request_type'] = t.pk
+        return super().to_internal_value(data)
+
+    def _mark_comp(self, workflow):
+        if self._is_comp():
+            workflow.leave_levels.update(is_compensatory=True)
+            LeaveApprovalLevels.objects.filter(is_compensatory=True).exclude(workflow=workflow).update(is_compensatory=False)
+
+    def save(self, **kwargs):
+        workflow = super().save(**kwargs)
+        self._mark_comp(workflow)
+        return workflow
 
     # ---------------- REPRESENTATION ---------------- #
     def to_representation(self, instance):

@@ -24,6 +24,7 @@ Rules for users who are not company admins and do not hold the model's add/chang
 import logging
 
 from rest_framework import permissions
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +299,7 @@ class EssGuard(permissions.BasePermission):
             # payslip PDF upload / e-mail
             if label == 'payrollmanagement.payslip' and action == 'upload_pdf':
                 if 'change_payslip' not in c.codes:
-                    self.message = 'Only payroll users can upload payslip PDFs or send payslip e-mails.'
+                    self.message = tr('Only payroll users can upload payslip PDFs or send payslip e-mails.')
                     return False
                 return True
             # nested profile records on the employee screen
@@ -310,7 +311,7 @@ class EssGuard(permissions.BasePermission):
             if label in READ_ONLY_MODELS and action in VERBS:
                 if f'{verb}_{name}' in c.codes:
                     return True
-                self.message = f'You cannot change {model._meta.verbose_name} records – HR or payroll keeps them.'
+                self.message = tr('You cannot change {0} records – HR or payroll keeps them.', model._meta.verbose_name)
                 return False
             if label in MODEL_GROUP and action in VERBS:
                 if f'{verb}_{name}' in c.codes:
@@ -326,10 +327,10 @@ class EssGuard(permissions.BasePermission):
                     v = data.get(f)
                     if f == 'status':
                         if not is_pending(v):
-                            self.message = 'A new request is always pending: its status is set by the approvers.'
+                            self.message = tr('A new request is always pending: its status is set by the approvers.')
                             return False
                     elif _norm(v) not in ('', 'false', '0'):
-                        self.message = f'"{f}" is filled in by the approver, not by the requester.'
+                        self.message = tr('"{0}" is filled in by the approver, not by the requester.', f)
                         return False
             return True
         except Exception:
@@ -341,9 +342,9 @@ class EssGuard(permissions.BasePermission):
         if pol == SELF:
             return True
         if pol == REQUEST:
-            self.message = f'Changes to your {group} details need HR approval. {REQUEST_HINT}'
+            self.message = tr('Changes to your {0} details need HR approval. {1}', group, REQUEST_HINT)
         else:
-            self.message = f'Your {group} details are kept by HR. Ask HR if something is wrong.'
+            self.message = tr('Your {0} details are kept by HR. Ask HR if something is wrong.', group)
         return False
 
     def has_object_permission(self, request, view, obj):
@@ -403,15 +404,15 @@ class EssGuard(permissions.BasePermission):
         mine = self._is_requester(obj, c)
         if action in APPROVE_ACTIONS:
             if mine:
-                self.message = 'You cannot approve or reject your own request.'
+                self.message = tr('You cannot approve or reject your own request.')
                 return False
             if not self._is_step_approver(obj, request.user.pk):
-                self.message = 'Only the approver of the pending step can approve or reject this request.'
+                self.message = tr('Only the approver of the pending step can approve or reject this request.')
                 return False
             return True
         if action in ('update', 'partial_update', 'destroy'):
             if not is_pending(cur):
-                self.message = f'This request is already {cur}; it can no longer be changed or deleted.'
+                self.message = tr('This request is already {0}; it can no longer be changed or deleted.', cur)
                 return False
             data = _data(request) if action != 'destroy' else {}
             for f in guarded_fields(type(obj)):
@@ -421,8 +422,8 @@ class EssGuard(permissions.BasePermission):
                     continue  # the requester withdraws a pending request
                 if f == 'status' and is_pending(data.get(f)):
                     continue
-                self.message = ('Use Approve or Reject: the requester cannot set the status of a request.' if f == 'status'
-                                else f'"{f}" is filled in by the approver, not by the requester.')
+                self.message = (tr('Use Approve or Reject: the requester cannot set the status of a request.') if f == 'status'
+                                else tr('"{0}" is filled in by the approver, not by the requester.', f))
                 return False
         return True
 

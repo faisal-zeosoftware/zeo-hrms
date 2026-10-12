@@ -27,6 +27,7 @@ from . import profile as P
 from . import services as S
 from .models import (GRIEVANCE_CATEGORIES, LETTER_TYPES, ChangeRequestAttachment, Grievance, GrievanceMessage, GrievanceSetting,
                      LetterRequest, LetterTemplate, ProfileChangeRequest)
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 
 def deny(msg, code=403):
@@ -42,11 +43,11 @@ def bad(exc):
 
 def _file(f, name=None, inline=False):
     if not f or not f.name:
-        return deny('There is no file.', 404)
+        return deny(tr('There is no file.'), 404)
     try:
         fh = f.open('rb')
     except Exception:
-        return deny('The file is missing on the server – ask HR to upload it again.', 404)
+        return deny(tr('The file is missing on the server – ask HR to upload it again.'), 404)
     name = name or os.path.basename(f.name)
     ctype = mimetypes.guess_type(name)[0] or 'application/octet-stream'
     return FileResponse(fh, as_attachment=not inline, filename=name, content_type=ctype)
@@ -104,7 +105,7 @@ class OptionsView(Base):
     def get(self, request):
         rows = P.options(request.GET.get('source') or '')
         if rows is None:
-            return deny('Unknown list.', 404)
+            return deny(tr('Unknown list.'), 404)
         return Response(rows)
 
 
@@ -112,7 +113,7 @@ class DashboardView(Base):
     def get(self, request):
         emp = self.emp(request)
         if emp is None:
-            return Response({'detail': 'No employee record is linked to your login.', 'cards': {}})
+            return Response({'detail': tr('No employee record is linked to your login.'), 'cards': {}})
         return Response(S.dashboard(request, emp))
 
 
@@ -121,17 +122,17 @@ class MyProfileView(Base):
     def get(self, request):
         emp = self.emp(request)
         if emp is None:
-            return deny('No employee record is linked to your login – ask HR to link it.', 404)
+            return deny(tr('No employee record is linked to your login – ask HR to link it.'), 404)
         return Response(P.read_profile(emp, masked=True))
 
 
 class EmployeeProfileHRView(Base):
     def get(self, request, emp_id):
         if not S.can(request, *S.CR_HR):
-            return deny('Only HR can open another employee\'s self-service profile.')
+            return deny(tr('Only HR can open another employee\'s self-service profile.'))
         emp = S.employee(emp_id)
         if emp is None or not S.branch_ok(request, emp.emp_branch_id_id):
-            return deny('Employee not found in your branches.', 404)
+            return deny(tr('Employee not found in your branches.'), 404)
         return Response(P.read_profile(emp, masked=False))
 
 
@@ -141,7 +142,7 @@ class ProfileChangeView(Base):
     def post(self, request):
         emp = self.emp(request)
         if emp is None:
-            return deny('No employee record is linked to your login.', 404)
+            return deny(tr('No employee record is linked to your login.'), 404)
         d = _data(request)
         rid = d.get('record_id')
         try:
@@ -179,7 +180,7 @@ class ChangeRequestsView(Base):
 
     def get(self, request):
         if not S.can(request, *S.CR_HR):
-            return deny('Only HR can review profile change requests.')
+            return deny(tr('Only HR can review profile change requests.'))
         qs = ProfileChangeRequest.objects.filter(S.branch_q(request))
         st = request.GET.get('status')
         if st:
@@ -205,7 +206,7 @@ class ChangeRequestView(Base):
     def get(self, request, pk):
         r, hr = _cr_for(request, pk)
         if r is None:
-            return deny('Request not found.', 404)
+            return deny(tr('Request not found.'), 404)
         return Response(S.change_json(r, hr=hr))
 
 
@@ -213,12 +214,12 @@ class ChangeRequestActionView(Base):
     def post(self, request, pk, act):
         r, hr = _cr_for(request, pk)
         if r is None:
-            return deny('Request not found.', 404)
+            return deny(tr('Request not found.'), 404)
         emp = S.my_employee(request)
         try:
             if act == 'withdraw':
                 if emp is None or r.employee_id != emp.pk:
-                    return deny('Only the employee who asked can withdraw the request.')
+                    return deny(tr('Only the employee who asked can withdraw the request.'))
                 if r.status != 'pending':
                     return Response({'status': f'This request is already {r.get_status_display().lower()}.'}, status=400)
                 r.status, r.decided_at = 'withdrawn', timezone.now()
@@ -226,22 +227,22 @@ class ChangeRequestActionView(Base):
                 return Response(S.change_json(r))
             if act in ('approve', 'reject'):
                 if not hr:
-                    return deny('Only HR of the employee\'s branch can approve or reject this request.')
+                    return deny(tr('Only HR of the employee\'s branch can approve or reject this request.'))
                 S.decide_change(request, r, act == 'approve', (request.data or {}).get('note') or (request.data or {}).get('decision_note') or '')
                 return Response(S.change_json(r, hr=True))
         except ValidationError as exc:
             return bad(exc)
-        return deny('Unknown action.', 404)
+        return deny(tr('Unknown action.'), 404)
 
 
 class ChangeRequestFileView(Base):
     def get(self, request, pk, aid):
         r, hr = _cr_for(request, pk)
         if r is None:
-            return deny('Request not found.', 404)
+            return deny(tr('Request not found.'), 404)
         a = ChangeRequestAttachment.objects.filter(request=r, pk=aid).first()
         if a is None:
-            return deny('File not found.', 404)
+            return deny(tr('File not found.'), 404)
         return _file(a.file, a.name or None)
 
 
@@ -251,11 +252,11 @@ class PolicySettingsView(Base):
 
     def put(self, request):
         if not S.can(request, *S.SETTINGS_HR):
-            return deny('Only HR can change the self-service field settings.')
+            return deny(tr('Only HR can change the self-service field settings.'))
         rows = request.data if isinstance(request.data, list) else (request.data or {}).get('rows') or []
         saved, errors = S.save_policies(rows, request.user)
         if errors:
-            return Response({'saved': saved, 'errors': errors, 'detail': 'Some rows were not saved: ' + ' '.join(errors)}, status=400)
+            return Response({'saved': saved, 'errors': errors, 'detail': tr('Some rows were not saved: ') + ' '.join(errors)}, status=400)
         return Response({'saved': saved, 'rows': P.policies()})
 
 
@@ -289,21 +290,21 @@ class MyLettersView(Base):
     def post(self, request):
         emp = self.emp(request)
         if emp is None:
-            return deny('No employee record is linked to your login.', 404)
+            return deny(tr('No employee record is linked to your login.'), 404)
         try:
             lr = _letter_from(_data(request), emp, request.user)
         except ValidationError as exc:
             return bad(exc)
         lr.save()
         for u in S.users_with(emp.emp_branch_id_id, S.LETTER_HR, exclude=(request.user.pk,)):
-            S.notify(user=u, title='HR letter requested', message=f'{P.person(emp)} asked for a {lr.get_letter_type_display().lower()} ({lr.number}).')
+            S.notify(user=u, title=tmsg('HR letter requested'), message=tmsg('{0} asked for a {1} ({2}).', P.person(emp), lr.get_letter_type_display().lower(), lr.number))
         return Response(letter_json(lr), status=201)
 
 
 class LettersHRView(Base):
     def get(self, request):
         if not S.can(request, *S.LETTER_HR):
-            return deny('Only HR can see letter requests.')
+            return deny(tr('Only HR can see letter requests.'))
         qs = LetterRequest.objects.filter(S.branch_q(request))
         if request.GET.get('status'):
             qs = qs.filter(status=request.GET['status'])
@@ -315,7 +316,7 @@ class LetterIssueView(Base):
 
     def post(self, request):
         if not S.can(request, *S.LETTER_HR):
-            return deny('Only HR can issue letters.')
+            return deny(tr('Only HR can issue letters.'))
         d = _data(request)
         emp = S.employee(d.get('employee_id') or d.get('employee') or 0)
         if emp is None or not S.branch_ok(request, emp.emp_branch_id_id):
@@ -329,7 +330,7 @@ class LetterIssueView(Base):
             if lr is not None and lr.pk:
                 lr.delete()
             return bad(exc)
-        S.notify(employee=emp, title='HR letter ready', message=f'Your {lr.get_letter_type_display().lower()} ({lr.reference_no}) is ready in My letters.')
+        S.notify(employee=emp, title=tmsg('HR letter ready'), message=tmsg('Your {0} ({1}) is ready in My letters.', lr.get_letter_type_display().lower(), lr.reference_no))
         return Response(letter_json(lr, hr=True), status=201)
 
 
@@ -347,12 +348,12 @@ class LetterActionView(Base):
     def post(self, request, pk, act):
         lr, hr = _letter_for(request, pk)
         if lr is None:
-            return deny('Letter not found.', 404)
+            return deny(tr('Letter not found.'), 404)
         emp = S.my_employee(request)
         note = (request.data or {}).get('note') or ''
         if act == 'withdraw':
             if emp is None or lr.employee_id != emp.pk:
-                return deny('Only the employee who asked can withdraw the request.')
+                return deny(tr('Only the employee who asked can withdraw the request.'))
             if lr.status != 'pending':
                 return Response({'status': f'This letter is already {lr.get_status_display().lower()}.'}, status=400)
             lr.status = 'withdrawn'
@@ -360,9 +361,9 @@ class LetterActionView(Base):
             return Response(letter_json(lr))
         if act in ('approve', 'reject'):
             if not hr:
-                return deny('Only HR of the employee\'s branch can approve or reject letters.')
+                return deny(tr('Only HR of the employee\'s branch can approve or reject letters.'))
             if emp is not None and lr.employee_id == emp.pk:
-                return deny('You cannot approve your own letter request.')
+                return deny(tr('You cannot approve your own letter request.'))
             if lr.status != 'pending':
                 return Response({'status': f'This letter is already {lr.get_status_display().lower()}.'}, status=400)
             if act == 'reject':
@@ -370,24 +371,24 @@ class LetterActionView(Base):
                     return Response({'note': 'Give the reason for rejecting.'}, status=400)
                 lr.status, lr.decided_by_id, lr.decided_at, lr.decision_note = 'rejected', request.user.pk, timezone.now(), note[:500]
                 lr.save()
-                S.notify(employee=S.employee(lr.employee_id), title='HR letter rejected', message=f'Your letter request {lr.number} was rejected: {note}')
+                S.notify(employee=S.employee(lr.employee_id), title=tmsg('HR letter rejected'), message=tmsg('Your letter request {0} was rejected: {1}', lr.number, note))
                 return Response(letter_json(lr, hr=True))
             try:
                 L.issue(lr, request.user, note)
             except ValidationError as exc:
                 return bad(exc)
-            S.notify(employee=S.employee(lr.employee_id), title='HR letter ready', message=f'Your {lr.get_letter_type_display().lower()} ({lr.reference_no}) is ready in My letters.')
+            S.notify(employee=S.employee(lr.employee_id), title=tmsg('HR letter ready'), message=tmsg('Your {0} ({1}) is ready in My letters.', lr.get_letter_type_display().lower(), lr.reference_no))
             return Response(letter_json(lr, hr=True))
-        return deny('Unknown action.', 404)
+        return deny(tr('Unknown action.'), 404)
 
 
 class LetterPdfView(Base):
     def get(self, request, pk):
         lr, hr = _letter_for(request, pk)
         if lr is None:
-            return deny('Letter not found.', 404)
+            return deny(tr('Letter not found.'), 404)
         if lr.status != 'issued' or not lr.pdf:
-            return deny('The letter is not ready yet.', 404)
+            return deny(tr('The letter is not ready yet.'), 404)
         return _file(lr.pdf, f'{lr.reference_no}.pdf', inline=request.GET.get('inline') == '1')
 
 
@@ -398,7 +399,7 @@ class LetterVerifyView(Base):
             return Response({'code': 'Enter the verification code printed at the bottom of the letter.'}, status=400)
         lr = LetterRequest.objects.filter(verification_code=code, status='issued').first()
         if lr is None:
-            return Response({'valid': False, 'detail': 'No letter was issued with this code.'})
+            return Response({'valid': False, 'detail': tr('No letter was issued with this code.')})
         emp = S.employee(lr.employee_id)
         return Response({'valid': True, 'reference_no': lr.reference_no, 'letter': lr.get_letter_type_display(), 'employee': P.person(emp),
                          'issued_at': lr.decided_at, 'addressee': lr.addressee})
@@ -407,13 +408,13 @@ class LetterVerifyView(Base):
 class LetterTemplatesView(Base):
     def get(self, request):
         if not S.can(request, *S.TEMPLATE_HR, *S.LETTER_HR):
-            return deny('Only HR can see letter templates.')
+            return deny(tr('Only HR can see letter templates.'))
         L.ensure_templates()
         return Response([_tpl_json(t) for t in LetterTemplate.objects.all()])
 
     def post(self, request):
         if not S.can(request, *S.TEMPLATE_HR):
-            return deny('Only HR can change letter templates.')
+            return deny(tr('Only HR can change letter templates.'))
         t = LetterTemplate()
         return _save_tpl(request, t, created=True)
 
@@ -460,17 +461,17 @@ def _save_tpl(request, t, created=False):
 class LetterTemplateView(Base):
     def put(self, request, pk):
         if not S.can(request, *S.TEMPLATE_HR):
-            return deny('Only HR can change letter templates.')
+            return deny(tr('Only HR can change letter templates.'))
         t = LetterTemplate.objects.filter(pk=pk).first()
         if t is None:
-            return deny('Template not found.', 404)
+            return deny(tr('Template not found.'), 404)
         return _save_tpl(request, t)
 
     patch = put
 
     def delete(self, request, pk):
         if not S.can(request, *S.TEMPLATE_HR):
-            return deny('Only HR can change letter templates.')
+            return deny(tr('Only HR can change letter templates.'))
         LetterTemplate.objects.filter(pk=pk).delete()
         return Response(status=204)
 
@@ -480,7 +481,7 @@ class LetterPreviewView(Base):
 
     def post(self, request):
         if not S.can(request, *S.LETTER_HR, *S.TEMPLATE_HR):
-            return deny('Only HR can preview letters.')
+            return deny(tr('Only HR can preview letters.'))
         d = _data(request)
         emp = S.employee(d.get('employee_id') or 0)
         if emp is None or not S.branch_ok(request, emp.emp_branch_id_id):
@@ -503,7 +504,7 @@ class MyComplaintsView(Base):
     def post(self, request):
         emp = self.emp(request)
         if emp is None:
-            return deny('No employee record is linked to your login.', 404)
+            return deny(tr('No employee record is linked to your login.'), 404)
         try:
             case, token = G.submit(request, emp, _data(request), _files(request))
         except ValidationError as exc:
@@ -529,7 +530,7 @@ class ComplaintView(Base):
     def get(self, request, pk):
         case, own, handler = _case_for(request, pk)
         if case is None:
-            return deny('Complaint not found.', 404)
+            return deny(tr('Complaint not found.'), 404)
         return Response(G.case_json(case, request, handler=handler))
 
 
@@ -537,7 +538,7 @@ class ComplaintActionView(Base):
     def post(self, request, pk, act):
         case, own, handler = _case_for(request, pk)
         if case is None:
-            return deny('Complaint not found.', 404)
+            return deny(tr('Complaint not found.'), 404)
         d = _data(request)
         try:
             if act == 'messages':
@@ -545,15 +546,15 @@ class ComplaintActionView(Base):
                 G.add_message(case, d.get('text') or '', request.user, from_employee=own and not handler, internal=handler and str(d.get('internal')).lower() in ('1', 'true'), attachment=f)
             elif act == 'feedback':
                 if not own:
-                    return deny('Only the employee who raised the complaint can give feedback.')
+                    return deny(tr('Only the employee who raised the complaint can give feedback.'))
                 G.feedback(case, d.get('feedback_rating') or d.get('rating'), d.get('feedback_text') or d.get('text') or '')
             elif act == 'status':
                 if not handler:
-                    return deny('Only the grievance officers handling this case can change its status.')
+                    return deny(tr('Only the grievance officers handling this case can change its status.'))
                 G.transition(request, case, d.get('status'), d.get('note') or '', d.get('outcome') or '')
             elif act == 'assign':
                 if not handler:
-                    return deny('Only the grievance officers handling this case can assign it.')
+                    return deny(tr('Only the grievance officers handling this case can assign it.'))
                 ids = [int(x) for x in (d.get('user_ids') or []) if str(x).isdigit()]
                 mgr = G.manager_user_id(case)
                 if mgr in ids:
@@ -563,7 +564,7 @@ class ComplaintActionView(Base):
                 GrievanceMessage.objects.create(grievance=case, author_user_id=request.user.pk, internal=True, event='assigned',
                                                 text='Assigned to ' + ', '.join(S.uname(i) for i in ids) if ids else 'Assignment cleared.')
             else:
-                return deny('Unknown action.', 404)
+                return deny(tr('Unknown action.'), 404)
         except ValidationError as exc:
             return bad(exc)
         case.refresh_from_db()
@@ -574,10 +575,10 @@ class ComplaintFileView(Base):
     def get(self, request, pk, mid):
         case, own, handler = _case_for(request, pk)
         if case is None:
-            return deny('Complaint not found.', 404)
+            return deny(tr('Complaint not found.'), 404)
         m = case.messages.filter(pk=mid).first()
         if m is None or (m.internal and not handler):
-            return deny('File not found.', 404)
+            return deny(tr('File not found.'), 404)
         return _file(m.attachment)
 
 
@@ -604,7 +605,7 @@ class ComplaintTrackView(Base):
 class ComplaintsHandlerView(Base):
     def get(self, request):
         if not S.can(request, *S.GRIEVANCE) and not Grievance.objects.filter(assigned_user_ids__contains=[request.user.pk]).exists():
-            return deny('Only grievance officers can see complaints.')
+            return deny(tr('Only grievance officers can see complaints.'))
         qs = G.handler_cases(request)
         if request.GET.get('status'):
             qs = qs.filter(status=request.GET['status'])
@@ -614,7 +615,7 @@ class ComplaintsHandlerView(Base):
 class ComplaintSettingsView(Base):
     def get(self, request):
         if not S.can(request, *S.GRIEVANCE):
-            return deny('Only grievance officers can see these settings.')
+            return deny(tr('Only grievance officers can see these settings.'))
         rows = []
         for k, label in GRIEVANCE_CATEGORIES:
             s = G.settings_for(k)
@@ -629,7 +630,7 @@ class ComplaintSettingsView(Base):
 
     def put(self, request):
         if not (S.can(request, *S.GRIEVANCE) and S.can(request, 'change_grievancesetting', 'change_emp_master')):
-            return deny('Only HR can change complaint settings.')
+            return deny(tr('Only HR can change complaint settings.'))
         rows = request.data if isinstance(request.data, list) else (request.data or {}).get('categories') or []
         for r in rows:
             if r.get('category') not in dict(GRIEVANCE_CATEGORIES):
@@ -649,7 +650,7 @@ class ComplaintSettingsView(Base):
 class ComplaintEscalateView(Base):
     def post(self, request):
         if not S.can(request, *S.GRIEVANCE):
-            return deny('Only grievance officers can run the escalation check.')
+            return deny(tr('Only grievance officers can run the escalation check.'))
         return Response({'escalated': G.escalate_overdue()})
 
 
@@ -665,9 +666,9 @@ class AnnouncementReadView(Base):
         from django.apps import apps
         emp = self.emp(request)
         if emp is None:
-            return deny('No employee record is linked to your login.', 404)
+            return deny(tr('No employee record is linked to your login.'), 404)
         if not any(a['id'] == pk for a in S.my_announcements(emp, include_expired=True)):
-            return deny('Announcement not found.', 404)
+            return deny(tr('Announcement not found.'), 404)
         AV = apps.get_model('OrganisationManager', 'AnnouncementView')
         av, created = AV.objects.get_or_create(announcement_id=pk, employee=emp)
         return Response({'id': pk, 'read': True, 'read_at': av.viewed_at, 'already': not created})
@@ -681,7 +682,7 @@ class AnnouncementFileView(Base):
         allowed = S.can(request, *S.ANNOUNCE_HR) or (emp is not None and any(a['id'] == pk for a in S.my_announcements(emp, include_expired=True)))
         a = A.objects.filter(pk=pk).first() if allowed else None
         if a is None:
-            return deny('Announcement not found.', 404)
+            return deny(tr('Announcement not found.'), 404)
         return _file(a.attachment)
 
 
@@ -689,15 +690,21 @@ class AnnouncementStatsView(Base):
     def get(self, request, pk=None):
         from django.apps import apps
         if not S.can(request, *S.ANNOUNCE_HR):
-            return deny('Only HR can see who read announcements.')
+            return deny(tr('Only HR can see who read announcements.'))
         A = apps.get_model('OrganisationManager', 'Announcement')
+        anns = A.objects.all()
+        from AccessControl.access import allowed_branches
+        mine = allowed_branches(request)
+        if mine is not None:   # v1.22.0 branch rights: announcements for the user's branches (or their employees) and company-wide ones
+            anns = anns.filter(Q(branches__in=mine) | (Q(branches__isnull=True) & (Q(specific_employees__isnull=True) |
+                                                                                 Q(specific_employees__emp_branch_id__in=mine)))).distinct()
         if pk:
-            a = A.objects.filter(pk=pk).first()
+            a = anns.filter(pk=pk).first()
             if a is None:
-                return deny('Announcement not found.', 404)
+                return deny(tr('Announcement not found.'), 404)
             return Response(S.announcement_stats(a, request))
         out = []
-        for a in A.objects.order_by('-created_at')[:200]:
+        for a in anns.order_by('-created_at')[:200]:
             s = S.announcement_stats(a, request)
             s.pop('readers', None)
             s.update({'created_at': a.created_at, 'expires_at': a.expires_at, 'schedule_at': a.schedule_at})
@@ -721,7 +728,7 @@ class MyPayslipView(Base):
         emp = self.emp(request)
         p = S.my_payslips(emp).filter(pk=pk).first() if emp else None
         if p is None:
-            return deny('Payslip not found.', 404)
+            return deny(tr('Payslip not found.'), 404)
         return Response(S.payslip_json(p, lines=True))
 
 
@@ -730,7 +737,7 @@ class MyPayslipPdfView(Base):
         emp = self.emp(request)
         p = S.my_payslips(emp).filter(pk=pk).first() if emp else None
         if p is None:
-            return deny('Payslip not found.', 404)
+            return deny(tr('Payslip not found.'), 404)
         if p.payslip_pdf and p.payslip_pdf.name:
             return _file(p.payslip_pdf, f'payslip-{p.payroll_run.year}-{p.payroll_run.month:02d}.pdf')
         from PayrollManagement.utils import generate_payslip_pdf
@@ -762,10 +769,10 @@ class DocumentFileView(Base):
         D = apps.get_model('EmpManagement', 'Emp_Documents')
         d = D.objects.filter(pk=pk).select_related('emp_id').first()
         if d is None:
-            return deny('Document not found.', 404)
+            return deny(tr('Document not found.'), 404)
         emp = self.emp(request)
         own = emp is not None and d.emp_id_id == emp.pk
         hr = S.can(request, 'view_emp_documents', 'change_emp_documents', 'change_emp_master') and S.branch_ok(request, d.emp_id.emp_branch_id_id)
         if not own and not hr:
-            return deny('Document not found.', 404)
+            return deny(tr('Document not found.'), 404)
         return _file(d.emp_doc_document)

@@ -216,7 +216,14 @@ class AssetCustomFieldValueSerializer(serializers.ModelSerializer):
             dup = dup.exclude(pk=self.instance.pk)
         if dup.exists():
             raise serializers.ValidationError({'custom_field': f'{asset} already has a value for "{field.custom_field}". Edit that value instead.'})
-        if value not in (None, ''):
+        if value not in (None, '') and (field.data_type or 'text') not in ('text', 'date', 'dropdown', 'radio', 'checkbox'):
+            # v1.16.0: the other field types of the one asset designer (number, e-mail, multi-select …)
+            from DataTools.onedesign import asset_typed
+            try:
+                attrs['field_value'] = asset_typed(field, value, required=False)
+            except ValueError as e:
+                raise serializers.ValidationError({'field_value': str(e)})
+        elif value not in (None, ''):
             t = field.data_type or 'text'
             if t == 'date' and parse_date(str(value)[:10]) is None:
                 raise serializers.ValidationError({'field_value': 'Enter a date (YYYY-MM-DD).'})
@@ -244,9 +251,52 @@ class AssetCustomFieldValueSerializer(serializers.ModelSerializer):
 
 class AssetCustomFieldSerializer(serializers.ModelSerializer):
     field_values = AssetCustomFieldValueSerializer(many=True, read_only=True)
+    # v1.16.0: the asset form's one designer has every field type of the other designers (not only the first five)
+    data_type = serializers.CharField(max_length=20, required=False, allow_null=True, allow_blank=True)
     class Meta:
         model = AssetCustomField
         fields = '__all__'
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        try:   # v1.16.0: mandatory, section, order, help text, example, rules (FormSetting 'layout:asset')
+            from DataTools.onedesign import asset_field_json, asset_meta
+            if getattr(self, '_zmeta', None) is None:
+                self._zmeta = asset_meta()
+            j = asset_field_json(instance, self._zmeta)
+            rep.update({k: j[k] for k in ('required', 'section', 'order', 'help_text', 'placeholder', 'example', 'rules', 'default', 'options', 'alias_of')})
+            rep['mandatory'] = j['required']
+        except Exception:
+            pass
+        return rep
+
+    def _layout(self, instance, old_name=None):
+        from DataTools.forms import set_layout, set_mandatory, LAYOUT_KEYS
+        from DataTools.fieldrules import RULE_KEYS
+        raw = self.initial_data if hasattr(self, 'initial_data') and hasattr(self.initial_data, 'get') else {}
+        user = getattr(self.context.get('request'), 'user', None) if isinstance(self.context, dict) else None
+        if old_name and old_name != instance.custom_field:
+            set_layout('asset', instance.custom_field, None, old_name=old_name)
+            from DataTools.forms import _mandatory_map
+            m = _mandatory_map('asset')
+            if old_name in m:
+                set_mandatory('asset', instance.custom_field, m[old_name], old_name=old_name)
+        if any(k in raw for k in LAYOUT_KEYS + RULE_KEYS + ('rules',)):
+            set_layout('asset', instance.custom_field, raw, user, data_type=instance.data_type)
+        if 'mandatory' in raw or 'required' in raw:
+            flag = str(raw.get('mandatory', raw.get('required'))).lower() in ('true', '1', 'yes')
+            set_mandatory('asset', instance.custom_field, flag, user)
+
+    def create(self, validated_data):
+        inst = super().create(validated_data)
+        self._layout(inst)
+        return inst
+
+    def update(self, instance, validated_data):
+        old = instance.custom_field
+        inst = super().update(instance, validated_data)
+        self._layout(inst, old_name=old)
+        return inst
 
     def validate(self, attrs):
         # v1.12.0: clear messages instead of the model's generic errors
@@ -258,8 +308,17 @@ class AssetCustomFieldSerializer(serializers.ModelSerializer):
             others = others.exclude(pk=self.instance.pk)
         if others.exists():
             raise serializers.ValidationError({'custom_field': f'A field called "{name}" already exists. Field names are unique across all asset types – use another name.'})
+        # v1.16.0: one designer per form – not a copy of a built-in asset field or of a generic extra field
+        from DataTools.onedesign import check_new_custom_field, ASSET_TYPES
+        msg = check_new_custom_field('asset', name, exclude_name=getattr(self.instance, 'custom_field', None))
+        if msg:
+            raise serializers.ValidationError({'custom_field': msg})
         t = attrs.get('data_type', getattr(self.instance, 'data_type', None)) or 'text'
-        key = {'dropdown': 'dropdown_values', 'radio': 'radio_values', 'checkbox': 'checkbox_values'}.get(t)
+        if t not in ASSET_TYPES:
+            raise serializers.ValidationError({'data_type': f'Choose a field type ({", ".join(ASSET_TYPES)}).'})
+        if t == 'checkbox' and not attrs.get('checkbox_values') and not getattr(self.instance, 'checkbox_values', None):
+            attrs['checkbox_values'] = ['Yes', 'No']
+        key = {'dropdown': 'dropdown_values', 'radio': 'radio_values', 'checkbox': 'checkbox_values', 'multiselect': 'dropdown_values'}.get(t)
         if key:
             vals = attrs.get(key, getattr(self.instance, key, None))
             if isinstance(vals, str):
@@ -672,7 +731,7 @@ class BranchSerializer(serializers.ModelSerializer):
         from calendars.serializer import HolidaySerializer  # Ensure correct import path
         # Fetch assigned holiday calendars for this branch
         assigned_holiday_calendars = assign_holiday.objects.filter(branch__in=[obj]).values_list('holiday_model', flat=True)
-        holidays = holiday.objects.filter(calendar__in=assigned_holiday_calendars)
+        holidays = holiday.objects.filter(calendar__in=assigned_holiday_calendars).order_by('start_date', 'id')   # v1.15.1: by date
         return HolidaySerializer(holidays, many=True).data
     
     def get_policies(self, obj):

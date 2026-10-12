@@ -1,3 +1,4 @@
+from datetime import date as _date   # v1.20.2 (WPS pay period)
 from zeo.workflow_utils import replace_existing_workflows
 from EmpManagement.email_utils import warn_if_email_not_configured
 from rest_framework import serializers
@@ -200,10 +201,36 @@ class PayrollRunSerializer(serializers.ModelSerializer):
  
         rep['department'] = [d.dept_name for d in instance.department.all()]
         rep['category'] = [c.ctgry_title for c in instance.category.all()]
+        try:   # v1.18.0: who prepared / approved / paid, and the deadline checks
+            from PayrollPlus.services import run_control_row
+            rep['control'] = run_control_row(instance)
+        except Exception:
+            pass
  
         return rep
  
     def validate(self, data):
+        # v1.15.1: a run is approved / paid only when every payslip has been approved or rejected (it could be closed with
+        # payslips still waiting, and paid in WPS without approval)
+        # v1.16.0 (D16): the run moves processed → approved → paid (paid = closed); "approved" can be taken back to
+        # "processed" while the run is not paid. Other status changes are refused with a message that says what to do.
+        if self.instance is not None and 'status' in data and data.get('status') != self.instance.status:
+            old, new = str(self.instance.status or '').lower(), str(data.get('status') or '').lower()
+            if old == 'paid':
+                raise serializers.ValidationError({'status': ['This payroll run is paid and closed. It cannot be changed.']})
+            allowed = {('processed', 'approved'), ('approved', 'paid'), ('approved', 'processed')}
+            if (old, new) not in allowed:
+                msg = {
+                    'approved': 'Only a processed payroll run can be approved. Process the payroll first.',
+                    'paid': 'Approve the payroll run before you mark it as paid.',
+                    'processed': 'Only an approved payroll run can be set back to processed.',
+                    'pending': 'A payroll run cannot be set back to pending. Delete the run and run the payroll again.',
+                }.get(new, 'This status change is not allowed.')
+                raise serializers.ValidationError({'status': [msg]})
+        if self.instance is not None and data.get('status') in ('approved', 'paid') and data.get('status') != self.instance.status:
+            waiting =self.instance.payslips.filter(approvals__status='Pending').distinct().count()
+            if waiting:
+                raise serializers.ValidationError({'status': [f'Approve or reject every payslip first: {waiting} payslip(s) are waiting for approval.']})
         month = data.get('month')
         year = data.get('year')
         branches = data.get('branch')  # list of brnch_mstr instances, from branch_ids
@@ -226,6 +253,14 @@ class PayrollRunSerializer(serializers.ModelSerializer):
  
             if category:
                 qs = qs.filter(emp_ctgry_id__in=category)
+
+            # v1.18.0: employees who join after the payroll month are not in its run (they were paid a full month)
+            if month and year:
+                import calendar as _cal
+                from datetime import date as _d
+                from django.db.models import Q as _Q
+                _end = _d(int(year), int(month), _cal.monthrange(int(year), int(month))[1])
+                qs = qs.filter(_Q(emp_joined_date__isnull=True) | _Q(emp_joined_date__lte=_end))
  
             employee_ids = set(qs.values_list('id', flat=True))
  
@@ -358,9 +393,38 @@ class PayslipSerializer(serializers.ModelSerializer):
         read_only=True
     )
 
+    employee_details = serializers.SerializerMethodField()   # v1.20.2: the payslip page header (one payslip only)
+
     class Meta:
         model = Payslip
         fields = '__all__'
+
+    def get_employee_details(self, obj):
+        """v1.20.2 – name, designation, MoHRE person ID, Emirates ID and the salary account for the payslip header. Only for a
+        single payslip (lists of payslips stay light)."""
+        view = self.context.get('view')
+        if getattr(view, 'action', None) != 'retrieve':
+            return None
+        e = obj.employee
+        if e is None:
+            return None
+        out = {'emp_code': e.emp_code, 'emp_first_name': e.emp_first_name, 'emp_last_name': e.emp_last_name,
+               'designation': getattr(getattr(e, 'emp_desgntn_id', None), 'desgntn_job_title', '') or '',
+               'department': getattr(getattr(e, 'emp_dept_id', None), 'dept_name', '') or '',
+               'person_id': getattr(e, 'person_id', '') or '', 'emp_company_email': getattr(e, 'emp_company_email', '') or '',
+               'emirates_id': '', 'emp_bank': []}
+        try:
+            from EmployeeProfile.models import EmployeeIdentity
+            i = EmployeeIdentity.objects.filter(employee_id=e.pk).first()
+            out['emirates_id'] = (i.emirates_id if i else '') or ''
+        except Exception:
+            pass
+        try:
+            out['emp_bank'] = [{'bank_name': b.bank_name, 'iban_number': b.iban_number, 'account_number': b.account_number, 'is_active': b.is_active}
+                               for b in e.bank_details.all().order_by('-is_active', '-id')]
+        except Exception:
+            pass
+        return out
 
     # --------------------------------------------------------
     # Currency
@@ -1495,34 +1559,44 @@ class SIFSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid PayrollRun ID")
         return value
     def generate_sif_data(self):
+        """v1.15.1: one EDR per payslip of the run that is paid (not rejected, no approval step waiting), with the payslip's
+        net pay split into fixed / variable income and the leave days of the month. Before, the amounts came from the salary
+        structure (not what payroll paid: no unpaid leave, overtime, loans …), the variable part crashed (is_fixed no longer
+        exists), "Days on Leave" was missing and an employee who left in the month was not paid."""
         payroll_run = PayrollRun.objects.get(id=self.validated_data['payroll_run_id'])
-        employees = payroll_run.get_employees().filter(is_active=True)
-
-        # ✅ Apply branch filter if provided
+        slips = payroll_run.payslips.select_related('employee').order_by('employee__emp_code')
         branch_ids = self.validated_data.get("branch_ids", [])
         if branch_ids:
-            employees = employees.filter(emp_branch_id__in=branch_ids)
-
-        # ✅ Apply department filter if provided
+            slips = slips.filter(employee__emp_branch_id__in=branch_ids)
         department_ids = self.validated_data.get("department_ids", [])
         if department_ids:
-            employees = employees.filter(emp_dept_id__in=department_ids)
-
-        # ✅ Apply employee filter if provided
+            slips = slips.filter(employee__emp_dept_id__in=department_ids)
         employee_ids = self.validated_data.get("employee_ids", [])
         if employee_ids:
-            employees = employees.filter(id__in=employee_ids)
+            slips = slips.filter(employee_id__in=employee_ids)
 
         month, year = payroll_run.month, payroll_run.year
         last_day = calendar.monthrange(year, month)[1]
         pay_start_date = f"{year}-{month:02d}-01"
         pay_end_date = f"{year}-{month:02d}-{last_day}"
+        try:   # v1.20.2: Payroll controls → pay period of the WPS file
+            from PayrollPlus.models import PayrollPlusSettings as _PPS
+            _wps_cycle = _PPS.get().wps_period == 'attendance'
+        except Exception:
+            _wps_cycle = False
 
         sif_data = []
-        total_salary = Decimal("0.0")
+        total_salary = Decimal("0.00")
         skipped_employees = []
 
-        for employee in employees:
+        for ps in slips:
+            employee = ps.employee
+            if (ps.status or '').lower() == 'rejected':
+                skipped_employees.append({"emp_code": employee.emp_code, "reason": "Payslip was rejected"})
+                continue
+            if ps.approvals.filter(status='Pending').exists():
+                skipped_employees.append({"emp_code": employee.emp_code, "reason": "Payslip is waiting for approval"})
+                continue
             # ✅ Get the employee’s active bank detail
             bank_detail = employee.bank_details.filter(is_active=True).first()
             if not bank_detail:
@@ -1548,40 +1622,55 @@ class SIFSerializer(serializers.Serializer):
                 })
                 continue
 
-            # ✅ IBAN validation
-            if not bank_detail.iban_number or len(bank_detail.iban_number) != 23:
+            # ✅ IBAN validation – v1.20.2: or the 16-digit salary card of an exchange house (WPS agent), kept as the account number
+            _acct = bank_detail.iban_number if bank_detail.iban_number and len(bank_detail.iban_number) == 23 else None
+            if _acct is None and bank_detail.account_number and str(bank_detail.account_number).isdigit() and len(str(bank_detail.account_number)) == 16:
+                _acct = str(bank_detail.account_number)
+            if _acct is None:
                 skipped_employees.append({
                     "emp_code": employee.emp_code,
-                    "reason": "Invalid or missing IBAN (23 characters required)"
+                    "reason": "Invalid or missing IBAN (23 characters) or salary card number (16 digits)"
                 })
                 continue
 
-            # ✅ Calculate fixed & variable income
-            fixed_income = sum(
-                struct.amount or Decimal("0.0")
-                for struct in employee.salary_structures.filter(
-                    component__component_value_type="fixed", is_active=True
-                )
-            )
-            variable_income = sum(
-                struct.amount or Decimal("0.0")
-                for struct in employee.salary_structures.filter(
-                    component__is_fixed=False, is_active=True
-                )
-            )
+            # ✅ net pay of the payslip: variable = additions of variable components (overtime, encashment, expenses …), fixed = the rest
+            net = max(Decimal(str(ps.net_salary or 0)), Decimal("0.00"))
+            variable_income = Decimal("0.00")
+            for pc in ps.components.select_related('component'):
+                c = pc.component
+                if c.show_in_payslip and c.component_type == 'addition' and c.component_value_type == 'variable':
+                    variable_income += Decimal(str(pc.amount or 0))
+            variable_income = min(max(variable_income, Decimal("0.00")), net)
+            fixed_income = net - variable_income
+            leave_days = sum((Decimal(str(x.days or 0)) for x in ps.leave_details.all()), Decimal("0"))
 
             total_salary += fixed_income + variable_income
 
+            # v1.20.2: the pay period is the salary month, or the run's attendance cycle (e.g. 26 Aug – 25 Sep) when Payroll controls
+            # say so; from the joining date / to the last working day for joiners and leavers; days = the days of that period (was 30)
+            _ps0, _pe0 = _date.fromisoformat(pay_start_date), _date.fromisoformat(pay_end_date)
+            if _wps_cycle and payroll_run.attendance_start_date and payroll_run.attendance_end_date:
+                _ps0, _pe0 = payroll_run.attendance_start_date, payroll_run.attendance_end_date
+            if employee.emp_joined_date and employee.emp_joined_date > _ps0:
+                _ps0 = employee.emp_joined_date
+            try:
+                from .signals import last_working_day as _lwd
+                _l = _lwd(employee)
+                if _l and _l < _pe0:
+                    _pe0 = _l
+            except Exception:
+                pass
             row = {
                 "Type": "EDR",
                 "Person ID": employee.person_id,
                 "Routing Code": bank_detail.route_code,
-                "IBAN Number": bank_detail.iban_number,
-                "Pay Start Date": pay_start_date,
-                "Pay End Date": pay_end_date,
-                "Number of Days": last_day,
+                "IBAN Number": _acct,
+                "Pay Start Date": _ps0.isoformat(),
+                "Pay End Date": _pe0.isoformat(),
+                "Number of Days": max(0, (_pe0 - _ps0).days + 1),
                 "Fixed Income": f"{fixed_income:.2f}",
                 "Variable Income": f"{variable_income:.2f}",
+                "Days on Leave": f"{leave_days.normalize():f}" if leave_days else "0",
             }
             sif_data.append(row)
         return sif_data, total_salary, skipped_employees

@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 # PAYROLL DATE / DAYS CALCULATION
 # ============================================================
 
-def get_payroll_dates_and_days(instance, branch=None):
+def get_payroll_dates_and_days(instance, branch=None, structure=None):
     PayStructure = apps.get_model(
         "PayrollManagement",
         "PayStructure"
@@ -98,12 +98,12 @@ def get_payroll_dates_and_days(instance, branch=None):
         str(total_days_in_month)
     )
 
-    pay_structure = None
+    pay_structure = structure
 
     # IMPORTANT:
     # PayrollRun.branch is ManyToMany.
     # Therefore a specific branch must be passed here.
-    if branch:
+    if pay_structure is None and branch:
         pay_structure = (
             PayStructure.objects
             .filter(branch=branch)
@@ -220,6 +220,106 @@ def get_payroll_dates_and_days(instance, branch=None):
         )
 
     return start_date, end_date, total_days
+
+
+
+def structure_for(employee):
+    """v1.18.0 – the Payroll settings (pay structure) of an employee: one of the employee's branch (or for every branch) whose
+    categories / departments / designations, when set, include the employee's; the most specific wins. Before, the first
+    structure of the branch was used for everyone – two payroll groups (office staff cut off on the 20th, hospital staff on
+    the 26th) in one branch could not be run."""
+    PayStructure = apps.get_model("PayrollManagement", "PayStructure")
+    best, score = None, -1
+    for ps in PayStructure.objects.prefetch_related('branch', 'department', 'category', 'designation'):
+        br = {b.pk for b in ps.branch.all()}
+        if br and employee.emp_branch_id_id not in br:
+            continue
+        sc = 1 if br else 0
+        ok = True
+        for rel, val in (('category', employee.emp_ctgry_id_id), ('department', employee.emp_dept_id_id), ('designation', employee.emp_desgntn_id_id)):
+            ids = {x.pk for x in getattr(ps, rel).all()}
+            if ids:
+                if val not in ids:
+                    ok = False
+                    break
+                sc += 2
+        if ok and sc > score:
+            best, score = ps, sc
+    return best
+
+
+def last_working_day(employee):
+    """v1.18.0 – the employee's last working day when leaving (approved resignation / termination or Employment info)."""
+    days = []
+    try:
+        R = apps.get_model("EmpManagement", "EmployeeResignation")
+        r = R.objects.filter(employee=employee, status__iexact='approved').order_by('-last_working_date').first()
+        if r and r.last_working_date:
+            days.append(r.last_working_date)
+    except Exception:
+        pass
+    try:
+        EI = apps.get_model("EmployeeProfile", "EmploymentInfo")
+        i = EI.objects.filter(employee_id=employee.pk).first()
+        if i and i.date_of_leaving and i.status in ('on_notice', 'left', 'terminated', 'absconded', 'retired'):
+            days.append(i.date_of_leaving)
+    except Exception:
+        pass
+    return min(days) if days else None
+
+
+
+def _store_window(instance, windows):
+    """v1.18.0: the run shows the attendance window it used (when all its employees share one)."""
+    try:
+        if len(windows) == 1:
+            a, b = next(iter(windows))
+            a = a.date() if isinstance(a, datetime) else a
+            b = b.date() if isinstance(b, datetime) else b
+            if (instance.attendance_start_date, instance.attendance_end_date) != (a, b):
+                instance.attendance_start_date, instance.attendance_end_date = a, b
+                instance.save(update_fields=['attendance_start_date', 'attendance_end_date'])
+    except Exception:
+        logger.debug('window not stored', exc_info=True)
+
+
+
+PENSION_CATEGORIES = ('basic', 'hra', 'housing_allowance', 'transport_allowance')
+GPSSA_NEW_LAW = date(2023, 10, 31)     # Federal Decree-Law 57/2023: 11 % employee share for those registered from this date
+
+
+def is_uae_national(employee):
+    """v1.18.0 – an Emirati employee of a UAE company (GPSSA pension, no Labour Law gratuity)."""
+    try:
+        from CountryPack import services as _cp
+        return bool(_cp.is_ae() and _cp.is_national(str(getattr(employee, 'emp_nationality', '') or '')))
+    except Exception:
+        n = str(getattr(employee, 'emp_nationality', '') or '').upper()
+        return 'EMIRAT' in n or n in ('UAE', 'UNITED ARAB EMIRATES')
+
+
+def pension_variables(employee, start_date=None, end_date=None):
+    """v1.18.0 – GPSSA figures for payroll formulas:
+       is_national            1 for an Emirati employee of a UAE company, else 0
+       pension_salary         contribution salary: basic + housing + transport of the active salary (min 3,000, max 70,000)
+       pension_employee_rate  0.11 when the employee joined on / after 31 Oct 2023 (new law), else 0.05
+       pension_employer_rate  0.125 (employer share net of the government's 2.5 %)"""
+    nat = is_uae_national(employee)
+    out = {'is_national': Decimal('1' if nat else '0'), 'pension_salary': Decimal('0.00'),
+           'pension_employee_rate': Decimal('0.00'), 'pension_employer_rate': Decimal('0.00')}
+    if not nat:
+        return out
+    ESS = apps.get_model("PayrollManagement", "EmployeeSalaryStructure")
+    sal = sum((Decimal(str(r.amount or 0)) for r in ESS.objects.filter(employee=employee, is_active=True,
+                                                                         component__payroll_category__in=PENSION_CATEGORIES,
+                                                                         component__component_type='addition')), Decimal('0'))
+    if sal:
+        sal = min(max(sal, Decimal('3000')), Decimal('70000'))
+    joined = getattr(employee, 'emp_joined_date', None)
+    out['pension_salary'] = sal.quantize(Decimal('0.01'))
+    out['pension_employee_rate'] = Decimal('0.11') if (joined and joined >= GPSSA_NEW_LAW) else Decimal('0.05')
+    out['pension_employer_rate'] = Decimal('0.125')
+    return out
 
 
 # ============================================================
@@ -343,14 +443,7 @@ def process_payroll_run(instance):
             f"({branch.branch_name})"
         )
 
-        start_date, end_date, total_days = (
-            get_payroll_dates_and_days(
-                instance,
-                branch=branch
-            )
-        )
-
-        employees_qs = (
+        employees_all = (
             instance
             .get_employees()
             .filter(
@@ -359,6 +452,20 @@ def process_payroll_run(instance):
             )
             .distinct()
         )
+        # v1.18.0: one pass per pay structure (payroll group) of the branch
+        groups = {}
+        for e in employees_all:
+            ps = structure_for(e)
+            groups.setdefault(ps.pk if ps else None, (ps, []))[1].append(e.pk)
+        for _ps_id, (_ps, _ids) in groups.items():
+            start_date, end_date, total_days = get_payroll_dates_and_days(instance, branch=branch, structure=_ps)
+            employees_qs = employees_all.filter(pk__in=_ids)
+            from .perf import payroll_cache as _pc
+            with _pc():
+                process_payroll(instance, employees_qs, start_date, end_date, total_days)
+            processed_any = True
+            _store_window(instance, {(start_date, end_date)})
+        continue
 
         employee_count = employees_qs.count()
 
@@ -378,13 +485,15 @@ def process_payroll_run(instance):
             f"Days={total_days}"
         )
 
-        process_payroll(
-            instance,
-            employees_qs,
-            start_date,
-            end_date,
-            total_days
-        )
+        from .perf import payroll_cache   # v1.16.0 (D15)
+        with payroll_cache():
+            process_payroll(
+                instance,
+                employees_qs,
+                start_date,
+                end_date,
+                total_days
+            )
 
         processed_any = True
 
@@ -512,26 +621,60 @@ def update_employee_salary_structure(sender, instance, created, **kwargs):
         EmpMaster = apps.get_model('EmpManagement', 'emp_master')
         EmployeeSalaryStructure = apps.get_model('PayrollManagement', 'EmployeeSalaryStructure')
         
-        employees = EmpMaster.objects.all()
+        # v1.16.0 (D15): branch / department / designation / category read with the employees (used by every lookup)
+        employees = EmpMaster.objects.all().select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id')
 
-        for employee in employees:
-            # Get variables including fixed components, calendar_days, ot_hours etc.
-            variables = get_formula_variables(employee)
+        from .perf import payroll_cache   # v1.16.0 (D15): one shift plan / rule / calendar read for all employees
+        from django.db import transaction
+        # v1.16.0 (D15): one transaction for all employees (was one commit per employee, ~15 ms each); same rows
+        with payroll_cache(), transaction.atomic():
+            _recalculate_component_for(instance, employees)
 
-            try:
-                amount = evaluate_formula(instance.formula, variables, employee, instance)
-            except Exception as e:
-                logger.error(f"Formula evaluation error for {employee}: {e}")
-                amount = Decimal('0.00')
 
-            logger.info(f"Calculated amount for {instance.name} ({instance.code}) for employee {employee}: {amount}")
+def _recalculate_component_for(instance, employees):
+    """v1.16.0: body of update_employee_salary_structure (same calculation), run inside payroll_cache()."""
+    EmployeeSalaryStructure = apps.get_model('PayrollManagement', 'EmployeeSalaryStructure')
+    for employee in employees:
+        # Get variables including fixed components, calendar_days, ot_hours etc.
+        variables = get_formula_variables(employee)
 
-            EmployeeSalaryStructure.objects.update_or_create(
-                employee=employee,
-                component=instance,
-                defaults={'amount': amount, 'is_active': True}
-            )
-            logger.info(f"Updated EmployeeSalaryStructure for {employee} with component {instance.name} - Amount: {amount}")
+        try:
+            amount = evaluate_formula(instance.formula, variables, employee, instance)
+        except Exception as e:
+            logger.error(f"Formula evaluation error for {employee}: {e}")
+            amount = Decimal('0.00')
+
+        logger.info(f"Calculated amount for {instance.name} ({instance.code}) for employee {employee}: {amount}")
+
+        # v1.20.2: a row HR switched off (component not for this employee) stays off when the component is edited – before,
+        # every save of the component switched it on again for everybody (e.g. overtime for staff not entitled to it)
+        _row = EmployeeSalaryStructure.objects.filter(employee=employee, component=instance).first()
+        if _row is not None:
+            if _row.amount != amount:
+                EmployeeSalaryStructure.objects.filter(pk=_row.pk).update(amount=amount)
+        else:
+            EmployeeSalaryStructure.objects.create(employee=employee, component=instance, amount=amount, is_active=True)
+        logger.info(f"Updated EmployeeSalaryStructure for {employee} with component {instance.name} - Amount: {amount}")
+
+
+def _roster_days(employee, start_date, end_date):
+    """v1.18.0: {date: is rest day} for the days a published roster (or a day change) plans for the employee."""
+    out = {}
+    try:
+        from ShiftPlanner.resolver import Book
+        a = start_date.date() if isinstance(start_date, datetime) else start_date
+        b = end_date.date() if isinstance(end_date, datetime) else end_date
+        book = Book(a, b, [employee.pk])
+        d = a
+        while d <= b:
+            r = book.get(employee, d, sources=('roster', 'override'))
+            if r is not None:
+                out[d] = bool(r.get('off'))
+            d += timedelta(days=1)
+    except Exception:
+        logger.debug('roster days not available', exc_info=True)
+    return out
+
 
 def get_formula_variables(employee, start_date=None, end_date=None):
     EmpLeaveBalance = apps.get_model("calendars", "emp_leave_balance")
@@ -561,11 +704,13 @@ def get_formula_variables(employee, start_date=None, end_date=None):
             day=monthrange(today.year, today.month)[1]
         )
 
-    pay_structure = (
+    # v1.16.0 (D15): the branch's payroll settings once per run (PayrollManagement.perf)
+    from .perf import memo as _memo
+    pay_structure = _memo(('pay_structure', employee.emp_branch_id_id), lambda: (
         PayStructure.objects
         .filter(branch=employee.emp_branch_id)
         .first()
-    )
+    ))
 
     fixed_days = (
         pay_structure.fixed_working_days
@@ -580,7 +725,21 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         ),
         "fixed_days": Decimal(str(fixed_days)),
         "standard_hours": Decimal("160.0"),
+        "paid_days": Decimal(str(fixed_days)),   # v1.20.2: set to the payslip's paid days when payroll runs
     }
+
+    # v1.20.2: days of the period the employee was employed (joining date / last working day inside the period) – for
+    # pro-rating accruals (gratuity, leave salary, air ticket provision) of joiners and leavers
+    try:
+        _a0 = start_date.date() if isinstance(start_date, datetime) else start_date
+        _b0 = end_date.date() if isinstance(end_date, datetime) else end_date
+        _j0 = getattr(employee, 'emp_joined_date', None)
+        _l0 = last_working_day(employee)
+        _f0 = max(_a0, _j0) if _j0 else _a0
+        _t0 = min(_b0, _l0) if _l0 else _b0
+        variables["employed_days"] = Decimal(max(0, (_t0 - _f0).days + 1))
+    except Exception:
+        variables["employed_days"] = variables["calendar_days"]
 
     # ========================================================
     # OVERTIME
@@ -609,12 +768,20 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         _Q(approved=True) | _Q(source="MANUAL"), employee=employee, date__range=(start_date, end_date)
     ).values("pk")
 
-    variables["ot_hours"] = (
+    # v1.16.0 (D15): total and the normal / weekend / holiday split in one query (were four) – same sums
+    _ot = (
         EmployeeOvertime.objects
         .filter(**ot_filter)
         .aggregate(
-            total_hours=Sum("hours")
-        )["total_hours"]
+            total_hours=Sum("hours"),
+            normal=Sum("hours", filter=Q(ot_type="NORMAL")),
+            weekend=Sum("hours", filter=Q(ot_type="WEEKEND")),
+            holiday=Sum("hours", filter=Q(ot_type="HOLIDAY")),
+            night=Sum("hours", filter=Q(ot_type="NIGHT")),   # v1.20.2
+        )
+    )
+    variables["ot_hours"] = (
+        _ot["total_hours"]
         or Decimal("0.00")
     )
 
@@ -640,28 +807,40 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     # WEEKEND / HOLIDAY DAYS
     # ========================================================
 
-    weekend_days = get_employee_weekend_days(employee)
-    holiday_dates = get_employee_holidays(
+    # v1.16.0 (D15): weekend / holiday calendars once per employee and run (PayrollManagement.perf), attendance days in
+    # one query instead of one query per day of the period – same values as before
+    from .perf import memo as _memo
+    from .perf import employee_weekend_days as _wk_days, employee_holidays as _hol_days
+    weekend_days = _memo(('weekend_days', employee.pk), lambda: _wk_days(employee))
+    holiday_dates = _memo(('holidays', employee.pk, start_date, end_date), lambda: _hol_days(
         employee,
         start_date,
         end_date
+    ))
+    _att_dates = set(
+        Attendance.objects.filter(employee=employee, date__range=(start_date, end_date)).values_list("date", flat=True)
     )
 
     weekend_ot_days = 0
     holiday_ot_days = 0
     holiday_weekend_ot_days = 0
 
+    # v1.18.0: employees on a published roster (hospital shifts) have their rest days in the roster, not on Saturday / Sunday –
+    # a rostered weekend shift is a working day and a rostered day off is their rest day
+    planned = _memo(('roster_days', employee.pk, start_date, end_date), lambda: _roster_days(employee, start_date, end_date))
+
+    def _rest_day(d):
+        d0 = d.date() if isinstance(d, datetime) else d
+        if d0 in planned:
+            return planned[d0]
+        return d.strftime("%A") in weekend_days
+
     for single_date in daterange(start_date, end_date):
 
-        weekday = single_date.strftime("%A")
-
-        is_weekend = weekday in weekend_days
+        is_weekend = _rest_day(single_date)
         is_holiday = single_date in holiday_dates
 
-        attended = Attendance.objects.filter(
-            employee=employee,
-            date=single_date
-        ).exists()
+        attended = (single_date.date() if isinstance(single_date, datetime) else single_date) in _att_dates
 
         if is_weekend and attended:
             weekend_ot_days += 1
@@ -701,9 +880,9 @@ def get_formula_variables(employee, start_date=None, end_date=None):
 
     # v1.11.0: clearer day counts – working_days stays "days present in the attendance calendar" for existing formulas
     try:
-        _wk = set(get_employee_weekend_days(employee))
-        _hol = set(get_employee_holidays(employee, start_date, end_date))
-        variables["scheduled_working_days"] = Decimal(sum(1 for d in daterange(start_date, end_date) if d.strftime("%A") not in _wk and d not in _hol))
+        _wk = set(weekend_days)    # v1.16.0 (D15): same calendars as above (were read again)
+        _hol = set(holiday_dates)
+        variables["scheduled_working_days"] = Decimal(sum(1 for d in daterange(start_date, end_date) if not _rest_day(d) and d not in _hol))
     except Exception:
         variables["scheduled_working_days"] = Decimal("0")
     variables["present_days"] = Decimal(str(working_days))
@@ -713,6 +892,11 @@ def get_formula_variables(employee, start_date=None, end_date=None):
                                                      .aggregate(t=Sum("unpaid_fraction"))["t"] or 0))
     except Exception:
         variables["unpaid_leave_days"] = Decimal("0")
+    try:   # v1.20.2: days without pay only – unpaid leave and absence (a day at half pay, e.g. maternity, is not one)
+        variables["days_without_pay"] = Decimal(str(_AC.objects.filter(employee=employee, date__range=(start_date, end_date)).filter(
+            Q(status="Absent") | Q(leave_type__type="unpaid")).aggregate(t=Sum("unpaid_fraction"))["t"] or 0))
+    except Exception:
+        variables["days_without_pay"] = variables["unpaid_leave_days"]
 
     # v1.11.0: hours worked in the period (WORKHOURS() / worked_hours in formulas)
     try:
@@ -748,9 +932,14 @@ def get_formula_variables(employee, start_date=None, end_date=None):
 
     if employee.emp_joined_date:
 
+        # v1.20.2: the joining day counts as a day of service (joined 2 Oct 2021 → 5.00 years on 30 Sep 2026, not 4.997)
+        _end = end_date.date() if isinstance(end_date, datetime) else end_date
+        _lwd = last_working_day(employee)
+        if _lwd and _lwd < _end:
+            _end = _lwd
         service_days = (
-            end_date - employee.emp_joined_date
-        ).days
+            _end - employee.emp_joined_date
+        ).days + 1
 
         if service_days > 0:
 
@@ -813,34 +1002,24 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     # OVERTIME BREAKDOWN
     # ========================================================
 
-    overtimes = EmployeeOvertime.objects.filter(
-        **ot_filter
-    )
-
     variables["normal_ot_hours"] = (
-        overtimes
-        .filter(ot_type="NORMAL")
-        .aggregate(
-            s=Sum("hours")
-        )["s"]
+        _ot["normal"]
         or Decimal("0.00")
     )
 
     variables["weekend_ot_hours"] = (
-        overtimes
-        .filter(ot_type="WEEKEND")
-        .aggregate(
-            s=Sum("hours")
-        )["s"]
+        _ot["weekend"]
         or Decimal("0.00")
     )
 
     variables["holiday_ot_hours"] = (
-        overtimes
-        .filter(ot_type="HOLIDAY")
-        .aggregate(
-            s=Sum("hours")
-        )["s"]
+        _ot["holiday"]
+        or Decimal("0.00")
+    )
+
+    # v1.20.2: night overtime (22:00–04:00, Decree-Law 33/2021 Art. 19 – at least 50% for non-shift workers)
+    variables["night_ot_hours"] = (
+        _ot.get("night")
         or Decimal("0.00")
     )
 
@@ -853,6 +1032,7 @@ def get_formula_variables(employee, start_date=None, end_date=None):
         employee,
         "WEEKEND"
     )
+    variables["ot_night_rate"] = get_ot_rate(employee, "NIGHT")   # v1.20.2
 
     variables["ot_holiday_rate"] = get_ot_rate(
         employee,
@@ -911,8 +1091,12 @@ def get_formula_variables(employee, start_date=None, end_date=None):
 
         comp = sc.component
 
+        # v1.20.2: a variable component without a formula is a monthly input (entered or imported for the month, set back
+        # to 0 after the run) – its amount can now be used in formulas too, e.g. NSHIFT (night shifts worked this month)
+        # in the formula NSHIFT * 15
+        is_input = (comp.component_value_type == "variable" and not (comp.formula or "").strip())
         if (
-            comp.component_value_type == "fixed"
+            (comp.component_value_type == "fixed" or is_input)
             and sc.amount is not None
         ):
 
@@ -950,9 +1134,9 @@ def get_formula_variables(employee, start_date=None, end_date=None):
 
     basic_salary = Decimal("0.00")
 
-    basic_component = salary_structs.filter(
-        component__payroll_category="basic"
-    ).first()
+    # v1.16.0 (D15): from the rows already read (was a second query; same row: the first by id, rows are unique per component)
+    _basic_rows = [sc for sc in salary_structs if sc.component.payroll_category == "basic"]
+    basic_component = min(_basic_rows, key=lambda sc: sc.pk) if _basic_rows else None
 
     if basic_component and basic_component.amount is not None:
 
@@ -1046,6 +1230,16 @@ def get_formula_variables(employee, start_date=None, end_date=None):
     )
 
     variables.update(gratuity_vars)
+
+    # v1.18.0: UAE nationals – GPSSA pension instead of the Labour Law gratuity
+    try:
+        variables.update(pension_variables(employee, start_date, end_date))
+        if variables.get('is_national') == Decimal('1'):
+            for _k in ('gratuity_days', 'monthly_gratuity_accrual', 'total_gratuity_liability'):
+                if _k in variables:
+                    variables[_k] = Decimal('0.00')
+    except Exception:
+        logger.exception("pension variables failed for %s", employee.pk)
 
     # ========================================================
     # FORMULA COMPONENTS
@@ -1670,7 +1864,8 @@ def process_payroll(
     # PROCESS EACH EMPLOYEE
     # ========================================================
 
-    for employee in employees_qs:
+    # v1.16.0 (D15): branch / department / designation / category read with the employees (used by every lookup)
+    for employee in employees_qs.select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id'):
 
         logger.info(
             f"Processing payroll for employee "
@@ -1739,6 +1934,37 @@ def process_payroll(
             str(unpaid_leave_days_val)
         )
 
+        # v1.18.0: joiners and leavers – days of the period before the joining date or after the last working day are not
+        # paid (before, a new joiner was paid the whole month, an employee joining next month got a full payslip, and a
+        # leaver was paid to the end of the month)
+        _a = start_date.date() if isinstance(start_date, datetime) else start_date
+        _b = end_date.date() if isinstance(end_date, datetime) else end_date
+        _joined = employee.emp_joined_date
+        _lwd = last_working_day(employee)
+        if (_joined and _joined > _b) or (_lwd and _lwd < _a):
+            logger.info(f"{employee.emp_code} not employed in {_a}..{_b} – no payslip")
+            continue
+        _not_employed = 0
+        if _joined and _joined > _a:
+            _not_employed += (_joined - _a).days
+        if _lwd and _lwd < _b:
+            _not_employed += (_b - _lwd).days
+        if _not_employed:
+            _window = Decimal((_b - _a).days + 1)
+            # v1.20.2: Payroll controls → "Part months": share of the calendar month (default) or days employed (at most the
+            # fixed days – the policy "monthly salary ÷ 30, a full month always pays 30 days")
+            _pm = 'share'
+            try:
+                from PayrollPlus.models import PayrollPlusSettings as _PPS
+                _pm = _PPS.get().part_month
+            except Exception:
+                pass
+            if _pm == 'days':
+                _employed = _window - Decimal(_not_employed)
+                unpaid_leave_days += max(Decimal('0'), Decimal(str(total_days)) - min(_employed, Decimal(str(total_days))))
+            else:
+                unpaid_leave_days += (Decimal(_not_employed) * Decimal(str(total_days)) / _window).quantize(Decimal('0.01'))
+
         # ====================================================
         # DAYS WORKED
         # ====================================================
@@ -1762,6 +1988,7 @@ def process_payroll(
             total_working_days=total_days,
             days_worked=days_worked,
         )
+        variables["paid_days"] = days_worked   # v1.20.2: the payslip's paid days (after unpaid leave, absence, joining / leaving)
 
         logger.info(
             f"Created Payslip {payslip.id} "
@@ -2369,18 +2596,8 @@ def process_payroll(
         f"PayrollRun {instance.id} "
         f"marked as processed."
     )
-    totals = calculate_payslip_totals(
-            payslip
-        )
-
-    logger.info(
-        f"Payroll completed for "
-        f"{employee.emp_code}: "
-        f"Additions={totals['total_additions']}, "
-        f"Deductions={totals['total_deductions']}, "
-        f"Gross={totals['gross_salary']}, "
-        f"Net={totals['net_salary']}"
-    )
+    # v1.15.1: the totals of the last payslip were calculated a second time here – it failed (name not defined)
+    # when every employee of the call already had a payslip
 
 
 
@@ -2398,20 +2615,34 @@ def payrollrun_m2m_changed(sender, instance, action, pk_set, **kwargs):
         logger.info(f"PayrollRun {instance.id} status is {instance.status}; skipping m2m processing.")
         return
 
-    # Calculate dates and total days based on PayStructure
-    try:
-        start_date, end_date, total_days = get_payroll_dates_and_days(instance)
-    except Exception as e:
-        logger.exception(f"Invalid date for PayrollRun {getattr(instance,'id', None)} in m2m handler: {e}")
-        return
-
     # employees have been added; process only those employees attached to instance
     employees_qs = instance.employees.all()
     if not employees_qs.exists():
         logger.warning(f"No employees in PayrollRun {instance.id} after m2m post_add")
         return
 
-    process_payroll(instance, employees_qs, start_date, end_date, total_days)
+    # v1.15.1: dates and days per branch from the branch's pay structure (Payroll settings: fixed 30 days, custom cycle …);
+    # the run used to be calculated on calendar days for every branch because no branch was passed
+    Branch = apps.get_model("OrganisationManager", "brnch_mstr")
+    # v1.18.0: grouped by branch AND pay structure (payroll group by category / department / designation)
+    by_group, structs = {}, {}
+    for e in employees_qs.select_related('emp_branch_id'):
+        ps = structure_for(e)
+        structs[ps.pk if ps else None] = ps
+        by_group.setdefault((e.emp_branch_id_id, ps.pk if ps else None), []).append(e.pk)
+    windows = set()
+    from .perf import payroll_cache   # v1.16.0 (D15): shift plan / rules / calendars read once for the whole run
+    with payroll_cache():
+        for (br_id, ps_id), ids in by_group.items():
+            try:
+                start_date, end_date, total_days = get_payroll_dates_and_days(instance, branch=Branch.objects.filter(pk=br_id).first() if br_id else None,
+                                                                              structure=structs.get(ps_id))
+            except Exception as e:
+                logger.exception(f"Invalid date for PayrollRun {getattr(instance,'id', None)} in m2m handler: {e}")
+                return
+            windows.add((start_date, end_date))
+            process_payroll(instance, employees_qs.filter(pk__in=ids), start_date, end_date, total_days)
+    _store_window(instance, windows)
 
 
 # Connect m2m handler to the through model. We fetch PayrollRun model and connect here.
@@ -2444,18 +2675,124 @@ def update_dependents_on_fixed_change(sender, instance, **kwargs):
         formula=""
     )
 
+    # v1.15.1: formula components (overtime, leave encashment, expense reimbursement …) are given to every employee when
+    # the component is saved; an employee whose salary is entered later got none of them and was paid 0 for them.
+    # Add the missing ones (inactive rows that HR switched off stay off); payroll calculates the amount every run.
+    have = set(EmployeeSalaryStructure.objects.filter(employee=instance.employee).values_list('component_id', flat=True))
+    for comp in formula_components:
+        if comp.pk not in have:
+            EmployeeSalaryStructure.objects.get_or_create(employee=instance.employee, component=comp,
+                                                          defaults={'amount': Decimal('0.00'), 'is_active': True})
+
+    # v1.16.0 (D15): the variables were calculated again for every dependent component (same values: they read the fixed
+    # components only, and the rows were completed above) – calculated once
+    _vars = None
     for comp in formula_components:
         if comp.formula and instance.component.code in comp.formula:
             try:
                 emp_struct, _ = EmployeeSalaryStructure.objects.get_or_create(
                     employee=instance.employee, component=comp
                 )
+                if _vars is None:
+                    _vars = get_formula_variables(instance.employee, date.today(), date.today())   # v1.18.0: dates, not date-times (the preview failed)
                 emp_struct.amount = evaluate_formula(
-                    comp.formula, get_formula_variables(instance.employee, datetime.today(), datetime.today()), instance.employee, comp
+                    comp.formula, dict(_vars), instance.employee, comp
                 )
                 emp_struct.save(update_fields=["amount"])
             except Exception as e:
                 logger.error(f"Error updating dependent component {comp.name} for {instance.employee}: {e}")
+
+
+# ============================================================
+# v1.16.0 (D17): LOAN REPAYMENTS FOLLOW THE PAYSLIP
+# A loan instalment is recorded (LoanRepayment) when the payslip is processed. When the payslip is rejected the
+# instalment is not paid: the repayment is reversed (loan balance back, a loan closed by it is open again). When a
+# rejected payslip is approved again later, the instalment is recorded again (same rule as payroll processing).
+# ============================================================
+
+_REJECTED = ('rejected',)
+_PAID_AGAIN = ('approved', 'paid', 'processed', 'pending')
+
+
+@receiver(pre_save, sender="PayrollManagement.Payslip")
+def _payslip_status_before(sender, instance, update_fields=None, **kwargs):
+    instance._v116_old_status = None
+    if instance.pk is None or (update_fields is not None and 'status' not in update_fields):
+        return
+    from .perf import active as _run_active
+    if _run_active():          # payroll processing never rejects / re-approves a payslip – no extra read per save
+        return
+    instance._v116_old_status = sender.objects.filter(pk=instance.pk).values_list('status', flat=True).first()
+
+
+@receiver(post_save, sender="PayrollManagement.Payslip")
+def _payslip_status_loans(sender, instance, created, update_fields=None, **kwargs):
+    old = getattr(instance, '_v116_old_status', None)
+    if created or old is None:
+        return
+    was, now = str(old).lower(), str(instance.status or '').lower()
+    if was == now:
+        return
+    try:
+        if now in _REJECTED and was not in _REJECTED:
+            reverse_loan_repayments(instance)
+        elif was in _REJECTED and now in _PAID_AGAIN:
+            reapply_loan_repayments(instance)
+    except Exception:
+        logger.exception("loan repayment update failed for payslip %s", instance.pk)
+
+
+def _loan_balance(loan):
+    LoanRepayment = apps.get_model("PayrollManagement", "LoanRepayment")
+    paid = LoanRepayment.objects.filter(loan=loan).aggregate(t=Sum("amount_paid"))["t"] or Decimal("0.00")
+    return Decimal(str(loan.amount_requested or "0.00")) - Decimal(str(paid))
+
+
+def reverse_loan_repayments(payslip):
+    """The instalments recorded with this payslip are taken back (the payslip was rejected – nothing was paid)."""
+    LoanRepayment = apps.get_model("PayrollManagement", "LoanRepayment")
+    reps = list(LoanRepayment.objects.filter(payslip=payslip).select_related("loan"))
+    for rep in reps:
+        loan = rep.loan
+        rep.delete()
+        balance = _loan_balance(loan)
+        loan.remaining_balance = balance if balance > 0 else Decimal("0.00")
+        fields = ["remaining_balance"]
+        if str(loan.status) == "Closed" and balance > 0:
+            loan.status = "Approved"
+            fields.append("status")
+        loan.save(update_fields=fields)
+        logger.info("Loan %s: instalment %s of payslip %s reversed (payslip rejected)", loan.pk, rep.amount_paid, payslip.pk)
+    return len(reps)
+
+
+def reapply_loan_repayments(payslip):
+    """A rejected payslip is approved again: record the instalments of the loans it deducts (same rule as processing)."""
+    LoanApplication = apps.get_model("PayrollManagement", "LoanApplication")
+    LoanRepayment = apps.get_model("PayrollManagement", "LoanRepayment")
+    PayslipComponent = apps.get_model("PayrollManagement", "PayslipComponent")
+    if not PayslipComponent.objects.filter(payslip=payslip, component__payroll_category="loan").exists():
+        return 0
+    loans = LoanApplication.objects.filter(employee_id=payslip.employee_id, status="Approved")
+    if payslip.created_at:
+        loans = loans.filter(Q(approved_on__isnull=True) | Q(approved_on__lte=payslip.created_at))
+    n = 0
+    for loan in loans.order_by("pk"):
+        if LoanRepayment.objects.filter(loan=loan, payslip=payslip).exists():
+            continue
+        if LoanRepayment.objects.filter(loan=loan).count() >= loan.repayment_period:
+            continue
+        emi = Decimal(str(loan.emi_amount or "0.00"))
+        remaining = _loan_balance(loan) - emi
+        LoanRepayment.objects.create(loan=loan, payslip=payslip, repayment_date=payslip.payroll_run.payment_date,
+                                     amount_paid=emi, remaining_balance=remaining)
+        loan.remaining_balance = remaining
+        loan.save(update_fields=["remaining_balance"])
+        if remaining <= 0:
+            loan.status = "Closed"
+            loan.save(update_fields=["status"])
+        n += 1
+    return n
 
 
 

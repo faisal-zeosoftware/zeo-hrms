@@ -13,6 +13,7 @@ rules are applied here):
   * employees (ESS) see only their own schedule, availability, requests and notices; they can claim open shifts of
     their branch / department and answer swap requests sent to them.
 """
+from itertools import islice  # v1.22.0 branch rights
 import csv
 import io
 from datetime import date, datetime, time, timedelta
@@ -32,6 +33,7 @@ from . import services as S
 from .models import Availability, OpenShift, OpenShiftClaim, RosterEntry, RosterPeriod, ShiftNotice, ShiftRequest, ShiftRule
 from .resolver import Book, ZERO, crosses_midnight, describe, holidays
 from .services import PlanError, Rights, person
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 MAX_PERIOD_DAYS = 62
 
@@ -50,15 +52,15 @@ class Member(BasePermission):
     def has_permission(self, request, view):
         u = request.user
         if not u or not u.is_authenticated:
-            self.message = 'Please log in.'
+            self.message = tr('Please log in.')
             return False
         sch = _schema(request)
         if not sch or sch == 'public':
-            self.message = 'Choose a company.'
+            self.message = tr('Choose a company.')
             return False
         if u.is_superuser or u.tenants.filter(schema_name=sch).exists():
             return True
-        self.message = 'You do not have access to this company.'
+        self.message = tr('You do not have access to this company.')
         return False
 
 
@@ -90,7 +92,7 @@ def deny(msg='You may not do this.'):
 def pdate(v, field='date', required=True):
     if v in (None, ''):
         if required:
-            raise PlanError(f'Enter the {field.replace("_", " ")} (YYYY-MM-DD).', problems={field: 'Required.'})
+            raise PlanError(tr('Enter the {0} (YYYY-MM-DD).', field.replace("_", " ")), problems={field: 'Required.'})
         return None
     if isinstance(v, date):
         return v
@@ -100,18 +102,18 @@ def pdate(v, field='date', required=True):
             return datetime.strptime(s, fmt).date()
         except ValueError:
             pass
-    raise PlanError(f'The {field.replace("_", " ")} “{v}” is not a date. Use YYYY-MM-DD.', problems={field: 'Not a date.'})
+    raise PlanError(tr('The {0} “{1}” is not a date. Use YYYY-MM-DD.', field.replace("_", " "), v), problems={field: 'Not a date.'})
 
 
 def pint(v, field, required=False):
     if v in (None, '', 'null'):
         if required:
-            raise PlanError(f'Choose the {field.replace("_", " ")}.', problems={field: 'Required.'})
+            raise PlanError(tr('Choose the {0}.', field.replace("_", " ")), problems={field: 'Required.'})
         return None
     try:
         return int(v)
     except (TypeError, ValueError):
-        raise PlanError(f'The {field.replace("_", " ")} must be a number.', problems={field: 'Not a number.'})
+        raise PlanError(tr('The {0} must be a number.', field.replace("_", " ")), problems={field: 'Not a number.'})
 
 
 def pbool(v, default=False):
@@ -131,7 +133,7 @@ def hhmm(t):
 def emp_or_404(i):
     e = S.emp_by_id(i)
     if e is None:
-        raise PlanError('Employee not found.', status=404)
+        raise PlanError(tr('Employee not found.'), status=404)
     return e
 
 
@@ -188,7 +190,7 @@ def _ptime(v, field, errors):
             return datetime.strptime(s, fmt).time()
         except ValueError:
             pass
-    errors[field] = 'Use HH:MM, e.g. 09:00.'
+    errors[field] = tr('Use HH:MM, e.g. 09:00.')
     return None
 
 
@@ -200,18 +202,18 @@ def shift_input(data, shift=None, rule=None, r=None):
     if shift is None or 'name' in data:
         name = (data.get('name') or '').strip()
         if not name:
-            errors['name'] = 'Enter the shift name.'
+            errors['name'] = tr('Enter the shift name.')
         elif len(name) > 50:
-            errors['name'] = 'Use at most 50 characters.'
+            errors['name'] = tr('Use at most 50 characters.')
         elif Shift.objects.filter(name__iexact=name).exclude(pk=getattr(shift, 'pk', None)).exists():
-            errors['name'] = 'A shift with this name already exists.'
+            errors['name'] = tr('A shift with this name already exists.')
         sv['name'] = name
     st = _ptime(data.get('start_time'), 'start_time', errors) if 'start_time' in data or shift is None else shift.start_time
     en = _ptime(data.get('end_time'), 'end_time', errors) if 'end_time' in data or shift is None else shift.end_time
     if (st is None) != (en is None) and not errors.get('start_time') and not errors.get('end_time'):
-        errors['end_time' if st else 'start_time'] = 'Enter both start and end time (or neither for a day-off shift).'
+        errors['end_time' if st else 'start_time'] = tr('Enter both start and end time (or neither for a day-off shift).')
     if st and en and st == en:
-        errors['end_time'] = 'The end time must differ from the start time.'
+        errors['end_time'] = tr('The end time must differ from the start time.')
     sv['start_time'], sv['end_time'] = st, en
     if 'break_minutes' in data or shift is None:
         try:
@@ -219,7 +221,7 @@ def shift_input(data, shift=None, rule=None, r=None):
             if bm < 0:
                 raise ValueError
         except (TypeError, ValueError):
-            errors['break_minutes'] = 'Enter the break in whole minutes (0 or more).'
+            errors['break_minutes'] = tr('Enter the break in whole minutes (0 or more).')
             bm = 0
         sv['break_duration'] = timedelta(minutes=bm)
     brk = sv.get('break_duration', getattr(shift, 'break_duration', None) or timedelta(0))
@@ -230,19 +232,19 @@ def shift_input(data, shift=None, rule=None, r=None):
             b += timedelta(days=1)
         length = Decimal((b - a).total_seconds()) / Decimal(3600)
         if brk and brk >= (b - a) and 'break_minutes' not in errors:
-            errors['break_minutes'] = 'The break must be shorter than the shift.'
+            errors['break_minutes'] = tr('The break must be shorter than the shift.')
     # rules
     if 'code' in data or rule is None:
         code = (data.get('code') or '').strip().upper()
         if len(code) > 20:
-            errors['code'] = 'Use at most 20 characters.'
+            errors['code'] = tr('Use at most 20 characters.')
         elif code and ShiftRule.objects.filter(code__iexact=code).exclude(shift_id=getattr(shift, 'pk', -1)).exists():
-            errors['code'] = 'Another shift already uses this code.'
+            errors['code'] = tr('Another shift already uses this code.')
         rv['code'] = code
     if 'colour' in data:
         c = (data.get('colour') or '').strip()
         if c and not (c.startswith('#') and len(c) in (4, 7) and all(x in '0123456789abcdefABCDEF' for x in c[1:])):
-            errors['colour'] = 'Use a colour like #5b4ff5.'
+            errors['colour'] = tr('Use a colour like #5b4ff5.')
         rv['colour'] = c or '#5b4ff5'
     for f, kind in RULE_NUM.items():
         if f not in data:
@@ -256,18 +258,18 @@ def shift_input(data, shift=None, rule=None, r=None):
             if val < 0:
                 raise ValueError
             if kind == 'dec' and f.endswith('hours') and val > 24:
-                errors[f] = 'Use 24 hours or less.'
+                errors[f] = tr('Use 24 hours or less.')
                 continue
             rv[f] = val
         except (TypeError, ValueError, InvalidOperation):
-            errors[f] = 'Enter a number of 0 or more.'
+            errors[f] = tr('Enter a number of 0 or more.')
     mn = rv.get('min_hours', getattr(rule, 'min_hours', None))
     mx = rv.get('max_hours', getattr(rule, 'max_hours', None))
     hd = rv.get('half_day_hours', getattr(rule, 'half_day_hours', None))
     if mn is not None and mx is not None and mn > mx and 'max_hours' not in errors:
-        errors['max_hours'] = 'Maximum hours must be at least the minimum hours.'
+        errors['max_hours'] = tr('Maximum hours must be at least the minimum hours.')
     if hd is not None and mn is not None and hd > mn and 'half_day_hours' not in errors:
-        errors['half_day_hours'] = 'Half-day hours must not be more than the minimum hours.'
+        errors['half_day_hours'] = tr('Half-day hours must not be more than the minimum hours.')
     if 'active' in data:
         rv['active'] = pbool(data.get('active'), True)
     if 'night_auto' in data:
@@ -290,12 +292,12 @@ def shift_input(data, shift=None, rule=None, r=None):
             if not ids and rule is not None and not rule.branch_ids:
                 pass   # a shift of all branches stays one of all branches
             elif not ids:
-                errors['branch_ids'] = 'Choose at least one of your branches.'
+                errors['branch_ids'] = tr('Choose at least one of your branches.')
             elif any(i not in r.branches for i in ids):
-                errors['branch_ids'] = 'You can only choose your own branches.'
+                errors['branch_ids'] = tr('You can only choose your own branches.')
         rv['branch_ids'] = ids
     if errors:
-        raise PlanError('Please correct the marked fields.', problems=errors)
+        raise PlanError(tr('Please correct the marked fields.'), problems=errors)
     return sv, rv, length
 
 
@@ -335,7 +337,7 @@ class ShiftMasterView(Base):
     def post(self, request):
         from calendars.models import Shift
         if not self.r.has('add_shift'):
-            deny('You may not add shifts.')
+            deny(tr('You may not add shifts.'))
         sv, rv, _ = shift_input(request.data, r=self.r)
         if 'branch_ids' not in rv and self.r.branches is not None:
             rv['branch_ids'] = sorted(self.r.branches)   # branch HR: new shifts belong to their branches
@@ -352,10 +354,10 @@ class ShiftMasterDetail(Base):
         from calendars.models import Shift
         s = Shift.objects.filter(pk=pk).first()
         if s is None:
-            raise PlanError('Shift not found.', status=404)
+            raise PlanError(tr('Shift not found.'), status=404)
         rule = ShiftRule.objects.filter(shift_id=s.pk).first()
         if not _shift_visible(self.r, rule):
-            raise PlanError('Shift not found.', status=404)
+            raise PlanError(tr('Shift not found.'), status=404)
         return s, rule
 
     def get(self, request, pk):
@@ -364,10 +366,10 @@ class ShiftMasterDetail(Base):
 
     def patch(self, request, pk):
         if not self.r.has('change_shift'):
-            deny('You may not change shifts.')
+            deny(tr('You may not change shifts.'))
         s, rule = self._get(pk)
         if rule is not None and rule.branch_ids and self.r.branches is not None and any(int(b) not in self.r.branches for b in rule.branch_ids):
-            deny('This shift is shared with branches you do not manage.')
+            deny(tr('This shift is shared with branches you do not manage.'))
         sv, rv, _ = shift_input(request.data, shift=s, rule=rule, r=self.r)
         with transaction.atomic():
             for k, v in sv.items():
@@ -381,7 +383,7 @@ class ShiftMasterDetail(Base):
     def delete(self, request, pk):
         from calendars.models import Attendance, EmployeeShiftSchedule, ShiftOverride, ShiftPattern
         if not self.r.has('delete_shift'):
-            deny('You may not delete shifts.')
+            deny(tr('You may not delete shifts.'))
         s, rule = self._get(pk)
         used = []
         if RosterEntry.objects.filter(shift_id=s.pk).exists() or OpenShift.objects.filter(shift_id=s.pk).exists():
@@ -394,7 +396,7 @@ class ShiftMasterDetail(Base):
         if ShiftOverride.objects.filter(override_shift=s).exists():
             used.append('shift overrides')
         if used:
-            raise PlanError(f'This shift is used in {", ".join(used)}. Switch it off (Active = No) instead of deleting it.', status=409)
+            raise PlanError(tr('This shift is used in {0}. Switch it off (Active = No) instead of deleting it.', ", ".join(used)), status=409)
         with transaction.atomic():
             ShiftRule.objects.filter(shift_id=s.pk).delete()
             s.delete()
@@ -429,13 +431,13 @@ def period_input(data, p=None):
     if p is None or 'name' in data:
         v['name'] = (data.get('name') or '').strip()[:120]
         if not v['name']:
-            errors['name'] = 'Enter a name, e.g. “Sharjah – October week 2”.'
+            errors['name'] = tr('Enter a name, e.g. “Sharjah – October week 2”.')
     if p is None or 'branch' in data or 'branch_id' in data:
         b = data.get('branch', data.get('branch_id'))
         try:
             v['branch_id'] = int(b)
         except (TypeError, ValueError):
-            errors['branch'] = 'Choose the branch.'
+            errors['branch'] = tr('Choose the branch.')
     if 'department' in data or 'department_id' in data:
         dv = data.get('department', data.get('department_id'))
         v['department_id'] = int(dv) if str(dv or '').isdigit() else None
@@ -449,9 +451,9 @@ def period_input(data, p=None):
     b = v.get('date_to', getattr(p, 'date_to', None))
     if a and b and 'date_to' not in errors:
         if b < a:
-            errors['date_to'] = 'The end date must be on or after the start date.'
+            errors['date_to'] = tr('The end date must be on or after the start date.')
         elif (b - a).days + 1 > MAX_PERIOD_DAYS:
-            errors['date_to'] = f'A roster can cover at most {MAX_PERIOD_DAYS} days. Split it into weeks or months.'
+            errors['date_to'] = tr('A roster can cover at most {0} days. Split it into weeks or months.', MAX_PERIOD_DAYS)
     if 'approver' in data or 'approver_id' in data:
         av = data.get('approver', data.get('approver_id'))
         v['approver_id'] = int(av) if str(av or '').isdigit() else None
@@ -459,7 +461,7 @@ def period_input(data, p=None):
         sv = data.get('default_shift', data.get('default_shift_id'))
         v['default_shift_id'] = int(sv) if str(sv or '').isdigit() else None
         if v['default_shift_id'] and not Shift.objects.filter(pk=v['default_shift_id']).exists():
-            errors['default_shift'] = 'Choose a shift from the list.'
+            errors['default_shift'] = tr('Choose a shift from the list.')
     for f, lo, hi in (('min_rest_hours', 0, 24), ('max_week_hours', 1, 168)):
         if f in data:
             try:
@@ -468,11 +470,11 @@ def period_input(data, p=None):
                     raise ValueError
                 v[f] = x
             except (TypeError, ValueError, InvalidOperation):
-                errors[f] = f'Enter a number between {lo} and {hi}.'
+                errors[f] = tr('Enter a number between {0} and {1}.', lo, hi)
     if 'notes' in data:
         v['notes'] = data.get('notes') or ''
     if errors:
-        raise PlanError('Please correct the marked fields.', problems=errors)
+        raise PlanError(tr('Please correct the marked fields.'), problems=errors)
     return v
 
 
@@ -487,9 +489,9 @@ def _period_visible(r, p):
 def get_period(r, pk, manage=False):
     p = RosterPeriod.objects.filter(pk=pk).first()
     if p is None or not (_period_visible(r, p) or (not manage and r.team and _team_in_period(r, p))):
-        raise PlanError('Roster not found.', status=404)
+        raise PlanError(tr('Roster not found.'), status=404)
     if manage and not r.can_manage_period(p):
-        deny('You may not change rosters of this branch.')
+        deny(tr('You may not change rosters of this branch.'))
     return p
 
 
@@ -505,18 +507,19 @@ class PeriodsView(Base):
             qs = qs.filter(status=st)
         n = names()
         rows = []
-        for p in qs[:300]:
-            if _period_visible(self.r, p) or (self.r.team and p.status == 'published' and _team_in_period(self.r, p)):
-                cnt = {'entries': p.entries.count(), 'changed_after_publish': p.entries.filter(changed_after_publish=True).count()}
-                rows.append(period_row(p, n, self.r, cnt))
+        # v1.22.0 branch rights: the 300-row limit applies to the rosters the user may see (it was taken before the check)
+        visible = (p for p in qs.iterator() if _period_visible(self.r, p) or (self.r.team and p.status == 'published' and _team_in_period(self.r, p)))
+        for p in islice(visible, 300):
+            cnt = {'entries': p.entries.count(), 'changed_after_publish': p.entries.filter(changed_after_publish=True).count()}
+            rows.append(period_row(p, n, self.r, cnt))
         return Response(rows)
 
     def post(self, request):
         if not self.r.manage:
-            deny('You may not create rosters.')
+            deny(tr('You may not create rosters.'))
         v = period_input(request.data)
         if not self.r.branch_ok(v['branch_id']):
-            deny('You can only create rosters for your own branches.')
+            deny(tr('You can only create rosters for your own branches.'))
         p = RosterPeriod.objects.create(created_by_id=request.user.pk, **v)
         out = period_row(p, r=self.r)
         if pbool(request.data.get('generate')):
@@ -535,11 +538,11 @@ class PeriodDetail(Base):
         v = period_input(request.data, p)
         if 'branch_id' in v and v['branch_id'] != p.branch_id:
             if p.entries.exists():
-                raise PlanError('The branch cannot change once the roster has shifts. Create a new roster instead.')
+                raise PlanError(tr('The branch cannot change once the roster has shifts. Create a new roster instead.'))
             if not self.r.branch_ok(v['branch_id']):
-                deny('You can only use your own branches.')
+                deny(tr('You can only use your own branches.'))
         if ('date_from' in v or 'date_to' in v) and p.entries.exclude(date__gte=v.get('date_from', p.date_from), date__lte=v.get('date_to', p.date_to)).exists():
-            raise PlanError('Some planned days fall outside the new dates. Clear them first.')
+            raise PlanError(tr('Some planned days fall outside the new dates. Clear them first.'))
         for k, x in v.items():
             setattr(p, k, x)
         p.save()
@@ -548,7 +551,7 @@ class PeriodDetail(Base):
     def delete(self, request, pk):
         p = get_period(self.r, pk, manage=True)
         if p.status not in ('draft', 'rejected'):
-            raise PlanError('Only draft rosters can be deleted. Send it back to draft first.', status=409)
+            raise PlanError(tr('Only draft rosters can be deleted. Send it back to draft first.'), status=409)
         p.delete()
         return Response(status=204)
 
@@ -563,48 +566,48 @@ class PeriodAction(Base):
         now = timezone.now()
         if action == 'generate':
             if not self.r.can_manage_period(p):
-                deny('You may not change rosters of this branch.')
+                deny(tr('You may not change rosters of this branch.'))
             res = S.generate(p, u, overwrite=pbool(d.get('overwrite')))
             return Response({'result': res, 'problems': S.check_period(p)})
         if action == 'check':
             return Response({'problems': S.check_period(p)})
         if action == 'copy-week':
             if not self.r.can_manage_period(p):
-                deny('You may not change rosters of this branch.')
+                deny(tr('You may not change rosters of this branch.'))
             t = pdate(d.get('target_start'), 'target_start')
             s = pdate(d.get('source_start'), 'source_start', required=False)
             n = S.copy_week(p, t, s, u)
             return Response({'copied': n, 'problems': S.check_period(p)})
         if action == 'submit':
             if not self.r.can_manage_period(p):
-                deny('You may not submit rosters of this branch.')
+                deny(tr('You may not submit rosters of this branch.'))
             if p.status not in ('draft', 'rejected'):
-                raise PlanError(f'This roster is {p.get_status_display().lower()} already.', status=409)
+                raise PlanError(tr('This roster is {0} already.', p.get_status_display().lower()), status=409)
             if not p.entries.exists():
-                raise PlanError('The roster is empty. Generate it or plan some shifts first.')
+                raise PlanError(tr('The roster is empty. Generate it or plan some shifts first.'))
             probs = S.check_period(p)
             errs = [x for x in probs if x['level'] == 'error']
             if errs:
-                raise PlanError(f'Fix {len(errs)} problem(s) before submitting.', problems=errs)
+                raise PlanError(tr('Fix {0} problem(s) before submitting.', len(errs)), problems=errs)
             p.status, p.submitted_by_id, p.submitted_at, p.decision_note = 'submitted', u.pk, now, ''
             p.save()
             self._tell_approvers(p)
             return Response(period_row(p, r=self.r) | {'problems': probs})
         if action == 'recall':
             if p.status != 'submitted' or not self.r.can_manage_period(p):
-                raise PlanError('Only a submitted roster can be called back by its planners.', status=409)
+                raise PlanError(tr('Only a submitted roster can be called back by its planners.'), status=409)
             p.status = 'draft'
             p.save()
             return Response(period_row(p, r=self.r))
         if action in ('approve', 'reject'):
             if p.status != 'submitted':
-                raise PlanError('Only a submitted roster can be approved or sent back.', status=409)
+                raise PlanError(tr('Only a submitted roster can be approved or sent back.'), status=409)
             if not self.r.can_approve_period(p):
-                deny('You may not approve this roster.')
+                deny(tr('You may not approve this roster.'))
             note = (d.get('note') or '').strip()
             if action == 'reject':
                 if not note:
-                    raise PlanError('Say why the roster is sent back, so the planner can fix it.', problems={'note': 'Required.'})
+                    raise PlanError(tr('Say why the roster is sent back, so the planner can fix it.'), problems={'note': 'Required.'})
                 p.status, p.decision_note = 'rejected', note[:255]
                 p.save()
                 self._tell_user(p.submitted_by_id, 'Roster sent back', f'The roster “{p.name}” was sent back: {note}')
@@ -617,28 +620,28 @@ class PeriodAction(Base):
             return Response(period_row(p, r=self.r))
         if action == 'publish':
             if p.status != 'approved':
-                raise PlanError('Approve the roster before publishing it.', status=409)
+                raise PlanError(tr('Approve the roster before publishing it.'), status=409)
             if not self.r.can_publish(p):
-                deny('You may not publish this roster.')
+                deny(tr('You may not publish this roster.'))
             return Response(self._publish(p, u, now))
         if action == 'reopen':
             if not self.r.can_manage_period(p) or p.status not in ('submitted', 'approved', 'published'):
-                raise PlanError('Only submitted, approved or published rosters can be reopened.', status=409)
+                raise PlanError(tr('Only submitted, approved or published rosters can be reopened.'), status=409)
             was = p.status
             p.status = 'draft'
             p.save()
             if was == 'published':
                 for emp in S.E().objects.filter(pk__in=p.entries.values('employee_id')):
-                    notify.send(employee=emp, kind='unpublished', title='Schedule withdrawn',
-                                message=f'Your schedule {p.date_from:%d %b} – {p.date_to:%d %b %Y} was taken back for changes. You will be told when it is published again.')
+                    notify.send(employee=emp, kind='unpublished', title=tmsg('Schedule withdrawn'),
+                                message=tmsg('Your schedule {0:%d %b} – {1:%d %b %Y} was taken back for changes. You will be told when it is published again.', p.date_from, p.date_to))
             return Response(period_row(p, r=self.r))
-        raise PlanError('Unknown action.', status=404)
+        raise PlanError(tr('Unknown action.'), status=404)
 
     def _publish(self, p, u, now):
         probs = S.check_period(p)
         errs = [x for x in probs if x['level'] == 'error']
         if errs:
-            raise PlanError(f'Fix {len(errs)} problem(s) before publishing.', problems=errs)
+            raise PlanError(tr('Fix {0} problem(s) before publishing.', len(errs)), problems=errs)
         p.status, p.published_by_id, p.published_at = 'published', u.pk, now
         p.save()
         p.entries.update(changed_after_publish=False)
@@ -650,8 +653,8 @@ class PeriodAction(Base):
         for emp in S.E().objects.filter(pk__in=list(by_emp)):
             work = [e for e in by_emp[emp.pk] if not e.off and e.shift_id]
             lines = '; '.join(f'{e.date:%a %d %b} {S.shift_label(shifts.get(e.shift_id))}' for e in work[:14])
-            notify.send(employee=emp, kind='published', title='Your schedule is published',
-                        message=f'Your schedule {p.date_from:%d %b} – {p.date_to:%d %b %Y}: {len(work)} shift day(s). {lines}')
+            notify.send(employee=emp, kind='published', title=tmsg('Your schedule is published'),
+                        message=tmsg('Your schedule {0:%d %b} – {1:%d %b %Y}: {2} shift day(s). {3}', p.date_from, p.date_to, len(work), lines))
             sent += 1
         return period_row(p) | {'notified': sent, 'problems': probs}
 
@@ -735,7 +738,7 @@ class CellsView(Base):
         S.check_editable(p)
         cells = request.data.get('cells')
         if not isinstance(cells, list) or not cells:
-            raise PlanError('Send the cells to change.')
+            raise PlanError(tr('Send the cells to change.'))
         scope = {e.pk: e for e in S.period_employees(p)}
         shifts = S.shifts_by_id()
         bad = []
@@ -744,18 +747,18 @@ class CellsView(Base):
                 try:
                     emp = scope.get(pint(c.get('employee'), 'employee', True))
                     if emp is None:
-                        raise PlanError('This employee is not part of the roster (branch / department).')
+                        raise PlanError(tr('This employee is not part of the roster (branch / department).'))
                     d = pdate(c.get('date'), 'date')
                     sid = pint(c.get('shift'), 'shift')
                     if sid is not None and sid not in shifts:
-                        raise PlanError('Choose a shift from the list.')
+                        raise PlanError(tr('Choose a shift from the list.'))
                     S.upsert_entry(p, emp, d, sid, pbool(c.get('off')), 'manual', request.user, note=c.get('note'))
                 except PlanError as e:
                     bad.append({'row': i + 1, 'employee': c.get('employee'), 'date': c.get('date'), 'message': e.message})
             if bad:
                 transaction.set_rollback(True)
         if bad:
-            raise PlanError('Nothing was saved. Fix the cells listed.', problems=bad)
+            raise PlanError(tr('Nothing was saved. Fix the cells listed.'), problems=bad)
         ids = {pint(c.get('employee'), 'employee') for c in cells}
         return Response({'saved': len(cells), 'problems': S.check_period(p, ids)})
 
@@ -771,14 +774,14 @@ def _target_emp(r, data_emp, what='this'):
     """The employee a request is for: own by default; HR / manager may name one of theirs."""
     if data_emp in (None, ''):
         if r.emp is None:
-            raise PlanError('Your login is not linked to an employee. Choose the employee.', problems={'employee': 'Required.'})
+            raise PlanError(tr('Your login is not linked to an employee. Choose the employee.'), problems={'employee': 'Required.'})
         return r.emp
     emp = emp_or_404(data_emp)
     if r.emp is not None and emp.pk == r.emp.pk:
         return emp
     if r.manages_emp(emp) or r.is_manager_of(emp):
         return emp
-    deny(f'You can only do {what} for yourself.')
+    deny(tr('You can only do {0} for yourself.', what))
 
 
 def avail_input(data, errors=None):
@@ -787,7 +790,7 @@ def avail_input(data, errors=None):
     v = {}
     kind = data.get('kind') or 'unavailable'
     if kind not in dict(Availability.KINDS):
-        errors['kind'] = 'Choose available, unavailable or preferred.'
+        errors['kind'] = tr('Choose available, unavailable or preferred.')
     v['kind'] = kind
     wd = data.get('weekday')
     v['weekday'] = None
@@ -797,23 +800,23 @@ def avail_input(data, errors=None):
             if not 0 <= v['weekday'] <= 6:
                 raise ValueError
         except (TypeError, ValueError):
-            errors['weekday'] = 'Choose a weekday.'
+            errors['weekday'] = tr('Choose a weekday.')
     try:
         v['date_from'] = pdate(data.get('date_from'), 'date_from', required=False)
         v['date_to'] = pdate(data.get('date_to'), 'date_to', required=False)
     except PlanError as e:
         errors['date_from'] = e.message
     if v.get('weekday') is None and not v.get('date_from') and 'weekday' not in errors:
-        errors['weekday'] = 'Choose a weekday or a date range.'
+        errors['weekday'] = tr('Choose a weekday or a date range.')
     if v.get('date_from') and v.get('date_to') and v['date_to'] < v['date_from']:
-        errors['date_to'] = 'The end date must be on or after the start date.'
+        errors['date_to'] = tr('The end date must be on or after the start date.')
     sid = data.get('shift')
     v['shift_id'] = int(sid) if str(sid or '').isdigit() else None
     if v['shift_id'] and not Shift.objects.filter(pk=v['shift_id']).exists():
-        errors['shift'] = 'Choose a shift from the list.'
+        errors['shift'] = tr('Choose a shift from the list.')
     v['note'] = (data.get('note') or '')[:255]
     if errors:
-        raise PlanError('Please correct the marked fields.', problems=errors)
+        raise PlanError(tr('Please correct the marked fields.'), problems=errors)
     return v
 
 
@@ -824,7 +827,7 @@ class AvailabilityView(Base):
         if eid:
             emp = emp_or_404(eid)
             if not self.r.can_see_emp(emp):
-                deny('You can only see your own availability.')
+                deny(tr('You can only see your own availability.'))
             qs = qs.filter(employee_id=emp.pk)
         else:
             allowed = set(self.r.team) | ({self.r.emp.pk} if self.r.emp else set())
@@ -845,10 +848,10 @@ class AvailabilityDetail(Base):
     def _get(self, pk):
         a = Availability.objects.filter(pk=pk).first()
         if a is None:
-            raise PlanError('Not found.', status=404)
+            raise PlanError(tr('Not found.'), status=404)
         emp = S.emp_by_id(a.employee_id)
         if not ((self.r.emp and self.r.emp.pk == a.employee_id) or self.r.manages_emp(emp) or self.r.is_manager_of(emp)):
-            raise PlanError('Not found.', status=404)
+            raise PlanError(tr('Not found.'), status=404)
         return a
 
     def patch(self, request, pk):
@@ -914,15 +917,15 @@ class OpenShiftsView(Base):
         try:
             day = pdate(d.get('date'), 'date')
             if day < date.today():
-                errors['date'] = 'Choose today or a later day.'
+                errors['date'] = tr('Choose today or a later day.')
         except PlanError as e:
             errors['date'], day = e.message, None
         sid = d.get('shift')
         if not str(sid or '').isdigit() or not Shift.objects.filter(pk=sid).exists():
-            errors['shift'] = 'Choose a shift from the list.'
+            errors['shift'] = tr('Choose a shift from the list.')
         bid = d.get('branch')
         if not str(bid or '').isdigit():
-            errors['branch'] = 'Choose the branch.'
+            errors['branch'] = tr('Choose the branch.')
         try:
             slots = int(d.get('slots')) if d.get('slots') not in (None, '') else 1
             if slots < 1 or slots > 100:
@@ -930,9 +933,9 @@ class OpenShiftsView(Base):
         except (TypeError, ValueError):
             errors['slots'], slots = 'Enter how many people are needed (1–100).', 1
         if errors:
-            raise PlanError('Please correct the marked fields.', problems=errors)
+            raise PlanError(tr('Please correct the marked fields.'), problems=errors)
         if not self.r.manage or not self.r.branch_ok(int(bid)):
-            deny('You may not post open shifts for this branch.')
+            deny(tr('You may not post open shifts for this branch.'))
         dep = int(d['department']) if str(d.get('department') or '').isdigit() else None
         o = OpenShift.objects.create(date=day, shift_id=int(sid), branch_id=int(bid), department_id=dep, slots=slots,
                                      note=(d.get('note') or '')[:255], created_by_id=request.user.pk)
@@ -944,8 +947,8 @@ class OpenShiftsView(Base):
                 qs = qs.filter(emp_dept_id_id=dep)
             for emp in qs[:300]:
                 if emp.users_id:
-                    notify.send(employee=emp, kind='open_shift', title='Open shift available',
-                                message=f'An open shift {S.shift_label(sh)} on {o.date:%a %d %b %Y} needs {o.slots} person(s). Claim it in My schedule.')
+                    notify.send(employee=emp, kind='open_shift', title=tmsg('Open shift available'),
+                                message=tmsg('An open shift {0} on {1:%a %d %b %Y} needs {2} person(s). Claim it in My schedule.', S.shift_label(sh), o.date, o.slots))
                     told += 1
         return Response(open_row(o, self.r, S.shifts_by_id(), names()) | {'notified': told}, status=201)
 
@@ -956,40 +959,40 @@ class OpenShiftAction(Base):
     def post(self, request, pk, action):
         o = OpenShift.objects.filter(pk=pk).first()
         if o is None:
-            raise PlanError('Open shift not found.', status=404)
+            raise PlanError(tr('Open shift not found.'), status=404)
         if action == 'cancel':
             if not (self.r.manage and self.r.branch_ok(o.branch_id)):
-                deny('You may not cancel this open shift.')
+                deny(tr('You may not cancel this open shift.'))
             if o.status != 'open':
-                raise PlanError(f'This open shift is {o.get_status_display().lower()}.', status=409)
+                raise PlanError(tr('This open shift is {0}.', o.get_status_display().lower()), status=409)
             o.status = 'cancelled'
             o.save()
             for c in o.claims.filter(status='pending'):
                 S.stamp(c, request.user, 'rejected', 'The open shift was cancelled.')
                 c.save()
-                notify.send(employee=S.emp_by_id(c.employee_id), kind='open_shift', title='Open shift cancelled',
-                            message=f'The open shift on {o.date:%d %b %Y} you claimed was cancelled.')
+                notify.send(employee=S.emp_by_id(c.employee_id), kind='open_shift', title=tmsg('Open shift cancelled'),
+                            message=tmsg('The open shift on {0:%d %b %Y} you claimed was cancelled.', o.date))
             return Response(open_row(o, self.r, S.shifts_by_id(), names()))
         if action != 'claim':
-            raise PlanError('Unknown action.', status=404)
+            raise PlanError(tr('Unknown action.'), status=404)
         emp = self.r.emp
         if emp is None:
-            raise PlanError('Your login is not linked to an employee.', status=403)
+            raise PlanError(tr('Your login is not linked to an employee.'), status=403)
         if o.status != 'open':
-            raise PlanError('This open shift is no longer open.', status=409)
+            raise PlanError(tr('This open shift is no longer open.'), status=409)
         if not _eligible(o, emp):
-            deny('This open shift is for another branch or department.')
+            deny(tr('This open shift is for another branch or department.'))
         if o.claims.filter(employee_id=emp.pk, status__in=('pending', 'approved')).exists():
-            raise PlanError('You have already claimed this shift.', status=409)
+            raise PlanError(tr('You have already claimed this shift.'), status=409)
         S.refuse_if_leave(emp, o.date)
         sid, off = S.current_shift(emp, o.date)
         if sid and not off:
-            raise PlanError(f'You already work {S.shift_label(S.shifts_by_id().get(sid))} on {o.date:%d %b %Y}. Ask for a shift change instead.', status=409)
+            raise PlanError(tr('You already work {0} on {1:%d %b %Y}. Ask for a shift change instead.', S.shift_label(S.shifts_by_id().get(sid)), o.date), status=409)
         c = OpenShiftClaim.objects.create(open_shift=o, employee_id=emp.pk, note=(request.data.get('note') or '')[:255])
         mgr = emp.emp_reporting_manager
         if mgr is not None:
-            notify.send(user=mgr, kind='open_shift', title='Open shift claimed',
-                        message=f'{person(emp)} claimed the open shift on {o.date:%a %d %b %Y}. Approve or reject it in Shift planner → Requests.')
+            notify.send(user=mgr, kind='open_shift', title=tmsg('Open shift claimed'),
+                        message=tmsg('{0} claimed the open shift on {1:%a %d %b %Y}. Approve or reject it in Shift planner → Requests.', person(emp), o.date))
         return Response({'id': c.id, 'status': c.status, 'status_label': c.get_status_display()}, status=201)
 
 
@@ -999,30 +1002,30 @@ class ClaimAction(Base):
     def post(self, request, pk, action):
         c = OpenShiftClaim.objects.select_related('open_shift').filter(pk=pk).first()
         if c is None:
-            raise PlanError('Claim not found.', status=404)
+            raise PlanError(tr('Claim not found.'), status=404)
         emp = S.emp_by_id(c.employee_id)
         o = c.open_shift
         if c.status != 'pending':
-            raise PlanError(f'This claim is {c.get_status_display().lower()} already.', status=409)
+            raise PlanError(tr('This claim is {0} already.', c.get_status_display().lower()), status=409)
         if action == 'withdraw':
             if not (self.r.emp and self.r.emp.pk == c.employee_id):
-                deny('Only the employee can withdraw the claim.')
+                deny(tr('Only the employee can withdraw the claim.'))
             c.status = 'withdrawn'
             c.save()
             return Response({'status': c.status})
         if action not in ('approve', 'reject'):
-            raise PlanError('Unknown action.', status=404)
+            raise PlanError(tr('Unknown action.'), status=404)
         if not self.r.can_decide_for(emp):
-            deny('You may not decide on this claim.')
+            deny(tr('You may not decide on this claim.'))
         note = (request.data.get('note') or '')[:255]
         if action == 'reject':
             S.stamp(c, request.user, 'rejected', note)
             c.save()
-            notify.send(employee=emp, kind='open_shift', title='Open shift claim rejected',
-                        message=f'Your claim for the open shift on {o.date:%d %b %Y} was rejected.' + (f' {note}' if note else ''))
+            notify.send(employee=emp, kind='open_shift', title=tmsg('Open shift claim rejected'),
+                        message=tmsg('Your claim for the open shift on {0:%d %b %Y} was rejected.', o.date) + (f' {note}' if note else ''))
             return Response({'status': c.status})
         if o.status != 'open':
-            raise PlanError('This open shift is no longer open.', status=409)
+            raise PlanError(tr('This open shift is no longer open.'), status=409)
         S.refuse_if_leave(emp, o.date)
         with transaction.atomic():
             S.set_shift(emp, o.date, o.shift_id, 'open_shift', request.user, note='Open shift')
@@ -1034,11 +1037,11 @@ class ClaimAction(Base):
                 for other in o.claims.filter(status='pending'):
                     S.stamp(other, request.user, 'rejected', 'All places were filled.')
                     other.save()
-                    notify.send(employee=S.emp_by_id(other.employee_id), kind='open_shift', title='Open shift filled',
-                                message=f'The open shift on {o.date:%d %b %Y} was filled by others.')
+                    notify.send(employee=S.emp_by_id(other.employee_id), kind='open_shift', title=tmsg('Open shift filled'),
+                                message=tmsg('The open shift on {0:%d %b %Y} was filled by others.', o.date))
         sh = S.shifts_by_id().get(o.shift_id)
-        notify.send(employee=emp, kind='open_shift', title='Open shift approved',
-                    message=f'You work {S.shift_label(sh)} on {o.date:%a %d %b %Y}.')
+        notify.send(employee=emp, kind='open_shift', title=tmsg('Open shift approved'),
+                    message=tmsg('You work {0} on {1:%a %d %b %Y}.', S.shift_label(sh), o.date))
         return Response({'status': c.status, 'open_shift_status': o.status})
 
 
@@ -1082,19 +1085,20 @@ class RequestsView(Base):
         if request.GET.get('kind'):
             qs = qs.filter(kind=request.GET['kind'])
         shifts, n = S.shifts_by_id(), names()
-        return Response([req_row(q, self.r, shifts, n) for q in qs[:500] if _visible_req(self.r, q)])
+        # v1.22.0 branch rights: the 500-row limit applies to the requests the user may see (it was taken before the check)
+        return Response([req_row(q, self.r, shifts, n) for q in islice((q for q in qs.iterator() if _visible_req(self.r, q)), 500)])
 
     def post(self, request):
         d = request.data
         kind = d.get('kind')
         if kind not in dict(ShiftRequest.KINDS):
-            raise PlanError('Choose swap, change or cancel.', problems={'kind': 'Required.'})
+            raise PlanError(tr('Choose swap, change or cancel.'), problems={'kind': 'Required.'})
         emp = _target_emp(self.r, d.get('employee'), 'shift requests')
         day = pdate(d.get('date'), 'date')
         if day < date.today():
-            raise PlanError('You can only change today or later days.', problems={'date': 'In the past.'})
+            raise PlanError(tr('You can only change today or later days.'), problems={'date': 'In the past.'})
         if ShiftRequest.objects.filter(employee_id=emp.pk, date=day, status__in=('peer', 'pending')).exists():
-            raise PlanError('There is already an open request for this day. Withdraw it first.', status=409)
+            raise PlanError(tr('There is already an open request for this day. Withdraw it first.'), status=409)
         cur_id, cur_off = S.current_shift(emp, day)
         shifts = S.shifts_by_id()
         q = ShiftRequest(kind=kind, employee_id=emp.pk, date=day, from_shift_id=None if cur_off else cur_id,
@@ -1102,44 +1106,43 @@ class RequestsView(Base):
         if kind == 'change':
             to = pint(d.get('to_shift'), 'to_shift', True)
             if to not in shifts:
-                raise PlanError('Choose the shift you want.', problems={'to_shift': 'Choose a shift.'})
+                raise PlanError(tr('Choose the shift you want.'), problems={'to_shift': 'Choose a shift.'})
             rule = ShiftRule.objects.filter(shift_id=to).first()
             if rule is not None and not rule.active:
-                raise PlanError('That shift is switched off. Choose another one.', problems={'to_shift': 'Inactive.'})
+                raise PlanError(tr('That shift is switched off. Choose another one.'), problems={'to_shift': 'Inactive.'})
             if q.from_shift_id == to:
-                raise PlanError('You already work this shift on that day.', problems={'to_shift': 'Same shift.'})
+                raise PlanError(tr('You already work this shift on that day.'), problems={'to_shift': 'Same shift.'})
             S.refuse_if_leave(emp, day)
             q.to_shift_id, q.status = to, 'pending'
         elif kind == 'cancel':
             if q.from_shift_id is None:
-                raise PlanError('There is no shift to cancel on that day.', status=409)
+                raise PlanError(tr('There is no shift to cancel on that day.'), status=409)
             if not q.reason:
-                raise PlanError('Say why the shift should be cancelled.', problems={'reason': 'Required.'})
+                raise PlanError(tr('Say why the shift should be cancelled.'), problems={'reason': 'Required.'})
             q.status = 'pending'
         else:  # swap
             other = emp_or_404(pint(d.get('swap_employee'), 'swap_employee', True))
             if other.pk == emp.pk:
-                raise PlanError('Choose a colleague, not yourself.', problems={'swap_employee': 'Same employee.'})
+                raise PlanError(tr('Choose a colleague, not yourself.'), problems={'swap_employee': 'Same employee.'})
             if other.emp_branch_id_id != emp.emp_branch_id_id:
-                raise PlanError('You can only swap with a colleague of your branch.', problems={'swap_employee': 'Other branch.'})
+                raise PlanError(tr('You can only swap with a colleague of your branch.'), problems={'swap_employee': 'Other branch.'})
             sday = pdate(d.get('swap_date'), 'swap_date', required=False) or day
             if sday < date.today():
-                raise PlanError("The colleague's day is in the past.", problems={'swap_date': 'In the past.'})
+                raise PlanError(tr("The colleague's day is in the past."), problems={'swap_date': 'In the past.'})
             for x, dd in ((emp, day), (other, sday), (emp, sday), (other, day)):
                 S.refuse_if_leave(x, dd)
             o_id, o_off = S.current_shift(other, sday)
             q.swap_employee_id, q.swap_date, q.swap_shift_id = other.pk, sday, None if o_off else o_id
             if sday == day and q.swap_shift_id == q.from_shift_id:
-                raise PlanError('You both work the same shift that day – there is nothing to swap.', status=409)
+                raise PlanError(tr('You both work the same shift that day – there is nothing to swap.'), status=409)
             if sday == day and q.swap_shift_id is None and q.from_shift_id is None:
-                raise PlanError('You are both off that day – there is nothing to swap.', status=409)
+                raise PlanError(tr('You are both off that day – there is nothing to swap.'), status=409)
             q.status = 'peer'
         q.save()
         shift_txt = S.shift_label(shifts.get(q.from_shift_id)) if q.from_shift_id else 'Off'
         if q.kind == 'swap':
-            notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title='Shift swap request',
-                        message=f'{person(emp)} asks to swap: their {day:%a %d %b} ({shift_txt}) for your {q.swap_date:%a %d %b} '
-                                f'({S.shift_label(shifts.get(q.swap_shift_id)) if q.swap_shift_id else "Off"}). Accept or decline in My schedule.')
+            notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title=tmsg('Shift swap request'),
+                        message=tmsg('{0} asks to swap: their {1:%a %d %b} ({2}) for your {3:%a %d %b} ({4}). Accept or decline in My schedule.', person(emp), day, shift_txt, q.swap_date, S.shift_label(shifts.get(q.swap_shift_id)) if q.swap_shift_id else "Off"))
         else:
             self._tell_approver(emp, q)
         return Response(req_row(q, self.r, shifts, names()), status=201)
@@ -1148,8 +1151,8 @@ class RequestsView(Base):
     def _tell_approver(emp, q):
         mgr = emp.emp_reporting_manager
         if mgr is not None:
-            notify.send(user=mgr, kind='request', title=f'{q.get_kind_display()} waiting for approval',
-                        message=f'{person(emp)} asks for a {q.get_kind_display().lower()} on {q.date:%a %d %b %Y}. Approve or reject it in Shift planner → Requests.')
+            notify.send(user=mgr, kind='request', title=tmsg('{0} waiting for approval', q.get_kind_display()),
+                        message=tmsg('{0} asks for a {1} on {2:%a %d %b %Y}. Approve or reject it in Shift planner → Requests.', person(emp), q.get_kind_display().lower(), q.date))
 
 
 def apply_request(q, user):
@@ -1178,44 +1181,44 @@ class RequestAction(Base):
     def post(self, request, pk, action):
         q = ShiftRequest.objects.filter(pk=pk).first()
         if q is None or not _visible_req(self.r, q):
-            raise PlanError('Request not found.', status=404)
+            raise PlanError(tr('Request not found.'), status=404)
         note = (request.data.get('note') or '')[:255]
         emp = S.emp_by_id(q.employee_id)
         shifts, n = S.shifts_by_id(), names()
         me = self.r.emp.pk if self.r.emp else None
         if action in ('accept', 'decline'):
             if q.status != 'peer' or me != q.swap_employee_id:
-                raise PlanError('Only the colleague can answer this swap while it waits for them.', status=403)
+                raise PlanError(tr('Only the colleague can answer this swap while it waits for them.'), status=403)
             q.peer_decided_at = timezone.now()
             if action == 'decline':
                 q.status, q.decision_note = 'declined', note
                 q.save()
-                notify.send(employee=emp, kind='swap', title='Swap declined', message=f'{person(self.r.emp)} declined your swap for {q.date:%d %b %Y}.' + (f' {note}' if note else ''))
+                notify.send(employee=emp, kind='swap', title=tmsg('Swap declined'), message=tmsg('{0} declined your swap for {1:%d %b %Y}.', person(self.r.emp), q.date) + (f' {note}' if note else ''))
             else:
                 for x, dd in ((emp, q.date), (self.r.emp, q.swap_date or q.date)):
                     S.refuse_if_leave(x, dd)
                 q.status = 'pending'
                 q.save()
-                notify.send(employee=emp, kind='swap', title='Swap accepted', message=f'{person(self.r.emp)} accepted your swap for {q.date:%d %b %Y}. It now waits for approval.')
+                notify.send(employee=emp, kind='swap', title=tmsg('Swap accepted'), message=tmsg('{0} accepted your swap for {1:%d %b %Y}. It now waits for approval.', person(self.r.emp), q.date))
                 RequestsView._tell_approver(emp, q)
             return Response(req_row(q, self.r, shifts, n))
         if action == 'withdraw':
             if q.status not in ('peer', 'pending') or not (me == q.employee_id or q.created_by_id == request.user.pk):
-                raise PlanError('Only the requester can withdraw an open request.', status=403)
+                raise PlanError(tr('Only the requester can withdraw an open request.'), status=403)
             q.status = 'withdrawn'
             q.save()
             if q.swap_employee_id:
-                notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title='Swap withdrawn', message=f'{person(emp)} withdrew the swap for {q.date:%d %b %Y}.')
+                notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title=tmsg('Swap withdrawn'), message=tmsg('{0} withdrew the swap for {1:%d %b %Y}.', person(emp), q.date))
             return Response(req_row(q, self.r, shifts, n))
         if action not in ('approve', 'reject'):
-            raise PlanError('Unknown action.', status=404)
+            raise PlanError(tr('Unknown action.'), status=404)
         if q.status != 'pending':
-            raise PlanError(f'This request is {q.get_status_display().lower()}.', status=409)
+            raise PlanError(tr('This request is {0}.', q.get_status_display().lower()), status=409)
         if not self.r.can_decide_for(emp):
-            deny('You may not decide on this request.')
+            deny(tr('You may not decide on this request.'))
         if action == 'reject':
             if not note:
-                raise PlanError('Say why the request is rejected.', problems={'note': 'Required.'})
+                raise PlanError(tr('Say why the request is rejected.'), problems={'note': 'Required.'})
             S.stamp(q, request.user, 'rejected', note)
             q.save()
         else:
@@ -1226,7 +1229,7 @@ class RequestAction(Base):
         word = 'approved' if action == 'approve' else 'rejected'
         for x in filter(None, [emp, S.emp_by_id(q.swap_employee_id) if q.swap_employee_id else None]):
             notify.send(employee=x, kind='request', title=f'{q.get_kind_display()} {word}',
-                        message=f'The {q.get_kind_display().lower()} for {q.date:%a %d %b %Y} was {word}.' + (f' {note}' if note else ''))
+                        message=tmsg('The {0} for {1:%a %d %b %Y} was {2}.', q.get_kind_display().lower(), q.date, word) + (f' {note}' if note else ''))
         return Response(req_row(q, self.r, shifts, n))
 
 
@@ -1257,9 +1260,9 @@ def _range(request, default_days=14):
     a = pdate(request.GET.get('from'), 'from', required=False) or date.today()
     b = pdate(request.GET.get('to'), 'to', required=False) or (a + timedelta(days=default_days - 1))
     if b < a:
-        raise PlanError('The end date must be on or after the start date.')
+        raise PlanError(tr('The end date must be on or after the start date.'))
     if (b - a).days > 92:
-        raise PlanError('Choose at most 3 months.')
+        raise PlanError(tr('Choose at most 3 months.'))
     return a, b
 
 
@@ -1269,7 +1272,7 @@ class MyScheduleView(Base):
     def get(self, request):
         emp = self.r.emp
         if emp is None:
-            raise PlanError('Your login is not linked to an employee.', status=403)
+            raise PlanError(tr('Your login is not linked to an employee.'), status=403)
         a, b = _range(request)
         shifts, n = S.shifts_by_id(), names()
         opens = [open_row(o, self.r, shifts, n) for o in OpenShift.objects.filter(status='open', date__gte=date.today(), branch_id=emp.emp_branch_id_id)
@@ -1342,11 +1345,11 @@ class ResolveView(Base):
     def get(self, request):
         emp = emp_or_404(request.GET.get('employee') or (self.r.emp.pk if self.r.emp else None))
         if not self.r.can_see_emp(emp):
-            deny('You can only look at your own shifts.')
+            deny(tr('You can only look at your own shifts.'))
         a = pdate(request.GET.get('date'), 'date')
         b = pdate(request.GET.get('to'), 'to', required=False) or a
         if (b - a).days > 62:
-            raise PlanError('Choose at most 62 days.')
+            raise PlanError(tr('Choose at most 62 days.'))
         book = Book(a, b, [emp.pk])
         out = []
         for d in S.days(a, b):
@@ -1364,7 +1367,7 @@ class PayrollPreview(Base):
     def get(self, request):
         emp = emp_or_404(request.GET.get('employee'))
         if not (self.r.manages_emp(emp) or (self.r.has('view_payslip', 'add_payrollrun', 'view_payrollrun') and self.r.branch_ok(emp.emp_branch_id_id))):
-            deny('You may not see payroll figures of this employee.')
+            deny(tr('You may not see payroll figures of this employee.'))
         from .payroll import variables
         a = pdate(request.GET.get('from'), 'from')
         b = pdate(request.GET.get('to'), 'to')
@@ -1402,7 +1405,7 @@ def read_table(f):
             rows.append(row)
         return rows
     if name and not name.endswith('.csv') and not name.endswith('.txt'):
-        raise PlanError('Upload a .csv or .xlsx file.')
+        raise PlanError(tr('Upload a .csv or .xlsx file.'))
     raw = f.read()
     text = raw.decode('utf-8-sig') if isinstance(raw, bytes) else raw
     rd = csv.DictReader(io.StringIO(text))
@@ -1430,12 +1433,12 @@ class UploadRosterView(Base):
         S.check_editable(p)
         f = request.FILES.get('file')
         if f is None:
-            raise PlanError('Choose the file to upload.', problems={'file': 'Required.'})
+            raise PlanError(tr('Choose the file to upload.'), problems={'file': 'Required.'})
         rows = read_table(f)
         if not rows:
-            raise PlanError('The file has no rows. Use the template.')
+            raise PlanError(tr('The file has no rows. Use the template.'))
         if 'employee_code' not in rows[0] or 'date' not in rows[0] or 'shift' not in rows[0]:
-            raise PlanError('The file needs the columns employee_code, date and shift. Download the template.')
+            raise PlanError(tr('The file needs the columns employee_code, date and shift. Download the template.'))
         scope = {e.emp_code.lower(): e for e in S.period_employees(p)}
         lookup = shift_lookup()
         out, seen = [], set()
@@ -1443,11 +1446,11 @@ class UploadRosterView(Base):
             errs = []
             emp = scope.get((row.get('employee_code') or '').lower())
             if emp is None:
-                errs.append('Employee code not found in this roster’s branch / department.')
+                errs.append(tr('Employee code not found in this roster’s branch / department.'))
             try:
                 d = pdate(row.get('date'), 'date')
                 if d < p.date_from or d > p.date_to:
-                    errs.append(f'Date outside the roster ({p.date_from} – {p.date_to}).')
+                    errs.append(tr('Date outside the roster ({0} – {1}).', p.date_from, p.date_to))
             except PlanError as e:
                 d = None
                 errs.append(e.message)
@@ -1455,10 +1458,10 @@ class UploadRosterView(Base):
             off = sv.lower() in ('off', 'day off', 'o', 'rest')
             sid = None if off else lookup.get(sv.lower())
             if not off and sid is None:
-                errs.append(f'Shift “{sv}” not found. Use a shift code, a shift name or OFF.')
+                errs.append(tr('Shift “{0}” not found. Use a shift code, a shift name or OFF.', sv))
             key = (row.get('employee_code', '').lower(), d)
             if key in seen and d:
-                errs.append('The same employee and date appear twice.')
+                errs.append(tr('The same employee and date appear twice.'))
             seen.add(key)
             out.append({'row': i, 'employee_code': row.get('employee_code'), 'employee': person(emp) if emp else '', 'date': d,
                         'shift': 'OFF' if off else sv, 'shift_id': sid, 'off': off, 'note': row.get('note', ''), 'errors': errs, 'ok': not errs})
@@ -1466,7 +1469,7 @@ class UploadRosterView(Base):
         if not pbool(request.data.get('commit')):
             return Response({'rows': out, 'valid': len(out) - len(bad), 'errors': len(bad)})
         if bad:
-            raise PlanError(f'{len(bad)} row(s) have errors. Nothing was saved.', problems=bad)
+            raise PlanError(tr('{0} row(s) have errors. Nothing was saved.', len(bad)), problems=bad)
         with transaction.atomic():
             for x in out:
                 S.upsert_entry(p, scope[x['employee_code'].lower()], x['date'], x['shift_id'], x['off'], 'upload', request.user, note=x['note'])
@@ -1479,13 +1482,13 @@ class UploadShiftsView(Base):
     def post(self, request):
         from calendars.models import Shift
         if not self.r.has('add_shift') or not self.r.has('change_shift'):
-            deny('You may not add or change shifts.')
+            deny(tr('You may not add or change shifts.'))
         f = request.FILES.get('file')
         if f is None:
-            raise PlanError('Choose the file to upload.', problems={'file': 'Required.'})
+            raise PlanError(tr('Choose the file to upload.'), problems={'file': 'Required.'})
         rows = read_table(f)
         if not rows or 'name' not in rows[0]:
-            raise PlanError('The file needs at least the column name. Download the template.')
+            raise PlanError(tr('The file needs at least the column name. Download the template.'))
         out, plans = [], []
         names_seen = set()
         for i, row in enumerate(rows, start=2):
@@ -1497,7 +1500,7 @@ class UploadShiftsView(Base):
                 data.pop('name', None)
             try:
                 if name.lower() in names_seen:
-                    raise PlanError('The same shift name appears twice.')
+                    raise PlanError(tr('The same shift name appears twice.'))
                 names_seen.add(name.lower())
                 sv, rv, _ = shift_input(data, shift=s, rule=rule, r=self.r)
                 out.append({'row': i, 'name': name, 'action': 'update' if s else 'add', 'errors': [], 'ok': True})
@@ -1509,7 +1512,7 @@ class UploadShiftsView(Base):
         if not pbool(request.data.get('commit')):
             return Response({'rows': out, 'valid': len(out) - len(bad), 'errors': len(bad)})
         if bad:
-            raise PlanError(f'{len(bad)} row(s) have errors. Nothing was saved.', problems=bad)
+            raise PlanError(tr('{0} row(s) have errors. Nothing was saved.', len(bad)), problems=bad)
         with transaction.atomic():
             for s, rule, sv, rv in plans:
                 if s is None:
@@ -1533,7 +1536,7 @@ class TemplateView(Base):
             return csv_response('shift_upload_template.csv', SHIFT_COLS,
                                 [['Morning 07:00-15:00', 'MOR', '07:00', '15:00', '60', '10', '10', '8', '10', '4', 'no', '30', '0', '0', '#2e7d32', 'yes'],
                                  ['Night 22:00-06:00', 'NGT', '22:00', '06:00', '30', '15', '15', '7', '9', '4', 'yes', '30', '10', '25', '#283593', 'yes']])
-        raise PlanError('Unknown template.', status=404)
+        raise PlanError(tr('Unknown template.'), status=404)
 
 
 # ------------------------------------------------------------------ 12. reports
@@ -1566,7 +1569,7 @@ def roster_report_rows(r, a, b, branch=None, department=None, status='published'
 class RosterReport(Base):
     def get(self, request):
         if not (self.r.manage or self.r.team):
-            deny('This report is for HR and managers.')
+            deny(tr('This report is for HR and managers.'))
         a, b = _range(request, 31)
         rows = roster_report_rows(self.r, a, b, pint(request.GET.get('branch'), 'branch'), pint(request.GET.get('department'), 'department'),
                                   request.GET.get('status', 'published'))
@@ -1579,7 +1582,7 @@ class RosterReport(Base):
 class RequestsReport(Base):
     def get(self, request):
         if not (self.r.manage or self.r.team):
-            deny('This report is for HR and managers.')
+            deny(tr('This report is for HR and managers.'))
         a, b = _range(request, 31)
         qs = ShiftRequest.objects.filter(date__gte=a, date__lte=b)
         if request.GET.get('status'):
@@ -1625,3 +1628,140 @@ class MetaView(Base):
             'departments': list(M('OrganisationManager', 'dept_master').objects.values('id', 'dept_name')),
             'approvers': list(M('UserManagement', 'CustomUser').objects.filter(tenants__schema_name=_schema(request)).values('id', 'username').distinct()[:300]),
         })
+
+
+# ------------------------------------------------------------------ v1.18.0: on-call duty
+def oncall_row(o, r=None):
+    emp = S.emp_by_id(o.employee_id)
+    row = {'id': o.id, 'employee_id': o.employee_id, 'employee': person(emp), 'date': o.date, 'kind': o.kind, 'kind_label': o.get_kind_display(),
+           'start_time': hhmm(o.start_time), 'end_time': hhmm(o.end_time), 'hours': fl(o.hours), 'callout_hours': fl(o.callout_hours), 'note': o.note,
+           'status': o.status, 'status_label': o.get_status_display(), 'decision_note': o.decision_note, 'decided_at': o.decided_at,
+           'department': getattr(getattr(emp, 'emp_dept_id', None), 'dept_name', '') if emp else ''}
+    if r is not None:
+        row['can_decide'] = o.status == 'pending' and r.can_decide_for(emp) and o.created_by_id != r.user.pk
+        row['can_edit'] = o.status == 'pending' and (r.manages_emp(emp) or r.is_manager_of(emp))
+    return row
+
+
+def _oncall_input(data, o=None):
+    from .models import OnCallDuty
+    errors = {}
+    v = {'date': pdate(data.get('date', getattr(o, 'date', None)), 'date')}
+    kind = data.get('kind') or getattr(o, 'kind', 'standby')
+    if kind not in dict(OnCallDuty.KINDS):
+        errors['kind'] = tr('Choose standby or on site.')
+    v['kind'] = kind
+    for f in ('start_time', 'end_time'):
+        raw = data.get(f, hhmm(getattr(o, f, None)))
+        v[f] = None
+        if raw not in (None, ''):
+            try:
+                v[f] = datetime.strptime(str(raw)[:5], '%H:%M').time()
+            except ValueError:
+                errors[f] = tr('Use HH:MM, e.g. 09:00.')
+    for f in ('hours', 'callout_hours'):
+        raw = data.get(f, getattr(o, f, 0))
+        try:
+            v[f] = Decimal(str(raw or 0)).quantize(Decimal('0.01'))
+            if v[f] < 0 or v[f] > 24:
+                raise InvalidOperation
+        except (InvalidOperation, ValueError):
+            errors[f] = tr('Enter hours between 0 and 24.')
+    if not errors.get('hours') and not v.get('hours') and v.get('start_time') and v.get('end_time'):
+        a = datetime.combine(v['date'], v['start_time'])
+        b = datetime.combine(v['date'], v['end_time'])
+        if b <= a:
+            b += timedelta(days=1)
+        v['hours'] = Decimal(str(round((b - a).total_seconds() / 3600, 2)))
+    if not errors.get('hours') and not v.get('hours'):
+        errors['hours'] = tr('Enter the on-call hours (or the start and end time).')
+    if not errors.get('callout_hours') and not errors.get('hours') and v['callout_hours'] > v['hours']:
+        errors['callout_hours'] = tr('Called-in hours cannot be more than the on-call hours.')
+    v['note'] = (data.get('note', getattr(o, 'note', '')) or '')[:255]
+    if errors:
+        raise PlanError(tr('Check the on-call entry.'), problems=errors)
+    return v
+
+
+class OnCallView(Base):
+    """GET ?from&to&employee&status – on-call duties the user may see; POST – plan an on-call duty for an employee
+    (HR / roster planners of the branch, or the employee's manager)."""
+
+    def get(self, request):
+        from .models import OnCallDuty
+        qs = OnCallDuty.objects.all()
+        a, b = pdate(request.GET.get('from'), 'from', False), pdate(request.GET.get('to'), 'to', False)
+        if a:
+            qs = qs.filter(date__gte=a)
+        if b:
+            qs = qs.filter(date__lte=b)
+        if request.GET.get('status'):
+            qs = qs.filter(status__in=request.GET['status'].split(','))
+        allowed = set(self.r.team) | ({self.r.emp.pk} if self.r.emp else set())
+        if self.r.manage or self.r.admin:
+            emps = S.E().objects.all() if self.r.branches is None else S.E().objects.filter(emp_branch_id__in=self.r.branches)
+            allowed |= set(emps.values_list('pk', flat=True))
+        if request.GET.get('employee'):
+            eid = pint(request.GET['employee'], 'employee')
+            allowed &= {eid}
+        qs = qs.filter(employee_id__in=allowed)
+        rows = [oncall_row(o, self.r) for o in qs[:2000]]
+        return Response({'rows': rows, 'can_plan': self.r.manage or bool(self.r.team)})
+
+    def post(self, request):
+        from .models import OnCallDuty
+        emp = emp_or_404(pint(request.data.get('employee'), 'employee', True))
+        if not (self.r.manages_emp(emp) or self.r.is_manager_of(emp)):
+            deny(tr('Only HR, roster planners or the manager can plan on-call duty for this employee.'))
+        v = _oncall_input(request.data)
+        if OnCallDuty.objects.filter(employee_id=emp.pk, date=v['date']).exists():
+            raise PlanError(tr('{0} is already on call on {1:%d/%m/%Y}.', emp.emp_first_name, v['date']), problems={'date': 'Duplicate.'})
+        o = OnCallDuty.objects.create(employee_id=emp.pk, created_by_id=request.user.pk, **v)
+        return Response(oncall_row(o, self.r), status=201)
+
+
+class OnCallAction(Base):
+    """POST approve / reject (the manager or HR of the branch – not who planned it), PATCH while pending, DELETE while pending."""
+
+    def _get(self, pk):
+        from .models import OnCallDuty
+        o = OnCallDuty.objects.filter(pk=pk).first()
+        emp = S.emp_by_id(o.employee_id) if o else None
+        if o is None or not (self.r.can_see_emp(emp)):
+            raise PlanError(tr('Not found.'), status=404)
+        return o, emp
+
+    def post(self, request, pk, action):
+        o, emp = self._get(pk)
+        if action not in ('approve', 'reject'):
+            raise PlanError(tr('Unknown action.'), status=400)
+        if o.status != 'pending':
+            raise PlanError(tr('This on-call duty is {0} already.', o.get_status_display().lower()), status=409)
+        if not self.r.can_decide_for(emp):
+            deny(tr('You may not approve on-call duty for this employee.'))
+        if o.created_by_id == request.user.pk and not self.r.admin:
+            deny(tr('Somebody else must approve the on-call duty you planned.'))
+        note = (request.data.get('note') or '').strip()
+        if action == 'reject' and not note:
+            raise PlanError(tr('Say why the on-call duty is rejected.'), problems={'note': 'Required.'})
+        o.status = 'approved' if action == 'approve' else 'rejected'
+        o.decided_by_id, o.decided_at, o.decision_note = request.user.pk, timezone.now(), note[:255]
+        o.save()
+        return Response(oncall_row(o, self.r))
+
+    def patch(self, request, pk, action=None):
+        o, emp = self._get(pk)
+        if o.status != 'pending' or not (self.r.manages_emp(emp) or self.r.is_manager_of(emp)):
+            deny(tr('Only a pending on-call duty can be changed.'))
+        v = _oncall_input({**{k: request.data.get(k) for k in request.data}, 'date': request.data.get('date', o.date)}, o)
+        for k, x in v.items():
+            setattr(o, k, x)
+        o.save()
+        return Response(oncall_row(o, self.r))
+
+    def delete(self, request, pk, action=None):
+        o, emp = self._get(pk)
+        if o.status == 'approved' or not (self.r.manages_emp(emp) or self.r.is_manager_of(emp)):
+            deny(tr('An approved on-call duty cannot be deleted.'))
+        o.delete()
+        return Response(status=204)

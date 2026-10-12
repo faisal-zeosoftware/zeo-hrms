@@ -32,18 +32,20 @@ SCREENS = {
     'EmpManagement.EndOfService': ('End of service', 'sub-sidebar/end-of-service'),
     'EmpManagement.GeneralRequest': ('General requests', 'general-sidebar/general-request'),
     'EmpManagement.DocumentRequest': ('Document requests', 'general-sidebar/document-request'),
-    'EmpManagement.EmployeeBankDetail': ('Employees', 'sub-sidebar/employee-master'),
     'OrganisationManager.dept_master': ('Departments', 'sub-sidebar/department-master'),
     'OrganisationManager.desgntn_master': ('Designations', 'sub-sidebar/designation-master'),
-    'OrganisationManager.ctgry_master': ('Categories', 'sub-sidebar/catogary-master'),
+    'OrganisationManager.ctgry_master': ('Categories', 'sub-sidebar/category-master'),   # v1.15.1 spelling
     'OrganisationManager.brnch_mstr': ('Branches', 'settings/branch-master'),
-    'OrganisationManager.Asset': ('Asset register', 'asset-options/asset-master'),
-    'OrganisationManager.AssetAllocation': ('Asset allocation', 'asset-options/asset-allocation'),
+    'OrganisationManager.Asset': ('Asset register', 'asset-plus/register'),   # v1.15.1 Assets app
+    'OrganisationManager.AssetAllocation': ('Asset allocation', 'asset-plus/allocations'),   # v1.15.1 Assets app
     'OrganisationManager.AssetRequest': ('Asset requests', 'asset-options/asset-request'),
     'calendars.employee_leave_request': ('Leave requests', 'leave-options/leave-request'),
     'calendars.LeaveApproval': ('Leave approvals', 'leave-options/leave-approvals'),
     'calendars.emp_leave_balance': ('Leave balance', 'leave-options/leave-balance'),
     'calendars.Attendance': ('Attendance list', 'attendance-sidebar/employee-full-attendance'),
+    'AttendancePlus.AttendanceDay': ('Daily attendance', 'attendance-plus/days'),   # v1.16.0 (attendance reports drill to the day)
+    'AttendancePlus.Punch': ('Punches', 'attendance-plus/punches'),
+    'EmpManagement.EmployeeBankDetail': ('Employees', 'sub-sidebar/employee-master'),
     'calendars.LateinEarlyoutRequest': ('Late in / early out', 'attendance-sidebar/attendance-attendance-request'),
     'calendars.EmployeeOvertime': ('Overtime', 'shift-options/employee-overtime'),
     'PayrollManagement.PayrollRun': ('Payroll runs', 'salary-options/pay-roll'),
@@ -83,6 +85,10 @@ def own_page(label, obj):
         return f'{M_}sub-sidebar/employee-details/{obj.pk}/details'
     if label == 'PayrollManagement.PayrollRun':
         return f'{M_}salary-options/payroll-details/{obj.pk}'
+    if label == 'PayrollManagement.Payslip' and obj.payroll_run_id:   # v1.16.0: the run page lists the payslip
+        return f'{M_}salary-options/payroll-details/{obj.payroll_run_id}'
+    if label == 'OrganisationManager.Asset':   # v1.15.1: the asset's own page in the Assets app
+        return f'{M_}asset-plus/register/{obj.pk}'
     return None
 
 
@@ -182,6 +188,10 @@ def employee_of(obj):
     for f in obj._meta.concrete_fields:
         if isinstance(f, models.ForeignKey) and f.related_model is not None and f.related_model._meta.label == 'EmpManagement.emp_master':
             return getattr(obj, f.name, None)
+    # v1.16.0: side tables keyed by the employee id (AttendancePlus day / punch …)
+    eid = getattr(obj, 'employee_id', None)
+    if isinstance(eid, int) and not any(f.name == 'employee' and isinstance(f, models.ForeignKey) for f in obj._meta.concrete_fields):
+        return apps.get_model('EmpManagement', 'emp_master').objects.filter(pk=eid).first()
     # one step further: payslip line → payslip → employee, approval → leave request → employee
     for f in obj._meta.concrete_fields:
         if isinstance(f, models.ForeignKey) and f.related_model is not None and f.related_model._meta.app_label not in ('UserManagement', 'OrganisationManager'):

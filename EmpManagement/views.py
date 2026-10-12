@@ -73,6 +73,8 @@ from Core .mixins import BranchAccessMixin
 from django.core.mail import send_mail
 from .utils import send_notification_email,get_employee_context
 from UserManagement.models import CustomUser
+from AccessControl.access import limit_by_branch, check_branch, allowed_branches, BranchReportMixin  # v1.22.0 branch rights
+
 
 
 
@@ -592,13 +594,10 @@ class EmpViewSet(viewsets.ModelViewSet):
         # Get leave balance
         leave_balance = user.get_leave_balance()
 
-        # Get pending leave requests for the employee
-        pending_leave_types = employee_leave_request.objects.filter(
-            employee=user, status="pending"
-        ).values_list("leave_type", flat=True)  # Extract leave_type IDs
-
-        # Exclude leave types that are in pending requests
-        available_leave_types = leave_type.objects.exclude(id__in=pending_leave_types)
+        # v1.16.0 (D20): every leave type is offered, also one with a pending request (an employee may plan two
+        # separate annual leaves) – the leave request API decides (overlap, balance incl. pending days, policy rules).
+        # Before, types with a pending request were hidden from My leave / the HR leave screen.
+        available_leave_types = leave_type.objects.all()
 
         # Serialize data
         leave_balance_serializer = EmployeeLeaveBalanceSerializer(leave_balance, many=True)
@@ -866,7 +865,7 @@ class EmpViewSet(viewsets.ModelViewSet):
         }
 
         # Fetch all employees
-        employees = emp_master.objects.all()
+        employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
 
         # Fetch all distinct field names from Emp_CustomField
         custom_fields = Emp_CustomField.objects.values_list('emp_custom_field', flat=True).distinct()
@@ -966,7 +965,7 @@ class EmpViewSet(viewsets.ModelViewSet):
         }
 
         # Fetch all employees
-        employees = emp_master.objects.all()
+        employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
 
         # Fetch all distinct field names from Emp_CustomField
         custom_fields = Emp_CustomField.objects.values_list('emp_custom_field', flat=True).distinct()
@@ -1004,7 +1003,7 @@ class EmpViewSet(viewsets.ModelViewSet):
 
         return response
 
-class ReportViewset(viewsets.ModelViewSet):
+class ReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = Report.objects.all()
     serializer_class = EmployeeReportSerializer
     permission_classes = [ReportPermission]
@@ -1112,7 +1111,7 @@ class ReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
 
-            employees = emp_master.objects.all()
+            employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, employees)
             file_path = report_file(file_name, 'Report')  # Use 'file_name' provided by the user
@@ -1139,9 +1138,9 @@ class ReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'std_report'
+            file_name = self._std_name('std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            employees = emp_master.objects.all()
+            employees = self._scoped(emp_master.objects.all(), 'emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, employees)
             file_path = report_file(file_name, 'Report')
@@ -1166,7 +1165,7 @@ class ReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = Report.objects.get(file_name='std_report')
+            report = Report.objects.get(file_name=self._std_name('std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except Report.DoesNotExist:
@@ -1243,7 +1242,7 @@ class ReportViewset(viewsets.ModelViewSet):
                 selected_fields = []  # No data in the report
 
         # Fetch employees data from emp_master
-        employees = emp_master.objects.all()
+        employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
 
         # Get unique values for selected_fields
         unique_values = self.get_unique_values_for_fields(employees, selected_fields, report_content)
@@ -1512,6 +1511,21 @@ class Emp_CustomFieldValueViewSet(viewsets.ModelViewSet):
     # v1.12.0: HR rights, or an employee for their own record (self service)
     permission_classes = [CustomFieldValuePermission]
     zeo_access = False
+
+    def get_queryset(self):
+        # v1.16.0: ?emp_master=<id> (ESS profile); a self-service employee only reads their own values
+        qs = super().get_queryset()
+        emp = self.request.query_params.get('emp_master')
+        if emp and str(emp).isdigit():
+            qs = qs.filter(emp_master_id=int(emp))
+        try:
+            from AccessControl.access import ctx
+            c = ctx(self.request)
+            if not c.admin and not ({'view_emp_customfieldvalue', 'change_emp_master', 'view_emp_master'} & c.codes):
+                qs = qs.filter(emp_master_id=c.emp.pk if c.emp is not None else -1)
+        except Exception:
+            pass
+        return qs
 
     
       
@@ -2062,7 +2076,7 @@ class Emp_DocumentViewSet(viewsets.ModelViewSet):
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
-class Doc_ReportViewset(viewsets.ModelViewSet):
+class Doc_ReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = Doc_Report.objects.all()
     serializer_class = DocumentReportSerializer
     permission_classes = [DocReportPermission]
@@ -2103,9 +2117,9 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
             self.generate_standard_report()   
     def generate_standard_report(self):
         try:
-            file_name = 'doc_std_report'
+            file_name = self._std_name('doc_std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            documents = Emp_Documents.objects.all()
+            documents = self._scoped(Emp_Documents.objects.all(), 'emp_id__emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.doc_report_data(fields_to_include, documents)
             file_path = report_file(file_name, 'Doc_Report')
@@ -2130,7 +2144,7 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = Doc_Report.objects.get(file_name='doc_std_report')
+            report = Doc_Report.objects.get(file_name=self._std_name('doc_std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except Doc_Report.DoesNotExist:
@@ -2155,7 +2169,7 @@ class Doc_ReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
 
-            documents = Emp_Documents.objects.all()
+            documents = limit_by_branch(request, Emp_Documents.objects.all(), branch_path='emp_id__emp_branch_id')  # v1.22.0 branch rights
             # documents = self.filter_documents_by_date_range(documents, from_date, to_date)
 
             report_data = self.doc_report_data(fields_to_include, documents)
@@ -3052,7 +3066,7 @@ class EmailConfigurationViewSet(viewsets.ModelViewSet):
 
 
     
-class GeneralReportViewset(viewsets.ModelViewSet):
+class GeneralReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch rights
     queryset = GeneralRequestReport.objects.all()
     serializer_class = GeneralReportSerializer
     # permission_classes = [GeneralRequestReportPermission]
@@ -3111,7 +3125,7 @@ class GeneralReportViewset(viewsets.ModelViewSet):
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
             
-            generalreport = GeneralRequest.objects.all()
+            generalreport = limit_by_branch(request, GeneralRequest.objects.all(), branch_path='employee__emp_branch_id')  # v1.22.0 branch rights
             # documents = self.filter_documents_by_date_range(documents)
 
             report_data = self.generate_report_data(fields_to_include,generalreport)
@@ -3134,9 +3148,9 @@ class GeneralReportViewset(viewsets.ModelViewSet):
     
     def generate_standard_report(self):
         try:
-            file_name = 'generalrequest_std_report'
+            file_name = self._std_name('generalrequest_std_report')  # v1.22.0 branch rights
             fields_to_include = self.get_available_fields().keys()
-            generalreport = GeneralRequest.objects.all()
+            generalreport = self._scoped(GeneralRequest.objects.all(), 'employee__emp_branch_id')  # v1.22.0 branch rights
 
             report_data = self.generate_report_data(fields_to_include, generalreport)
             file_path = report_file(file_name, 'GeneralRequestReport')
@@ -3158,7 +3172,7 @@ class GeneralReportViewset(viewsets.ModelViewSet):
         try:
             # Ensure the standard report is up-to-date
             self.generate_standard_report()
-            report = GeneralRequestReport.objects.get(file_name='generalrequest_std_report')
+            report = GeneralRequestReport.objects.get(file_name=self._std_name('generalrequest_std_report'))  # v1.22.0 branch rights
             serializer = self.get_serializer(report)
             return Response(serializer.data)
         except GeneralRequestReport.DoesNotExist:
@@ -3330,6 +3344,7 @@ class UpdateESSUserView(APIView):
         if not selected_employee_ids:
             return Response({'detail': 'At least one selected employee ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        check_branch(request, employee_id=selected_employee_ids)  # v1.22.0 branch rights
         selected_employees = emp_master.objects.filter(id__in=selected_employee_ids)
 
         if not selected_employees.exists():
@@ -3337,6 +3352,10 @@ class UpdateESSUserView(APIView):
 
         # Update the SelectedEmpNotify record with the selected employees
         preference, created = SelectedEmpNotify.objects.get_or_create(id=1)
+        branches = allowed_branches(request)  # v1.22.0 branch rights: keep other branches' selections untouched
+        if branches is not None:
+            others = preference.selected_employees.exclude(emp_branch_id__in=branches)
+            selected_employees = list(selected_employees) + list(others)
         preference.selected_employees.set(selected_employees)
         preference.save()
 
@@ -3345,7 +3364,7 @@ class UpdateESSUserView(APIView):
 
 class ESSUserListView(APIView):
     def get(self, request, *args, **kwargs):
-        ess_users = emp_master.objects.filter(is_ess=True)
+        ess_users = limit_by_branch(request, emp_master.objects.filter(is_ess=True), branch_path='emp_branch_id')  # v1.22.0 branch rights
         serializer = EmpSerializer(ess_users, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -4384,7 +4403,8 @@ class EndOfServiceViewset(viewsets.ModelViewSet):
                 "total_service_days": eos.total_service_days,
                 "leave_days_without_pay": eos.leave_days_without_pay,
                 "net_days_worked": eos.net_number_of_days_worked,
-                "basic_salary": float(payslip.gross_salary or 0),
+                "basic_salary": float(eos.last_month_salary or 0),   # v1.15.1: was the gross pay of the last payslip
+                "gross_salary": float(payslip.gross_salary or 0),
                 "gratuity_days": eos.gratuity_days,
                 "last_month_salary": eos.last_month_salary,
             },

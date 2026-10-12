@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from .models import (ZERO, AdvanceApplication, Expense, ExpenseAdvance, ExpenseApproval, ExpenseCategory, ExpensePolicy,
                      ExpenseReport, ExpenseSettings, Trip)
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -111,7 +112,7 @@ def rate_to_aed(currency, given=None):
         return Decimal(str(given))
     if cur in PEGGED_AED:
         return PEGGED_AED[cur]
-    raise ExpenseError(f'Give the exchange rate from {cur} to AED.')
+    raise ExpenseError(tr('Give the exchange rate from {0} to AED.', cur))
 
 
 def compute_amounts(exp, policy):
@@ -119,19 +120,19 @@ def compute_amounts(exp, policy):
     kind = exp.category.kind if exp.category_id else 'general'
     if kind == 'mileage':
         if not exp.mileage_km or Decimal(str(exp.mileage_km)) <= 0:
-            raise ExpenseError('Enter the distance in km for a mileage expense.')
+            raise ExpenseError(tr('Enter the distance in km for a mileage expense.'))
         rate = policy.mileage_rate if policy else Decimal('0.5')
         exp.amount = money(Decimal(str(exp.mileage_km)) * rate)
         exp.currency = 'AED'
     elif kind == 'per_diem':
         if not exp.per_diem_days or Decimal(str(exp.per_diem_days)) <= 0:
-            raise ExpenseError('Enter the number of days for a per diem expense.')
+            raise ExpenseError(tr('Enter the number of days for a per diem expense.'))
         if policy and policy.per_diem_rate and policy.per_diem_rate > 0:
             exp.amount = money(Decimal(str(exp.per_diem_days)) * policy.per_diem_rate)
             exp.currency = 'AED'
     exp.amount = money(exp.amount)
     if exp.amount <= 0:
-        raise ExpenseError('The amount must be more than zero.')
+        raise ExpenseError(tr('The amount must be more than zero.'))
     exp.exchange_rate = rate_to_aed(exp.currency, exp.exchange_rate if (exp.currency or 'AED').upper() != 'AED' else None)
     exp.amount_aed = money(exp.amount * exp.exchange_rate)
     return exp
@@ -190,7 +191,7 @@ def prepare_expense(exp):
     """Fill branch / department from the employee, amounts, violations. Does not save."""
     emp = employee(exp.employee_id)
     if emp is None:
-        raise ExpenseError('Employee not found.')
+        raise ExpenseError(tr('Employee not found.'))
     exp.branch_id = emp.emp_branch_id_id
     if not exp.department_id:
         exp.department_id = emp.emp_dept_id_id
@@ -217,7 +218,8 @@ def next_number(model, prefix):
 # ------------------------------------------------------------------ approvals (reports and trips)
 def _admin_user():
     U = M('UserManagement', 'CustomUser')
-    return U.objects.filter(is_active=True, is_superuser=True).order_by('pk').first()
+    from django.db import connection   # v1.22.0: an administrator of this company, not of any company
+    return U.objects.filter(is_active=True, is_superuser=True, tenants__schema_name=connection.schema_name).order_by('pk').first()
 
 
 def build_chain(emp, roles):
@@ -254,7 +256,7 @@ def start_approvals(target, emp, roles):
     rnd = _round_of(target) + (0 if isinstance(target, ExpenseReport) else 1)
     chain = build_chain(emp, roles)
     if not chain:
-        raise ExpenseError('No approver could be found (reporting manager, branch HR, company HR or admin).')
+        raise ExpenseError(tr('No approver could be found (reporting manager, branch HR, company HR or admin).'))
     for i, (u, role) in enumerate(chain, start=1):
         ExpenseApproval.objects.create(round=rnd, level=i, approver_user_id=u.pk, role=role,
                                        status='pending' if i == 1 else 'waiting', **_target_kw(target))
@@ -271,12 +273,12 @@ def current_step(target):
 def _find_step(target, user, is_admin):
     step = current_step(target)
     if step is None:
-        raise ExpenseError('Nothing is waiting for approval here.')
+        raise ExpenseError(tr('Nothing is waiting for approval here.'))
     emp = employee(target.employee_id)
     if user.pk in own_user_ids(emp):
-        raise ExpenseError('You cannot approve your own request.', status=403)
+        raise ExpenseError(tr('You cannot approve your own request.'), status=403)
     if step.approver_user_id != user.pk and not is_admin:
-        raise ExpenseError('This step is waiting for another approver.', status=403)
+        raise ExpenseError(tr('This step is waiting for another approver.'), status=403)
     return step
 
 
@@ -350,22 +352,22 @@ def _settle_advances(report):
 
 def add_expenses(report, ids):
     if report.status not in ('draft', 'sent_back'):
-        raise ExpenseError('Expenses can only be added to a draft or sent-back report.')
+        raise ExpenseError(tr('Expenses can only be added to a draft or sent-back report.'))
     exps = list(Expense.objects.filter(pk__in=ids))
     if len(exps) != len(set(int(i) for i in ids)):
-        raise ExpenseError('Some expenses were not found.')
+        raise ExpenseError(tr('Some expenses were not found.'))
     for e in exps:
         if e.employee_id != report.employee_id:
-            raise ExpenseError('Only expenses of the report\'s employee can be added.')
+            raise ExpenseError(tr('Only expenses of the report\'s employee can be added.'))
         if e.status != 'unreported' or (e.report_id and e.report_id != report.pk):
-            raise ExpenseError(f'The expense of {e.date:%d/%m/%Y} ({e.amount_aed}) is already in a report.')
+            raise ExpenseError(tr('The expense of {0:%d/%m/%Y} ({1}) is already in a report.', e.date, e.amount_aed))
     Expense.objects.filter(pk__in=[e.pk for e in exps]).update(report=report)
     return recalc_report(report)
 
 
 def remove_expense(report, exp):
     if report.status not in ('draft', 'sent_back') or exp.report_id != report.pk:
-        raise ExpenseError('This expense cannot be removed from the report now.')
+        raise ExpenseError(tr('This expense cannot be removed from the report now.'))
     exp.report = None
     exp.status = 'unreported'
     exp.save(update_fields=['report', 'status', 'updated_at'])
@@ -376,23 +378,23 @@ def remove_expense(report, exp):
 def submit_report(report, user):
     report = ExpenseReport.objects.select_for_update().get(pk=report.pk)
     if report.status not in ('draft', 'sent_back'):
-        raise ExpenseError(f'The report is {report.get_status_display().lower()} – it cannot be submitted.')
+        raise ExpenseError(tr('The report is {0} – it cannot be submitted.', report.get_status_display().lower()))
     emp = employee(report.employee_id)
     exps = list(report.expenses.select_related('category'))
     if not exps:
-        raise ExpenseError('Add at least one expense to the report.')
+        raise ExpenseError(tr('Add at least one expense to the report.'))
     pol = report.policy or policy_for(emp)
     problems = []
     for e in exps:
         if e.employee_id != report.employee_id:
-            raise ExpenseError('The report has expenses of another employee.')
+            raise ExpenseError(tr('The report has expenses of another employee.'))
         if e.status != 'unreported':
-            raise ExpenseError(f'The expense of {e.date:%d/%m/%Y} is {e.get_status_display().lower()}.')
+            raise ExpenseError(tr('The expense of {0:%d/%m/%Y} is {1}.', e.date, e.get_status_display().lower()))
         e.policy_violations = check_expense(e, pol, report)
         e.save(update_fields=['policy_violations'])
         problems += [f'{e.date:%d/%m/%Y} {e.category.name}: {v["message"]}' for v in e.policy_violations if v['level'] == 'block']
     if problems:
-        raise ExpenseError('The report breaks the expense policy: ' + ' '.join(problems), problems=problems)
+        raise ExpenseError(tr('The report breaks the expense policy: ') + ' '.join(problems), problems=problems)
     report.policy = pol
     report.round += 1
     report.status = 'submitted'
@@ -409,9 +411,9 @@ def submit_report(report, user):
 def act_report(report, user, action, note='', is_admin=False):
     report = ExpenseReport.objects.select_for_update().get(pk=report.pk)
     if report.status != 'submitted':
-        raise ExpenseError('The report is not waiting for approval.')
+        raise ExpenseError(tr('The report is not waiting for approval.'))
     if action in ('reject', 'send_back') and not (note or '').strip():
-        raise ExpenseError('Give a reason.')
+        raise ExpenseError(tr('Give a reason.'))
     step = _find_step(report, user, is_admin)
     step.acted_by_user_id, step.acted_at = user.pk, timezone.now()
     step.note = (note or '')[:1000] + ('' if step.approver_user_id == user.pk else ' (by company admin)')
@@ -453,7 +455,7 @@ def act_report(report, user, action, note='', is_admin=False):
         recalc_report(report)
         _notify(getattr(emp, 'users', None), f'Expense report {report.number} sent back', f'{report.number} sent back: {note}')
     else:
-        raise ExpenseError('Action is approve, reject or send_back.')
+        raise ExpenseError(tr('Action is approve, reject or send_back.'))
     report.refresh_from_db()
     return report
 
@@ -462,15 +464,15 @@ def act_report(report, user, action, note='', is_admin=False):
 def reimburse(report, via, reference='', on=None, user=None):
     report = ExpenseReport.objects.select_for_update().get(pk=report.pk)
     if report.status != 'approved':
-        raise ExpenseError('Only an approved report can be reimbursed.')
+        raise ExpenseError(tr('Only an approved report can be reimbursed.'))
     if report.reimburse_via == 'payroll' and report.payroll_run_id is None and via == 'payroll':
-        raise ExpenseError('The report is already set to be paid with the next payroll.')
+        raise ExpenseError(tr('The report is already set to be paid with the next payroll.'))
     if via not in ('direct', 'payroll'):
-        raise ExpenseError('Reimburse via direct or payroll.')
+        raise ExpenseError(tr('Reimburse via direct or payroll.'))
     report.reimburse_via = via
     if via == 'direct' or report.amount_to_reimburse <= 0:
         if via == 'direct' and report.amount_to_reimburse > 0 and not (reference or '').strip():
-            raise ExpenseError('Give the payment reference (bank transfer / cheque / cash voucher).')
+            raise ExpenseError(tr('Give the payment reference (bank transfer / cheque / cash voucher).'))
         _mark_reimbursed(report, on or date.today(), reference or ('Covered by advance' if report.amount_to_reimburse <= 0 else ''))
     else:
         report.reimbursement_reference = (reference or 'With the next payroll')[:100]
@@ -520,9 +522,9 @@ def mark_paid_by_payslip(payslip):
 @transaction.atomic
 def submit_trip(trip, user):
     if trip.status not in ('draft', 'rejected'):
-        raise ExpenseError('Only a draft trip can be submitted.')
+        raise ExpenseError(tr('Only a draft trip can be submitted.'))
     if trip.end_date < trip.start_date:
-        raise ExpenseError('The trip ends before it starts.')
+        raise ExpenseError(tr('The trip ends before it starts.'))
     emp = employee(trip.employee_id)
     pol = policy_for(emp)
     start_approvals(trip, emp, pol.roles() if pol else DEFAULT_ROLES)
@@ -534,7 +536,7 @@ def submit_trip(trip, user):
 @transaction.atomic
 def act_trip(trip, user, action, note='', is_admin=False):
     if trip.status != 'submitted':
-        raise ExpenseError('The trip is not waiting for approval.')
+        raise ExpenseError(tr('The trip is not waiting for approval.'))
     step = _find_step(trip, user, is_admin)
     step.acted_by_user_id, step.acted_at, step.note = user.pk, timezone.now(), (note or '')[:1000]
     if action == 'approve':
@@ -553,22 +555,22 @@ def act_trip(trip, user, action, note='', is_admin=False):
                                               status='approved', approved_by_id=user.pk, created_by_id=user.pk)
     elif action == 'reject':
         if not (note or '').strip():
-            raise ExpenseError('Give a reason.')
+            raise ExpenseError(tr('Give a reason.'))
         step.status = 'rejected'
         step.save()
         _close_steps(trip)
         trip.status = 'rejected'
         trip.save(update_fields=['status'])
     else:
-        raise ExpenseError('Action is approve or reject.')
+        raise ExpenseError(tr('Action is approve or reject.'))
     return trip
 
 
 def approve_advance(adv, user):
     if adv.status != 'requested':
-        raise ExpenseError('Only a requested advance can be approved.')
+        raise ExpenseError(tr('Only a requested advance can be approved.'))
     if user.pk in own_user_ids(employee(adv.employee_id)):
-        raise ExpenseError('You cannot approve your own advance.', status=403)
+        raise ExpenseError(tr('You cannot approve your own advance.'), status=403)
     adv.status, adv.approved_by_id = 'approved', user.pk
     adv.save(update_fields=['status', 'approved_by_id'])
     return adv
@@ -576,9 +578,9 @@ def approve_advance(adv, user):
 
 def pay_advance(adv, user, reference, on=None):
     if adv.status != 'approved':
-        raise ExpenseError('Only an approved advance can be paid.')
+        raise ExpenseError(tr('Only an approved advance can be paid.'))
     if not (reference or '').strip():
-        raise ExpenseError('Give the payment reference.')
+        raise ExpenseError(tr('Give the payment reference.'))
     adv.status, adv.reference, adv.paid_on = 'paid', reference[:100], on or date.today()
     adv.save(update_fields=['status', 'reference', 'paid_on'])
     return adv

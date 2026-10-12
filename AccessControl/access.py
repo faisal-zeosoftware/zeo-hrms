@@ -28,6 +28,7 @@ import logging
 from django.db import connection
 from django.db.models import Q, ForeignKey, OneToOneField, ManyToManyField
 from rest_framework import permissions
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 logger = logging.getLogger(__name__)
 
@@ -226,11 +227,11 @@ class ZeoAccess(permissions.BasePermission):
             return True
         user = request.user
         if not user or not user.is_authenticated:
-            self.message = 'Please log in.'
+            self.message = tr('Please log in.')
             return False
         schema = request_schema(request)
         if schema and not user.is_superuser and not user.tenants.filter(schema_name=schema).exists():
-            self.message = 'You do not have access to this company.'
+            self.message = tr('You do not have access to this company.')
             return False
         model = view_model(view)
         Emp, Branch, User, Company = _models()
@@ -238,7 +239,7 @@ class ZeoAccess(permissions.BasePermission):
             # nobody but a superuser can hand out superuser / staff rights or companies they do not administer
             data = _data(request)
             if any(str(data.get(k)).lower() in ('true', '1') for k in ('is_superuser', 'is_staff')):
-                self.message = 'Only a system administrator can grant administrator rights.'
+                self.message = tr('Only a system administrator can grant administrator rights.')
                 return False
             if 'tenants' in data:
                 from django_tenants.utils import schema_context
@@ -250,7 +251,7 @@ class ZeoAccess(permissions.BasePermission):
                     with schema_context(comp.schema_name):
                         ok = UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists()
                     if not ok or not user.tenants.filter(pk=comp.pk).exists():
-                        self.message = 'You can only add users to companies you administer.'
+                        self.message = tr('You can only add users to companies you administer.')
                         return False
         if model is Company:
             if request.method in permissions.SAFE_METHODS:
@@ -267,14 +268,14 @@ class ZeoAccess(permissions.BasePermission):
             return True  # rows / object check: own login only
         if model is None:
             if type(view).__name__ in BACKOFFICE_VIEWS and not c.backoffice:
-                self.message = 'This page is for HR users only.'
+                self.message = tr('This page is for HR users only.')
                 return False
             return True
         name = model._meta.model_name
         verb = verb_for(request, view)
         if f'{verb}_{name}' in c.codes:
-            if verb in ('add', 'change') and not self._branch_ok(request, model, c):
-                self.message = 'You can only work with records of your own branches.'
+            if verb in ('add', 'change') and not self._branch_ok(request, model, c, detail=bool(getattr(view, 'detail', False))):
+                self.message = tr('You can only work with records of your own branches.')
                 return False
             return True
         if verb == 'view':
@@ -285,10 +286,10 @@ class ZeoAccess(permissions.BasePermission):
                 first = ep.split('__')[0]
                 vals = _values(_data(request).get(first))
                 if vals and any(str(v) not in (str(c.emp.id), str(c.emp.emp_code)) for v in vals):
-                    self.message = 'You can only raise requests for yourself.'
+                    self.message = tr('You can only raise requests for yourself.')
                     return False
             return True  # self-service: object rules below
-        self.message = f'You do not have permission to {verb} {model._meta.verbose_name}.'
+        self.message = tr('You do not have permission to {0} {1}.', verb, model._meta.verbose_name)
         return False
 
     def has_object_permission(self, request, view, obj):
@@ -305,7 +306,7 @@ class ZeoAccess(permissions.BasePermission):
                 ok = UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists()
             ok = ok and user.tenants.filter(pk=obj.pk).exists()
             if not ok:
-                self.message = 'Only the company administrator can change company details.'
+                self.message = tr('Only the company administrator can change company details.')
             return ok
         if not request_schema(request):
             return True
@@ -321,7 +322,7 @@ class ZeoAccess(permissions.BasePermission):
         if isinstance(obj, User):
             if obj.id == user.id or f'{verb_for(request, view)}_customuser' in c.codes:
                 return True
-            self.message = 'You can only change your own login.'
+            self.message = tr('You can only change your own login.')
             return False
         verb = verb_for(request, view)
         if f'{verb}_{model._meta.model_name}' in c.codes or verb == 'view':
@@ -331,32 +332,37 @@ class ZeoAccess(permissions.BasePermission):
             if ep is not None and c.emp:
                 own = model.objects.filter(pk=obj.pk, **({ep: c.emp} if ep else {'users': c.user})).exists()
                 if not own:
-                    self.message = 'You can only delete your own records.'
+                    self.message = tr('You can only delete your own records.')
                 return own
             uf = user_fields(model)
             return any(getattr(obj, f'{f}_id', None) == c.user.id for f in uf if hasattr(obj, f'{f}_id'))
         return True
 
     @staticmethod
-    def _branch_ok(request, model, c):
+    def _branch_ok(request, model, c, detail=False):
         if c.branches is None:
             return True
         Emp, _, _, _ = _models()
         data = _data(request)
         allowed = {str(b) for b in c.branches}
+        ep = emp_path(model)
+        emp_ids = []
+        if ep:
+            vals = _values(data.get(ep.split('__')[0]))
+            emp_ids = [v for v in vals if str(v).isdigit()]
+            if emp_ids and Emp.objects.filter(id__in=emp_ids).exclude(emp_branch_id__in=c.branches).exists():
+                return False
         bp, _ = branch_path(model)
         if bp and '__' not in bp and bp != 'id':
-            keys = [k for k in (bp, bp + '_id', 'branch', 'branch_id', 'branches') if k in data]
+            keys = [k for k in (bp, bp + '_id', 'branch', 'branch_id', 'branches', 'branch_ids') if k in data]   # v1.18.0: + branch_ids (Payroll run screen)
             vals = [v for k in keys for v in _values(data.get(k))]
             if vals and any(str(v) not in allowed for v in vals):
                 return False
-            if not vals and request.method == 'POST':
-                return False  # branch users must pick one of their branches
-        ep = emp_path(model)
-        if ep:
-            vals = _values(data.get(ep.split('__')[0]))
-            ids = [v for v in vals if str(v).isdigit()]
-            if ids and Emp.objects.filter(id__in=ids).exclude(emp_branch_id__in=c.branches).exists():
+            # branch users must pick one of their branches when they CREATE a record. v1.18.0: not for an action on an existing
+            # record (submit / approve / create opening … send no branch) – those were all refused for branch HR users; the
+            # record itself is already limited to their branches by the row filter. Nor when the record names an employee
+            # of their branches (HR entering a leave request for an employee: the branch comes from the employee)
+            if not vals and request.method == 'POST' and not detail and not emp_ids:
                 return False
         return True
 
@@ -462,3 +468,149 @@ def install():
     APIView.get_permissions = get_permissions
     GenericAPIView.filter_queryset = filter_queryset
     _installed = True
+
+
+# ---------------------------------------------------------------------------
+# v1.22.0 branch rights: helpers for views that query models directly
+# (@action methods, APIViews, integer employee_id / branch_id columns)
+# ---------------------------------------------------------------------------
+BRANCH_DENIED = 'You can only work with your branches.'
+
+
+def allowed_branches(request):
+    """v1.22.0 branch rights: None = every branch (company admin / public schema), else the user's branch ids."""
+    user = getattr(request, 'user', None)
+    if not user or not user.is_authenticated:
+        return []
+    if not request_schema(request):
+        return None if user.is_superuser else []
+    return ctx(request).branches
+
+
+def emp_ids_in_branches(branches):
+    """v1.22.0 branch rights: emp_master ids of the given branches (queryset, usable in __in)."""
+    Emp, _, _, _ = _models()
+    return Emp.objects.filter(emp_branch_id__in=list(branches or [])).values('id')
+
+
+def limit_by_branch(request, qs, branch_path=None, emp_field=None, include_null=False):
+    """v1.22.0 branch rights: limit qs to the user's branches (no-op for admins).
+
+    branch_path: ORM path to a brnch_mstr FK or an integer branch id column;
+    emp_field:   ORM path to an emp_master FK or an integer employee id column;
+    neither:     automatic path (branch_path(model)).
+    """
+    branches = allowed_branches(request)
+    if branches is None:
+        return qs
+    model = qs.model
+    q = None
+    if emp_field:
+        fk = False
+        if '__' not in emp_field:
+            try:
+                f = model._meta.get_field(emp_field)
+                fk = isinstance(f, (ForeignKey, OneToOneField))
+            except Exception:
+                fk = False
+        else:
+            fk = True
+        q = Q(**{f'{emp_field}__emp_branch_id__in': branches}) if fk else Q(**{f'{emp_field}__in': emp_ids_in_branches(branches)})
+        if include_null:
+            q |= Q(**{f'{emp_field}__isnull': True})
+    else:
+        bp = branch_path
+        if not bp:
+            bp, _ = globals()['branch_path'](model)
+        if not bp:
+            return qs
+        q = Q(**{f'{bp}__in': branches})
+        if include_null:
+            q |= Q(**{f'{bp}__isnull': True})
+    qs = qs.filter(q)
+    return qs.distinct() if (emp_field and '__' in emp_field) or (branch_path and '__' in branch_path) else qs
+
+
+def check_branch(request, branch_id=None, employee_id=None, employee_code=None):
+    """v1.22.0 branch rights: raise PermissionDenied when a branch / employee is outside the user's branches.
+
+    Each argument may be a single value or a list; unknown employees are left to the view (404 / validation).
+    """
+    from rest_framework.exceptions import PermissionDenied
+    branches = allowed_branches(request)
+    if branches is None:
+        return
+    allowed = {str(b) for b in branches}
+    Emp, _, _, _ = _models()
+    msg = tr(BRANCH_DENIED)
+    for b in _values(branch_id):
+        if str(getattr(b, 'pk', b)) not in allowed:
+            raise PermissionDenied(msg)
+    ids = [str(getattr(e, 'pk', e)) for e in _values(employee_id)]
+    ids = [i for i in ids if i.isdigit()]
+    if ids and Emp.objects.filter(id__in=ids).exclude(emp_branch_id__in=branches).exists():
+        raise PermissionDenied(msg)
+    codes = [str(c) for c in _values(employee_code)]
+    if codes and Emp.objects.filter(emp_code__in=codes).exclude(emp_branch_id__in=branches).exists():
+        raise PermissionDenied(msg)
+
+
+def branch_allows(request, branch_id=None, employee_id=None, employee_code=None):
+    """v1.22.0 branch rights: boolean form of check_branch."""
+    from rest_framework.exceptions import PermissionDenied
+    try:
+        check_branch(request, branch_id, employee_id, employee_code)
+        return True
+    except PermissionDenied:
+        return False
+
+
+class BranchReportMixin:
+    """v1.22.0 branch rights: standard reports of branch-restricted users only hold their branches' rows and are
+    written to a per-user file, so they neither read nor overwrite the company-wide standard report."""
+
+    def _branches(self):
+        req = getattr(self, 'request', None)
+        return None if req is None else allowed_branches(req)
+
+    def _std_name(self, base):
+        return base if self._branches() is None else f'{base}_u{self.request.user.pk}'
+
+    def _scoped(self, qs, path):
+        return qs if self._branches() is None else limit_by_branch(self.request, qs, branch_path=path)
+
+
+def run_in_branches(branches, run):
+    """v1.22.0 branch rights: a payroll run belongs to the user's branches when its branches, picked employees and
+    payslips are all inside them (None = company admin = always)."""
+    if branches is None:
+        return True
+    if run is None:
+        return False
+    for rel, path in (('branch', 'id'), ('employees', 'emp_branch_id'), ('payslips', 'employee__emp_branch_id')):
+        mgr = getattr(run, rel, None)
+        if mgr is not None and mgr.exclude(**{f'{path}__in': branches}).exists():
+            return False
+    has_any = any(getattr(run, rel).exists() for rel in ('branch', 'employees', 'payslips') if getattr(run, rel, None) is not None)
+    return has_any   # a run with no branch / employee / payslip at all is company-wide: admins only
+
+
+def deny_branch():
+    """v1.22.0 branch rights: refuse with the standard message (HTTP 403)."""
+    from rest_framework.exceptions import PermissionDenied
+    raise PermissionDenied(tr(BRANCH_DENIED))
+
+
+def company_perms():
+    """v1.22.0 – the rights rows (UserTenantPermissions) of the users of the open company.
+
+    The rights table is shared by all companies, so `UserTenantPermissions.objects` holds every company's users: "users with
+    role X" picked people of other companies, who then got to-dos, e-mails and notifications about this company's records.
+    """
+    from django.db import connection
+    from tenant_users.tenants.models import UserTenantPermissions
+    qs = UserTenantPermissions.objects.all()
+    sch = getattr(connection, 'schema_name', 'public')
+    if sch and sch != 'public':
+        qs = qs.filter(profile__tenants__schema_name=sch).distinct()
+    return qs

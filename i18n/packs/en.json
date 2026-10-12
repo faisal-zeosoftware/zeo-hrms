@@ -1,0 +1,9 @@
+{
+ "lang": "en",
+ "name": "English",
+ "english_name": "English",
+ "dir": "ltr",
+ "date_format": "dd/MM/yyyy",
+ "number": {"decimal": ".", "group": ","},
+ "terms": {}
+}

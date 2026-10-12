@@ -14,6 +14,7 @@ from django.utils import timezone
 from zeo.module_helpers import notify
 from .models import (DEFAULT_SKILL_LEVELS, AlertLog, CourseModule, CourseSkill, EmployeeSkill, ModuleProgress, OnlineEnrolment,
                      RoleSkill, SessionAttendance, SessionCost, SessionExtra, Skill, SkillLevel, Trainer, TrainingBudget)
+from Translations.i18n import msg as tmsg, tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 Z = Decimal('0')
@@ -129,11 +130,11 @@ def save_attendance(session, rows):
     for r in rows or []:
         nid = int(r.get('nomination') or r.get('nomination_id') or 0)
         if nid not in noms:
-            raise ValidationError(f"Nomination {nid} is not a participant of {session.code}.")
+            raise ValidationError(tr('Nomination {0} is not a participant of {1}.', nid, session.code))
         d = r.get('date')
         d = date.fromisoformat(d) if isinstance(d, str) else d
         if not d or d < session.start_date or d > session.end_date:
-            raise ValidationError(f"{d} is outside the session dates ({session.start_date} - {session.end_date}).")
+            raise ValidationError(tr('{0} is outside the session dates ({1} - {2}).', d, session.start_date, session.end_date))
         hours = r.get('hours')
         SessionAttendance.objects.update_or_create(
             nomination_id=nid, date=d,
@@ -229,8 +230,8 @@ def enrol(course, employee, user=None, nomination=None):
         course_id=course.id, employee_id=employee.id,
         defaults={'assigned_by': getattr(user, 'id', None), 'nomination_id': getattr(nomination, 'id', None)})
     if created and user is not None and getattr(employee, 'users_id', None) != user.id:
-        notify(employee=employee, title='Online course assigned', notification_type='learning',
-               message=f"{course.title} ({course.code}) was assigned to you. Open My Learning to start.")
+        notify(employee=employee, title=tmsg('Online course assigned'), notification_type='learning',
+               message=tmsg('{0} ({1}) was assigned to you. Open My Learning to start.', course.title, course.code))
     return en
 
 
@@ -284,10 +285,10 @@ def complete_module(module, employee, score=None):
     p = open_module(module, employee)
     if module.content_type == 'quiz':
         if score in (None, ''):
-            raise ValidationError('Enter the quiz score.')
+            raise ValidationError(tr('Enter the quiz score.'))
         score = int(score)
         if not 0 <= score <= 100:
-            raise ValidationError('Score must be 0-100.')
+            raise ValidationError(tr('Score must be 0-100.'))
         mark = module.pass_mark if module.pass_mark is not None else course.pass_mark
         p.score, p.passed = score, score >= mark
         if p.passed:
@@ -334,8 +335,8 @@ def maybe_complete_course(course, employee):
         en.certificate_id = cert.id
         m.TrainingNeed.objects.filter(employee=employee, course=course).exclude(status__in=('completed', 'cancelled')).update(status='completed')
         skills_from_course(employee.id, course, source='online', ref=course.code)
-        notify(employee=employee, title='Course completed', notification_type='learning',
-               message=f"Well done - you completed {course.title}. Your certificate {cert.certificate_number} is in My Learning.")
+        notify(employee=employee, title=tmsg('Course completed'), notification_type='learning',
+               message=tmsg('Well done - you completed {0}. Your certificate {1} is in My Learning.', course.title, cert.certificate_number))
     en.save()
     return True
 
@@ -356,7 +357,8 @@ def session_cost(session, confirmed=None):
             'total': per_head * len(confirmed) + shared, 'confirmed': confirmed}
 
 
-def budget_vs_actual(year, department_ids=None):
+def budget_vs_actual(year, department_ids=None, employee_ids=None):
+    """employee_ids (v1.22.0 branch rights): when given, actuals only count these employees."""
     m = _lm()
     from OrganisationManager.models import dept_master
     names = dict(dept_master.objects.values_list('id', 'dept_name'))
@@ -368,12 +370,16 @@ def budget_vs_actual(year, department_ids=None):
                 actual[None]['session_costs'] += c['shared']
             continue
         for nom in c['confirmed']:
+            if employee_ids is not None and nom.employee_id not in employee_ids:   # v1.22.0 branch rights
+                continue
             d = nom.employee.emp_dept_id_id
             actual[d]['per_head'] += c['per_head']
             actual[d]['session_costs'] += c['share_per_participant']
             actual[d]['participants'] += 1
     courses = {}
     for en in OnlineEnrolment.objects.filter(status='completed', completed_at__year=year, nomination_id__isnull=True):
+        if employee_ids is not None and en.employee_id not in employee_ids:   # v1.22.0 branch rights
+            continue
         if en.course_id not in courses:
             courses[en.course_id] = m.Course.objects.filter(pk=en.course_id).first()
         crs = courses[en.course_id]
@@ -596,12 +602,12 @@ def escalate_nominations(days=3, now=None):
         label = f"{emp_name(nom.employee)} - {nom.session.course.title} ({nom.session.code})"
         if nom.manager_status == 'pending':
             rec = [('user', nom.employee.emp_reporting_manager)] + [('user', u) for u in ld_users(nom.employee)]
-            n = _send_once('nom_escalation', nom.id, 'manager', rec, 'Nomination waiting for manager',
-                           f"{label} has waited more than {days} days for the manager's approval.")
+            n = _send_once('nom_escalation', nom.id, 'manager', rec, tmsg('Nomination waiting for manager'),
+                           tmsg("{0} has waited more than {1} days for the manager's approval.", label, days))
         else:
             rec = [('user', u) for u in ld_users(nom.employee)]
-            n = _send_once('nom_escalation', nom.id, 'ld', rec, 'Nomination waiting for L&D',
-                           f"{label} has waited more than {days} days for L&D approval.")
+            n = _send_once('nom_escalation', nom.id, 'ld', rec, tmsg('Nomination waiting for L&D'),
+                           tmsg('{0} has waited more than {1} days for L&D approval.', label, days))
         sent += 1 if n else 0
     return sent
 

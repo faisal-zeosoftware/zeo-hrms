@@ -15,6 +15,7 @@ from django.utils import timezone
 from . import profile as P
 from .arabic import has_arabic, shape, visual_line
 from .models import LETTER_TYPES, LetterRequest, LetterTemplate
+from Translations.i18n import tr as _tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
 M = apps.get_model
@@ -156,6 +157,15 @@ def values(emp, lr):
     if lr.language == 'ar' and not lr.addressee:
         v['addressee'] = 'إلى من يهمه الأمر'
         v['purpose'] = lr.purpose or 'الاستخدام الشخصي'
+    if lr.language != 'en':  # v1.15.0: department, designation, branch and nationality in the letter's language
+        try:
+            from Translations.services import translated
+            for key, fk, attr in (('designation', 'emp_desgntn_id', 'desgntn_job_title'), ('department', 'emp_dept_id', 'dept_name'),
+                                  ('branch', 'emp_branch_id', 'branch_name'), ('nationality', 'emp_nationality', 'N_name')):
+                if getattr(emp, fk + '_id', None):
+                    v[key] = translated(getattr(emp, fk), attr, lr.language) or v[key]
+        except Exception:
+            log.debug('translated names for the letter skipped', exc_info=True)
     return v
 
 
@@ -238,6 +248,14 @@ def render_pdf(emp, lr, tpl, vals):
     from reportlab.pdfgen import canvas
     font, bold = _font()
     rtl = lr.language == 'ar'
+    shaper = visual_line
+    if rtl:  # v1.15.0: embedded Noto Naskh Arabic + arabic-reshaper / python-bidi (Translations.pdf); English letters unchanged
+        try:
+            from Translations.pdf import fonts as _ar_fonts, shape as _ar_shape
+            font, bold = _ar_fonts()
+            shaper = _ar_shape
+        except Exception:
+            log.debug('Arabic letter font not available', exc_info=True)
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     W, H = A4
@@ -245,7 +263,7 @@ def render_pdf(emp, lr, tpl, vals):
     c.setTitle(f'{TYPE_LABEL.get(lr.letter_type, "Letter")} {lr.reference_no}')
 
     def txt(x, y, s, f=font, size=10.5, align='left'):
-        s = visual_line(s) if (rtl or has_arabic(s)) else s
+        s = shaper(s) if (rtl or has_arabic(s)) else s
         c.setFont(f, size)
         if align == 'right':
             c.drawRightString(x, y, s)
@@ -316,8 +334,17 @@ def render_pdf(emp, lr, tpl, vals):
     c.setLineWidth(0.6)
     c.line(left, 22 * mm, right, 22 * mm)
     foot = f'Verification code: {lr.verification_code}  ·  Reference: {lr.reference_no}  ·  Verify with HR or in ZEO HRMS → Self service → Verify a letter.'
-    c.setFont(font, 7.5)
-    c.drawString(left, 17 * mm, foot)
+    if rtl:  # v1.15.0: the verification line in the letter's language
+        try:
+            from Translations.i18n import tr
+            foot = tr('Verification code: {0}  ·  Reference: {1}  ·  Verify with HR or in ZEO HRMS → Self service → Verify a letter.',
+                      lr.verification_code, lr.reference_no, lang=lr.language)
+        except Exception:
+            pass
+        txt(right, 17 * mm, foot, font, 7.5, 'right')
+    else:
+        c.setFont(font, 7.5)
+        c.drawString(left, 17 * mm, foot)
     if tpl.footer:
         txt(left, 13 * mm, fill(tpl.footer, vals)[:150], font, 7.5)
     c.showPage()
@@ -341,16 +368,16 @@ def new_code():
 def validate_request(data):
     t = data.get('letter_type')
     if t not in TYPE_LABEL:
-        raise ValidationError({'letter_type': 'Choose the type of letter.'})
+        raise ValidationError({'letter_type': _tr('Choose the type of letter.')})
     lang = data.get('language') or 'en'
     if lang not in ('en', 'ar'):
-        raise ValidationError({'language': 'Choose English or Arabic.'})
+        raise ValidationError({'language': _tr('Choose English or Arabic.')})
     missing = [k for k in NEEDS.get(t, ()) if not data.get(k)]
     if missing:
         labels = {'bank_name': 'the bank', 'destination': 'the destination', 'travel_from': 'the travel start date', 'travel_to': 'the return date'}
         raise ValidationError({k: f'Enter {labels.get(k, k)} for this letter.' for k in missing})
     if data.get('travel_from') and data.get('travel_to') and str(data['travel_to']) < str(data['travel_from']):
-        raise ValidationError({'travel_to': 'The return date cannot be before the travel date.'})
+        raise ValidationError({'travel_to': _tr('The return date cannot be before the travel date.')})
     return t, lang
 
 
@@ -359,7 +386,7 @@ def issue(lr, user, note=''):
     emp = M('EmpManagement', 'emp_master').objects.select_related('emp_branch_id', 'emp_desgntn_id', 'emp_dept_id', 'emp_nationality').get(pk=lr.employee_id)
     tpl = template_for(lr.letter_type, lr.language, lr.branch_id)
     if tpl is None:
-        raise ValidationError({'template': 'There is no active template for this letter type and language – add one in Letter templates.'})
+        raise ValidationError({'template': _tr('There is no active template for this letter type and language – add one in Letter templates.')})
     if not lr.reference_no:
         lr.reference_no = new_reference()
     if not lr.verification_code:

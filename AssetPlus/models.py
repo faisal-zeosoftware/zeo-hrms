@@ -39,6 +39,7 @@ class AssetPlusSettings(models.Model):
     require_acknowledgement = models.BooleanField(default=True, help_text='Employees confirm in self-service that they received the asset')
     block_final_settlement = models.BooleanField(default=True, help_text='Final settlement cannot be processed while assets are still with the employee')
     max_instalments = models.PositiveSmallIntegerField(default=12)
+    verification_days = models.PositiveIntegerField(default=365, help_text='v1.18.0: physical verification of every asset every N days (0 = off)')
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
@@ -88,12 +89,16 @@ class AssetProfile(models.Model):
     barcode = models.CharField(max_length=80, blank=True)
     meter_reading = models.DecimalField(max_digits=12, decimal_places=1, null=True, blank=True, help_text='Current km / hours')
     notes = models.TextField(blank=True)
+    last_verified_on = models.DateField(null=True, blank=True)            # v1.18.0: periodic physical verification
+    last_verified_by_id = models.IntegerField(null=True, blank=True)
+    last_verified_result = models.CharField(max_length=20, blank=True)   # found / not_found / damaged / wrong_location
     created_by_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        permissions = (('view_assetbookvalue', 'Can see asset cost and book value'),)
+        permissions = (('view_assetbookvalue', 'Can see asset cost and book value'),
+                       ('verify_asset', 'Can record the periodic physical verification of assets'))
 
 
 class AssetFile(models.Model):

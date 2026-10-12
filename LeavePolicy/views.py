@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 
 from django.apps import apps
 from django.db import transaction
+from django.db.models import Q  # v1.22.0 branch rights
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import serializers, status, viewsets
@@ -13,6 +14,8 @@ from rest_framework.views import APIView
 
 from . import engine, setup
 from .models import EmployeeLeavePolicy, LeaveLedger, LeavePolicy, LeavePolicyLine
+from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
+from AccessControl.access import limit_by_branch, check_branch, allowed_branches, branch_allows, BRANCH_DENIED, deny_branch  # v1.22.0 branch rights
 
 M = apps.get_model
 READ = {'view_leavepolicy', 'view_leave_type', 'view_leave_entitlement', 'view_emp_leave_balance', 'view_employee_leave_request', 'view_leavereport'}
@@ -70,9 +73,9 @@ class LineSerializer(serializers.ModelSerializer):
         try:
             v = [[float(a), float(b)] for a, b in (v or [])]
         except (TypeError, ValueError):
-            raise serializers.ValidationError('Pay slabs are pairs of [days, pay %].')
+            raise serializers.ValidationError(tr('Pay slabs are pairs of [days, pay %].'))
         if any(a <= 0 or not 0 <= b <= 100 for a, b in v):
-            raise serializers.ValidationError('Days must be more than 0 and pay % between 0 and 100.')
+            raise serializers.ValidationError(tr('Days must be more than 0 and pay % between 0 and 100.'))
         return v
 
     def validate_service_steps(self, v):
@@ -80,15 +83,15 @@ class LineSerializer(serializers.ModelSerializer):
         out = []
         for s in (v or []):
             if not isinstance(s, dict):
-                raise serializers.ValidationError('Each step is {"from_year": …, "days": …}.')
+                raise serializers.ValidationError(tr('Each step is {"from_year": …, "days": …}.'))
             try:
                 y, d = int(s.get('from_year')), float(s.get('days'))
             except (TypeError, ValueError):
-                raise serializers.ValidationError('Each step needs a service year and days a year.')
+                raise serializers.ValidationError(tr('Each step needs a service year and days a year.'))
             if y < 2:
-                raise serializers.ValidationError('Steps start from service year 2 (year 1 uses the days a year of the line).')
+                raise serializers.ValidationError(tr('Steps start from service year 2 (year 1 uses the days a year of the line).'))
             if d < 0 or d > 366:
-                raise serializers.ValidationError(f'Service year {y}: days a year between 0 and 366.')
+                raise serializers.ValidationError(tr('Service year {0}: days a year between 0 and 366.', y))
             cf = s.get('carry_forward_max')
             if cf in ('', None):
                 cf = None
@@ -96,22 +99,22 @@ class LineSerializer(serializers.ModelSerializer):
                 try:
                     cf = float(cf)
                 except (TypeError, ValueError):
-                    raise serializers.ValidationError(f'Service year {y}: carry-forward limit must be a number.')
+                    raise serializers.ValidationError(tr('Service year {0}: carry-forward limit must be a number.', y))
                 if cf < 0:
-                    raise serializers.ValidationError(f'Service year {y}: carry-forward limit cannot be negative.')
+                    raise serializers.ValidationError(tr('Service year {0}: carry-forward limit cannot be negative.', y))
             out.append({'from_year': y, 'days': d, 'carry_forward_max': cf})
         years = [x['from_year'] for x in out]
         if len(years) != len(set(years)):
-            raise serializers.ValidationError('Each service year once.')
+            raise serializers.ValidationError(tr('Each service year once.'))
         return sorted(out, key=lambda x: x['from_year'])
 
     def validate(self, data):
         prorate = data.get('prorate', getattr(self.instance, 'prorate', 'calendar'))
         accrual = data.get('accrual', getattr(self.instance, 'accrual', 'monthly'))
         if prorate == 'worked' and accrual != 'monthly':
-            raise serializers.ValidationError({'prorate': 'Days worked needs leave earned monthly (yearly leave is given at the start of the year, before the days are worked).'})
+            raise serializers.ValidationError({'prorate': tr('Days worked needs leave earned monthly (yearly leave is given at the start of the year, before the days are worked).')})
         if data.get('service_steps') and accrual not in ('monthly', 'yearly'):
-            raise serializers.ValidationError({'service_steps': 'Days by length of service need leave earned monthly or yearly.'})
+            raise serializers.ValidationError({'service_steps': tr('Days by length of service need leave earned monthly or yearly.')})
         return data
 
 
@@ -140,12 +143,12 @@ class PolicySerializer(serializers.ModelSerializer):
             taken = {c: p.name for p in others for c in (p.category_ids or [])}
             clash = [taken[c] for c in cats if c in taken]
             if clash:
-                raise serializers.ValidationError({'category_ids': f'A category can be in one policy only; already in {", ".join(sorted(set(clash)))}.'})
+                raise serializers.ValidationError({'category_ids': tr('A category can be in one policy only; already in {0}.', ", ".join(sorted(set(clash))))})
         lines = self.initial_data.get('lines')
         if lines is not None:
             ids = [l.get('leave_type_id') for l in lines]
             if len(ids) != len(set(ids)):
-                raise serializers.ValidationError({'lines': 'Each leave type once per policy.'})
+                raise serializers.ValidationError({'lines': tr('Each leave type once per policy.')})
         return data
 
     def to_internal_value(self, data):
@@ -222,7 +225,7 @@ class EmployeePolicySerializer(serializers.ModelSerializer):
 
     def validate_employee_id(self, v):
         if not _emp(v):
-            raise serializers.ValidationError('Employee not found.')
+            raise serializers.ValidationError(tr('Employee not found.'))
         return v
 
 
@@ -230,6 +233,18 @@ class EmployeePolicyViewSet(viewsets.ModelViewSet):
     permission_classes = [LeaveHR]
     serializer_class = EmployeePolicySerializer
     queryset = EmployeeLeavePolicy.objects.select_related('policy')
+
+    # v1.22.0 branch rights: employee_id is a plain integer column, so the central row filter cannot see the branch
+    def get_queryset(self):
+        return limit_by_branch(self.request, super().get_queryset(), emp_field='employee_id')
+
+    def perform_create(self, serializer):
+        check_branch(self.request, employee_id=serializer.validated_data.get('employee_id'))
+        serializer.save()
+
+    def perform_update(self, serializer):
+        check_branch(self.request, employee_id=serializer.validated_data.get('employee_id', serializer.instance.employee_id))
+        serializer.save()
 
 
 # ------------------------------------------------------------------ an employee's effective policy
@@ -240,9 +255,9 @@ class EffectiveView(APIView):
         c = _ctx(request)
         emp = _emp(request.query_params.get('employee')) if request.query_params.get('employee') else c.emp
         if emp is None:
-            return Response({'detail': 'Employee not found.'}, status=404)
+            return Response({'detail': tr('Employee not found.')}, status=404)
         if not (c.admin or (c.emp and c.emp.pk == emp.pk) or (c.codes & READ and (c.branches is None or emp.emp_branch_id_id in c.branches))):
-            return Response({'detail': 'You may not see this employee.'}, status=403)
+            return Response({'detail': tr('You may not see this employee.')}, status=403)
         p = engine.policy_for(emp)
         names = _type_names()
         out = {'employee': person(emp), 'employee_id': emp.pk, 'policy': p.name if p else None, 'policy_id': p.pk if p else None,
@@ -279,7 +294,9 @@ class AccrualView(APIView):
 
     def post(self, request):
         if not can(request, RUN):
-            return Response({'detail': 'You may not run leave accrual.'}, status=403)
+            return Response({'detail': tr('You may not run leave accrual.')}, status=403)
+        if allowed_branches(request) is not None:   # v1.22.0 branch rights: the run covers every branch (no employee filter)
+            return Response({'detail': tr('Only the company administrator can run leave accrual for the whole company.')}, status=403)
         m = request.data.get('month')       # 'YYYY-MM' (the month to credit)
         on = None
         if m:
@@ -287,7 +304,7 @@ class AccrualView(APIView):
                 y, mm = map(int, str(m).split('-')[:2])
                 on = date(y, mm, cal.monthrange(y, mm)[1])
             except ValueError:
-                return Response({'detail': 'Month as YYYY-MM.'}, status=400)
+                return Response({'detail': tr('Month as YYYY-MM.')}, status=400)
         return Response(engine.run_accrual(on, request.user.pk, preview=bool(request.data.get('preview'))))
 
 
@@ -296,7 +313,9 @@ class YearEndView(APIView):
 
     def post(self, request):
         if not can(request, RUN):
-            return Response({'detail': 'You may not run the leave year end.'}, status=403)
+            return Response({'detail': tr('You may not run the leave year end.')}, status=403)
+        if allowed_branches(request) is not None:   # v1.22.0 branch rights: the run covers every branch (no employee filter)
+            return Response({'detail': tr('Only the company administrator can run the leave year end for the whole company.')}, status=403)
         d = parse_date(str(request.data.get('date') or '')) if request.data.get('date') else None
         r = engine.run_year_end(d, request.user.pk, preview=bool(request.data.get('preview')))
         names = _type_names()
@@ -311,10 +330,10 @@ class LedgerStartView(APIView):
 
     def post(self, request):
         if not can(request, RUN):
-            return Response({'detail': 'You may not do this.'}, status=403)
+            return Response({'detail': tr('You may not do this.')}, status=403)
         d = parse_date(str(request.data.get('date') or '')) or date.today()
         n = 0
-        for b in M('calendars', 'emp_leave_balance').objects.all():
+        for b in limit_by_branch(request, M('calendars', 'emp_leave_balance').objects.all(), emp_field='employee'):  # v1.22.0 branch rights
             if not LeaveLedger.objects.filter(employee_id=b.employee_id, leave_type_id=b.leave_type_id).exists() and b.balance:
                 LeaveLedger.objects.create(employee_id=b.employee_id, leave_type_id=b.leave_type_id, date=d, kind='opening',
                                            days=float(b.balance), note='Balance when the ledger started', created_by_id=request.user.pk)
@@ -328,7 +347,7 @@ class OpeningsView(APIView):
 
     def post(self, request):
         if not can(request, RUN | {'add_emp_leave_balance', 'change_emp_leave_balance', 'import_emp_leave_balance'}):
-            return Response({'detail': 'You may not load opening balances.'}, status=403)
+            return Response({'detail': tr('You may not load opening balances.')}, status=403)
         d = parse_date(str(request.data.get('date') or '')) or date.today()
         mode = request.data.get('mode') or 'set'
         Emp, LT = M('EmpManagement', 'emp_master'), M('calendars', 'leave_type')
@@ -341,8 +360,11 @@ class OpeningsView(APIView):
                 days = float(r.get('days'))
             except (TypeError, ValueError):
                 days = None
+            if e is not None and not branch_allows(request, employee_id=e.pk):   # v1.22.0 branch rights
+                errors.append(tr('Row {0}: ', i) + tr(BRANCH_DENIED))
+                continue
             if not e or not t or days is None:
-                errors.append(f'Row {i}: ' + ('employee not found' if not e else 'leave type not found' if not t else 'days must be a number'))
+                errors.append(tr('Row {0}: ', i) + (tr('employee not found') if not e else tr('leave type not found') if not t else tr('days must be a number')))
                 continue
             cur = float(engine.balance_row(e.pk, t.pk).balance or 0)
             delta = days - cur if mode == 'set' else days
@@ -359,9 +381,9 @@ class LedgerView(APIView):
         c = _ctx(request)
         emp = _emp(request.query_params.get('employee')) if request.query_params.get('employee') else c.emp
         if emp is None:
-            return Response({'detail': 'Employee not found.'}, status=404)
+            return Response({'detail': tr('Employee not found.')}, status=404)
         if not (c.admin or (c.emp and c.emp.pk == emp.pk) or (c.codes & READ and (c.branches is None or emp.emp_branch_id_id in c.branches))):
-            return Response({'detail': 'You may not see this employee.'}, status=403)
+            return Response({'detail': tr('You may not see this employee.')}, status=403)
         qs = LeaveLedger.objects.filter(employee_id=emp.pk)
         if request.query_params.get('leave_type'):
             qs = qs.filter(leave_type_id=request.query_params['leave_type'])
@@ -384,7 +406,7 @@ class PlannerView(APIView):
         d0 = parse_date(q.get('from') or '') or date.today().replace(day=1)
         d1 = parse_date(q.get('to') or '') or (d0.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
         if (d1 - d0).days > 120:
-            return Response({'detail': 'Choose at most 4 months.'}, status=400)
+            return Response({'detail': tr('Choose at most 4 months.')}, status=400)
         Emp = M('EmpManagement', 'emp_master')
         emps = Emp.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id')
         team_only = not (c.admin or c.codes & READ)
@@ -433,13 +455,21 @@ class PlannerView(APIView):
 
 
 # ------------------------------------------------------------------ encashment approval
+def _payroll_plus():
+    try:
+        from PayrollPlus import services
+        return services
+    except ImportError:
+        return None
+
+
 class EncashmentView(APIView):
     """GET ?status=pending – encashments with their checks; POST {id, action: approve|reject, remarks}."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if not can(request, ENCASH | {'view_leaveencashment'}):
-            return Response({'detail': 'You may not see encashments.'}, status=403)
+            return Response({'detail': tr('You may not see encashments.')}, status=403)
         c = _ctx(request)
         LE = M('PayrollManagement', 'LeaveEncashment')
         qs = LE.objects.select_related('employee', 'leave_type', 'payroll_run').order_by('-id')
@@ -454,30 +484,42 @@ class EncashmentView(APIView):
                         'balance_now': float(engine.balance_row(e.employee_id, e.leave_type_id).balance or 0), 'status': e.get_status_display(),
                         'requested': e.created_at.date() if getattr(e, 'created_at', None) else None, 'remarks': e.remarks or '',
                         'payroll_run': str(e.payroll_run) if e.payroll_run_id else '', 'problems': engine.check_encashment(e) if e.status in ('draft', 'pending') else []})
+        _pp = _payroll_plus()
+        if _pp:   # v1.18.0: the approval steps (HR → Finance → management)
+            for r in out:
+                r['steps'] = _pp.encashment_steps_row(r['id'])
         return Response({'rows': out})
 
     def post(self, request):
-        if not can(request, ENCASH):
-            return Response({'detail': 'You may not approve encashments.'}, status=403)
+        if not can(request, ENCASH | {'approve_leaveencashment_final'}):
+            return Response({'detail': tr('You may not approve encashments.')}, status=403)
         LE = M('PayrollManagement', 'LeaveEncashment')
         e = LE.objects.select_related('employee', 'leave_type').filter(pk=request.data.get('id')).first()
         if e is None:
-            return Response({'detail': 'Encashment not found.'}, status=404)
+            return Response({'detail': tr('Encashment not found.')}, status=404)
         c = _ctx(request)
         if c.branches is not None and e.employee.emp_branch_id_id not in c.branches:
-            return Response({'detail': 'Encashment not found.'}, status=404)
+            return Response({'detail': tr('Encashment not found.')}, status=404)
         if e.status not in ('draft', 'pending'):
-            return Response({'detail': f'This encashment is already {e.get_status_display().lower()}.'}, status=400)
+            return Response({'detail': tr('This encashment is already {0}.', e.get_status_display().lower())}, status=400)
         act = request.data.get('action')
         if act == 'reject':
             e.status, e.remarks = 'rejected', (request.data.get('remarks') or e.remarks or '')[:500]
             e.save(update_fields=['status', 'remarks'])
             return Response({'status': e.get_status_display()})
         if act != 'approve':
-            return Response({'detail': 'action is approve or reject.'}, status=400)
+            return Response({'detail': tr('action is approve or reject.')}, status=400)
         errs = engine.check_encashment(e)
         if errs:
             return Response({'detail': ' '.join(errs), 'problems': errs}, status=400)
+        _pp = _payroll_plus()
+        if _pp:   # v1.18.0: HR → Finance → management chain (when switched on)
+            try:
+                _pp.check_final_encashment(e, request.user, c.codes, c.admin)
+            except _pp.Refused as ex:
+                return Response({'detail': ex.message}, status=ex.status)
+        elif not can(request, ENCASH):
+            return Response({'detail': tr('You may not approve encashments.')}, status=403)
         with transaction.atomic():
             days = float(e.encashment_days)
             if not float(e.encashment_amount or 0):      # keep the amount of the company formula; else basic / 30 × days
@@ -490,6 +532,8 @@ class EncashmentView(APIView):
             e.save()
             engine.post(e.employee_id, e.leave_type_id, date.today(), 'encashed', -days, ref=e,
                         note=f'Encashed {days:g} days – AED {float(e.encashment_amount):,.2f} (paid with the next payroll)', user_id=request.user.pk, move_balance=True)
+            if _pp:
+                _pp.record_final_encashment(e, request.user, request.data.get('remarks') or '')
         return Response({'status': e.get_status_display(), 'amount': float(e.encashment_amount)})
 
 
@@ -513,17 +557,23 @@ class ApproversView(APIView):
 
     def get(self, request):
         if not can(request, READ | APPROVE_CODES):
-            return Response({'detail': 'You may not see the approvers.'}, status=403)
+            return Response({'detail': tr('You may not see the approvers.')}, status=403)
         from .models import LevelRole, OrgRole
         from .approvers import resolve
         U = M('UserManagement', 'CustomUser')
         users = {u.pk: u for u in U.objects.filter(is_active=True).order_by('username')}
+        mine = allowed_branches(request)   # v1.22.0 branch rights: other branches' roles / workflows / branches are hidden
+        org_roles = OrgRole.objects.all()
+        if mine is not None:
+            org_roles = org_roles.filter(Q(branch_id__in=mine) | Q(branch_id__isnull=True))
         roles = [{'role': r.role, 'branch_id': r.branch_id, 'department_id': r.department_id, 'user_id': r.user_id,
-                  'user': _uname(users.get(r.user_id)) or f'#{r.user_id} (inactive)'} for r in OrgRole.objects.all()]
+                  'user': _uname(users.get(r.user_id)) or f'#{r.user_id} (inactive)'} for r in org_roles]
         WF = M('calendars', 'LVApprovalWorkflow')
         lr = {x.level_id: x for x in LevelRole.objects.all()}
         wfs = []
         for w in WF.objects.select_related('request_type').prefetch_related('branch', 'leave_levels').order_by('request_type__name'):
+            if mine is not None and w.branch.all() and not any(b.pk in mine for b in w.branch.all()):   # v1.22.0 branch rights
+                continue
             lv = []
             for l in w.leave_levels.all().order_by('level'):
                 r = lr.get(l.pk)
@@ -537,13 +587,13 @@ class ApproversView(APIView):
         Br = M('OrganisationManager', 'brnch_mstr'); D = M('OrganisationManager', 'dept_master')
         return Response({'org_roles': roles, 'workflows': wfs, 'roles': LevelRole.ROLES, 'org_role_kinds': OrgRole.ROLES,
                          'users': [{'id': u.pk, 'name': _uname(u)} for u in users.values()],
-                         'branches': [{'id': b.pk, 'name': b.branch_name} for b in Br.objects.all().order_by('branch_name')],
+                         'branches': [{'id': b.pk, 'name': b.branch_name} for b in (Br.objects.all() if mine is None else Br.objects.filter(pk__in=mine)).order_by('branch_name')],  # v1.22.0 branch rights
                          'departments': [{'id': d.pk, 'name': d.dept_name} for d in D.objects.all().order_by('dept_name')]})
 
     @transaction.atomic
     def post(self, request):
         if not can(request, APPROVE_CODES):
-            return Response({'detail': 'You may not change the approvers.'}, status=403)
+            return Response({'detail': tr('You may not change the approvers.')}, status=403)
         from .models import LevelRole, OrgRole
         L = M('calendars', 'LeaveApprovalLevels')
         U = M('UserManagement', 'CustomUser')
@@ -551,27 +601,36 @@ class ApproversView(APIView):
         for r in request.data.get('org_roles') or []:
             key = dict(role=r.get('role'), branch_id=r.get('branch_id') or None, department_id=r.get('department_id') or None)
             if key['role'] not in {k for k, _ in OrgRole.ROLES}:
-                return Response({'detail': f'Unknown role {key["role"]}.'}, status=400)
+                return Response({'detail': tr('Unknown role {0}.', key["role"])}, status=400)
             if key['role'] == 'branch_hr' and not key['branch_id']:
-                return Response({'detail': 'Branch HR manager needs a branch.'}, status=400)
+                return Response({'detail': tr('Branch HR manager needs a branch.')}, status=400)
             if key['role'] == 'department_head' and not key['department_id']:
-                return Response({'detail': 'Department head needs a department.'}, status=400)
+                return Response({'detail': tr('Department head needs a department.')}, status=400)
+            # v1.22.0 branch rights: branch users only set roles of their own branches (not company-wide / department-only roles)
+            mine = allowed_branches(request)
+            if mine is not None and str(key['branch_id']) not in {str(b) for b in mine}:
+                deny_branch()
             if not r.get('user_id'):
                 OrgRole.objects.filter(**key).delete()
                 continue
             if not U.objects.filter(pk=r['user_id'], is_active=True).exists():
-                return Response({'detail': 'Choose an active user.'}, status=400)
+                return Response({'detail': tr('Choose an active user.')}, status=400)
             OrgRole.objects.update_or_create(**key, defaults={'user_id': r['user_id']})
         for x in request.data.get('levels') or []:
             lvl = L.objects.filter(pk=x.get('level_id')).first()
             if lvl is None:
-                return Response({'detail': 'Approval level not found.'}, status=400)
+                return Response({'detail': tr('Approval level not found.')}, status=400)
+            mine = allowed_branches(request)   # v1.22.0 branch rights: only levels of workflows limited to the user's branches
+            if mine is not None:
+                wf_br = list(lvl.workflow.branch.values_list('pk', flat=True)) if lvl.workflow_id else []
+                if not wf_br or any(b not in mine for b in wf_br):
+                    deny_branch()
             role = x.get('role') or 'user'
             esc = x.get('escalate_role') or ''
             if role not in valid_roles or (esc and esc not in valid_roles):
-                return Response({'detail': 'Unknown approver role.'}, status=400)
+                return Response({'detail': tr('Unknown approver role.')}, status=400)
             if role == 'user' and not (x.get('approver_id') or lvl.approver_id):
-                return Response({'detail': f'Level {lvl.level}: choose the user or a role.'}, status=400)
+                return Response({'detail': tr('Level {0}: choose the user or a role.', lvl.level)}, status=400)
             LevelRole.objects.update_or_create(level_id=lvl.pk, defaults={'role': role, 'escalate_role': esc})
             upd = {}
             if 'approver_id' in x:
@@ -592,12 +651,13 @@ class WhoApprovesView(APIView):
 
     def get(self, request):
         if not can(request, READ | APPROVE_CODES):
-            return Response({'detail': 'You may not see the approvers.'}, status=403)
+            return Response({'detail': tr('You may not see the approvers.')}, status=403)
         from .approvers import resolve
         emp = _emp(request.query_params.get('employee'))
         LT = M('calendars', 'leave_type').objects.filter(pk=request.query_params.get('leave_type')).first()
         if emp is None or LT is None:
-            return Response({'detail': 'Choose an employee and a leave type.'}, status=400)
+            return Response({'detail': tr('Choose an employee and a leave type.')}, status=400)
+        check_branch(request, employee_id=emp.pk)  # v1.22.0 branch rights
         WF = M('calendars', 'LVApprovalWorkflow')
         w = WF.objects.filter(request_type=LT, branch__in=[emp.emp_branch_id]).first()
         if w is None:
@@ -619,12 +679,12 @@ class EscalationView(APIView):
 
     def get(self, request):
         if not can(request, READ | APPROVE_CODES):
-            return Response({'detail': 'You may not see escalations.'}, status=403)
+            return Response({'detail': tr('You may not see escalations.')}, status=403)
         from .approvers import escalate_due
         return Response({'due': escalate_due(dry=True)})
 
     def post(self, request):
         if not can(request, APPROVE_CODES):
-            return Response({'detail': 'You may not run escalations.'}, status=403)
+            return Response({'detail': tr('You may not run escalations.')}, status=403)
         from .approvers import escalate_due
         return Response({'escalated': escalate_due()})

@@ -7469,7 +7469,8 @@
    "src/app/from-designer/from-designer.component.html:2258",
    "src/app/from-designer/from-designer.component.html:2661",
    "src/app/from-designer/from-designer.component.html:3163",
-   "src/app/from-designer/from-designer.component.html:3600"
+   "src/app/from-designer/from-designer.component.html:3600",
+   "src/app/login/signup.component.ts"
   ]
  },
  {
@@ -12311,7 +12312,8 @@
   "text": "Company name",
   "where": [
    "src/app/employee-family/employee-family.component.html:403",
-   "src/app/employee-uploaded-details/employee-uploaded-details.component.html:228"
+   "src/app/employee-uploaded-details/employee-uploaded-details.component.html:228",
+   "src/app/login/signup.component.ts"
   ]
  },
  {
@@ -18333,7 +18335,8 @@
    "src/app/from-designer/from-designer.component.html:3525",
    "src/app/shared-ui/field-types.ts:19",
    "src/app/shared-ui/menu-config.ts:463",
-   "src/app/shared-ui/z-record-panel.component.ts:19"
+   "src/app/shared-ui/z-record-panel.component.ts:19",
+   "src/app/login/signup.component.ts"
   ]
  },
  {
@@ -31395,7 +31398,8 @@
   "text": "Hide",
   "where": [
    "src/app/shared-ui/z-org-chart.component.ts:45",
-   "src/app/shared-ui/z-record-panel.component.ts:68"
+   "src/app/shared-ui/z-record-panel.component.ts:68",
+   "src/app/login/login.component.html:1"
   ]
  },
  {
@@ -36512,7 +36516,8 @@
    "src/app/learning-plus/skill-matrix.component.ts:25",
    "src/app/learning-plus/training-history.component.ts:27",
    "src/app/leave-policy/encashment-approvals.component.ts:35",
-   "src/app/leave-policy/leave-planner.component.ts:59"
+   "src/app/leave-policy/leave-planner.component.ts:59",
+   "src/app/login/signup.component.ts"
   ],
   "more": 14
  },
@@ -37285,7 +37290,8 @@
    "src/app/asset-plus/asset-home.component.ts:38",
    "src/app/asset-plus/asset-plus.routes.ts:19",
    "src/app/asset-plus/asset-queue.component.ts:27",
-   "src/app/shared-ui/menu-config.ts:295"
+   "src/app/shared-ui/menu-config.ts:295",
+   "src/app/login/login.component.html:1"
   ]
  },
  {
@@ -46658,7 +46664,8 @@
    "src/app/shared-ui/menu-config.ts:224",
    "src/app/shared-ui/menu-config.ts:387",
    "src/app/user-grouping-edit/user-grouping-edit.component.html:1956",
-   "src/app/user-role-grouping-create/user-role-grouping-create.component.html:1956"
+   "src/app/user-role-grouping-create/user-role-grouping-create.component.html:1956",
+   "src/app/login/signup.component.ts"
   ]
  },
  {
@@ -47782,7 +47789,8 @@
   "text": "Plan",
   "where": [
    "src/app/asset-plus/asset-detail.component.ts:237",
-   "src/app/asset-plus/asset-queue.component.ts:184"
+   "src/app/asset-plus/asset-queue.component.ts:184",
+   "src/app/login/signup.component.ts"
   ]
  },
  {
@@ -50099,7 +50107,8 @@
    "src/app/shared-ui/menu-config.ts:319",
    "src/app/shared-ui/menu-config.ts:322",
    "src/app/user-grouping-edit/user-grouping-edit.component.html:3016",
-   "src/app/user-role-grouping-create/user-role-grouping-create.component.html:3036"
+   "src/app/user-role-grouping-create/user-role-grouping-create.component.html:3036",
+   "src/app/login/login.component.html:1"
   ]
  },
  {
@@ -51023,7 +51032,8 @@
  {
   "text": "Ready",
   "where": [
-   "src/app/attendance-plus/punch-import.component.ts:31"
+   "src/app/attendance-plus/punch-import.component.ts:31",
+   "src/app/login/signup.component.ts"
   ]
  },
  {
@@ -58094,7 +58104,8 @@
    "src/app/shared-ui/z-org-chart.component.ts:45",
    "src/app/shift-planner/shift-reports.component.ts:34",
    "src/app/unified-calendar/unified-calendar.component.ts:66",
-   "src/app/z-report/z-record-view.component.ts:52"
+   "src/app/z-report/z-record-view.component.ts:52",
+   "src/app/login/login.component.html:1"
   ]
  },
  {
@@ -65058,7 +65069,8 @@
   "text": "Version",
   "where": [
    "src/app/org-structure/policy-ack.component.ts:36",
-   "src/app/org-structure/policy-ack.component.ts:40"
+   "src/app/org-structure/policy-ack.component.ts:40",
+   "src/app/login/login.component.html:1"
   ]
  },
  {
@@ -66919,7 +66931,8 @@
    "src/app/holiday-calendar/holiday-calendar.component.html:79",
    "src/app/holiday-calendar/holiday-calendar.component.html:256",
    "src/app/weelcalendar/weelcalendar.component.html:128",
-   "src/app/weelcalendar/weelcalendar.component.html:465"
+   "src/app/weelcalendar/weelcalendar.component.html:465",
+   "src/app/login/signup.component.ts"
   ]
  },
  {
@@ -71168,6 +71181,486 @@
   "text": "Choose the pay period of the WPS file.",
   "where": [
    "payroll-controls"
+  ]
+ },
+ {
+  "text": "Sign in",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Staff sign in with their e-mail, employees with their employee code.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "E-mail or employee code",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Hide password",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Show password",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Signing in…",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Confirm it is you",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Your sign-in details are correct. We send a one-time code to your registered e-mail or phone.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Send the code",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Use another user",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Enter the code",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Type the code we sent to your e-mail or phone.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "One-time code",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Verify and continue",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Send the code again",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "One login for the whole company",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "People, projects, property and safety – in one place.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "HRMS",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "CRM",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Property",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "HSE",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "People, attendance, leave, payroll and self service",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Support tickets with SLA, AMC contracts and delivery",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Contacts, pipelines, viewings and offers",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Units, leases, cheques, owners and the tenant portal",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Work orders, preventive plans, assets and vendors",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Permits to work, incidents, inspections and actions",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Made for companies in the UAE and the GCC – English and Arabic.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Enter your e-mail or employee code.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Enter your password.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "No company is set up for your login yet. Ask your HR team.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Your user details could not be loaded. Try again.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "The e-mail, employee code or password is not correct.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "We sent the code to your registered e-mail or phone.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "The code could not be sent. Try again in a minute.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "Enter the code.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "The code is not correct or has expired.",
+  "where": [
+   "src/app/login/login.component.html:1"
+  ]
+ },
+ {
+  "text": "1 company · shared cloud",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "14-day free trial – no card needed.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Always included:",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Apps – select at least one",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "At least 8 characters, not only numbers.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Buildings, units, leases, billing, cheques",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Choose your plan and apps",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Contacts, pipelines, opportunities, activities",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Continue",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Creating the company",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Creating your company…",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Finishing",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Giving access",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "HR and Payroll",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Industry",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "New to ZEO?",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Own servers – contact Adept",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Owner and password",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "People, attendance, leave, self service, salaries and WPS",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Plan and apps",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Price on request",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Projects, tasks, timesheets, tickets with SLA, AMC",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Risk, permits, incidents, inspections, audits",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Salaries, payslips, WPS, gratuity, loans and final settlement",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Setting up the apps",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Settings with the employee master, and the HR app (leave, attendance, documents, self service, expenses).",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Sign-up is not available on this server. Ask Adept for a ZEO account.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Start a free trial",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Start the free trial",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Steps",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "The account could not be created.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "The company could not be created",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "The owner manages the subscription, apps and users of the account.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "This takes about a minute.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Unknown error.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Unlimited companies · own database · group features",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Up to {0} companies + extra companies (cap {1})",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Work orders, inspections, preventive plans",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "You can change the plan and apps at any time.",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Your company",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Your company is ready",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Your name",
+  "where": [
+   "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "ZEO could not be reached. Try again in a moment.",
+  "where": [
+   "src/app/login/signup.component.ts"
   ]
  }
 ]

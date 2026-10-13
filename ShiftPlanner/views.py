@@ -1048,7 +1048,7 @@ class ClaimAction(Base):
 # ------------------------------------------------------------------ 5/6. swap, change and cancellation requests
 def req_row(q, r, shifts, n):
     emp, other = S.emp_by_id(q.employee_id), S.emp_by_id(q.swap_employee_id) if q.swap_employee_id else None
-    row = {'id': q.id, 'kind': q.kind, 'kind_label': q.get_kind_display(), 'employee_id': q.employee_id, 'employee': person(emp),
+    row = {'id': q.id, 'number': q.number, 'kind': q.kind, 'kind_label': q.get_kind_display(), 'employee_id': q.employee_id, 'employee': person(emp),
            'date': q.date, 'from_shift_id': q.from_shift_id, 'from_shift': S.shift_label(shifts.get(q.from_shift_id)) if q.from_shift_id else 'Off',
            'to_shift_id': q.to_shift_id, 'to_shift': S.shift_label(shifts.get(q.to_shift_id)) if q.to_shift_id else '',
            'swap_employee_id': q.swap_employee_id, 'swap_employee': person(other), 'swap_date': q.swap_date,

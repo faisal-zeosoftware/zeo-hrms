@@ -7,6 +7,9 @@ from .models import CustomUser
 # Signal handler function to update superuser tenants
 def add_company_to_superusers(sender, instance, created, **kwargs):
     if created:  # Only process newly created companies
+        from django.conf import settings as _st
+        if getattr(_st, 'ZEO_CLOUD', False):   # v1.23.0 ZEO Cloud: a company is opened only by its account's people
+            return
         superusers = CustomUser.objects.filter(is_superuser=True)
         for user in superusers:
             user.tenants.add(instance)

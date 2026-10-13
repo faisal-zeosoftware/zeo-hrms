@@ -33,3 +33,13 @@ class CompanyGroup(models.Model):
 
     class Meta:
         default_permissions = ()
+
+
+class CompanyOption(models.Model):
+    """v1.22.3 – small settings of the company: e.g. `neutralized` (a duplicate made for testing: no e-mails, no mailbox)."""
+    key = models.CharField(max_length=60, unique=True)
+    value = models.JSONField(default=dict, blank=True)
+    changed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        default_permissions = ()

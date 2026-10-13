@@ -67,6 +67,7 @@ class EncashmentStep(models.Model):
 class ExitSettlement(models.Model):
     STATUS = [('draft', 'Draft – HR calculating'), ('submitted', 'Waiting for Finance'), ('validated', 'Waiting for management approval'),
               ('approved', 'Approved – to be paid'), ('paid', 'Paid'), ('cancelled', 'Cancelled')]
+    number = models.CharField(max_length=30, blank=True, default='', db_index=True, help_text='v1.22.1: document number (Settings › Document numbering)')
     eos_id = models.IntegerField(unique=True)
     employee_id = models.IntegerField(db_index=True)
     calc_date = models.DateField()

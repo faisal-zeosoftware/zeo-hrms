@@ -253,6 +253,7 @@ class CorrectionRequest(models.Model):
              ('on_duty', 'On duty / outside work'), ('wfh', 'Work from home'))
     STATES = (('manager', 'Waiting for manager'), ('hr', 'Waiting for HR'), ('approved', 'Approved'),
               ('rejected', 'Rejected'), ('cancelled', 'Cancelled'))
+    number = models.CharField(max_length=30, blank=True, default='', db_index=True, help_text='v1.22.1: document number (Settings › Document numbering)')
     employee_id = models.IntegerField(db_index=True)
     branch_id = models.IntegerField(null=True, blank=True, db_index=True)
     date = models.DateField()

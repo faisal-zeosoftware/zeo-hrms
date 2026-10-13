@@ -4,6 +4,7 @@ from django.db import models
 
 class EmployeeTransfer(models.Model):
     STATUS = [('scheduled', 'Scheduled'), ('done', 'Done'), ('cancelled', 'Cancelled')]
+    number = models.CharField(max_length=30, blank=True, default='', db_index=True, help_text='v1.22.1: document number (Settings › Document numbering)')
     employee_id = models.IntegerField(db_index=True)
     effective_date = models.DateField()
     from_branch_id = models.IntegerField(null=True, blank=True)

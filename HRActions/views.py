@@ -76,7 +76,7 @@ class TransfersView(APIView):
         if mine is not None:
             transfers = transfers.filter(Q(employee_id__in=emp_ids_in_branches(mine)) | Q(from_branch_id__in=mine) | Q(to_branch_id__in=mine))
         for t in transfers[:500]:
-            rows.append({'id': t.id, 'employee_id': t.employee_id, 'employee': _person(emps.get(t.employee_id)), 'effective_date': t.effective_date,
+            rows.append({'id': t.id, 'number': t.number, 'employee_id': t.employee_id, 'employee': _person(emps.get(t.employee_id)), 'effective_date': t.effective_date,
                          'from_branch': n['b'].get(t.from_branch_id, ''), 'to_branch': n['b'].get(t.to_branch_id, ''),
                          'from_department': n['d'].get(t.from_department_id, ''), 'to_department': n['d'].get(t.to_department_id, ''),
                          'to_designation': n['g'].get(t.to_designation_id, ''), 'to_category': n['c'].get(t.to_category_id, ''),

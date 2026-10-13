@@ -94,6 +94,25 @@ class CustomAuthentication(BaseAuthentication):
         return None
 
 #EMPLOYEE CRUD
+# v1.23.0 (Phase 0) – the reverse lists EmpSerializer nests; read once per request instead of once per employee
+EMP_PREFETCH = ('airticket_requests', 'document_requests', 'salary_structures', 'payslips', 'bank_details', 'advance_salary_requests',
+                'loan', 'asset_requests', 'generalrequest_set', 'employee_leave_request_set', 'emp_leave_balance_set', 'custom_field_values',
+                'emp_family', 'emp_documents', 'emp_qualification', 'emp_job_history', 'emp_market_skills', 'emp_prgrm_skills',
+                'emp_lang_skills', 'policy_file', 'resignations', 'lateinearlyout')
+_EMP_PF = None
+
+
+def _emp_prefetch():
+    global _EMP_PF
+    if _EMP_PF is None:
+        names = {r.get_accessor_name() for r in emp_master._meta.related_objects} | {f.name for f in emp_master._meta.many_to_many}
+        _EMP_PF = [n for n in EMP_PREFETCH if n in names]
+        for deep in ('emp_leave_balance_set__leave_type', 'employee_leave_request_set__leave_type', 'payslips__payroll_run'):
+            if deep.split('__')[0] in names:
+                _EMP_PF.append(deep)
+    return _EMP_PF
+
+
 class EmpViewSet(viewsets.ModelViewSet):
     queryset = emp_master.objects.all()
     serializer_class = EmpSerializer
@@ -104,6 +123,8 @@ class EmpViewSet(viewsets.ModelViewSet):
             'emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id', 'emp_nationality', 'emp_relegion',
             'emp_country_id', 'emp_state_id', 'emp_reporting_manager', 'work_location', 'visa_location',
             'emp_weekend_calendar', 'holiday_calendar', 'users')
+        if getattr(self, 'action', None) in ('list', 'retrieve'):   # v1.23.0 (Phase 0): the nested lists in one query each
+            queryset = queryset.prefetch_related(*_emp_prefetch())
 
         # ESS user → show only own employee profile
         if user.is_authenticated and getattr(user, 'is_ess', False):

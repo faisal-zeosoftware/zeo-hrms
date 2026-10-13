@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.views import TokenObtainPairView
 # from . import views
-from .views import (RegisterUserAPIView, CompanyViewSet, DomainViewset, TenantUserListView, CustomTokenObtainPairView, UserDetailView,NoEssUerListView,GroupPermTenantUserListView,
+from .views import (MyCompaniesView, DuplicateCompanyView, DuplicateStatusView, RegisterUserAPIView, CompanyViewSet, DomainViewset, TenantUserListView, CustomTokenObtainPairView, UserDetailView,NoEssUerListView,GroupPermTenantUserListView,
                     ValidateCredentialsView,SendOTPView,VerifyOTPView,SendResetPasswordOTP,VerifyResetOTP,ResetPassword,ChangePasswordView,ESSSendResetPasswordOTP,ESSVerifyResetOTP,
                     ESSResetPassword)
 from . import views
@@ -16,6 +16,9 @@ router.register(r'domain', DomainViewset)
 
 
 urlpatterns = [
+    path('api/my-companies/', MyCompaniesView.as_view(), name='my-companies'),   # v1.22.2 company list after login
+    path('api/my-companies/<int:pk>/duplicate/', DuplicateCompanyView.as_view(), name='duplicate-company'),   # v1.22.3
+    path('api/my-companies/duplicate/<str:job>/', DuplicateStatusView.as_view(), name='duplicate-company-status'),
     path('api/', include(router.urls)),
     path('api/user/<str:tenant_id>/', UserDetailView.as_view(), name='user-detail'),  # New path
     path("token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),

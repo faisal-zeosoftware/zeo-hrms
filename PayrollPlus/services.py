@@ -506,7 +506,7 @@ def settlement_row(st, full=False):
     E = M('EmpManagement', 'emp_master')
     e = E.objects.filter(pk=st.employee_id).select_related('emp_dept_id', 'emp_desgntn_id').first()
     today = timezone.localdate()
-    row = {'id': st.pk, 'eos_id': st.eos_id, 'employee_id': st.employee_id, 'employee': f'{e.emp_first_name} {e.emp_last_name or ""}'.strip() if e else '',
+    row = {'id': st.pk, 'number': st.number, 'eos_id': st.eos_id, 'employee_id': st.employee_id, 'employee': f'{e.emp_first_name} {e.emp_last_name or ""}'.strip() if e else '',
            'employee_code': e.emp_code if e else '', 'department': str(e.emp_dept_id) if e and e.emp_dept_id_id else '',
            'designation': str(e.emp_desgntn_id) if e and e.emp_desgntn_id_id else '', 'joined': st.joined, 'last_working_date': st.last_working_date,
            'exit_type': st.exit_type, 'service_days': st.service_days, 'service_years': _eligible_years(st),

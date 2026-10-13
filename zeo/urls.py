@@ -57,6 +57,7 @@ urlpatterns = [
     path('ai/', include('AISettings.urls')),                    # v1.16.0
     path('views/', include('SavedViews.urls')),                  # v1.16.0
     path('payroll-plus/', include('PayrollPlus.urls')),         # v1.18.0
+    path('cloud/', include('ZeoCloud.urls')),                  # v1.23.0 ZEO Cloud
     
 
 

@@ -36,6 +36,7 @@ PUBLIC_PATHS = (
     '/users/token/', '/users/validate-credentials/', '/users/verify-otp/', '/users/send-otp/',
     '/users/send-reset-otp/', '/users/verify-reset-otp/', '/users/reset-password/',
     '/users/ess-send-reset-otp/', '/users/ess-verify-reset-otp/', '/users/ess-reset-password/',
+    '/cloud/api/signup/', '/cloud/api/jobs/',   # v1.23.0 ZEO Cloud sign-up (before a login exists)
 )
 # APIViews without a model that show company-wide data: back-office users only
 BACKOFFICE_VIEWS = {

@@ -207,10 +207,16 @@ def branch_doc_prefix(branch, doc_type):
     import re
     code = re.sub(r'[^A-Z0-9]', '', (branch.branch_code or '').upper())
     code = re.sub(r'^BR(?=[A-Z0-9])', '', code) or f'B{branch.pk}'
-    base = f"{code[:3]}-{doc_type[:3].upper()}"
+    # v1.22.1: the types added for the other transaction screens have their own short codes (EXP… would repeat)
+    short = {'expense_trip': 'TRP', 'expense_report': 'EXR', 'expense_advance': 'EXA', 'profile_change_request': 'PCR',
+             'letter_request': 'LTR', 'grievance': 'GRV', 'asset_return': 'ART', 'asset_transfer': 'ATR',
+             'asset_maintenance': 'AMN', 'asset_damage': 'ADM', 'asset_loss': 'ALS', 'asset_disposal': 'ADS',
+             'manpower_requisition': 'MRF', 'job_offer': 'OFR', 'attendance_correction': 'ACR',
+             'employee_transfer': 'ETR', 'exit_settlement': 'FSS', 'shift_request': 'SHR'}.get(doc_type, doc_type[:3].upper())
+    base = f"{code[:3]}-{short}"
     prefix, n = base, 2
     while DocumentNumbering.objects.filter(type=doc_type, prefix__iexact=prefix).exclude(branch_id=branch).exists():
-        prefix = f"{code[:2]}{n}-{doc_type[:3].upper()}"
+        prefix = f"{code[:2]}{n}-{short}"
         n += 1
     return prefix[:8]
 

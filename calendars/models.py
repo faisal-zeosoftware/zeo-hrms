@@ -1284,6 +1284,16 @@ class employee_leave_request(models.Model):
         
 
     def save(self, *args, **kwargs):
+        # v1.22.1: requests made without the leave screen (late / early penalties) take the next number from the
+        # branch's Document Numbering setup – they were saved without a number, and the second one failed
+        if not self.document_number:
+            from OrganisationManager.models import DocumentNumbering
+            branch = self.branch or getattr(self.employee, 'emp_branch_id', None)
+            self.document_number = DocumentNumbering.next_for(
+                branch, 'leave_request', taken=lambda n: employee_leave_request.objects.filter(document_number=n).exists()) or ''
+            if not self.document_number:
+                raise ValidationError(f'Set up document numbering for leave requests of branch {getattr(branch, "branch_name", "")} '
+                                      '(Settings › Document numbering).')
         # Calculate leave days based on start and end date
         self.number_of_days = self.calculate_leave_days()
         # If applied_days not set, initialize with requested number_of_days

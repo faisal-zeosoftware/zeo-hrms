@@ -142,6 +142,7 @@ class ShiftRequest(models.Model):
     KINDS = [('swap', 'Shift swap'), ('change', 'Shift change'), ('cancel', 'Shift cancellation')]
     STATUS = [('peer', 'Waiting for colleague'), ('pending', 'Waiting for approval'), ('approved', 'Approved'),
               ('rejected', 'Rejected'), ('declined', 'Declined by colleague'), ('withdrawn', 'Withdrawn')]
+    number = models.CharField(max_length=30, blank=True, default='', db_index=True, help_text='v1.22.1: document number (Settings › Document numbering)')
     kind = models.CharField(max_length=8, choices=KINDS)
     employee_id = models.IntegerField(db_index=True)
     date = models.DateField()

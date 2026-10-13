@@ -1868,7 +1868,7 @@ except Exception:  # pragma: no cover
 def _apps_hidden():
     try:
         from ZeoApps.reports import hidden_keys
-        return hidden_keys(REPORTS.keys())
+        return hidden_keys(REPORTS.keys(), REPORTS)
     except Exception:
         return set()
 

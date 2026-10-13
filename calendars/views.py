@@ -788,7 +788,7 @@ def _v112_record_punch(request, employee, kind, auth_method, lat=None, lng=None,
 
 
 class AttendanceViewSet(viewsets.ModelViewSet):
-    queryset = Attendance.objects.all()
+    queryset = Attendance.objects.select_related('employee', 'shift').prefetch_related('logs')   # v1.23.0: was 4 queries per row
     serializer_class = AttendanceSerializer
     parser_classes = [viewsets.ModelViewSet.parser_classes[0], MultiPartParser, FormParser] # JSON, MultiPart, Form
     # permission_classes = [AttendancePermission]
@@ -2220,14 +2220,14 @@ class LvApprovalViewset(viewsets.ModelViewSet):
 
             grouped_approvals[request_id].append({
                 'id': approval.id,
-                'role': approval.role,
+                'role': getattr(approval, 'role', None),   # v1.24.0: the field was removed from the model (was a 500)
                 'level': approval.level,
                 'status': approval.status,
                 'note': approval.note,
                 'created_at': approval.created_at,
                 'updated_at': approval.updated_at,
                 'approver': approval.approver.username,
-                'rejection_reason': approval.rejection_reason.reason_text if approval.rejection_reason else None,
+                'rejection_reason': approval.rejection_reason or None,   # v1.24.0: a text field now
             })
 
         # Format data to a list of dictionaries

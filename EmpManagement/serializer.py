@@ -897,6 +897,22 @@ class EmpSerializer(serializers.ModelSerializer):
         from ProjectManagement .serializer import ProjectSerializer  # to avoid circular import
         from ProjectManagement .models import Project
 
+        # v1.23.0 (Phase 0): the projects are serialised once per request, not once per employee
+        ctx = self.context if isinstance(self.context, dict) else None
+        if ctx is not None and getattr(self, 'many_parent', None) is None and ctx.get('view') is not None and getattr(ctx['view'], 'action', '') == 'list':
+            if ctx.get('_emp_projects') is None:
+                qs = Project.objects.prefetch_related('managers', 'members', 'tasks__task_managers', 'tasks__task_members',
+                                                      'tasks__stage', 'tasks__project')
+                data, by_emp = {}, {}
+                for p, d in zip(qs, ProjectSerializer(qs, many=True).data):
+                    data[p.pk] = d
+                    for e in list(p.managers.all()) + list(p.members.all()):
+                        lst = by_emp.setdefault(e.pk, [])
+                        if p.pk not in lst:
+                            lst.append(p.pk)
+                ctx['_emp_projects'] = (data, by_emp)
+            data, by_emp = ctx['_emp_projects']
+            return [data[i] for i in by_emp.get(obj.pk, [])]
         projects = Project.objects.filter(
             models.Q(managers=obj) | models.Q(members=obj)
         ).distinct()

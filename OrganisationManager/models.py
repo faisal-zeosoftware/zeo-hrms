@@ -170,11 +170,7 @@ class DocumentNumbering(models.Model):
         ('resignation_request','Resignation Request'),
         ('lateinearlyout_request','LateinEarlyout Request'),
         ('payroll_run','PayRollRun'),
-
-
-
-
-    ]
+    ] + __import__('zeo.docnum', fromlist=['TYPE_LABELS']).TYPE_LABELS   # v1.22.1: the other transaction screens
 
     branch_id = models.ForeignKey('brnch_mstr', on_delete=models.CASCADE)
     type = models.CharField(max_length=50, choices=DOCUMENT_TYPES)
@@ -256,6 +252,21 @@ class DocumentNumbering(models.Model):
             doc_numbering.save()
 
             return final_number
+
+    @classmethod
+    def next_for(cls, branch, doc_type, taken=None):
+        """v1.22.1: the next number from the branch's Document Numbering setup, for records made without the screen
+        (late / early penalties, automatic requests). None when the branch has no setup for the type.
+        `taken(number)` says whether a number is already used (then the next one is taken)."""
+        cfg = cls.objects.filter(branch_id=branch, type=doc_type).first() if branch is not None else None
+        if cfg is None:
+            return None
+        number = cfg.get_next_number()
+        tries = 0
+        while taken and taken(number) and tries < 500:
+            number = cfg.get_next_number()
+            tries += 1
+        return number
     
 
 class CompanyPolicy(models.Model):

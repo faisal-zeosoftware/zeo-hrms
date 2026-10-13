@@ -665,3 +665,101 @@ class ESSResetPassword(APIView):
             {"message": "Password reset successful"},
             status=status.HTTP_200_OK
         )
+
+
+from .models import company   # v1.22.2
+
+
+class MyCompaniesView(APIView):
+    """v1.22.2 – the companies the signed-in user may open, for the company list after login (light: no notifications).
+
+    GET /users/api/my-companies/ → {user, can_create, companies: [{id, name, schema_name, country, city, industry,
+    state_label, logo, apps}]}. Only the user's own companies; nothing about other users.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django_tenants.utils import schema_context
+        u = request.user
+        labels = dict(company.INDUSTRY_CHOICES)
+        out = []
+        for c in u.tenants.exclude(schema_name='public').select_related('country').order_by('name'):
+            apps, neutral, origin = [], False, ''
+            try:
+                with schema_context(c.schema_name):
+                    from ZeoApps.services import APPS, is_active
+                    apps = [a[2] for a in APPS if is_active(a[0])]
+                    from ZeoApps.models import CompanyOption   # v1.22.3: test copies
+                    opts = {o.key: o.value or {} for o in CompanyOption.objects.filter(key__in=('neutralized', 'duplicated_from'))}
+                    neutral = bool(opts.get('neutralized', {}).get('on'))
+                    origin = opts.get('duplicated_from', {}).get('name', '')
+            except Exception:
+                apps = apps or []
+            logo = ''
+            try:
+                logo = request.build_absolute_uri(c.logo.url) if c.logo else ''
+            except Exception:
+                logo = ''
+            out.append({'id': c.id, 'name': c.name, 'schema_name': c.schema_name,
+                        'country': getattr(c.country, 'country_name', '') or '', 'city': c.city or '',
+                        'industry': labels.get(c.industry_type or '', ''),
+                        'state_label': c.country.get_state_label() if c.country_id and hasattr(c.country, 'get_state_label') else '',
+                        'logo': logo, 'apps': apps, 'neutralized': neutral, 'copy_of': origin})
+        res = {'user': {'id': u.pk, 'username': u.username, 'email': u.email, 'name': ' '.join(x for x in [u.first_name, u.last_name] if x) if hasattr(u, 'first_name') else ''},
+               'can_create': bool(u.is_superuser), 'companies': out}
+        try:   # v1.23.0 ZEO Cloud: companies grouped by account, the user's role in each, notices, console link
+            from ZeoCloud.views import my_companies_extra
+            my_companies_extra(request, res)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('cloud company list')
+        return Response(res)
+
+
+def _cloud_owner(u, comp):
+    try:
+        from ZeoCloud.services import cloud_on
+        return bool(cloud_on() and comp is not None and getattr(getattr(comp, 'cloud', None), 'account', None) and comp.cloud.account.owner_id == u.pk)
+    except Exception:
+        return False
+
+
+class DuplicateCompanyView(APIView):
+    """v1.22.3 – POST /users/api/my-companies/<id>/duplicate/ {name, neutralize} → {job, schema}
+    Copies the company with all its data (like Odoo's Duplicate database). Administrators only."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        u = request.user
+        src = u.tenants.exclude(schema_name='public').filter(pk=pk).first()
+        try:   # v1.23.0 ZEO Cloud: the account owner duplicates within the plan; the copy joins the same account
+            from ZeoCloud.views import duplicate_check
+            refused = duplicate_check(u, src)
+        except Exception:
+            refused = None
+        if refused is not None:
+            return refused
+        if not u.is_superuser and not getattr(request, '_cloud_owner_ok', False) and not _cloud_owner(u, src):
+            return Response({'detail': 'Only an administrator can duplicate a company.'}, status=403)
+        if src is None:
+            return Response({'detail': 'Company not found.'}, status=404)
+        name = ' '.join(str(request.data.get('name') or '').split())[:100]
+        if len(name) < 2:
+            return Response({'detail': 'Enter a name for the copy.', 'name': ['Enter a name for the copy.']}, status=400)
+        if company.objects.filter(name__iexact=name).exists():
+            return Response({'detail': 'A company with this name exists already.', 'name': ['A company with this name exists already.']}, status=400)
+        from ZeoApps.duplicate import start
+        job, schema = start(src, name, bool(request.data.get('neutralize', True)), u)
+        return Response({'job': job, 'schema': schema}, status=202)
+
+
+class DuplicateStatusView(APIView):
+    """v1.22.3 – GET /users/api/my-companies/duplicate/<job>/ → {state: running|done|failed, step, step_no, steps, …}"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, job):
+        from ZeoApps.duplicate import status
+        s = status(job)
+        if not s or s.get('by') != request.user.pk:
+            return Response({'detail': 'Not found.'}, status=404)
+        return Response(s)

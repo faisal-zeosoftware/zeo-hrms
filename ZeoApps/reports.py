@@ -27,7 +27,10 @@ def app_of(key):
     return next((a for p, a in PREFIX_APP.items() if key.startswith(p)), None)
 
 
-def hidden_keys(keys):
+PAYROLL_EXTRA = {'final-settlements', 'leave-encashment'}   # v1.23.0 payroll reports outside the Payroll section
+
+
+def hidden_keys(keys, specs=None):
     """Report keys of apps that are not active in the company."""
     try:
         from .services import is_active
@@ -37,6 +40,8 @@ def hidden_keys(keys):
     out = set()
     for k in keys:
         a = app_of(k) or 'hrms'   # v1.22.0: reports without an app prefix are HRMS reports
+        if a == 'hrms' and (k in PAYROLL_EXTRA or (specs and len(specs.get(k) or ()) > 1 and specs[k][1] == 'Payroll')):
+            a = 'payroll'   # v1.23.0
         if a not in state:
             try:
                 state[a] = is_active(a)

@@ -4,7 +4,8 @@ Every app works on its own. When two apps are active in the same company their l
 (HSE and the kit apps check that the other app is active); deactivating an app hides it and switches its links off,
 its data is kept.
 
-    hrms        HRMS (people, time, pay, assets, talent)              state: ZeoApps.AppState
+    hrms        HR (people, time, leave, documents, self service)    state: ZeoApps.AppState  – free with any app (v1.23.0)
+    payroll     Payroll (salaries, payslips, WPS, gratuity)          state: ZeoApps.AppState  – v1.23.0; no row = as HR
     projects    Projects (support tickets, AMC, delivery)             state: ZeoApps.AppState
     crm         CRM (contacts, pipelines, opportunities)              state: ZeoCRM.CRMSettings (app kit)
     property    Property (buildings, units, leases, sales, portals)   state: ZeoProperty.PropertySettings (app kit)
@@ -23,7 +24,9 @@ log = logging.getLogger(__name__)
 
 # key, Django app label, title, icon, what it is for, kind, launcher landing page
 APPS = [
-    ('hrms', 'EmpManagement', 'HRMS', 'groups', 'People, time and attendance, leave, payroll, assets and talent', 'core', '/main-sidebar/home'),
+    ('hrms', 'EmpManagement', 'HR', 'groups', 'People, leave, attendance, documents, letters, self service, expenses, assets and talent', 'core', '/main-sidebar/home'),
+    # v1.23.0: Payroll is its own app; with HR it is the same menu as ZEO HRMS before
+    ('payroll', 'PayrollManagement', 'Payroll', 'payments', 'Salaries, payslips, WPS, gratuity, loans and final settlement', 'core', '/main-sidebar/salary-options/pay-roll'),
     ('projects', 'ZeoProjects', 'Projects', 'account_tree', 'Support tickets with SLA, customers and AMC contracts, project delivery', 'core', '/main-sidebar/zeo-projects/dashboard'),
     ('crm', 'ZeoCRM', 'CRM', 'handshake', 'Contacts, pipelines, opportunities, viewings, offers and listings', 'kit', '/main-sidebar/zeo-crm/home'),
     ('property', 'ZeoProperty', 'Property', 'apartment', 'Buildings, units, owners, leases, sales, billing, cheques and portals', 'kit', '/main-sidebar/zeo-property/home'),
@@ -31,6 +34,7 @@ APPS = [
     ('hse', 'ZeoHSE', 'HSE', 'health_and_safety', 'Risk, permits to work, incidents, inspections, audits and corrective actions', 'hse', '/main-sidebar/zeo-hse/home'),
 ]
 KEYS = [a[0] for a in APPS]
+CORE = ('hrms', 'projects', 'payroll')   # state in ZeoApps.AppState
 BY_KEY = {a[0]: a for a in APPS}
 BY_LABEL = {a[1]: a[0] for a in APPS}
 
@@ -58,12 +62,28 @@ def installed(key):
     label = BY_KEY[key][1]
     if not djapps.is_installed(label) and label not in {c.label for c in djapps.get_app_configs()}:
         return False
-    if key in ('hrms', 'projects'):
+    if key in CORE:
         return True
     try:
-        return model_of(key)._meta.db_table.lower() in {t.lower() for t in connection.introspection.table_names()}
+        return _has_table(model_of(key)._meta.db_table)
     except Exception:
         return False
+
+
+_TABLES = set()   # (schema, table) seen to exist – tables are never dropped while the process runs
+
+
+def _has_table(table):
+    """v1.23.0: one cheap lookup instead of listing every table of the schema (was 36 ms per call)."""
+    k = (getattr(connection, 'schema_name', 'public'), table.lower())
+    if k in _TABLES:
+        return True
+    with connection.cursor() as c:
+        c.execute('SELECT 1 FROM pg_tables WHERE schemaname = %s AND lower(tablename) = %s', [k[0], k[1]])
+        ok = c.fetchone() is not None
+    if ok:
+        _TABLES.add(k)
+    return ok
 
 
 def kit(key):
@@ -92,8 +112,10 @@ def core_state(key):
 def is_active(key):
     """Is the app active in the current company? (HRMS / Projects: yes unless switched off.)"""
     try:
-        if key in ('hrms', 'projects'):
+        if key in CORE:
             s = core_state(key)
+            if s is None and key == 'payroll':   # v1.23.0: companies from before the split – Payroll as HR
+                return is_active('hrms')
             return True if s is None else s.active
         if not installed(key):
             return False
@@ -131,7 +153,7 @@ def state(key):
     out.update(industries=[{'code': c, 'label': l} for c, l in inds], suggested=sug, suggested_label=labels.get(sug, sug))
     out['active'] = is_active(key)
     s = None
-    if key in ('hrms', 'projects'):
+    if key in CORE:
         s = core_state(key)
     elif key == 'hse':
         from ZeoHSE.models import HSESettings
@@ -169,8 +191,10 @@ def active_keys():
 
 # ------------------------------------------------------------------ links between apps (on when both apps are active)
 LINKS_WITH = {
-    'hrms': [('projects', 'Employees are project team members; timesheets, project cost and profitability come from salaries.'),
+    'hrms': [('payroll', 'Unpaid leave becomes a deduction, attendance gives overtime and absence, leave encashment and final settlement go to payroll, expenses are paid in payroll, payslips in self service.'),
+             ('projects', 'Employees are project team members; timesheets, project cost and profitability come from salaries.'),
              ('hse', 'Training certificates, attendance hours, sick leave, assets, shift roster, muster list and HSE induction for new joiners.')],
+    'payroll': [('hrms', 'Leave, attendance, encashment, exits and expenses from HR; payslips and salary certificate in self service.')],
     'projects': [('hrms', 'Team members, timesheets and employee cost come from HRMS.'),
                  ('hse', 'A site belongs to a project; each project shows an HSE tab; serious incidents add a project issue; settled claims add a project cost.')],
     'hse': [('hrms', 'Training, attendance hours (TRIR / LTIFR), lost days from sick leave, equipment from assets, permit crew roster, muster list.'),
@@ -231,7 +255,7 @@ class AppsError(Exception):
 def previous_industry(key):
     """The industry an app had when it was switched off ('' if it was never activated)."""
     try:
-        if key in ('hrms', 'projects'):
+        if key in CORE:
             r = core_state(key)
             return (r.industry or '') if r is not None and r.activated_at else ''
         if key == 'hse':
@@ -250,6 +274,7 @@ def activate(key, industry=None, user=None):
         raise AppsError('Unknown app.')
     if not installed(key):
         raise AppsError(f'{BY_KEY[key][2]} is not installed on this server.')
+    _cloud_check(key)
     inds, sug = industries_of(key)
     ind = industry or previous_industry(key) or sug
     if ind not in dict(inds):
@@ -257,7 +282,7 @@ def activate(key, industry=None, user=None):
     source = 'company' if ind == sug else 'chosen'
     added = {}
     with transaction.atomic():
-        if key in ('hrms', 'projects'):
+        if key in CORE:
             from .models import AppState
             s = AppState.objects.filter(app=key).first() or AppState(app=key)
             s.active, s.industry, s.industry_source = True, ind, source
@@ -303,6 +328,11 @@ def activate(key, industry=None, user=None):
         make_roles(key)
     except Exception:
         log.exception('role groups for %s', key)
+    if key != 'hrms' and not is_active('hrms'):   # v1.23.0: HR comes free with any app
+        try:
+            activate('hrms', None, user)
+        except Exception:
+            log.exception('HR with %s', key)
     _forget()
     return added
 
@@ -314,8 +344,10 @@ def deactivate(key, user=None):
     others = [k for k in KEYS if k != key and is_active(k)]
     if not others:
         raise AppsError('At least one app must stay active.')
+    if key == 'hrms':   # v1.23.0: HR is needed by every other app (free with any app)
+        raise AppsError('HR cannot be switched off while another app is active – it comes with every app.')
     with transaction.atomic():
-        if key in ('hrms', 'projects'):
+        if key in CORE:
             from .models import AppState
             s = AppState.objects.filter(app=key).first() or AppState(app=key)
             if s.pk is None:
@@ -338,7 +370,7 @@ def deactivate(key, user=None):
 def set_core_default(keys, industry=''):
     """New company: HRMS / Projects are active only when chosen (rows written so the choice is explicit)."""
     from .models import AppState
-    for k in ('hrms', 'projects'):
+    for k in CORE:
         s = AppState.objects.filter(app=k).first() or AppState(app=k)
         s.active = k in keys
         s.industry, s.industry_source = industry or '', 'company'
@@ -352,6 +384,8 @@ def setup_new_company(tenant, keys, user=None):
     HSE activated with the industry that matches the company industry type (it can be changed later in Settings → Apps)."""
     from django_tenants.utils import schema_context
     keys = [k for k in (keys or []) if k in BY_KEY] or ['hrms']
+    if 'hrms' not in keys:   # v1.23.0: HR comes with any app
+        keys = ['hrms'] + keys
     done, failed = [], {}
     with schema_context(tenant.schema_name):
         set_core_default(keys, getattr(tenant, 'industry_type', '') or '')
@@ -378,3 +412,21 @@ def _forget():
         forget_tables()
     except Exception:
         pass
+
+
+def _cloud_check(key):
+    """v1.23.0 ZEO Cloud: an app is switched on only if the company's account has a free licence place for it."""
+    try:
+        from django.conf import settings
+        if not getattr(settings, 'ZEO_CLOUD', False):
+            return
+        from ZeoCloud.services import account_of_schema, can_activate
+        acc = account_of_schema(connection.schema_name)
+        if acc is None:
+            return
+        ok, msg = can_activate(acc, key, connection.schema_name)
+    except Exception:
+        log.exception('cloud licence check')
+        return
+    if not ok:
+        raise AppsError(msg, 409)

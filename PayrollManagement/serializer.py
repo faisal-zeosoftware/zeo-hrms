@@ -188,6 +188,17 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         fields = '__all__'
  
     def to_representation(self, instance):
+        # v1.23.0 (Phase 0): a run nested in many payslips is built once per request
+        ctx = self.context if isinstance(self.context, dict) else None
+        cache = ctx.setdefault('_payroll_runs', {}) if ctx is not None and self.parent is not None else None
+        if cache is not None and instance.pk in cache:
+            return dict(cache[instance.pk])
+        rep = self._rep(instance)
+        if cache is not None:
+            cache[instance.pk] = rep
+        return rep
+
+    def _rep(self, instance):
         rep = super().to_representation(instance)
  
         rep['branch'] = [

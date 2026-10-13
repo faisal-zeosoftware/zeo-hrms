@@ -219,8 +219,8 @@ MIDDLEWARE = [
 ]
 
 # v1.23.0 ZEO Cloud – accounts, plans and licences (off for an own installation: no limits, nothing changes)
-ZEO_CLOUD = env_bool('ZEO_CLOUD', False)
-ZEO_CLOUD_ADMIN_EMAIL = env('ZEO_CLOUD_ADMIN_EMAIL', '')   # upgrade requests from owners are e-mailed here
+ZEO_CLOUD = env_bool('ZEO_CLOUD', True)
+ZEO_CLOUD_ADMIN_EMAIL = env('ZEO_CLOUD_ADMIN_EMAIL', 'aparnaudhayan03@gmail.com')   # upgrade requests from owners are e-mailed here
 # v1.24.0 own databases: where pg_dump / pg_restore / psql are (empty = /usr/lib/postgresql/16/bin or the path), and the
 # seconds a move waits so every server process sees the company closed / in its new place
 ZEO_PG_BIN = env('ZEO_PG_BIN', '')
@@ -436,9 +436,10 @@ CELERY_IMPORTS = ('EmpManagement.tasks',)
 EMAIL_HOST = env('ZEO_EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(env('ZEO_EMAIL_PORT', '587'))
 EMAIL_USE_TLS = env_bool('ZEO_EMAIL_USE_TLS', True)
-EMAIL_HOST_USER = env('ZEO_EMAIL_USER')
-EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD')
-DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
+EMAIL_HOST_USER = env('ZEO_EMAIL_USER','aparnaudhayan03@gmail.com')
+EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD','tupg ltue yjzw vvaw')
+DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'aparnaudhayan03@gmail.com')
+
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
 # v1.22.3: every e-mail goes through the guard – a neutralized company (test copy) sends none

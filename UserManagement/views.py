@@ -81,25 +81,61 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
         permissions = UserTenantPermissions.objects.filter(profile_id=user.id)
         serializer = PermissionSerializer(permissions, many=True)
         return Response(serializer.data)
+    # @action(detail=True, methods=['get'])
+    # def tenants(self, request, pk=None):
+    #     user_profile = self.get_object()
+    #     tenants = user_profile.tenants.all()
+
+    #     # v1.28.1: this is the top bar's company / branch menu – it wants the notification counts (the plain
+    #     # /users/api/user/<id>/ no longer computes them unless ?notifications=1)
+    #     class _Q(dict):
+    #         def get(self, k, d=None): return '1' if k == 'notifications' else super().get(k, d)
+    #     class _R:
+    #         query_params = _Q()
+    #         user = request.user
+    #     serializer = UserAllocatedCompanySerializer(
+    #         tenants.select_related('country', 'currency'),
+    #         many=True,
+    #         context={"user": user_profile, "request": _R()}
+    #     )
+
+    #     return Response(serializer.data)
+    
+    
     @action(detail=True, methods=['get'])
     def tenants(self, request, pk=None):
         user_profile = self.get_object()
         tenants = user_profile.tenants.all()
 
-        # v1.28.1: this is the top bar's company / branch menu – it wants the notification counts (the plain
-        # /users/api/user/<id>/ no longer computes them unless ?notifications=1)
+        # Preserve the actual request so image/file fields can build URLs.
+        original_query_params = request.query_params
+
         class _Q(dict):
-            def get(self, k, d=None): return '1' if k == 'notifications' else super().get(k, d)
+            def get(self, k, d=None):
+                if k == 'notifications':
+                    return '1'
+                return original_query_params.get(k, d)
+
         class _R:
-            query_params = _Q()
-            user = request.user
+            def __init__(self, request):
+                self._request = request
+                self.query_params = _Q()
+                self.user = request.user
+
+            def __getattr__(self, name):
+                return getattr(self._request, name)
+
         serializer = UserAllocatedCompanySerializer(
             tenants.select_related('country', 'currency'),
             many=True,
-            context={"user": user_profile, "request": _R()}
+            context={
+                "user": user_profile,
+                "request": _R(request),
+            }
         )
-
         return Response(serializer.data)
+
+    
     # @action(detail=True, methods=['get'])
     # def tenants(self, request, pk=None):
     #     user_profile = self.get_object()

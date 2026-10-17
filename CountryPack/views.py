@@ -156,4 +156,22 @@ def _note(request, row, data):
 
 class ApplyDefaultsView(_Admin):
     def post(self, request):
-        return Response(S.apply_defaults(request.user))
+        # v1.26.0: the pack picked on the screen is saved first, so "Apply country defaults" uses it (before, the
+        # saved pack was used and the user had to press Save first).
+        data = request.data if isinstance(request.data, dict) else {}
+        if 'pack_override' in data:
+            v = data.get('pack_override')
+            v = (str(v).strip().upper() if v not in (None, '') else '')
+            if v and v not in PACKS:
+                return Response({'detail': tr('Unknown pack "{0}". Use one of {1} or leave it empty for the company country.', v, ", ".join(PACKS)),
+                                 'field': 'pack_override'}, status=status.HTTP_400_BAD_REQUEST)
+            row = CountryPackSettings.get()
+            if (row.pack_override or '') != v:
+                row.pack_override = v
+                row.updated_by_id = request.user.pk
+                row.save()
+                S.clear_cache()
+                _note(request, row, {'pack_override': v})
+        res = S.apply_defaults(request.user)
+        res['settings'] = settings_payload()
+        return Response(res)

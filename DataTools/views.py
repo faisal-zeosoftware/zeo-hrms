@@ -27,7 +27,9 @@ from Translations.i18n import tr  # v1.15.0 language packs: messages in the user
 MAX_ROWS = 5000
 NATURAL_KEYS = ('emp_code', 'branch_code', 'dept_code', 'desgntn_code', 'ctgry_code', 'code', 'username', 'email',
                 'branch_name', 'dept_name', 'desgntn_job_title', 'ctgry_title', 'name', 'title', 'type_name',
-                'loan_type', 'schedule_name', 'calendar_title', 'calendar_code', 'serial_number', 'document_number')
+                'loan_type', 'schedule_name', 'calendar_title', 'calendar_code', 'serial_number', 'document_number',
+                # v1.26.0: masters that only had their id (country / state / nationality / religion / currency by name)
+                'country_name', 'country_code', 'state_name', 'state_code', 'N_name', 'religion', 'currency_code', 'currency_name')
 
 
 def _view_for(endpoint):
@@ -134,8 +136,18 @@ def _resolve_link(model, raw):
         parts = s.split()
         if len(parts) >= 2:
             q |= Q(emp_first_name__iexact=parts[0], emp_last_name__iexact=' '.join(parts[1:]))
+    if model._meta.model_name == 'cntry_mstr':   # v1.26.0: "UAE", "ARE", "971", "United Arab Emirates" -> the same row
+        try:
+            from CountryPack.packs import iso2
+            iso = iso2(s, s)
+            if iso:
+                q |= Q(country_code__iexact=iso)
+        except Exception:
+            pass
     hits = list(model._default_manager.filter(q).values_list('pk', flat=True)[:2])
     if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1 and model._meta.model_name == 'cntry_mstr':
         return hits[0]
     if s.isdigit() and int(s) in hits:
         return int(s)
@@ -358,6 +370,22 @@ class _check_access:
         return bool(model) and f'add_{model._meta.model_name}' in c.codes
 
 
+# v1.28.1: template columns per list that differ from the serializer – the company import had Schema name, Employer unique
+# ID and Bank routing code (not asked when a company is created) and no way to say which apps the company uses.
+TEMPLATE_OVERRIDES = {
+    '/users/api/company/': {
+        'hide': ['schema_name', 'employer_unique_id', 'bank_routing_code', 'paid_until', 'logo', 'cloud', 'db_alias', 'timezone'],
+        'extra': [{'key': 'apps', 'label': 'Apps for this company', 'required': False, 'many': True, 'type': 'text',
+                   'help': 'Comma-separated app keys: hrms, payroll, projects, crm, property, maintenance, hse (default hrms, payroll, projects)'}],
+        'passthrough': ['apps'],
+    },
+}
+
+
+def _overrides(path):
+    return TEMPLATE_OVERRIDES.get(path, {})
+
+
 class FieldsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -369,7 +397,9 @@ class FieldsView(APIView):
         if not _check_access.can_add(request, cls):
             return Response({'detail': tr('You do not have permission to add these records.')}, status=status.HTTP_403_FORBIDDEN)
         from AccessControl.access import view_model
-        return Response({'endpoint': path, 'fields': writable_fields(cls, request) + extra_fields(view_model(cls()))})
+        ov = _overrides(path)
+        fields = [f for f in writable_fields(cls, request) if f['key'] not in set(ov.get('hide', []))] + list(ov.get('extra', []))
+        return Response({'endpoint': path, 'fields': fields + extra_fields(view_model(cls()))})
 
 
 class ImportView(APIView):
@@ -390,16 +420,39 @@ class ImportView(APIView):
             return Response({'detail': tr('You do not have permission to add these records.')}, status=status.HTTP_403_FORBIDDEN)
         schema = request.query_params.get('schema', '')
         factory = APIRequestFactory()
-        results, seen = [], {}
+        seen = {}
         from .duplicates import rules_for
         from AccessControl.access import view_model
         model = view_model(cls())
         dup_fields = [f for f, _ in (rules_for(model) or [])]
         ok = 0
+        # v1.26.0: no field-by-field history per imported row (≈3 extra queries a row); one summary note at the end
+        from Chatter.tracking import paused
+        _pause = paused()
+        _pause.__enter__()
+        try:
+            res = self._rows(request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen)
+        finally:
+            _pause.__exit__(None, None, None)
+        if not dry and res['ok']:
+            try:
+                from Chatter.models import Message
+                from Chatter.tracking import model_key
+                Message.objects.create(model=model_key(model), object_id='import', author=request.user,
+                                       body=f"Imported {res['ok']} of {res['total']} rows from a file.")
+            except Exception:
+                pass
+        return Response(res)
+
+    def _rows(self, request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen):
+        results, ok = [], 0
         for i, row in enumerate(rows, start=1):
             ser = _serializer(cls, request)
             base, xvals, ecf = split_extras(row if isinstance(row, dict) else {})
             data, problems = convert_row(ser, base)
+            for k in _overrides(path).get('passthrough', []):   # v1.28.1: columns the create view reads itself (company apps)
+                if base.get(k) not in (None, ''):
+                    data[k] = str(base[k]).strip()
             problems += check_extras(model, xvals, ecf)
             for f in dup_fields:  # same value twice in the file
                 v = str(data.get(f, '')).strip().lower()
@@ -437,7 +490,7 @@ class ImportView(APIView):
                 results.append({'row': i, 'ok': False, 'errors': _flatten(getattr(rb.resp, 'data', None) or 'Rejected')})
             except Exception as exc:  # keep going with the next row
                 results.append({'row': i, 'ok': False, 'errors': [str(exc)[:200]]})
-        return Response({'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': results})
+        return {'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': results}
 
 
 class _Rollback(Exception):

@@ -1098,6 +1098,8 @@ class OrgChartView(APIView):
         out = []
         for e in emps:
             mgr = by_user.get(e.emp_reporting_manager_id) if getattr(e, 'emp_reporting_manager_id', None) else None
+            if mgr is None and getattr(e, 'emp_reports_to_id', None):   # v1.26.0: Reports to (employee), e.g. from the bulk upload
+                mgr = e.emp_reports_to_id
             photo = None
             try:
                 photo = e.emp_profile_pic.url if e.emp_profile_pic else None

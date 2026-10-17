@@ -59,7 +59,7 @@ def env_list(name, default=()):
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-bu8sj-dd80ca20luk_(bo_tho55@wtmlpy^9k9gun$!f8&z4)&'
+SECRET_KEY = env('ZEO_SECRET_KEY')
 if not SECRET_KEY:
     raise RuntimeError('Set ZEO_SECRET_KEY in the environment or in .env (see .env.example).')
 
@@ -67,7 +67,7 @@ if not SECRET_KEY:
 DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1','80.65.208.178'])
+ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
 
 SHARED_APPS = [
     'django_tenants',
@@ -93,6 +93,9 @@ SHARED_APPS = [
     'corsheaders',
     'LanguagePack',      # v1.15.0 language packs (public schema only)
     'ZeoCloud',          # v1.23.0 ZEO Cloud: accounts, plans, app licences, the registry (public schema only)
+    'ZeoMobile',         # v1.25.0 mobile app: phones (fingerprint unlock, push notifications) – public schema only
+    'ZeoGroup',          # v1.27.0 group features across a group's companies (Premium, Enterprise) – public schema only
+    'ZeoLicence',        # v1.28.0 Enterprise licence files, Enterprise requests – public schema only
 ]
 
 TENANT_APPS = [
@@ -131,6 +134,7 @@ TENANT_APPS = [
     'AISettings',        # v1.16.0 AI settings (built-in free by default, optional external) + document reader
     'SavedViews',        # v1.16.0 saved list views
     'PayrollPlus',       # v1.18.0 payroll controls, leave-encashment approval steps, final settlement
+    'ZeoFlow',           # v1.29.0 workflow automation: rules, triggers, conditions, actions, approvals, scheduled actions
     'django.contrib.admin',
 
 ]
@@ -178,12 +182,14 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200',"http://80.65.208.178:4200"])  # the address(es) the Angular app is opened from
-
+CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
+# v1.25.0 the ZEO mobile app (Android: https://localhost, iPhone: capacitor://localhost) – always allowed
+CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [o for o in ('https://localhost', 'capacitor://localhost', 'http://localhost') if o not in CORS_ALLOWED_ORIGINS]
 
 FORMAT_MODULE_PATH = ['LanguagePack.formats']   # v1.15.0
 CORS_ALLOW_HEADERS = [
     'x-language',        # v1.15.0
+    'x-zeo-app',         # v1.25.0 mobile app version
     'content-type',
     'Authorization',  # Add this if you're using authorization headers
 ]
@@ -214,17 +220,39 @@ MIDDLEWARE = [
     'Chatter.tracking.CurrentRequestMiddleware',  # change history: who made each change
     'ZeoProjects.middleware.PortalGuardMiddleware',  # v1.20.0 customer portal users may only use the portal API
     'ZeoProperty.middleware.PortalGuardMiddleware',  # v1.21.0 tenant / owner / buyer portal users may only use the portal API
-    'ZeoCloud.middleware.CloudMiddleware',  # v1.23.0 ZEO Cloud: company users only, read-only when suspended, app licences
+    'ZeoCloud.middleware.CloudMiddleware',
+    'ZeoLicence.middleware.LicenceMiddleware',  # v1.28.0 Enterprise licence: read-only when it ended, licensed apps (only with ZEO_EDITION=enterprise)  # v1.23.0 ZEO Cloud: company users only, read-only when suspended, app licences
     'ZeoApps.middleware.HRMSActiveMiddleware',  # v1.22.0 a switched-off HRMS answers 409
 ]
 
 # v1.23.0 ZEO Cloud – accounts, plans and licences (off for an own installation: no limits, nothing changes)
-ZEO_CLOUD = env_bool('ZEO_CLOUD', True)
-ZEO_CLOUD_ADMIN_EMAIL = env('ZEO_CLOUD_ADMIN_EMAIL', 'aparnaudhayan03@gmail.com')   # upgrade requests from owners are e-mailed here
+ZEO_CLOUD = env_bool('ZEO_CLOUD', False)
+ZEO_CLOUD_ADMIN_EMAIL = env('ZEO_CLOUD_ADMIN_EMAIL', '')   # upgrade and Enterprise requests are e-mailed here
+# v1.28.0 Enterprise licence (README-UPDATE section 40)
+ZEO_EDITION = env('ZEO_EDITION', '')                                   # 'enterprise' on a client's own Enterprise server: licence checks on
+ZEO_LICENCE_PRIVATE_KEY = env('ZEO_LICENCE_PRIVATE_KEY', '')           # Adept's issuing server only: path of the private key (never in a package)
+ZEO_LICENCE_PUBLIC_KEYS = env('ZEO_LICENCE_PUBLIC_KEYS', '')           # optional extra public keys id:key,id:key
+ZEO_LICENCE_ACCEPT_TEST = env_bool('ZEO_LICENCE_ACCEPT_TEST', False)   # Adept's test servers only
+ZEO_LICENCE_GRACE_DAYS = int(env('ZEO_LICENCE_GRACE_DAYS', '15'))
+ZEO_LICENCE_EVALUATION_DAYS = int(env('ZEO_LICENCE_EVALUATION_DAYS', '30'))
+ZEO_LICENCE_CONTACT = env('ZEO_LICENCE_CONTACT', '')                   # e-mail shown on the licence screen for renewals
+# v1.28.0 Odoo link for ZEO Cloud invoices and online payment (Adept's cloud server; the API key only in .env)
+ZEO_ODOO_URL = env('ZEO_ODOO_URL', '')
+ZEO_ODOO_DB = env('ZEO_ODOO_DB', '')
+ZEO_ODOO_LOGIN = env('ZEO_ODOO_LOGIN', '')
+ZEO_ODOO_API_KEY = env('ZEO_ODOO_API_KEY', '')
+ZEO_ODOO_PRODUCT_ID = env('ZEO_ODOO_PRODUCT_ID', '')
+ZEO_ODOO_TAX_ID = env('ZEO_ODOO_TAX_ID', '')
+ZEO_ODOO_JOURNAL_ID = env('ZEO_ODOO_JOURNAL_ID', '')
 # v1.24.0 own databases: where pg_dump / pg_restore / psql are (empty = /usr/lib/postgresql/16/bin or the path), and the
 # seconds a move waits so every server process sees the company closed / in its new place
 ZEO_PG_BIN = env('ZEO_PG_BIN', '')
 ZEO_MOVE_SETTLE = int(env('ZEO_MOVE_SETTLE', '12'))
+# v1.25.0 mobile app: Firebase service-account JSON file for push notifications (empty = no push), the server name shown
+# in the app, and the days fingerprint sign-in keeps working without use
+ZEO_FCM_CREDENTIALS = env('ZEO_FCM_CREDENTIALS', '')
+ZEO_SERVER_NAME = env('ZEO_SERVER_NAME', '')
+ZEO_MOBILE_IDLE_DAYS = int(env('ZEO_MOBILE_IDLE_DAYS', '90'))
 
 
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
@@ -272,14 +300,13 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',
-        'NAME': 'zeo', 
-        'USER': 'zeo_user', 
-        'PASSWORD': '1234',
-        'HOST': '127.0.0.1', 
-        'PORT': '5432',
+        'NAME': env('ZEO_DB_NAME', 'zeo'),
+        'USER': env('ZEO_DB_USER', 'zeo_user'),
+        'PASSWORD': env('ZEO_DB_PASSWORD'),
+        'HOST': env('ZEO_DB_HOST', '127.0.0.1'),
+        'PORT': env('ZEO_DB_PORT', '5432'),
     }
 }
-
 # v1.24.0 ZEO Cloud: a company can live in the own database of its account ('control' = this main database)
 from ZeoCloud.dbsettings import with_cloud_databases   # noqa: E402
 DATABASES = with_cloud_databases(DATABASES)
@@ -382,9 +409,11 @@ CELERY_BEAT_SCHEDULE = {
     'zeoprojects-mailbox': {'task': 'ZeoProjects.tasks.check_mailboxes', 'schedule': crontab(minute='*/5')},
     'zeoprojects-daily': {'task': 'ZeoProjects.tasks.daily', 'schedule': crontab(hour=7, minute=35)},
     'zeohse-sweep': {'task': 'ZeoHSE.tasks.sweep', 'schedule': crontab(minute='*/15')},          # v1.21.0 HSE permits
+    'zeoflow-run-due': {'task': 'ZeoFlow.tasks.run_due', 'schedule': crontab(minute='*/15')},   # v1.29.0 workflow automation scheduler
     'zeohse-daily': {'task': 'ZeoHSE.tasks.daily', 'schedule': crontab(hour=7, minute=40)},        # v1.21.0 HSE daily jobs
     'zeoapps-daily': {'task': 'ZeoApps.tasks.daily', 'schedule': crontab(hour=7, minute=45)},      # v1.21.0 CRM / Property / Maintenance daily jobs
     'zeocloud-daily': {'task': 'ZeoCloud.tasks.daily', 'schedule': crontab(hour=6, minute=50)},   # v1.23.0 ZEO Cloud reminders
+    'zeocloud-odoo-sync': {'task': 'ZeoCloud.tasks.odoo_sync', 'schedule': crontab(minute=17)},   # v1.28.0 invoices paid in Odoo
     'schedule-document-expiry-notifications-for-all-tenants': {
         'task': 'EmpManagement.tasks.send_document_expiry_notifications_for_all_tenants',
         'schedule': crontab(hour=12, minute=00) 
@@ -436,10 +465,9 @@ CELERY_IMPORTS = ('EmpManagement.tasks',)
 EMAIL_HOST = env('ZEO_EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(env('ZEO_EMAIL_PORT', '587'))
 EMAIL_USE_TLS = env_bool('ZEO_EMAIL_USE_TLS', True)
-EMAIL_HOST_USER = env('ZEO_EMAIL_USER','aparnaudhayan03@gmail.com')
-EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD','tupg ltue yjzw vvaw')
-DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'aparnaudhayan03@gmail.com')
-
+EMAIL_HOST_USER = env('ZEO_EMAIL_USER')
+EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD')
+DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
 # v1.22.3: every e-mail goes through the guard – a neutralized company (test copy) sends none

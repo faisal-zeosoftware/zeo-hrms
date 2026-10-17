@@ -9,3 +9,5 @@ class ZeoCloudConfig(AppConfig):
     def ready(self):
         from . import signals  # noqa: F401
         signals.connect()
+        from . import rights   # v1.26.0 per-company rights of invited logins
+        rights.install()

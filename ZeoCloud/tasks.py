@@ -50,3 +50,13 @@ def daily():
         return run_daily()
     except Exception:
         log.exception('ZEO Cloud daily')
+
+
+@shared_task
+def odoo_sync():
+    """v1.28.0 – hourly: payment state of unpaid invoices from Odoo (nothing when Odoo is not set up)."""
+    from .odoo import configured, sync_all
+    if not configured():
+        return 'odoo not set up'
+    n, errors = sync_all()
+    return f'{n} paid, {len(errors)} errors'

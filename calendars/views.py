@@ -297,7 +297,9 @@ class Applicableviewset(viewsets.ModelViewSet):
 
 
 class leave_balance_viewset(viewsets.ModelViewSet):
-    queryset = emp_leave_balance.objects.all()
+    # v1.26.0: employee and leave type in the same query (≈2 extra queries per row: 1,315 rows took ~10 s), active employees,
+    # ordered by employee code
+    queryset = emp_leave_balance.objects.select_related('employee', 'leave_type').filter(employee__is_active=True).order_by('employee__emp_code', 'leave_type__name')
     serializer_class = EmployeeLeaveBalanceSerializer
     # permission_classes = [EmpLeaveBalancePermission] 
 
@@ -1664,7 +1666,7 @@ class ImportAttendanceViewSet(viewsets.ModelViewSet):
 
             # ---------- CSV ----------
             elif filename.endswith('.csv'):
-                file_data = upload_file.read().decode('utf-8')
+                file_data = upload_file.read().decode('utf-8-sig')
                 dataset.load(file_data, format='csv')
 
             else:
@@ -4765,7 +4767,7 @@ class EmpBulkuploadOvertimeViewSet(viewsets.ModelViewSet):
             elif file_name.endswith('.csv'):
 
                 dataset = CSV().create_dataset(
-                    upload_file.read().decode('utf-8')
+                    upload_file.read().decode('utf-8-sig')
                 )
 
             else:

@@ -305,8 +305,57 @@ def read_rows(upload):
     return [{(k or '').strip().lower().replace(' ', '_'): v for k, v in r.items()} for r in rdr]
 
 
+_IN_KEYS = ('actual_in', 'in', 'time_in', 'check_in', 'in_time', 'clock_in', 'first_in', 'punch_in')
+_OUT_KEYS = ('actual_out', 'out', 'time_out', 'check_out', 'out_time', 'clock_out', 'last_out', 'punch_out')
+_CODE_KEYS = ('employee_code', 'emp_code', 'emp_id', 'employee_id', 'code', 'employee_no', 'staff_no')
+
+
+def expand_daily(rows):
+    """v1.26.0 – a daily sheet (one row per employee and day with in / out times, e.g. a device export or the
+    'Attendance_Daily' sheet) becomes punch rows (in + out). Punch files (employee_code, date, time, type) pass unchanged."""
+    out = []
+    for r in rows:
+        r = {str(k or '').strip().lower().replace(' ', '_').replace('(', '').replace(')', ''): v for k, v in r.items()}
+        code = next((r[k] for k in _CODE_KEYS if r.get(k) not in (None, '')), '')
+        if r.get('time') not in (None, '') or not any(r.get(k) not in (None, '') for k in _IN_KEYS + _OUT_KEYS):
+            r['employee_code'] = code
+            out.append(r)
+            continue
+        for keys, kind in ((_IN_KEYS, 'in'), (_OUT_KEYS, 'out')):
+            v = next((r[k] for k in keys if r.get(k) not in (None, '')), None)
+            if v in (None, ''):
+                continue
+            d = r.get('date')
+            if isinstance(v, datetime):
+                d, v = v.date(), v.strftime('%H:%M:%S')
+            elif isinstance(v, str) and len(v.strip()) > 8 and (' ' in v.strip() or 'T' in v):
+                try:
+                    dt = datetime.fromisoformat(v.strip().replace('T', ' ')[:19])
+                    d, v = dt.date(), dt.strftime('%H:%M:%S')
+                except ValueError:
+                    pass
+            out.append({'employee_code': code, 'date': d, 'time': v, 'type': kind})
+    return out
+
+
+def _flex_date(d):
+    if isinstance(d, datetime):
+        return d.date()
+    if hasattr(d, 'year'):
+        return d
+    s = str(d or '').strip()[:19]
+    for fmt in ('%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y', '%d %b %Y', '%d-%b-%Y'):
+        try:
+            return datetime.strptime(s if fmt != '%Y-%m-%d' else s[:10], fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(s)
+
+
 def import_punches(rows, commit=False, user_id=None, allowed_ids=None):
     from EmpManagement.models import emp_master
+    rows = expand_daily(rows)   # v1.26.0
+    emps = {c.upper(): e for c, e in ((x.emp_code, x) for x in emp_master.objects.all().only('id', 'emp_code', 'emp_branch_id'))}
     out, seen = [], set()
     kinds = {'in': 'in', 'clock in': 'in', 'out': 'out', 'clock out': 'out', 'break out': 'break_out', 'break in': 'break_in',
              'break_out': 'break_out', 'break_in': 'break_in', 'lunch out': 'lunch_out', 'lunch in': 'lunch_in',
@@ -316,16 +365,14 @@ def import_punches(rows, commit=False, user_id=None, allowed_ids=None):
         code = str(r.get('employee_code') or r.get('emp_code') or '').strip()
         res = {'row': i, 'employee_code': code, 'date': str(r.get('date') or '')[:10], 'time': str(r.get('time') or ''),
                'type': str(r.get('type') or '').strip().lower(), 'errors': [], 'status': 'ok'}
-        e = emp_master.objects.filter(emp_code__iexact=code).first() if code else None
+        e = emps.get(code.upper()) if code else None   # v1.26.0: one query for all employees
         if not e:
             res['errors'].append('Employee code not found.')
         elif allowed_ids is not None and e.id not in allowed_ids:
             res['errors'].append('This employee is not in your branches.')
         ts = None
         try:
-            d = r.get('date')
-            d = d.date() if isinstance(d, datetime) else d
-            d = d if hasattr(d, 'year') else datetime.strptime(str(d).strip()[:10], '%Y-%m-%d').date()
+            d = _flex_date(r.get('date'))   # v1.26.0: also dd/mm/yyyy and date-times
             t = r.get('time')
             if hasattr(t, 'hour'):
                 t = t.strftime('%H:%M:%S')
@@ -335,7 +382,7 @@ def import_punches(rows, commit=False, user_id=None, allowed_ids=None):
             if ts > E.now():
                 res['errors'].append('The time is in the future.')
         except (ValueError, TypeError):
-            res['errors'].append('Date must be YYYY-MM-DD and time HH:MM.')
+            res['errors'].append('Date must be YYYY-MM-DD or DD/MM/YYYY and time HH:MM.')
         kind = kinds.get(res['type'])
         if kind is None:
             res['errors'].append('Type must be in, out, break out, break in, lunch out, lunch in or empty.')
@@ -353,8 +400,28 @@ def import_punches(rows, commit=False, user_id=None, allowed_ids=None):
             touched.add((e.id, p.work_date))
             res['status'] = 'imported' if created else 'duplicate'
         out.append(res)
-    for emp_id, day in touched:
-        E.recompute_day(emp_id, day)
+    if len(touched) > 300:   # v1.26.0: a month for a whole company – recalculate the days in the background
+        import threading
+        from django.db import close_old_connections, connection as _c
+        schema, todo = _c.schema_name, sorted(touched)
+
+        def _bg():
+            close_old_connections()
+            try:
+                _c.set_schema(schema)
+                for emp_id, day in todo:
+                    try:
+                        E.recompute_day(emp_id, day)
+                    except Exception:
+                        log.exception('recompute %s %s', emp_id, day)
+            finally:
+                close_old_connections()
+        threading.Thread(target=_bg, daemon=True).start()
+        if out:
+            out[0]['note'] = f'{len(todo)} employee-days are being recalculated in the background.'
+    else:
+        for emp_id, day in touched:
+            E.recompute_day(emp_id, day)
     return out
 
 

@@ -19,6 +19,9 @@ urlpatterns = [
     path('api/my-companies/', MyCompaniesView.as_view(), name='my-companies'),   # v1.22.2 company list after login
     path('api/my-companies/<int:pk>/duplicate/', DuplicateCompanyView.as_view(), name='duplicate-company'),   # v1.22.3
     path('api/my-companies/duplicate/<str:job>/', DuplicateStatusView.as_view(), name='duplicate-company-status'),
+    path('api/company-jobs/<str:job>/', views.CompanyJobView.as_view(), name='company-job'),   # v1.26.0
+    path('api/invites/', views.InvitesView.as_view(), name='invites'),                          # v1.26.0
+    path('api/invites/<int:pk>/', views.InvitesView.as_view(), name='invite'),
     path('api/', include(router.urls)),
     path('api/user/<str:tenant_id>/', UserDetailView.as_view(), name='user-detail'),  # New path
     path("token/", CustomTokenObtainPairView.as_view(), name="token_obtain_pair"),

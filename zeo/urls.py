@@ -47,6 +47,7 @@ urlpatterns = [
     path('zeo-projects/', include('ZeoProjects.urls')),          # v1.20.0 Projects app
     path('zeo-apps/', include('ZeoApps.urls')),                  # v1.21.0 apps of the company (Settings → Apps)
     path('zeo-hse/', include('ZeoHSE.urls')),                    # v1.21.0 HSE
+    path('flow/', include('ZeoFlow.urls')),                       # v1.29.0 workflow automation
     path('zeo-crm/', include('ZeoCRM.urls')),                    # v1.21.0 CRM
     path('zeo-property/', include('ZeoProperty.urls')),          # v1.21.0 Property
     path('zeo-maintenance/', include('ZeoMaintenance.urls')),    # v1.21.0 Maintenance
@@ -58,6 +59,10 @@ urlpatterns = [
     path('views/', include('SavedViews.urls')),                  # v1.16.0
     path('payroll-plus/', include('PayrollPlus.urls')),         # v1.18.0
     path('cloud/', include('ZeoCloud.urls')),                  # v1.23.0 ZEO Cloud
+    path('group/', include('ZeoGroup.urls')),               # v1.27.0 group features (public)
+    path('licence/', include('ZeoLicence.urls')),           # v1.28.0 Enterprise licence (public)
+    path('mobile/', include('ZeoMobile.urls')),             # v1.25.0 mobile app (public)
+    path('mobile-co/', include('ZeoMobile.urls_company')),  # v1.25.0 mobile app (company data)
     
 
 

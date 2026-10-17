@@ -300,12 +300,6 @@
   ]
  },
  {
-  "text": "+ keyOf(english) :",
-  "where": [
-   "src/app/shared-ui/field-help.service.ts:191"
-  ]
- },
- {
   "text": "+ New asset",
   "where": [
    "src/app/asset-plus/asset-home.component.ts:23",
@@ -535,12 +529,6 @@
   "text": "0 = no maximum.",
   "where": [
    "src/app/attendance-plus/attendance-plus.config.ts:47"
-  ]
- },
- {
-  "text": "0 ? ('expired {0}' | t:(x.expiry | zdate)) : (x.days",
-  "where": [
-   "src/app/hr-modules/dashboards/ess-dashboard.component.html:156"
   ]
  },
  {
@@ -7470,7 +7458,8 @@
    "src/app/from-designer/from-designer.component.html:2661",
    "src/app/from-designer/from-designer.component.html:3163",
    "src/app/from-designer/from-designer.component.html:3600",
-   "src/app/login/signup.component.ts"
+   "src/app/login/signup.component.ts",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -9683,7 +9672,8 @@
    "src/app/asset-allocation/asset-allocation.component.html:321",
    "src/app/asset-approvel-level/asset-approvel-level.component.html:47",
    "src/app/asset-email-template/asset-email-template.component.html:33",
-   "src/app/asset-escalation/asset-escalation.component.html:45"
+   "src/app/asset-escalation/asset-escalation.component.html:45",
+   "src/app/login/mobile.component.ts"
   ],
   "more": 208
  },
@@ -10838,7 +10828,8 @@
   "where": [
    "src/app/hr-actions/employee-transfer.component.ts:158",
    "src/app/salary/salary.component.html:524",
-   "src/app/salary/salary.component.html:1011"
+   "src/app/salary/salary.component.html:1011",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -11836,7 +11827,8 @@
    "src/app/expense/expense.config.ts:21",
    "src/app/expense/expense.config.ts:32",
    "src/app/expense/expense.config.ts:103",
-   "src/app/expense/expense.config.ts:110"
+   "src/app/expense/expense.config.ts:110",
+   "src/app/login/mobile.component.ts"
   ],
   "more": 24
  },
@@ -12783,7 +12775,8 @@
    "src/app/employee-profile/z-emp-employment.component.ts:116",
    "src/app/expense/expense-reports.component.ts:165",
    "src/app/pay-roll/pay-roll.component.html:984",
-   "src/app/payslip-approval/payslip-approval.component.html:171"
+   "src/app/payslip-approval/payslip-approval.component.html:171",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -46193,7 +46186,8 @@
   "text": "Password",
   "where": [
    "src/app/login/login.component.html:80",
-   "src/app/user-creation/user-creation.component.html:95"
+   "src/app/user-creation/user-creation.component.html:95",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71186,7 +71180,8 @@
  {
   "text": "Sign in",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71198,19 +71193,22 @@
  {
   "text": "E-mail or employee code",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
   "text": "Hide password",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
   "text": "Show password",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71222,7 +71220,8 @@
  {
   "text": "Confirm it is you",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71234,7 +71233,8 @@
  {
   "text": "Send the code",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71246,7 +71246,8 @@
  {
   "text": "Enter the code",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71366,7 +71367,8 @@
  {
   "text": "No company is set up for your login yet. Ask your HR team.",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71378,13 +71380,15 @@
  {
   "text": "The e-mail, employee code or password is not correct.",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
   "text": "We sent the code to your registered e-mail or phone.",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71396,13 +71400,15 @@
  {
   "text": "Enter the code.",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
   "text": "The code is not correct or has expired.",
   "where": [
-   "src/app/login/login.component.html:1"
+   "src/app/login/login.component.html:1",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71456,7 +71462,8 @@
  {
   "text": "Continue",
   "where": [
-   "src/app/login/signup.component.ts"
+   "src/app/login/signup.component.ts",
+   "src/app/login/mobile.component.ts"
   ]
  },
  {
@@ -71661,6 +71668,1812 @@
   "text": "ZEO could not be reached. Try again in a moment.",
   "where": [
    "src/app/login/signup.component.ts"
+  ]
+ },
+ {
+  "text": "Ask your HR or IT team. It is the address you open ZEO with in the browser.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Being moved – back in a few minutes",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Change server",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Choose a company",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Choose once. You can change it later under More.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Company server",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Enter the server address.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Face ID",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Fingerprint sign-in",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Fingerprint sign-in could not be turned on.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Fingerprint sign-in did not work.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Fingerprint sign-in did not work. Sign in with your password.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "It did not work. Try again.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "No ZEO server answered at {0}. Check the address and the internet connection.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "No ZEO server answered.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Not now",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Open ZEO with your {0} instead of the password and code. You can turn it off under More.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Open with",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Other companies",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Read-only",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Server address",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Sign in to ZEO",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Sign in with fingerprint",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Sign in with password",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Sign out",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "The server could not be reached. Check the internet connection and the server address.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "The server did not answer. Check the internet connection.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "The server did not give an unlock key.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "This address is not secure (http). Use https for real data.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "This app is older than your server allows. Update ZEO from the Play Store.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "This server has ZEO older than 1.25.0. Ask your IT team to update it.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Touch ID",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Try again",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Use fingerprint",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Use password",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Use your fingerprint next time?",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "We send a code to your registered e-mail or phone.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Where is your ZEO?",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "You have access to {0} companies.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Your companies could not be loaded.",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Your company signed up for ZEO online",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "ZEO runs on your company's own server",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "face",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "fingerprint",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "iris",
+  "where": [
+   "src/app/login/mobile.component.ts"
+  ]
+ },
+ {
+  "text": "Accept",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Access to {0} removed. The login stays for its other ZEO account.",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Company administrator",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Hello,",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Invitation",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Invitations",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Invited",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "No permission group",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Rights",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "Show all {0}",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "This e-mail already has a ZEO login",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "This login also belongs to another ZEO account. Only its owner can change the e-mail, user name or password; you can change the access to your companies.",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "as a user",
+  "where": [
+   "UserManagement/views.py"
+  ]
+ },
+ {
+  "text": "A new database is made with a copy of these {0} companies – all data, settings and users. The original does not change.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Add database – 14-day trial",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Added to the company names",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Choose one of the account's databases.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Choose the database.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Copying the database…",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Database {0} is read-only: its trial or subscription ended. You can view, export and print; ask Adept to activate it.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Database {0} is ready.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Database {0}: free trial – {1} days left.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Database {0}: subscription expired – grace period, {1} days left.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Each database is a separate PostgreSQL database for your companies. New companies are made in the default one; Duplicate makes a new database with a copy of every company in it – for a test or training copy, or to start a new group.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Enter the date it is paid until.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Every database after the first is an extra subscription: {0} days free, then a yearly fee (Adept sends the invoice). After the trial an unpaid database becomes read-only.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Every database after the first is an extra subscription: {0} days free, then {1} {2} a year. After the trial an unpaid database becomes read-only.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Example: {0}",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Expired – grace, {0} days left",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Extra database / year",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "From {0}",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Give the database a name, for example Test or Group 2.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Included in Premium",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Invitation to {0}",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Its companies are read-only (view, export, print) until the database is paid. Use Request upgrade, or move the companies to a paid database.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Mark paid",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Move",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Move {0} to {1}? The company is closed for a minute or two while it moves.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Name of a new, empty database (e.g. Group 2)",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Name of the new database",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "New database",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "No companies yet.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Only Adept can change the subscription of a database – use Request upgrade.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Own databases are part of Premium – ask Adept to change the plan.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Own databases are part of Premium – use Request upgrade.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Paid until",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Paid until {0}",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Read-only – not paid",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Read-only: the trial or subscription of the database {0} ended. You can view, export and print; adding or changing records is off until it is paid.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Remove the empty database {0}? It is deleted after 7 days.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Test copy – no e-mails are sent from the copies",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The copy adds {0} companies and your plan allows {1} (now {2}).",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The copy could not start.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The copy failed",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The database could not be created.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The database could not be created: {0}",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The databases could not be loaded.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The main database holds the shared cloud (Standard and Advance companies) and the accounts, users and plans. Every Premium account gets its own database, and can add more or duplicate one (customer → Databases).",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The subscription is read-only – no new databases can be created.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "This company is in the shared cloud – Adept moves it with the plan change.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "This database is included in Premium.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Your Premium account has several own databases – the company is made in the one you choose.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Your login and password stay the same. Nothing is shared with the company before you accept.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "as administrator",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "being copied",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "default",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "{0} databases",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Ask another user with payroll approval rights, or switch off \"Segregation of duties\" in Payroll → Setup → Payroll controls.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Choose an active user of this company.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "No column is a leave type – name the columns as the leave types (e.g. Annual Leave, Sick Leave) or use employee_code, leave_type, days.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "The file needs an \"Employee Code\" column.",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "This company has only one user: add a second user with payroll approval rights (Settings → Users),",
+  "where": [
+   "v1.26.0"
+  ]
+ },
+ {
+  "text": "Invitations waiting for an answer",
+  "where": [
+   "user-master.component.html"
+  ]
+ },
+ {
+  "text": "Invited by",
+  "where": [
+   "user-master.component.html"
+  ]
+ },
+ {
+  "text": "They already have a ZEO login, so they were invited instead of getting a new one. The company is added to their login when they press Accept on their company list.",
+  "where": [
+   "user-master.component.html"
+  ]
+ },
+ {
+  "text": "Cancel the invitation",
+  "where": [
+   "user-master.component.html"
+  ]
+ },
+ {
+  "text": "If this e-mail already has a ZEO login (for example in another company or account), it is invited instead: the person accepts on their company list and keeps their own password.",
+  "where": [
+   "user-master.component.html"
+  ]
+ },
+ {
+  "text": "1 company",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "1 day",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Add missing only (keep theirs)",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Available in Premium",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Choose Group HR head or Group viewer.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Choose the branch in the target company.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Choose the employee and the company.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Choose what to copy and the companies to copy to.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Code or name – Enter to search",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Company-wide settings of one company are copied to the others. A setting is matched by its code or name; Add missing only never changes what a company already has.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Copy from",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Copy settings",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Copy settings to companies",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Copy the salary (components by code; missing ones are added)",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Copy to",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Copying…",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Date of the move",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Documents (30 days)",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Earlier copies",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Employee code there",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Every company of the group, side by side. Figures are kept for 15 minutes – Update now reads them again.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Form designs and extra fields",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "From company",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Give the role",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Given by",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Gratuity provision",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Gross pay, last payroll",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group HR head",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group HR head – every company, HR rights",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group HR head: every company of the group, with HR Manager rights in the companies they do not work in yet, the approval inbox, copy settings and transfers. Group viewer: the group dashboard and reports only.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group dashboard",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group dashboard, approvals of every company, group reports, copy settings, transfers",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group features are part of Premium and Enterprise.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group reports",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group roles",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group total",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group view",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group view – all companies",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group viewer",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Group viewer – group dashboard and reports only",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Joined / left this month",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Keep the service date (joining date {0}) – gratuity and leave by service continue",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Last payroll",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Leave balances",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Mark all as read",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Move an employee to a sister company",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Move to {0}",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Moving…",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "No group roles yet – the owner has every group right.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "No notifications.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Not in this licence",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Nothing is waiting for your approval.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Only users of the group's companies can get a group role.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Payroll cost",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Reading the companies…",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Requests of every company of the group where you approve. Open takes you to the request in its company.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Requests waiting for approval",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Running…",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Server administrator",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Service date",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Settings the company already has",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "The employee is made in the new company with the same personal data, bank account and salary; the service date can be kept. The record in the old company is closed and both get a note.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "The first 1,000 rows are shown – Excel has them all.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "The owner has every group right already.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "The transfer could not be made: {0}",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "This company is not in the group.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "To company",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Update now",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Update them to match",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Updating…",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "You have no access to this group.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Your group role does not include this.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "joined",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "kept",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "rows",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "self-service login moves along",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "today",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "updated",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "{0} companies",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "{0} now works for {1} as {2}. The record in {3} is closed.",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "{0} salary lines, {1} bank accounts",
+  "where": [
+   "ZeoGroup"
+  ]
+ },
+ {
+  "text": "Adept writes this ID into the licence file – a file is valid on this server only.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "After the end date everything works for {0} more days; then ZEO is read-only (view, export, print) until the new file is uploaded. Nothing is deleted.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Anything else (servers, timeline, apps)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Check payment in Odoo",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Choose the .zeolic file",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Client",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Companies (empty = no limit)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Employees (empty = no limit)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Users (empty = no limit)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Employees: active employees of every company. Users: logins other than self service.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Ended – grace period",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Ended – read-only",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Ends soon",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Enter the dates as yyyy-mm-dd.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Enterprise",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Enterprise (own servers)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Enterprise licences come from Adept. Send the installation ID and what you need (renewal date, employees, companies, apps) to",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Enterprise request",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Enterprise requests",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Enterprise runs on servers of your own, with a licence from Adept. Tell us about your company – Adept will contact you.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Evaluation",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Give the client and the installation ID (ZEO-…) shown in their Settings → Licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Give the company, your name and your e-mail.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Group features",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Group features (group dashboard, reports, approvals, copy settings, transfers)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "HR and Settings",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Installation",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Installation ID",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Installation ID, licence file, limits and usage, renewal",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Invoice {0} is in Odoo as {1}.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Issue a licence file",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Issue and download",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Issue licence",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence ended – grace period",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence ends soon",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence for {0} saved – valid until {1}.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence issued",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence not started",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence {0} issued for {1} – the file is downloaded.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence: evaluation",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licences cannot be signed on this server:",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licences issued",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Limits and usage",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Make it in Odoo – posted, with the online payment link for the owner (the number comes from Odoo)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "No licence file yet – {0} days left to upload it (Settings → Licence).",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "No licence file yet.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "No licence – read-only",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "No licences yet.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "No valid licence file – ZEO is read-only. Upload the licence file from Adept in Settings → Licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Not an Enterprise installation",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Not paid yet in Odoo ({0}).",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Note (Adept only)",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Odoo could not be reached.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Odoo is not linked: set ZEO_ODOO_URL, ZEO_ODOO_DB, ZEO_ODOO_LOGIN and ZEO_ODOO_API_KEY in .env to send invoices to Odoo and offer online payment.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Only a server administrator can see the licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Only a server administrator can upload the licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Own servers – ask Adept",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Paid in Odoo – invoice {0} is paid.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Pay online",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Pay online opens the invoice on the payment page of Adept. The subscription is renewed automatically once the payment is received.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Payment page",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Read-only – licence ended",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Read-only – no licence",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Read-only: {0}",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Renewal or changes",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Send to Adept",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Send to Odoo",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Starts later",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Thank you – Adept will contact you about ZEO Enterprise.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The .zeolic file from Adept. Its signature is checked – a changed file is refused. A new file replaces the old one (renewal, more employees, more apps).",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The ZEO licence allows {0} {1} and all are in use. Ask Adept for a new licence file.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The ZEO licence ends in {0} days. Ask Adept for the renewal and upload the new file in Settings → Licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The ZEO licence has ended – ZEO is read-only (view, export, print). Upload the new licence file in Settings → Licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The ZEO licence has ended. Everything works for {0} more days – then ZEO becomes read-only. Upload the new licence file in Settings → Licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The licence could not be issued.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The licence could not be loaded.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The licence file is damaged.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The licence file was changed – its signature does not match.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The licence has no end date.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "The uploaded licence starts later – ZEO is read-only until then.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "This installation",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "This is not a ZEO Enterprise licence.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "This is not a ZEO licence file.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Too many requests from this address – please try again in an hour.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Upload the licence file",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Uploaded files",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "ZEO Cloud",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "ZEO Enterprise licence – {0}",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "ZEO Enterprise – your own servers",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "companies",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "employees",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "ended {0} days ago",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "group",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "no limit",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "users",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "{0} is not in the ZEO licence of this server.",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "Licence",
+  "where": [
+   "ZeoLicence"
+  ]
+ },
+ {
+  "text": "{0} days left",
+  "where": [
+   "ZeoLicence"
   ]
  }
 ]

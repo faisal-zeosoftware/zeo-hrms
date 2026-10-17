@@ -19,15 +19,21 @@ M = apps.get_model
 
 def _user(uid):
     U = M('UserManagement', 'CustomUser')
-    return U.objects.filter(pk=uid, is_active=True).first() if uid else None
+    from django.db import connection   # v1.26.0: only a user of this company
+    return U.objects.filter(pk=uid, is_active=True, tenants__schema_name=connection.schema_name).first() if uid else None
 
 
 def _manager_user(emp):
-    """(manager's employee record, manager's active user). The reporting manager is stored as a user."""
+    """(manager's employee record, manager's active user). The reporting manager is stored as a user; v1.26.0: when it is
+    empty, Reports-to (an employee, e.g. from the bulk upload) is used – that employee's login, if they have one."""
     u = getattr(emp, 'emp_reporting_manager', None) if emp else None
-    if u is None:
-        return None, None
     E = M('EmpManagement', 'emp_master')
+    if u is None:
+        m = getattr(emp, 'emp_reports_to', None) if emp else None
+        if m is None:
+            return None, None
+        mu = getattr(m, 'users', None)
+        return m, (mu if mu is not None and mu.is_active else None)
     m = E.objects.filter(users=u).first() or E.objects.filter(emp_code=u.username).first()
     return m, (u if u.is_active else None)
 

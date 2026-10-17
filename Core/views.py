@@ -197,7 +197,7 @@ class NationalityBlkupldViewSet(viewsets.ModelViewSet):
     def bulk_upload(self, request):
         if request.method == 'POST' and request.FILES.get('file'):
             csv_file = request.FILES['file']
-            decoded_file = csv_file.read().decode('utf-8').splitlines()
+            decoded_file = csv_file.read().decode('utf-8-sig').splitlines()
             reader = csv.DictReader(decoded_file)
 
             try:

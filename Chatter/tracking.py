@@ -45,8 +45,23 @@ def model_key(model):
     return f'{model._meta.app_label}.{model._meta.model_name}'
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def paused():
+    """v1.26.0 – no field-by-field history inside the block (bulk uploads, monthly accrual); the caller writes one summary
+    note instead. Each save used to run an extra SELECT and write a history row (≈3 queries per record)."""
+    prev = getattr(_local, 'paused', False)
+    _local.paused = True
+    try:
+        yield
+    finally:
+        _local.paused = prev
+
+
 def _tracked(sender):
-    if connection.schema_name == 'public':
+    if getattr(_local, 'paused', False) or connection.schema_name == 'public':
         return False
     meta = sender._meta
     if meta.app_label in SKIP_APPS or model_key(sender) in SKIP_MODELS or meta.auto_created:

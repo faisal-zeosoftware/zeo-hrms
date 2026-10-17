@@ -15,7 +15,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import (APP_KEYS, AccessNotice, Account, AccountCompany, AccountEvent, AppLicence, Invoice, Plan,
-                     PlatformAdmin)
+                     PlatformAdmin, DatabaseServer)
 
 log = logging.getLogger(__name__)
 APP_TITLES = {'hrms': 'HR', 'payroll': 'Payroll', 'projects': 'Projects', 'crm': 'CRM', 'property': 'Property',
@@ -171,7 +171,8 @@ def usage(acc, fresh=False):
     out = {'companies': len(links), 'extra_companies': sum(1 for l in links if l.extra),
            'employees': sum(employees_in(l.company.schema_name) for l in links),
            'users': users_of(acc).count(),
-           'storage_gb': round(sum(storage_mb(l.company.schema_name) for l in links) / 1024, 2)}
+           'storage_gb': round(sum(storage_mb(l.company.schema_name) for l in links) / 1024, 2),
+           'databases': DatabaseServer.objects.filter(account=acc).exclude(state='retired').count()}   # v1.26.0
     cache.set(key, out, 60)
     return out
 
@@ -187,7 +188,8 @@ def limits(acc):
         allowed_now = p.max_companies if p.max_companies is not None else None
     return {'companies_included': p.included_companies, 'companies_cap': allowed, 'companies_paid': allowed_now,
             'extra_allowed': p.extra_companies, 'employees': acc.limit('max_employees'), 'users': acc.limit('max_users'),
-            'storage_gb': acc.limit('storage_gb'), 'group_features': p.group_features}
+            'storage_gb': acc.limit('storage_gb'), 'group_features': p.group_features,
+            'own_databases': p.hosting == 'own', 'database_price': float(p.database_price) if p.database_price is not None else None}   # v1.26.0
 
 
 # ------------------------------------------------------------------ app licences
@@ -267,6 +269,84 @@ def check_company_add(acc):
     return True, False, ''
 
 
+def check_database_add(acc):
+    """v1.26.0: (ok, message) for one more own database. No limit: Premium only, each extra database has its own
+    subscription (14-day trial, then paid per year)."""
+    st = status_of(acc)
+    if st['read_only']:
+        return False, tr('The subscription is read-only – no new databases can be created.')
+    if acc.plan.hosting != 'own':
+        return False, tr('Own databases are part of Premium – ask Adept to change the plan.')
+    return True, ''
+
+
+DB_TRIAL_DAYS = 14
+
+
+def db_price(srv):
+    """Price per year of an extra database (its own price, else the plan's)."""
+    if srv.price is not None:
+        return float(srv.price)
+    p = srv.account.plan.database_price if srv.account_id else None
+    return float(p) if p is not None else None
+
+
+def db_status(srv, on=None):
+    """v1.26.0 subscription of one own database.
+    {'status': included|trial|active|grace|expired, 'read_only', 'days_left', 'until'}
+    The first database comes with Premium (included). An extra one: 14-day trial, then paid until a date; after the
+    paid date the account's grace days, then read-only (view, export, print) until it is paid."""
+    d = on or timezone.localdate()
+    out = {'status': 'included', 'read_only': False, 'days_left': None, 'until': None}
+    if not srv.extra:
+        return out
+    grace = srv.account.grace_days if srv.account_id else 15
+    if srv.paid_until and (not srv.trial_ends or srv.paid_until >= srv.trial_ends):
+        if d <= srv.paid_until:
+            out.update(status='active', days_left=(srv.paid_until - d).days, until=srv.paid_until.isoformat())
+        elif d <= srv.paid_until + timedelta(days=grace):
+            g = srv.paid_until + timedelta(days=grace)
+            out.update(status='grace', days_left=(g - d).days, until=g.isoformat())
+        else:
+            out.update(status='expired', read_only=True, until=srv.paid_until.isoformat())
+    elif srv.trial_ends:
+        if d <= srv.trial_ends:
+            out.update(status='trial', days_left=(srv.trial_ends - d).days, until=srv.trial_ends.isoformat())
+        else:
+            out.update(status='expired', read_only=True, until=srv.trial_ends.isoformat())
+    return out
+
+
+def db_status_of_key(key):
+    """db_status of a database key, cached 60 s (checked on every request by the middleware)."""
+    if not key:
+        return None
+    ck = f'zeo:cloud:dbst:{key}'
+    hit = cache.get(ck)
+    if hit is not None:
+        return hit or None
+    srv = DatabaseServer.objects.select_related('account').filter(key=key).first()
+    st = db_status(srv) if srv else None
+    if st is not None:
+        st['label'] = srv.label or srv.name
+    cache.set(ck, st or {}, 60)
+    return st
+
+
+def db_banner(key):
+    st = db_status_of_key(key)
+    if not st:
+        return None
+    n = st['days_left']
+    if st['status'] == 'trial':
+        return {'kind': 'trial', 'text': tr('Database {0}: free trial – {1} days left.', st['label'], n)}
+    if st['status'] == 'grace':
+        return {'kind': 'grace', 'text': tr('Database {0}: subscription expired – grace period, {1} days left.', st['label'], n)}
+    if st['status'] == 'expired':
+        return {'kind': 'readonly', 'text': tr('Database {0} is read-only: its trial or subscription ended. You can view, export and print; ask Adept to activate it.', st['label'])}
+    return None
+
+
 def check_employee_add(schema):
     acc = account_of_schema(schema)
     if acc is None:
@@ -324,13 +404,13 @@ def schema_for(name):
     return sf(name)
 
 
-def start_company(acc, name, industry, apps, user, extra=False, country_id=None, grant_creator=True):
+def start_company(acc, name, industry, apps, user, extra=False, country_id=None, grant_creator=True, db=''):
     """Create a company for the account in a background thread. Returns (job, schema)."""
     job = uuid.uuid4().hex[:16]
     schema = schema_for(name)
     _job(job, state='running', step=STEPS[0], step_no=1, steps=len(STEPS), account=acc.pk, name=name, schema=schema,
          by=getattr(user, 'pk', None), company_id=None, error='')
-    t = threading.Thread(target=_make_company, args=(job, acc.pk, name, schema, industry, list(apps or []), getattr(user, 'pk', None), extra, country_id, True, grant_creator), daemon=True)
+    t = threading.Thread(target=_make_company, args=(job, acc.pk, name, schema, industry, list(apps or []), getattr(user, 'pk', None), extra, country_id, True, grant_creator, db or ''), daemon=True)
     t.start()
     return job, schema
 
@@ -356,7 +436,7 @@ def grant_admin(user, comp):
             utp.save(update_fields=['is_superuser'])
 
 
-def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, country_id, own_thread=True, grant_creator=True):
+def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, country_id, own_thread=True, grant_creator=True, db=''):
     from django.db import close_old_connections
     if own_thread:
         close_old_connections()
@@ -387,10 +467,13 @@ def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, cou
             grant_admin(u, comp)
         _job(job, step=STEPS[3], step_no=4)
         moved = ''
-        if acc.db_alias:   # v1.24.0 Premium: the new company goes to the account's own database (new – no wait needed)
+        target = db or acc.db_alias   # v1.26.0: the database chosen on Create company, else the account's default one
+        if target and not DatabaseServer.objects.filter(key=target, account=acc, state='ready').exists():
+            target = acc.db_alias
+        if target:   # v1.24.0 Premium: the new company goes to the account's own database (new – no wait needed)
             from . import owndb
             connection.set_schema_to_public()
-            mv = owndb.start_move(comp, acc.db_alias, by=user, settle=0, run_now=True, account=acc)
+            mv = owndb.start_move(comp, target, by=user, settle=0, run_now=True, account=acc)
             moved = mv.state if mv.state == 'done' else f'not moved: {mv.error}'[:200]
         event(acc, 'company', f'Company created – {comp.name}' + (' (extra company)' if extra else ''), user, schema=schema, apps=done)
         cache.delete(f'zeo:cloud:usage:{acc.pk}')

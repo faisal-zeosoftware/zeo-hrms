@@ -91,6 +91,20 @@ def record_prepared(run, user):
     RC.objects.get_or_create(run_id=run.pk, defaults={'prepared_by_id': getattr(user, 'pk', None)})
 
 
+def _sod_hint():
+    """v1.26.0 – a new company often has one administrator only: say how to go on instead of a dead end."""
+    try:
+        from django.db import connection
+        U = M('UserManagement', 'CustomUser')
+        n = U.objects.filter(is_active=True, is_ess=False, tenants__schema_name=connection.schema_name).distinct().count()
+    except Exception:
+        n = 2
+    if n <= 1:
+        return ' ' + tr('This company has only one user: add a second user with payroll approval rights (Settings → Users), '
+                        'or switch off "Segregation of duties" in Payroll → Setup → Payroll controls.')
+    return ' ' + tr('Ask another user with payroll approval rights, or switch off "Segregation of duties" in Payroll → Setup → Payroll controls.')
+
+
 def check_run_status_change(run, new_status, user):
     """Segregation of duties: the user who prepared the run may not approve it or mark it paid. Raises Refused."""
     if not settings().segregation or user is None:
@@ -98,7 +112,7 @@ def check_run_status_change(run, new_status, user):
     c = control_for(run)
     if c and c.prepared_by_id and c.prepared_by_id == user.pk and new_status in ('approved', 'paid'):
         raise Refused(tr('You prepared this payroll run – somebody else must {0} it (segregation of duties).',
-                         tr('approve') if new_status == 'approved' else tr('release the payment of')), status=403)
+                         tr('approve') if new_status == 'approved' else tr('release the payment of')) + _sod_hint(), status=403)
     if new_status == 'paid' and c and c.approved_by_id and c.approved_by_id == user.pk:
         raise Refused(tr('You approved this payroll run – somebody else must release the payment (segregation of duties).'), status=403)
 
@@ -124,7 +138,7 @@ def check_payslip_approver(payslip, user):
         return
     c = control_for(payslip.payroll_run) if payslip and payslip.payroll_run_id else None
     if c and c.prepared_by_id == user.pk:
-        raise Refused(tr('You prepared this payroll – somebody else must approve its payslips (segregation of duties).'), status=403)
+        raise Refused(tr('You prepared this payroll – somebody else must approve its payslips (segregation of duties).') + _sod_hint(), status=403)
 
 
 # ------------------------------------------------------------------ leave encashment steps

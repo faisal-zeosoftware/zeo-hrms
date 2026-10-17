@@ -87,7 +87,7 @@ class SchemaMiddleware(MiddlewareMixin):
 
     def __call__(self, request):
         # Skip schema activation for public apps
-        public_schema_apps = ["users", "core", "cloud"]   # v1.23.0 cloud: public schema
+        public_schema_apps = ["users", "core", "cloud", "mobile", "group", "licence"]   # v1.23.0 cloud, v1.25.0 mobile: public schema
         app_name = request.path.split('/')[1]
 
         if app_name in public_schema_apps:

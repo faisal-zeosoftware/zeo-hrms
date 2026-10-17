@@ -371,6 +371,59 @@ def ensure_info(emp, today=None):
     return info
 
 
+def ensure_info_bulk(emps, today=None):
+    """v1.26.0 – EmploymentInfo for many employees at once (the employee list called ensure_info one by one: after a bulk
+    upload of 1,280 employees the first open of the list ran thousands of queries, ~15 s). Same rules as ensure_info;
+    employees with an approved resignation / end of service still go through ensure_info."""
+    today = today or date.today()
+    ids = [e.pk for e in emps]
+    if not ids:
+        return
+    have = set(EmploymentInfo.objects.filter(employee_id__in=ids).values_list('employee_id', flat=True))
+    todo = [e for e in emps if e.pk not in have]
+    if not todo:
+        return
+    special = set()
+    try:
+        special |= set(M('EmpManagement', 'EmployeeResignation').objects.filter(employee_id__in=[e.pk for e in todo], status__iexact='approved')
+                       .values_list('employee_id', flat=True))
+    except Exception:
+        pass
+    etype = {}
+    if apps.is_installed('OrgStructure'):
+        try:
+            for eo in M('OrgStructure', 'EmployeeOrg').objects.select_related('employment_type').filter(employee_id__in=[e.pk for e in todo]):
+                if eo.employment_type_id and eo.employment_type.probation_days:
+                    etype[eo.employee_id] = int(eo.employment_type.probation_days)
+        except Exception:
+            pass
+    new = []
+    for emp in todo:
+        if emp.pk in special:
+            ensure_info(emp, today)
+            continue
+        days, source = etype.get(emp.pk), 'employment_type' if emp.pk in etype else ''
+        if days is None and emp.emp_branch_id_id and (getattr(emp.emp_branch_id, 'probation_period_days', 0) or 0) > 0:
+            days, source = int(emp.emp_branch_id.probation_period_days), 'branch'
+        end = emp.emp_joined_date + timedelta(days=days) if days and emp.emp_joined_date else None
+        if end:
+            end = min(end, emp.emp_joined_date + relativedelta(months=UAE_MAX_PROBATION_MONTHS))
+        info = EmploymentInfo(employee_id=emp.pk, probation_days=days, probation_source=source, probation_end_date=end)
+        conf = emp.emp_date_of_confirmation
+        if end and end > today and not (conf and conf <= today and conf != end):
+            info.probation_status, info.status = 'on_probation', 'probation'
+        elif end or conf:
+            info.probation_status, info.status = 'confirmed', 'active'
+            info.confirmed_on = conf if conf and conf <= today else end
+        else:
+            info.probation_status, info.status = '', 'active'
+        if emp.is_active is False:
+            info.status, info.leaving_reason, info.leaving_source = 'left', 'Marked inactive', 'manual'
+        new.append(info)
+    if new:
+        EmploymentInfo.objects.bulk_create(new, ignore_conflicts=True, batch_size=500)
+
+
 def refresh_probation(emp, info, today=None):
     """Undecided probation that was never extended follows the joining date / employment type; on-notice
     employees whose last day has passed get their final status."""
@@ -563,8 +616,7 @@ def employment_json(emp, info=None):
 def probation_due(qs, days=30, today=None):
     today = today or date.today()
     ids = list(qs.values_list('id', flat=True))
-    for e in qs.filter(id__in=ids).exclude(id__in=EmploymentInfo.objects.values('employee_id')):
-        ensure_info(e)
+    ensure_info_bulk(list(qs.filter(id__in=ids).exclude(id__in=EmploymentInfo.objects.values('employee_id')).select_related('emp_branch_id')))   # v1.26.0
     infos = EmploymentInfo.objects.filter(employee_id__in=ids, probation_status__in=('on_probation', 'extended'),
                                           probation_end_date__isnull=False, probation_end_date__lte=today + timedelta(days=days))
     return infos
@@ -580,10 +632,10 @@ def skills_json(emp):
                                         'source': s.get_source_display(), 'date': s.date, 'verified': bool(s.verified_by)})
         except Exception:
             log.exception('learning skills')
-    for key, rel in (('marketing', 'emp_market_skills'), ('programming', 'emp_prgrm_skills'), ('language', 'emp_lang_skills')):
+    for key, rel, fk in (('marketing', 'emp_market_skills', 'marketing_skill_id'), ('programming', 'emp_prgrm_skills', 'program_skill_id'), ('language', 'emp_lang_skills', 'language_skill_id')):
         try:
             for s in getattr(emp, rel).all():
-                out[key].append({'id': s.pk, 'skill': s.value or '', 'percentage': float(s.percentage) if s.percentage is not None else None})
+                out[key].append({'id': s.pk, 'skill': s.value or '', 'percentage': float(s.percentage) if s.percentage is not None else None, 'fk': getattr(s, fk, None)})
         except Exception:
             pass
     return out
@@ -721,7 +773,7 @@ def completeness(emp, ident=None, has_contact=None, has_bank=None, cache=None):
         ('First name', emp.emp_first_name), ('Last name', emp.emp_last_name), ('Gender', emp.emp_gender), ('Date of birth', emp.emp_date_of_birth),
         ('Nationality', emp.emp_nationality_id), ('Marital status', emp.emp_marital_status), ('Mobile number', emp.emp_mobile_number_1),
         ('E-mail', emp.emp_personal_email or emp.emp_company_email), ('Address', emp.emp_present_address or emp.emp_permenent_address),
-        ('Department', emp.emp_dept_id_id), ('Designation', emp.emp_desgntn_id_id), ('Reporting manager', emp.emp_reporting_manager_id),
+        ('Department', emp.emp_dept_id_id), ('Designation', emp.emp_desgntn_id_id), ('Reporting manager', emp.emp_reporting_manager_id or getattr(emp, 'emp_reports_to_id', None)),
         ('Joining date', emp.emp_joined_date), ('Arabic name', g('arabic_name')),
         ('Passport number', g('passport_no')), ('Passport expiry', g('passport_expiry_date')),
         ('Emirates ID', g('emirates_id')), ('Emirates ID expiry', g('emirates_id_expiry_date')),
@@ -755,10 +807,7 @@ def completeness(emp, ident=None, has_contact=None, has_bank=None, cache=None):
 def employee_columns(emps):
     ids = [e.pk for e in emps]
     idn = {i.employee_id: i for i in EmployeeIdentity.objects.filter(employee_id__in=ids)}
-    have = set(EmploymentInfo.objects.filter(employee_id__in=ids).values_list('employee_id', flat=True))
-    for e in emps:
-        if e.pk not in have:
-            ensure_info(e)
+    ensure_info_bulk(emps)   # v1.26.0
     infos = {i.employee_id: i for i in EmploymentInfo.objects.filter(employee_id__in=ids)}
     out = []
     for e in emps:
@@ -839,7 +888,7 @@ def profile_groups():
             _f('insured', 'Covered by medical insurance', 'bool'), _f('visa_sponsored', 'Visa sponsored by the employee', 'bool')]},
         {'key': 'bank', 'label': 'Bank details', 'model': 'EmpManagement.EmployeeBankDetail', 'many': True, 'extra_model': 'EmployeeProfile.BankExtra', 'fields': [
             _f('bank_name', 'Bank'), _f('branch_name', 'Bank branch'), _f('account_number', 'Account number'), _f('iban_number', 'IBAN', 'text', placeholder='AE + 21 digits'),
-            _f('route_code', 'Routing code (9 digits)'), _f('bank_address', 'Bank address'), _f('is_active', 'Active', 'bool'),
+            _f('route_code', 'Routing code (9 digits)', placeholder='9 digits – UAE WPS bank routing number'), _f('bank_address', 'Bank address'), _f('is_active', 'Active', 'bool'),
             _f('payment_mode', 'Payment mode', 'select', options=_choices(BankExtra, 'payment_mode')), _f('wps_agent', 'WPS agent ID'),
             _f('is_primary', 'Salary account', 'bool'), _f('effective_from', 'Effective from', 'date')]},
         {'key': 'qualifications', 'label': 'Qualifications', 'model': 'EmpManagement.EmpQualification', 'many': True, 'extra_model': 'EmployeeProfile.QualificationExtra', 'fields': [
@@ -851,6 +900,13 @@ def profile_groups():
             _f('emp_jh_company_name', 'Company'), _f('emp_jh_designation', 'Designation'), _f('emp_jh_from_date', 'From', 'date'),
             _f('emp_jh_end_date', 'To', 'date'), _f('emp_jh_leaving_salary_permonth', 'Last salary per month', 'number'),
             _f('emp_jh_reason', 'Reason for leaving'), _f('emp_jh_years_experiance', 'Years', 'number')]},
+        # v1.28.1: the classic language / marketing / programming skills, editable on the record
+        {'key': 'languages', 'label': 'Languages', 'model': 'EmpManagement.EmployeeLangSkill', 'many': True, 'fields': [
+            _f('language_skill', 'Language', 'fk', source='Core.LanguageSkill'), _f('percentage', 'Level (%)', 'number')]},
+        {'key': 'marketing', 'label': 'Marketing skills', 'model': 'EmpManagement.EmployeeMarketingSkill', 'many': True, 'fields': [
+            _f('marketing_skill', 'Skill', 'fk', source='Core.MarketingSkill'), _f('percentage', 'Level (%)', 'number')]},
+        {'key': 'programming', 'label': 'Programming skills', 'model': 'EmpManagement.EmployeeProgramSkill', 'many': True, 'fields': [
+            _f('program_skill', 'Skill', 'fk', source='Core.ProgrammingLanguageSkill'), _f('percentage', 'Level (%)', 'number')]},
         {'key': 'skills', 'label': 'Skills', 'model': 'LearningPlus.EmployeeSkill', 'many': True, 'fields': [
             _f('skill', 'Skill', 'fk', source='LearningPlus.Skill'), _f('level', 'Level (1-5)', 'number')]},
         {'key': 'documents', 'label': 'Documents', 'model': 'EmpManagement.Emp_Documents', 'many': True, 'fields': [
@@ -915,7 +971,7 @@ def _country_groups(groups):
     return out
 
 
-GROUP_KEYS = {g: None for g in ('personal', 'contact', 'address', 'identity', 'emergency', 'family', 'bank', 'qualifications', 'experience', 'skills', 'documents')}
+GROUP_KEYS = {g: None for g in ('personal', 'contact', 'address', 'identity', 'emergency', 'family', 'bank', 'qualifications', 'experience', 'skills', 'documents', 'languages', 'marketing', 'programming')}
 
 
 def group_fields(group):
@@ -1016,8 +1072,27 @@ def _core(cls, model):
     return type(cls.__name__ + model.__name__, (cls,), {'Meta': meta})
 
 
+class _PctCore(serializers.ModelSerializer):
+    """v1.28.1: a language / marketing / programming skill with its level in percent."""
+    class Meta:
+        model = None
+        fields = ['percentage']
+
+    def validate_percentage(self, v):
+        if v is not None and (v < 0 or v > 100):
+            raise serializers.ValidationError(tr('The level is a percentage from 0 to 100.'))
+        return v
+
+
+def _pct_core(fk_name):
+    return type('PctCore_' + fk_name, (_PctCore,), {'Meta': type('Meta', (_PctCore.Meta,), {'fields': [fk_name, 'percentage']})})
+
+
 EMP_GROUPS = ('personal', 'contact', 'address')
 MULTI = {
+    'languages': ('EmpManagement.EmployeeLangSkill', 'emp_id', _pct_core('language_skill'), None, None, None),       # v1.28.1
+    'marketing': ('EmpManagement.EmployeeMarketingSkill', 'emp_id', _pct_core('marketing_skill'), None, None, None),
+    'programming': ('EmpManagement.EmployeeProgramSkill', 'emp_id', _pct_core('program_skill'), None, None, None),
     # group: (app.model, fk field to emp_master, core serializer base, extra model, extra key, extra serializer)
     'family': ('EmpManagement.emp_family', 'emp_id', _FamilyCore, DependentExtra, 'family_id', DependentExtraSerializer),
     'bank': ('EmpManagement.EmployeeBankDetail', 'employee', _BankCore, BankExtra, 'bank_detail_id', BankExtraSerializer),
@@ -1146,6 +1221,17 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
         extra_data = {k: v for k, v in data.items() if k not in core_keys}
         if group == 'family' and inst is None:
             core_data.setdefault('ef_company_expence', 0)
+        if group == 'experience' and not core_data.get('emp_jh_years_experiance'):
+            # v1.28.1: the record screen does not ask for the years (it shows the duration from the dates) –
+            # the model requires the number, so it is worked out here
+            f, t = core_data.get('emp_jh_from_date') or getattr(inst, 'emp_jh_from_date', None), core_data.get('emp_jh_end_date') or getattr(inst, 'emp_jh_end_date', None)
+            try:
+                import datetime as _dt
+                f = _dt.date.fromisoformat(str(f)[:10]) if f else None
+                t = _dt.date.fromisoformat(str(t)[:10]) if t else None
+                core_data['emp_jh_years_experiance'] = round(max(0, (t - f).days) / 365.25, 2) if f and t else 0
+            except (TypeError, ValueError):
+                core_data['emp_jh_years_experiance'] = 0
         cs = core_ser(inst, data=core_data, partial=inst is not None)
         es = None
         errors = {}
@@ -1158,6 +1244,11 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
                 errors.update(es.errors)
         elif extra_data:
             errors.update({k: 'This field cannot be changed here.' for k in extra_data})
+        if not errors and group in ('languages', 'marketing', 'programming'):   # v1.28.1: one row per language / skill
+            fkf = {'languages': 'language_skill', 'marketing': 'marketing_skill', 'programming': 'program_skill'}[group]
+            v = cs.validated_data.get(fkf)
+            if v is not None and Model.objects.filter(**{fk: employee, fkf: v}).exclude(pk=getattr(inst, 'pk', None)).exists():
+                errors[fkf] = tr('{0} is already on the list – edit that row instead.', str(v))
         if errors:
             raise ValidationError(errors)
 
@@ -1169,7 +1260,11 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
                 if hasattr(Model, 'updated_by_id'):
                     kw['updated_by_id'] = uid
                 obj = cs.save(**kw)
-                out = {'id': obj.pk, **{k: getattr(obj, k + '_id', None) if k == 'document_type' else getattr(obj, k) for k in core_keys if k != 'emp_doc_document'}}
+                def _val(k):   # v1.28.1: linked rows (document type, language / skill) come back as their id
+                    if hasattr(obj, k + '_id'):
+                        return getattr(obj, k + '_id', None)
+                    return getattr(obj, k)
+                out = {'id': obj.pk, **{k: _val(k) for k in core_keys if k != 'emp_doc_document'}}
                 if es is not None:
                     ex = es.save(**{extra_key: obj.pk, 'employee_id': employee.pk})
                     if group == 'bank' and ex.is_primary:

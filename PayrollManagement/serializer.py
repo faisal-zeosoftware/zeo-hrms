@@ -405,10 +405,19 @@ class PayslipSerializer(serializers.ModelSerializer):
     )
 
     employee_details = serializers.SerializerMethodField()   # v1.20.2: the payslip page header (one payslip only)
+    employee_name = serializers.SerializerMethodField()   # v1.26.0: pay sheets showed the employee code only
+    employee_code = serializers.SerializerMethodField()
 
     class Meta:
         model = Payslip
         fields = '__all__'
+
+    def get_employee_name(self, obj):
+        e = obj.employee
+        return ' '.join(x for x in (getattr(e, 'emp_first_name', ''), getattr(e, 'emp_last_name', '')) if x) if e else ''
+
+    def get_employee_code(self, obj):
+        return getattr(obj.employee, 'emp_code', '') if obj.employee_id else ''
 
     def get_employee_details(self, obj):
         """v1.20.2 – name, designation, MoHRE person ID, Emirates ID and the salary account for the payslip header. Only for a

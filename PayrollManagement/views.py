@@ -233,8 +233,34 @@ class SalaryRevisionHistoryViewSet(viewsets.ReadOnlyModelViewSet):
             return False
         return True
 class PayslipViewSet(viewsets.ModelViewSet):
-    queryset = Payslip.objects.all()
+    # v1.26.0: by employee code (the final pay sheet had no order) and the employee in the same query
+    queryset = Payslip.objects.select_related('employee', 'payroll_run').order_by('payroll_run_id', 'employee__emp_code')
     serializer_class = PayslipSerializer
+
+    @action(detail=False, methods=['post'], url_path='confirm-bulk')
+    def confirm_bulk(self, request):
+        """v1.26.0 – confirm many payslips in one call {ids: [...]} (the screen sent one full PUT per payslip, then reloaded
+        the whole app). Answers how many were confirmed and where they went (approval / final pay sheet)."""
+        ids = [int(x) for x in (request.data.get('ids') or []) if str(x).isdigit()]
+        if not ids:
+            return Response({'detail': 'Select the payslips to confirm.'}, status=status.HTTP_400_BAD_REQUEST)
+        qs = self._scoped().filter(pk__in=ids)
+        n = 0
+        with transaction.atomic():
+            for p in qs:
+                if not p.confirm_status:
+                    p.confirm_status = True
+                    p.save(update_fields=['confirm_status'])
+                    n += 1
+                # v1.26.0: payslips made before 1.26.0 may have no approval step at all – give them the step a new
+                # payslip gets now (auto-approved without a set-up), so they never vanish from every list
+                if not p.approvals.exists():
+                    from .models import create_initial_payslip_approval
+                    create_initial_payslip_approval(sender=type(p), instance=p, created=True)
+        approved = qs.filter(status__in=self.RELEASED).count()
+        pending = qs.filter(approvals__status='Pending').distinct().count()
+        return Response({'confirmed': n, 'approved': approved, 'waiting_for_approval': pending,
+                         'message': f'{n} payslip(s) confirmed: {approved} in the final pay sheet, {pending} waiting in Payslip approvals.'})
 
     # v1.13.0: employees only ever see their own approved / paid payslips (never drafts); payroll / HR users
     # see the payslips of their branches. Every action goes through the same scoped queryset.
@@ -478,7 +504,7 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
 
 #                 elif file_name.endswith('.csv'):
 #                     dataset.load(
-#                         excel_file.read().decode('utf-8'),
+#                         excel_file.read().decode('utf-8-sig'),
 #                         format='csv'
 #                     )
 
@@ -602,7 +628,7 @@ class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
             if file_name.endswith('.xlsx'):
                 dataset.load(excel_file.read(), format='xlsx')
             elif file_name.endswith('.csv'):
-                dataset.load(excel_file.read().decode('utf-8'), format='csv')
+                dataset.load(excel_file.read().decode('utf-8-sig'), format='csv')
             else:
                 return Response(
                     {"error": "Invalid file format. Upload .xlsx or .csv only."},
@@ -626,9 +652,11 @@ class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
             )
  
         # Validate every column header maps to a real SalaryComponent
-        existing_components = {
-            c.name: c for c in SalaryComponent.objects.filter(name__in=component_columns)
-        }
+        # v1.26.0: component names match without regard to case / spaces
+        _by_name = {}
+        for c in SalaryComponent.objects.all().order_by('id'):
+            _by_name.setdefault(' '.join(c.name.split()).lower(), c)
+        existing_components = {h: _by_name[' '.join(h.split()).lower()] for h in component_columns if ' '.join(h.split()).lower() in _by_name}
         unknown_components = [c for c in component_columns if c not in existing_components]
         if unknown_components:
             return Response(
@@ -650,11 +678,9 @@ class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
                 all_errors.append(f"Row {row_idx}: Duplicate Employee Code '{emp_code}' in file")
             seen_emp_codes.add(emp_code)
  
-            employee = emp_master.objects.filter(emp_code=emp_code).first()
+            employee = emp_master.objects.filter(emp_code__iexact=emp_code).first()
             if not employee:
-                all_errors.append(
-                    f"Row {row_idx}: emp_master matching query does not exist for ID: {emp_code}"
-                )
+                all_errors.append(f"Row {row_idx}: no employee with code {emp_code}")
                 continue
  
             # Components actually assigned to this employee (i.e. an
@@ -677,12 +703,8 @@ class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
  
                 component_obj = existing_components[comp_name]
  
-                if component_obj.id not in assigned_component_ids:
-                    all_errors.append(
-                        f"Row {row_idx}: Salary component '{comp_name}' is not assigned "
-                        f"to employee {emp_code}"
-                    )
-                    continue
+                # v1.26.0: a component the employee does not have yet is given to them (before: error "not assigned" –
+                # and the screen only said "Salary upload failed!")
  
                 row_has_component = True
                 try:
@@ -703,25 +725,26 @@ class EmpBulkuploadSalaryStructureViewSet(viewsets.ModelViewSet):
  
             if not row_has_component:
                 all_errors.append(
-                    f"Row {row_idx}: No valid (assigned) salary component amounts provided for {emp_code}"
+                    f"Row {row_idx}: no salary amount for {emp_code}"
                 )
  
         if all_errors:
             return Response({"errors": all_errors}, status=400)
  
-        updated_count = 0
+        updated_count = created_count = 0
         with transaction.atomic():
             for employee, component, amount in valid_entries:
-                # These pairs were already confirmed to exist during
-                # validation (assigned_component_ids check above), so this
-                # is always an update, never a create.
-                rows = EmployeeSalaryStructure.objects.filter(
-                    employee=employee, component=component
-                ).update(amount=amount, is_active=True)
-                updated_count += rows
+                row, created = EmployeeSalaryStructure.objects.get_or_create(
+                    employee=employee, component=component, defaults={'amount': amount, 'is_active': True})
+                if created:
+                    created_count += 1
+                else:
+                    EmployeeSalaryStructure.objects.filter(pk=row.pk).update(amount=amount, is_active=True)
+                    updated_count += 1
  
         return Response({
-            "message": f"{updated_count} salary component amount(s) updated successfully"
+            "message": f"{updated_count} salary amount(s) updated, {created_count} added",
+            "updated": updated_count, "created": created_count
         })
  
     # ------------------------------------------------------------------
@@ -1175,14 +1198,32 @@ class SIFDataView(APIView):
                 'Days on Leave': ''
             }
 
-            # Combine all rows
+            # v1.26.0: a plain summary and what still blocks the file (the screen showed HDR / SCR under employee columns and
+            # never said why employees were left out – 50 payslips gave a file with 0 employee rows and total 0.00)
+            warnings = []
+            if employer_unique_id == '0' * 13:
+                warnings.append('The WPS employer ID (MoHRE establishment number, 13 digits) is missing – enter it in Settings → Company (edit) '
+                                'or per branch in Payroll → Setup → Payroll controls.')
+            if bank_routing_code == '0' * 9:
+                warnings.append("The employer's bank routing code (9 digits) is missing – Settings → Company (edit).")
+            if skipped_employees:
+                warnings.append(f'{len(skipped_employees)} employee(s) are not in the file – see the list below. Add the missing details in '
+                                'the employee file (Bank / WPS, MoHRE person ID) or import them with the employee upload.')
+            summary = {
+                'company': tenant.name if tenant else '', 'employer_id': employer_unique_id, 'routing_code': bank_routing_code,
+                'file_date': current_time.strftime('%Y-%m-%d'), 'file_time': current_time.strftime('%H%M'),
+                'salary_month': f"{month:02d}{year}", 'employees': len(sif_data), 'total_salary': f"{salary_value:.2f}",
+                'currency': 'AED', 'skipped': len(skipped_employees),
+            }
             response_data = {
                 'status': 'success',
                 'data': {
                     'hdr': hdr_row,
                     'edr': sif_data,
                     'scr': scr_row,
-                    "skipped_employees": skipped_employees,  # 👈 new field
+                    "skipped_employees": skipped_employees,
+                    'summary': summary,
+                    'warnings': warnings,
                 }
             }
 

@@ -131,7 +131,14 @@ class PolicySerializer(serializers.ModelSerializer):
         Emp = M('EmpManagement', 'emp_master')
         over = set(EmployeeLeavePolicy.objects.values_list('employee_id', flat=True))
         by_cat = Emp.objects.filter(is_active=True, emp_ctgry_id__in=o.category_ids or []).exclude(pk__in=over).count()
-        return by_cat + o.employees.count()
+        n = by_cat + o.employees.count()
+        if o.is_default and o.active:   # v1.26.0: the default policy also covers employees whose category no policy names
+            named = set()
+            for p in LeavePolicy.objects.filter(active=True):
+                named.update(p.category_ids or [])
+            from django.db.models import Q
+            n += Emp.objects.filter(is_active=True).filter(Q(emp_ctgry_id__isnull=True) | ~Q(emp_ctgry_id__in=named or [0])).exclude(pk__in=over).count()
+        return n
 
     def get_categories(self, o):
         return list(M('OrganisationManager', 'ctgry_master').objects.filter(pk__in=o.category_ids or []).values_list('ctgry_title', flat=True))
@@ -351,10 +358,39 @@ class OpeningsView(APIView):
         d = parse_date(str(request.data.get('date') or '')) or date.today()
         mode = request.data.get('mode') or 'set'
         Emp, LT = M('EmpManagement', 'emp_master'), M('calendars', 'leave_type')
-        types = {t.name.lower(): t for t in LT.objects.all()} | {t.code.lower(): t for t in LT.objects.all()}
+        types = {t.name.lower(): t for t in LT.objects.all()} | {(t.code or '').lower(): t for t in LT.objects.all()}
+        for t in LT.objects.all():   # v1.26.0: "AL" also matches code "AL-SCHEMA"
+            if t.code and '-' in t.code:
+                types.setdefault(t.code.split('-')[0].lower(), t)
+        rows = request.data.get('rows') or []
+        f = request.FILES.get('file') if hasattr(request, 'FILES') else None
+        if f is not None:   # v1.26.0: upload a file – long (employee_code, leave_type, days) or wide (Employee Code + one column per leave type)
+            try:
+                from EmpManagement.bulk_import import read_file, _txt
+                header, data_rows = read_file(f.name, f.read())
+            except Exception:
+                return Response({'detail': tr('The file could not be read. Save it as CSV (UTF-8) or .xlsx.')}, status=400)
+            hn = [str(h or '').strip().lower().replace('*', '') for h in header]
+            ci = next((i for i, h in enumerate(hn) if h in ('employee code', 'employee_code', 'emp code', 'emp id', 'code')), None)
+            if ci is None:
+                return Response({'detail': tr('The file needs an "Employee Code" column.')}, status=400)
+            if 'leave_type' in hn or 'leave type' in hn:
+                li = hn.index('leave_type') if 'leave_type' in hn else hn.index('leave type')
+                di = next((i for i, h in enumerate(hn) if h in ('days', 'balance', 'opening', 'opening balance')), None)
+                rows = [{'employee_code': _txt(r[ci]), 'leave_type': _txt(r[li]), 'days': (r[di] if di is not None and di < len(r) else None)}
+                        for r in data_rows if ci < len(r)]
+            else:
+                cols = [(i, h) for i, h in enumerate(header) if i != ci and str(h or '').strip().lower() in types]
+                if not cols:
+                    return Response({'detail': tr('No column is a leave type – name the columns as the leave types (e.g. Annual Leave, Sick Leave) or use employee_code, leave_type, days.')}, status=400)
+                rows = [{'employee_code': _txt(r[ci]), 'leave_type': str(h).strip(), 'days': r[i]}
+                        for r in data_rows for i, h in cols if ci < len(r) and i < len(r) and r[i] not in (None, '')]
+        emps = {e.emp_code.upper(): e for e in Emp.objects.all().only('id', 'emp_code', 'emp_branch_id')}
         done, errors = 0, []
-        for i, r in enumerate(request.data.get('rows') or [], 1):
-            e = Emp.objects.filter(emp_code__iexact=str(r.get('employee_code', '')).strip()).first()
+        from Chatter.tracking import paused
+        _p = paused(); _p.__enter__()
+        for i, r in enumerate(rows, 1):
+            e = emps.get(str(r.get('employee_code', '')).strip().upper())
             t = types.get(str(r.get('leave_type', '')).strip().lower())
             try:
                 days = float(r.get('days'))
@@ -371,7 +407,8 @@ class OpeningsView(APIView):
             if delta:
                 engine.post(e.pk, t.pk, d, 'opening', delta, note=f'Opening balance ({mode} {days:g})', user_id=request.user.pk, move_balance=True)
             done += 1
-        return Response({'loaded': done, 'errors': errors})
+        _p.__exit__(None, None, None)
+        return Response({'loaded': done, 'errors': errors[:500], 'error_count': len(errors), 'rows': len(rows)})
 
 
 class LedgerView(APIView):
@@ -561,7 +598,8 @@ class ApproversView(APIView):
         from .models import LevelRole, OrgRole
         from .approvers import resolve
         U = M('UserManagement', 'CustomUser')
-        users = {u.pk: u for u in U.objects.filter(is_active=True).order_by('username')}
+        from django.db import connection   # v1.26.0: users of this company only (the user table is shared by all companies)
+        users = {u.pk: u for u in U.objects.filter(is_active=True, tenants__schema_name=connection.schema_name).distinct().order_by('username')}
         mine = allowed_branches(request)   # v1.22.0 branch rights: other branches' roles / workflows / branches are hidden
         org_roles = OrgRole.objects.all()
         if mine is not None:
@@ -613,8 +651,9 @@ class ApproversView(APIView):
             if not r.get('user_id'):
                 OrgRole.objects.filter(**key).delete()
                 continue
-            if not U.objects.filter(pk=r['user_id'], is_active=True).exists():
-                return Response({'detail': tr('Choose an active user.')}, status=400)
+            from django.db import connection   # v1.26.0: a user of this company
+            if not U.objects.filter(pk=r['user_id'], is_active=True, tenants__schema_name=connection.schema_name).exists():
+                return Response({'detail': tr('Choose an active user of this company.')}, status=400)
             OrgRole.objects.update_or_create(**key, defaults={'user_id': r['user_id']})
         for x in request.data.get('levels') or []:
             lvl = L.objects.filter(pk=x.get('level_id')).first()

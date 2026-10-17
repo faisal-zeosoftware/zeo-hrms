@@ -49,6 +49,8 @@ class emp_master(models.Model):
     emp_mobile_number_1      = models.CharField(null=True,blank =True)
     emp_mobile_number_2      = models.CharField(null=True,blank =True)
     emp_reporting_manager    = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True,  related_name='emp_reporting_manager')
+    emp_reports_to           = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='direct_reports',
+                                                 help_text='v1.26.0 – line manager as an employee (bulk upload "Reports To"); used when no reporting manager user is set')
     emp_country_id           = models.ForeignKey("Core.cntry_mstr",on_delete=models.SET_NULL,null=True,blank =True)
     emp_state_id             = models.ForeignKey("Core.state_mstr",on_delete=models.SET_NULL,null=True,blank =True)
     emp_city                 = models.CharField(max_length=50,null=True,blank =True)

@@ -189,21 +189,53 @@ def push_row(model, pk):
 
 
 # ---------------------------------------------------------------- own database
-def db_name_for(account):
+def db_name_for(account, n=1):
     base = re.sub(r'[^a-z0-9_]', '_', str(connections[CONTROL].settings_dict['NAME']).lower())
-    return f'{base}_acc{account.id}'[:63]
+    return (f'{base}_acc{account.id}' + (f'_{n}' if n > 1 else ''))[:63]
 
 
-def create_own_db(account, by=None, note=''):
-    """Create (or finish creating) the own database of an account. Returns the DatabaseServer."""
+def databases_of(account, include_retired=False):
+    """v1.26.0: the own databases of an account (the default one – Account.db_alias – first)."""
+    qs = DatabaseServer.objects.filter(account=account)
+    if not include_retired:
+        qs = qs.exclude(state='retired')
+    return sorted(qs, key=lambda d: (d.key != account.db_alias, d.created_at))
+
+
+def _next_key(account):
+    """acc12 for the first database of account 12, then acc12_2, acc12_3 … (a retired key is used again)."""
+    n = 1
+    while True:
+        key = f'acc{account.id}' + (f'_{n}' if n > 1 else '')
+        srv = DatabaseServer.objects.filter(key=key).first()
+        if srv is None or (srv.state == 'retired' and srv.account_id == account.id):
+            return key, n
+        n += 1
+
+
+def create_own_db(account, by=None, note='', new=False, label=''):
+    """Create (or finish creating) an own database of an account. Returns the DatabaseServer.
+
+    new=False: the account's default database (made when the account changes to Premium – as in 1.24.0).
+    new=True (v1.26.0): one more database for the account (Settings → Subscription → Databases, or the console)."""
     from . import services as S
-    key = f'acc{account.id}'
-    srv, _ = DatabaseServer.objects.get_or_create(key=key, defaults={'account': account, 'name': db_name_for(account),
-                                                                     'label': account.name, 'state': 'creating', 'note': note})
+    if new:
+        key, n = _next_key(account)
+    else:
+        key = account.db_alias or f'acc{account.id}'
+        n = int(key.rsplit('_', 1)[1]) if '_' in key and key.rsplit('_', 1)[1].isdigit() else 1
+    srv, _ = DatabaseServer.objects.get_or_create(key=key, defaults={'account': account, 'name': db_name_for(account, n),
+                                                                     'label': label or account.name, 'state': 'creating', 'note': note})
     if srv.state == 'ready':
         return srv
-    srv.state = 'creating'
-    srv.save(update_fields=['state'])
+    if label:
+        srv.label = label[:120]
+    srv.state, srv.note = 'creating', note or ''
+    if new and not srv.extra:   # v1.26.0 an extra database: its own subscription, starting with a 14-day trial
+        srv.extra = True
+    if new and not srv.trial_ends:   # a removed database added again keeps its old trial (no second trial)
+        srv.trial_ends = timezone.localdate() + timedelta(days=S.DB_TRIAL_DAYS)
+    srv.save(update_fields=['state', 'label', 'note', 'extra', 'trial_ends'])
     dbrouting.forget()
     try:
         main = _params(CONTROL)
@@ -223,15 +255,169 @@ def create_own_db(account, by=None, note=''):
         srv.save(update_fields=['state'])
         dbrouting.forget()
         sync_shared(key, initial=True)
-        account.hosting, account.db_alias = 'own', key
-        account.save(update_fields=['hosting', 'db_alias'])
-        S.event(account, 'database', f'Own database {srv.name} created', by=by)
+        if not account.db_alias or not new:   # the first database is the default one
+            account.hosting, account.db_alias = 'own', key
+            account.save(update_fields=['hosting', 'db_alias'])
+        S.event(account, 'database', f'Own database {srv.name} created' + (f' – {srv.label}' if new and srv.label else '')
+                + (f' (extra database: trial until {srv.trial_ends}, then {S.db_price(srv) or "the price agreed"} a year)' if srv.extra else ''), by=by)
+        if srv.extra:   # v1.26.0 Adept invoices each extra database
+            to = getattr(settings, 'ZEO_CLOUD_ADMIN_EMAIL', '') or ''
+            if to:
+                try:
+                    from django.core.mail import send_mail
+                    send_mail(f'ZEO Cloud – extra database for {account.name}',
+                              f'{account.name} ({account.owner_email}) added the database "{srv.label or srv.name}" ({srv.name}).\n'
+                              f'Free trial until {srv.trial_ends}; after that it is read-only until it is marked paid in the console '
+                              f'(customer → Databases → Paid until).', None, [to], fail_silently=True)
+                except Exception:
+                    log.exception('extra database mail')
         return srv
     except Exception as e:
         srv.state, srv.note = 'failed', f'{e}'[:2000]
         srv.save(update_fields=['state', 'note'])
         dbrouting.forget()
         raise
+
+
+def forget_db(key):
+    from django.core.cache import cache
+    cache.delete(f'zeo:cloud:dbst:{key}')
+
+
+def set_default_db(account, key, by=None):
+    """v1.26.0: new companies of the account are made in this database."""
+    from . import services as S
+    srv = DatabaseServer.objects.filter(account=account, key=key, state='ready').first()
+    if srv is None:
+        raise MoveError('This database is not ready.')
+    account.db_alias, account.hosting = key, 'own'
+    account.save(update_fields=['db_alias', 'hosting'])
+    S.event(account, 'database', f'Default database for new companies: {srv.label or srv.name}', by=by)
+    return srv
+
+
+def remove_db(account, key, by=None):
+    """v1.26.0: an empty database that is not the default one is retired (dropped by the daily job after 7 days)."""
+    from . import services as S
+    srv = DatabaseServer.objects.filter(account=account, key=key).exclude(state='retired').first()
+    if srv is None:
+        raise MoveError('Not found.')
+    if key == account.db_alias:
+        raise MoveError('This is the default database – make another one the default first.')
+    if AccountCompany.objects.filter(db_alias=key).exists():
+        raise MoveError('Move or archive the companies of this database first.')
+    if MoveJob.objects.filter(target=key, state__in=('waiting', 'running')).exists() or dup_running(key):
+        raise MoveError('A copy or a move into this database is still running.')
+    srv.state = 'retired'
+    srv.save(update_fields=['state'])
+    dbrouting.forget()
+    forget_db(key)
+    S.event(account, 'database', f'Database removed – {srv.label or srv.name} (deleted after 7 days)', by=by)
+    return srv
+
+
+# ---------------------------------------------------------------- v1.26.0 duplicate a whole database
+DUP = 'zeo:cloud:dbdup:{}'
+
+
+def _dup_set(job, **kw):
+    """Progress of a database copy in the cache; while it runs, both databases point to the job (dup_running)."""
+    from django.core.cache import cache
+    d = cache.get(DUP.format(job)) or {}
+    d.update(kw)
+    cache.set(DUP.format(job), d, 60 * 60 * 24)
+    for k in (d.get('source'), d.get('target')):
+        if not k:
+            continue
+        if d.get('state') == 'running':
+            cache.set(DUP.format('db:' + k), job, 60 * 60 * 6)
+        else:
+            cache.delete(DUP.format('db:' + k))
+
+
+def dup_status(job):
+    from django.core.cache import cache
+    return cache.get(DUP.format(job))
+
+
+def dup_running(key):
+    from django.core.cache import cache
+    j = cache.get(DUP.format('db:' + key))
+    st = dup_status(j) if j else None
+    return bool(st and st.get('state') == 'running')
+
+
+def start_duplicate_db(account, source_key, label, by=None, neutralize=False, suffix=''):
+    """A new own database with a copy of every company of `source_key` (data, settings and users, like Duplicate
+    company). Runs in the background: returns a job id for dup_status()."""
+    import uuid
+    src = DatabaseServer.objects.filter(account=account, key=source_key, state='ready').first()
+    if src is None:
+        raise MoveError('This database is not ready.')
+    if dup_running(source_key):
+        raise MoveError('This database is already being copied.')
+    links = list(AccountCompany.objects.select_related('company').filter(account=account, db_alias=source_key, archived=False))
+    if not links:
+        raise MoveError('This database has no companies to copy.')
+    job = uuid.uuid4().hex[:16]
+    suffix = (suffix or label or 'Copy').strip()[:30]
+    _dup_set(job, state='running', step='Creating the new database', source=source_key, target='', label=label, account=account.id,
+             companies=[{'id': l.company_id, 'name': l.company.name, 'copy': f'{l.company.name} ({suffix})'[:100], 'state': 'waiting', 'error': ''} for l in links],
+             error='', by=getattr(by, 'pk', None), neutralize=bool(neutralize))
+    threading.Thread(target=_run_duplicate_db, args=(job, account.id, source_key, label, getattr(by, 'pk', None), bool(neutralize)), daemon=True).start()
+    return job
+
+
+def _run_duplicate_db(job, account_id, source_key, label, by_id, neutralize):
+    from . import services as S
+    from UserManagement.models import CustomUser, company as Company
+    from ZeoApps import duplicate as D
+    close_old_connections()
+    try:
+        account = Account.objects.get(pk=account_id)
+        by = CustomUser.objects.filter(pk=by_id).first() if by_id else None
+        st = dup_status(job) or {}
+        srv = create_own_db(account, by=by, new=True, label=label or f'Copy of {DatabaseServer.objects.get(key=source_key).label}')
+        _dup_set(job, target=srv.key, step='Copying the companies')
+        rows = st.get('companies') or []
+        for row in rows:
+            row['state'] = 'copying'
+            _dup_set(job, companies=rows, step=f"Copying {row['name']}")
+            try:
+                comp = Company.objects.filter(pk=row['id']).first()
+                if comp is None:
+                    raise MoveError('The company no longer exists.')
+                name, n = row['copy'], 2
+                while Company.objects.filter(name__iexact=name).exists():
+                    name = f"{row['copy'][:95]} {n}"
+                    n += 1
+                sub = f'{job}-{row["id"]}'
+                schema = D.schema_for(name)
+                D._set(sub, state='running', step=D.STEPS[0], schema=schema)
+                D._run(sub, comp.pk, name, schema, neutralize, by_id or (account.owner_id or 0))   # copy next to the original
+                close_old_connections()
+                ds = D.status(sub) or {}
+                if ds.get('state') != 'done' or not ds.get('company_id'):
+                    raise MoveError(ds.get('error') or 'The copy failed.')
+                new = Company.objects.get(pk=ds['company_id'])
+                mv = start_move(new, srv.key, by=by, settle=0, run_now=True, account=account)   # then into the new database
+                if mv.state != 'done':
+                    raise MoveError(f'Copied, but not moved to the new database: {mv.error}'[:300])
+                row.update(state='done', copy=name, copy_id=new.pk)
+            except Exception as e:
+                log.exception('duplicate database %s: %s', source_key, row.get('name'))
+                row.update(state='failed', error=str(e)[:300])
+            _dup_set(job, companies=rows)
+        failed = [r for r in rows if r['state'] != 'done']
+        S.event(account, 'database', f'Database copied – {srv.label} ({len(rows) - len(failed)} of {len(rows)} companies)', by=by, job=job)
+        from django.core.cache import cache
+        cache.delete(f'zeo:cloud:usage:{account.pk}')
+        _dup_set(job, state='done', step='Done', failed=len(failed))
+    except Exception as e:
+        log.exception('duplicate database %s', source_key)
+        _dup_set(job, state='failed', error=str(e)[:300])
+    finally:
+        close_old_connections()
 
 
 # ---------------------------------------------------------------- move
@@ -426,7 +612,10 @@ def retire_empty():
     """An own database without companies (the account left Premium) is retired: no longer used; dropped by cloud_daily
     once the old copies in it are past their 7 days."""
     for srv in DatabaseServer.objects.filter(state='ready'):
-        if not AccountCompany.objects.filter(db_alias=srv.key).exists() and srv.account and srv.account.db_alias != srv.key:
+        # v1.26.0: an empty extra database of a Premium account stays (the owner may fill it); retired only when the
+        # account left Premium (hosting shared) – an explicit Remove retires it at once (remove_db)
+        if not AccountCompany.objects.filter(db_alias=srv.key).exists() and srv.account and srv.account.db_alias != srv.key \
+                and srv.account.hosting != 'own':
             srv.state = 'retired'
             srv.save(update_fields=['state'])
     dbrouting.forget()
@@ -461,7 +650,10 @@ def change_hosting(account, to_own, by=None, settle=None, run_now=False):
 
     Returns the ids of the companies that will move."""
     target = create_own_db(account, by=by).key if to_own else ''
-    ids = [l.company_id for l in AccountCompany.objects.filter(account=account, archived=False) if (l.db_alias or '') != target]
+    if to_own:   # v1.26.0: companies already in one of the account's own databases stay there
+        ids = [l.company_id for l in AccountCompany.objects.filter(account=account, archived=False) if not l.db_alias]
+    else:
+        ids = [l.company_id for l in AccountCompany.objects.filter(account=account, archived=False) if l.db_alias]
     if not to_own:
         account.hosting, account.db_alias = 'shared', ''
         account.save(update_fields=['hosting', 'db_alias'])

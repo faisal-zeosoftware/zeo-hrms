@@ -126,9 +126,15 @@ class PeriodSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class permserializer(serializers.ModelSerializer):
+    # v1.28.1: name, app and model too, so the permission grouping screen can list every permission (new modules
+    # included) under a readable heading instead of only the hand-picked ones
+    name = serializers.CharField(read_only=True)
+    app = serializers.CharField(source='content_type.app_label', read_only=True)
+    model = serializers.CharField(source='content_type.model', read_only=True)
+
     class Meta:
         model=Permission
-        fields=['id','codename']
+        fields=['id','codename','name','app','model']
 
 class GroupSerializer(serializers.ModelSerializer):
     permissions = serializers.PrimaryKeyRelatedField(

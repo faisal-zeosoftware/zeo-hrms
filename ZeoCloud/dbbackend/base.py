@@ -35,7 +35,10 @@ class DatabaseWrapper(TenantWrapper):
         return dbrouting.db_of_schema(schema_name) or CONTROL
 
     def set_tenant(self, tenant, include_public=True):
-        self._zeo_want = self._zeo_target(getattr(tenant, 'schema_name', None))
+        want = self._zeo_target(getattr(tenant, 'schema_name', None))
+        if want == CONTROL and self._zeo_db != CONTROL and self.connection is not None and self.in_atomic_block:
+            want = self._zeo_db     # v1.27.0: see _zeo_switch – shared models still go to the main database (router)
+        self._zeo_want = want
         return super().set_tenant(tenant, include_public)
 
     # set_schema and set_schema_to_public go through set_tenant (FakeTenant)
@@ -46,6 +49,13 @@ class DatabaseWrapper(TenantWrapper):
         if want == self._zeo_db:
             return
         if self.connection is not None:
+            if self.in_atomic_block and want == CONTROL and self._zeo_db != CONTROL:
+                # v1.27.0: `schema_context('public')` inside a transaction of an own-database company (e.g. the
+                # notification inbox written while a leave request is saved) – stay in this database: its public schema
+                # holds the copy of the shared tables, and the router still sends shared models to the main database.
+                # Before, the save failed with "TransactionManagementError".
+                self._zeo_want = self._zeo_db
+                return
             if self.in_atomic_block:
                 raise ProgrammingError(f'Company data is in database "{want}" but a transaction is open on "{self._zeo_db}" '
                                        '– open the company outside the transaction.')

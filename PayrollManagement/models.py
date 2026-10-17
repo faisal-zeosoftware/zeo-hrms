@@ -423,7 +423,7 @@ class Payslip(models.Model):
         if next_level:
 
             if workflow.approval_type == 'reporting_manager':
-                approver = getattr(self.employee, 'emp_reporting_manager', None)
+                approver = payslip_manager(self.employee)
             else:
                 approver = next_level.approver
 
@@ -578,6 +578,16 @@ class PayslipApproval(models.Model):
         ])
 
 
+def payslip_manager(emp):
+    """v1.26.0 – the reporting manager's login, else the login of Reports-to (an employee, e.g. from the bulk upload)."""
+    m = getattr(emp, 'emp_reporting_manager', None) if emp else None
+    if m is not None:
+        return m
+    rt = getattr(emp, 'emp_reports_to', None) if emp else None
+    u = getattr(rt, 'users', None) if rt else None
+    return u if u is not None and u.is_active else None
+
+
 def own_payslip_approver(payslip, approver, role):
     """v1.18.0: an approver never approves his / her own payslip (the approval check refuses it), so the step stayed pending
     forever and the whole payroll run could not be approved (e.g. the HR manager's own payslip at the HR manager level).
@@ -602,17 +612,16 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
         return
 
     # -------- SAFE BRANCH CHECK --------
-    if not instance.employee or not instance.employee.emp_branch_id:
+    if not instance.employee:
         return
 
     workflow = PayslipApprovalWorkflow.objects.filter(
         branch__id=instance.employee.emp_branch_id.id
-    ).first()
+    ).first() if instance.employee.emp_branch_id else None
 
-    if not workflow:
-        return
-
-    approval_type = workflow.approval_type
+    # v1.26.0: no approval set-up for the branch (or no branch) = no approval. Before, the payslip got no approval step,
+    # stayed "pending" and, once confirmed, was in no list at all (Trial, Approvals and Final pay sheet were empty).
+    approval_type = workflow.approval_type if workflow else 'no_approval'
 
     # -------- NO APPROVAL --------
     if approval_type == 'no_approval':
@@ -620,7 +629,7 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
         PayslipApproval.objects.create(
             request=instance,
             approver=instance.employee.user if hasattr(instance.employee, 'user') else None,
-            role="Auto Approval",
+            role="Auto Approval" if workflow else "Auto Approval (no approval set-up for the branch)",
             level=1,
             status='Approved',
             employee=instance.employee
@@ -634,7 +643,7 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
     # -------- REPORTING MANAGER --------
     if approval_type == 'reporting_manager':
 
-        manager = getattr(instance.employee, 'emp_reporting_manager', None)
+        manager = payslip_manager(instance.employee)   # v1.26.0: also Reports-to (employee) with a login
 
         if manager:
 
@@ -660,10 +669,11 @@ def create_initial_payslip_approval(sender, instance, created, **kwargs):
             workflow=workflow
         ).order_by('level').first()
 
-        if not first_level:
-            return
-
-        if not first_level.approver:
+        # v1.26.0: no level / no person on the first level -> the company administrator approves (was: no step at all and
+        # the payslip disappeared once confirmed)
+        if not first_level or not first_level.approver:
+            PayslipApproval.objects.create(request=instance, approver=None, role='Company administrator (no approver set)',
+                                           level=first_level.level if first_level else 1, status='Pending', employee=instance.employee)
             return
 
         step_approver, step_role = own_payslip_approver(instance, first_level.approver, first_level.role)

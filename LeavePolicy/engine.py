@@ -25,6 +25,9 @@ from django.db.models import Q, Sum
 from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
+
+import threading as _threading
+_run = _threading.local()   # v1.26.0: per-run look-ups of the monthly accrual (see run_accrual)
 M = apps.get_model
 ACTIVE_STATUSES = ('pending', 'approved')
 TAG = 'Leave rules'      # remark on attendance-calendar days written by the engine
@@ -45,10 +48,30 @@ def managed_type_ids():
         return set()
 
 
+def _run_maps():
+    """v1.26.0 – policies, overrides and lines read once for a whole accrual run (policy_for ran 2–3 queries and
+    p.lines.all() one more for every employee: 1,001 lines took ~29 s to preview and ~90 s to credit)."""
+    Policy, _, EmpPolicy, _ = _models()
+    pols = list(Policy.objects.filter(active=True).prefetch_related('lines').order_by('id'))
+    by_id = {p.pk: p for p in pols}
+    over = {}
+    for o in EmpPolicy.objects.filter(policy__active=True).select_related('policy'):
+        over.setdefault(o.employee_id, by_id.get(o.policy_id, o.policy))
+    by_cat = {}
+    for p in pols:
+        for c in (p.category_ids or []):
+            by_cat.setdefault(c, p)
+    default = next((p for p in pols if p.is_default), None)
+    return {'over': over, 'by_cat': by_cat, 'default': default}
+
+
 def policy_for(emp):
     Policy, _, EmpPolicy, _ = _models()
     if emp is None:
         return None
+    maps = getattr(_run, 'maps', None)
+    if maps is not None:
+        return maps['over'].get(emp.pk) or (maps['by_cat'].get(emp.emp_ctgry_id_id) if emp.emp_ctgry_id_id else None) or maps['default']
     o = EmpPolicy.objects.filter(employee_id=emp.pk, policy__active=True).select_related('policy').first()
     if o:
         return o.policy
@@ -344,6 +367,9 @@ def _active_employees():
 
 def exit_date(emp):
     """Last working day from the employee's resignation / termination (not rejected), if any."""
+    exits = getattr(_run, 'exits', None)
+    if exits is not None:
+        return exits.get(emp.pk)
     try:
         R = M('EmpManagement', 'EmployeeResignation')
         r = R.objects.filter(employee=emp).exclude(status__iexact='rejected').exclude(status__iexact='cancelled').order_by('-last_working_date').first()
@@ -530,13 +556,52 @@ def year_fraction(line, y0, y1, joined):
 
 
 def run_accrual(on=None, user_id=None, preview=False):
-    """Credit the leave earned for the month that ends on/before `on` (default: last month). Safe to run again."""
+    """Credit the leave earned for the month that ends on/before `on` (default: last month). Safe to run again.
+    v1.26.0: look-ups are read once per run and no field-by-field history is written (one summary note instead)."""
+    _run.maps = _run_maps()
+    try:
+        R = M('EmpManagement', 'EmployeeResignation')
+        ex = {}
+        for eid, lwd in R.objects.exclude(status__iexact='rejected').exclude(status__iexact='cancelled').exclude(last_working_date__isnull=True) \
+                .values_list('employee_id', 'last_working_date'):
+            if eid not in ex or lwd > ex[eid]:
+                ex[eid] = lwd
+        _run.exits = ex
+    except Exception:
+        _run.exits = None
+    try:
+        from Chatter.tracking import paused
+    except Exception:   # pragma: no cover
+        from contextlib import nullcontext as paused
+    try:
+        with paused():
+            res = _run_accrual(on, user_id, preview)
+    finally:
+        _run.maps = None
+        _run.exits = None
+    if not preview and res.get('count'):
+        try:
+            from Chatter.models import Message
+            Message.objects.create(model='LeavePolicy.leavepolicy', object_id='accrual', author_id=user_id,
+                                   body=f"Monthly accrual {res['month']}: {res['count']} balance line(s) credited.")
+        except Exception:
+            pass
+    return res
+
+
+def _run_accrual(on=None, user_id=None, preview=False):
     _, Line, _, Ledger = _models()
     on = on or (date.today().replace(day=1) - timedelta(days=1))
     m_end = (on.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     m_start = m_end.replace(day=1)
     tag = f'{m_end:%Y-%m}'
     rows = []
+    # v1.26.0: what was credited already, read once (was two EXISTS queries per employee and line)
+    done_tag = set(Ledger.objects.filter(kind__in=('accrual', 'reset'), note__startswith=tag).values_list('employee_id', 'leave_type_id'))
+    near = defaultdict(list)
+    for eid, lt, d in Ledger.objects.filter(kind__in=('accrual', 'reset'), date__gte=m_end - timedelta(days=740), date__lte=m_end + timedelta(days=370)) \
+            .values_list('employee_id', 'leave_type_id', 'date'):
+        near[(eid, lt)].append(d)
     for emp in _accrual_employees(m_start):
         p = policy_for(emp)
         if p is None or not emp.emp_joined_date or emp.emp_joined_date > m_end:
@@ -550,7 +615,7 @@ def run_accrual(on=None, user_id=None, preview=False):
                 continue
             if line.gender != 'B' and (emp.emp_gender or '') != line.gender:
                 continue
-            done = Ledger.objects.filter(employee_id=emp.pk, leave_type_id=line.leave_type_id, kind__in=('accrual', 'reset'), note__startswith=tag).exists()
+            done = (emp.pk, line.leave_type_id) in done_tag
             if done:
                 continue
             svc = months_of_service(emp, m_end)
@@ -586,7 +651,7 @@ def run_accrual(on=None, user_id=None, preview=False):
                 conf = emp.emp_date_of_confirmation
                 if line.after_probation and conf and conf > m_end:
                     continue
-                if Ledger.objects.filter(employee_id=emp.pk, leave_type_id=line.leave_type_id, kind__in=('accrual', 'reset'), date__range=(y0, y1)).exists():
+                if any(y0 <= d <= y1 for d in near.get((emp.pk, line.leave_type_id), ())):
                     continue
                 if m_start == y0:     # close last leave year first if nobody did (carry-forward limit, encash / lapse)
                     closed = close_line(emp, line, y0 - timedelta(days=1), user_id=user_id, preview=preview)
@@ -642,7 +707,7 @@ def expire_carry_forward(m_end, user_id=None, preview=False):
         if p is None:
             continue
         y0, _ = leave_year(p, m_end)
-        for line in p.lines.filter(carry_forward_expiry_months__gt=0):
+        for line in [l for l in p.lines.all() if (l.carry_forward_expiry_months or 0) > 0]:   # v1.26.0: prefetched
             exp = (y0.replace(day=1) + timedelta(days=31 * line.carry_forward_expiry_months)).replace(day=1) - timedelta(days=1)
             if exp != m_end:
                 continue

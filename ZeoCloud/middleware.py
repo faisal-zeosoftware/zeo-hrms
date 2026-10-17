@@ -2,7 +2,8 @@
 
 * the signed-in user must be a user of the company (Adept platform administrators excepted);
 * the account's status: cancelled → closed; suspended (or trial / grace period over) → read-only;
-* an app whose licence ended (or is not in the plan) is read-only in the company.
+* an app whose licence ended (or is not in the plan) is read-only in the company;
+* v1.26.0: a company in an extra own database whose trial / subscription ended is read-only.
 Companies that are not linked to a cloud account are not touched.
 """
 import json
@@ -13,7 +14,7 @@ from django.db import connection
 from django.http import HttpResponse
 
 log = logging.getLogger(__name__)
-OPEN = ('/users/', '/core/', '/cloud/', '/language/', '/admin', '/static', '/media', '/zeo-apps/')
+OPEN = ('/users/', '/core/', '/cloud/', '/language/', '/admin', '/static', '/media', '/zeo-apps/', '/mobile/', '/group/', '/licence/')
 SAFE = ('GET', 'HEAD', 'OPTIONS')
 READONLY_OK = re.compile(r'notif|/language/api/me|assistant|/export|/report|/views/api', re.I)
 APP_PREFIX = [('/payroll-plus/', 'payroll'), ('/payroll/', 'payroll'), ('/zeo-projects/', 'projects'), ('/zeo-crm/', 'crm'),
@@ -68,6 +69,11 @@ class CloudMiddleware:
         unsafe = request.method not in SAFE and not READONLY_OK.search(request.path)
         if st['read_only'] and unsafe:
             return _json({'detail': tr('Read-only: the subscription is suspended. You can view, export and print; adding or changing records is off until the invoice is paid.'), 'cloud': 'readonly'}, 423)
+        if unsafe and link.db_alias:   # v1.26.0: an extra database whose 14-day trial or subscription ended is read-only
+            from .services import db_status_of_key
+            dst = db_status_of_key(link.db_alias)
+            if dst and dst.get('read_only'):
+                return _json({'detail': tr('Read-only: the trial or subscription of the database {0} ended. You can view, export and print; adding or changing records is off until it is paid.', dst.get('label', '')), 'cloud': 'readonly'}, 423)
         if unsafe:
             app = next((a for p, a in APP_PREFIX if request.path.startswith(p)), None)
             if app:

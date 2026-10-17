@@ -72,10 +72,10 @@ def create_tenant_defaults(sender, tenant, **kwargs):
         # v1.15.1: the default holidays come from the company's country pack (CountryPack/holidays.py) instead of a
         # fixed western list for every company. Islamic holidays are added with their expected dates and a note.
         try:
-            from CountryPack.packs import pack_for_code
+            from CountryPack.packs import pack_for_country
             from CountryPack.holidays import seed_calendar
-            cc = getattr(getattr(tenant, 'country', None), 'country_code', '') or ''
-            seed_calendar(h_calendar, pack_for_code(cc) if cc else 'AE', current_year)
+            _ctry = getattr(tenant, 'country', None)
+            seed_calendar(h_calendar, pack_for_country(_ctry) if _ctry is not None else 'AE', current_year)   # v1.26.0: by ISO / name
         except Exception:
             holiday.objects.get_or_create(
                 description=f"New Year's Day {current_year}",

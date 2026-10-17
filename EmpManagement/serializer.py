@@ -578,6 +578,7 @@ class EmpSerializer(serializers.ModelSerializer):
     # Linked fields may arrive as names (the GET answer shows names); they are turned back into ids.
     NAME_FIELDS = {
         'emp_reporting_manager': ('UserManagement.CustomUser', 'username'),
+        'emp_reports_to': ('EmpManagement.emp_master', 'emp_code'),   # v1.26.0: line manager as an employee
         'emp_branch_id': ('OrganisationManager.brnch_mstr', 'branch_name'),
         'work_location': ('OrganisationManager.brnch_mstr', 'branch_name'),
         'visa_location': ('OrganisationManager.brnch_mstr', 'branch_name'),
@@ -939,6 +940,9 @@ class EmplistSerializer(serializers.ModelSerializer):
             rep['emp_ctgry_id'] =instance.emp_ctgry_id.ctgry_title
         if instance.emp_branch_id:
             rep['emp_branch_id'] =instance.emp_branch_id.branch_name
+        # v1.26.0: name for drop-downs (leave requests showed the code only)
+        rep['emp_name'] = ' '.join(x for x in (instance.emp_first_name, instance.emp_last_name) if x)
+        rep['branch_id'] = instance.emp_branch_id_id
         return rep
 class EmpBulkUploadSerializer(serializers.ModelSerializer):
     # v1.12.0: custom field VALUES of the new employee ([{emp_custom_field, field_value}]); this used to create

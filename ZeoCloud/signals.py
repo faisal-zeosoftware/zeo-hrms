@@ -2,7 +2,7 @@
 import logging
 
 from django.db import connection
-from django.db.models.signals import m2m_changed, post_save, pre_save
+from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 
 log = logging.getLogger(__name__)
 _done = False
@@ -112,6 +112,14 @@ def connect():
         post_save.connect(user_saved, sender=CustomUser, dispatch_uid='zeocloud_user_copy')
     except Exception:
         log.exception('user limit signal')
+    try:   # v1.26.0 per-company rights of invited logins
+        from UserManagement.models import CustomUser
+        from .models import CompanyAccess
+        m2m_changed.connect(access_tenants_changed, sender=CustomUser.tenants.through, dispatch_uid='zeocloud_access_tenants')
+        post_save.connect(_rights_forget, sender=CompanyAccess, dispatch_uid='zeocloud_access_save')
+        post_delete.connect(_rights_forget, sender=CompanyAccess, dispatch_uid='zeocloud_access_del')
+    except Exception:
+        log.exception('company access signals')
     try:
         from django.apps import apps
         from django.contrib.contenttypes.models import ContentType
@@ -119,3 +127,19 @@ def connect():
             post_save.connect(shared_row_saved, sender=m, dispatch_uid=f'zeocloud_copy_{m._meta.db_table}')
     except Exception:
         log.exception('shared row copy signals')
+
+
+def _rights_forget(*a, **kw):
+    from . import rights
+    rights.forget()
+
+
+def access_tenants_changed(sender, instance, action, reverse, pk_set, **kwargs):
+    """v1.26.0: access to a company removed -> the invited rights for it go too (on every server, cloud or not)."""
+    if action != 'post_remove' or not pk_set:
+        return
+    from .models import CompanyAccess
+    if reverse:
+        CompanyAccess.objects.filter(company_id=instance.pk, user_id__in=pk_set).delete()
+    else:
+        CompanyAccess.objects.filter(user_id=instance.pk, company_id__in=pk_set).delete()

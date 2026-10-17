@@ -23,7 +23,8 @@ from django.apps import apps
 from django.core.cache import cache
 from django.db import connection
 
-from .packs import (AE_LABELS, CURRENCY_DECIMALS, FEATURE_KEYS, LABEL_KEYS, NEUTRAL_LEAVE_TYPES, PACK_ORDER, PACKS, pack_for_code)
+from .packs import (AE_LABELS, CURRENCY_DECIMALS, FEATURE_KEYS, LABEL_KEYS, NEUTRAL_LEAVE_TYPES, PACK_ORDER, PACKS, pack_for_code,
+                    pack_for_country, iso2_of, iso2)
 from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
 log = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ def _norm_seed(d):
 
 def _country_rule(country_code):
     """The active rule set of a country in this company (standard first), else the standard GCC set from the code, else None."""
-    cc = (country_code or '').upper()[:2]
+    cc = iso2(country_code)
     if len(cc) != 2:
         return None
     try:
@@ -157,7 +158,7 @@ def rule_set_for_branch(branch_id=None, schema_name=None):
             except Exception:
                 pass
             b = M('OrganisationManager', 'brnch_mstr').objects.filter(pk=branch_id).select_related('br_country').first()
-            cc = (getattr(getattr(b, 'br_country', None), 'country_code', '') or '').upper()[:2] if b else ''
+            cc = iso2_of(getattr(b, 'br_country', None)) if b else ''
             if cc:
                 r = _country_rule(cc)
                 if r:
@@ -186,8 +187,7 @@ def _currency(comp, pack):
 
 
 def base_pack_code(comp):
-    cc = (getattr(getattr(comp, 'country', None), 'country_code', '') or '') if comp else ''
-    return pack_for_code(cc) if comp is not None else 'AE'
+    return pack_for_country(getattr(comp, 'country', None)) if comp is not None else 'AE'
 
 
 def _nationality_word(country_code):
@@ -209,7 +209,7 @@ def _resolve(schema):
     code = override if override in PACKS else auto
     P = PACKS[code]
     country = getattr(comp, 'country', None) if comp else None
-    cc = ((getattr(country, 'country_code', '') or '').upper()[:2]) if country else 'AE'
+    cc = iso2_of(country) if country else 'AE'
     labels = dict(P['labels'])
     features = dict(P['features'])
     nat_words = list(P['nationality_words'])
@@ -452,8 +452,8 @@ def clean_generic_id(v, max_len=18):
 # ------------------------------------------------------------------ document types for a new company
 def document_types_for_country(country):
     """Default document types of a new company in this country (AE: Emirates ID, Passport – as before)."""
-    cc = (getattr(country, 'country_code', '') or '').upper()[:2] if country is not None else ''
-    code = pack_for_code(cc)
+    cc = iso2_of(country) if country is not None else ''
+    code = pack_for_country(country) if country is not None else 'GEN'
     return list(PACKS[code]['document_types'])
 
 
@@ -532,6 +532,12 @@ def localize_report(data):
 
 
 # ------------------------------------------------------------------ apply defaults
+UAE_COMPONENTS = [   # v1.26.0 – name, code, payroll category
+    ('Housing Allowance', 'HOUSING', 'housing_allowance'),
+    ('Transport Allowance', 'TRANSPORT', 'transport_allowance'),
+    ('Food Allowance', 'FOOD', 'food_allowance'),
+    ('Other Allowance', 'OTHER', 'other_allowance'),
+]
 def _weekday_fields():
     return ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 
@@ -577,15 +583,18 @@ def apply_defaults(user=None, schema_name=None):
             except LookupError:
                 rule = _norm_seed(seed) if seed else None
             rule_name = rule['name'] if rule else ''
-            # 3. leave types – only when the company has none
+            # 3. leave types – UAE: the UAE standard set (adds only what is missing, existing types are kept; v1.26.0 – before,
+            #    nothing was loaded when the company had any leave type, and every new company has six); others: only when none
             LT = M('calendars', 'leave_type')
-            if LT.objects.exists():
-                kept.append({'kind': 'Leave types', 'name': f'{LT.objects.count()} leave types', 'detail': 'the company has leave types – not changed'})
-            elif p['pack'] == 'AE':
+            if p['pack'] == 'AE':
                 from LeavePolicy import setup as leave_setup
                 res = leave_setup.load(user)
                 for n in res.get('created_leave_types', []):
                     added.append({'kind': 'Leave type', 'name': n, 'detail': 'UAE Labour Law'})
+                if not res.get('created_leave_types'):
+                    kept.append({'kind': 'Leave types', 'name': 'UAE standard leave types', 'detail': 'already there'})
+            elif LT.objects.exists():
+                kept.append({'kind': 'Leave types', 'name': f'{LT.objects.count()} leave types', 'detail': 'the company has leave types – not changed'})
             else:
                 WF = M('calendars', 'LVApprovalWorkflow')
                 for name, code, cat, typ, half, desc in NEUTRAL_LEAVE_TYPES:
@@ -607,6 +616,43 @@ def apply_defaults(user=None, schema_name=None):
                                       deduct_leave=False, show_in_payslip=True, branch=branches[0] if len(branches) == 1 else None,
                                       description='Employee share of the GPSSA pension for UAE nationals (5 % / 11 % of basic + housing + transport)')
                     added.append({'kind': 'Salary component', 'name': 'Pension – GPSSA (employee)', 'detail': 'UAE nationals – Federal Decree-Law 57/2023'})
+            # 4b. v1.26.0 – UAE salary components every UAE payroll uses (Housing, Transport, Other / Food allowance)
+            if p['pack'] == 'AE':
+                SC = M('PayrollManagement', 'SalaryComponent')
+                for name, code, cat in UAE_COMPONENTS:
+                    if SC.objects.filter(code=code).exists() or SC.objects.filter(name__iexact=name).exists():
+                        kept.append({'kind': 'Salary component', 'name': name, 'detail': 'already there'})
+                        continue
+                    SC.objects.create(name=name, code=code, component_type='addition', payroll_category=cat, component_value_type='fixed',
+                                      deduct_leave=True, show_in_payslip=True, branch=None,
+                                      description=f'{name} – fixed monthly amount (UAE default)')
+                    added.append({'kind': 'Salary component', 'name': name, 'detail': 'fixed monthly allowance'})
+            # 4c. v1.26.0 – a payslip approval set-up for every branch that has none (no approval), so confirmed payslips
+            #     reach the final pay sheet instead of disappearing; HR can change it in Payroll → Setup → Approval levels
+            try:
+                PW = M('PayrollManagement', 'PayslipApprovalWorkflow')
+                covered = set(PW.objects.values_list('branch__id', flat=True))
+                missing = [b for b in branches if b.pk not in covered]
+                if missing:
+                    wf = PW.objects.create(approval_type='no_approval')
+                    wf.branch.set(missing)
+                    added.append({'kind': 'Payslip approval', 'name': 'No approval', 'detail': ', '.join(b.branch_name for b in missing)})
+            except (LookupError, Exception) as e:   # noqa: BLE001 – never block the other defaults
+                kept.append({'kind': 'Payslip approval', 'name': '–', 'detail': f'not set: {e}'})
+            # 4d. v1.26.0 – public holidays of the country in every holiday calendar without holidays
+            try:
+                from .holidays import seed_calendar
+                HC = M('calendars', 'holiday_calendar')
+                H = M('calendars', 'holiday')
+                from datetime import date as _d
+                for cal in HC.objects.all():
+                    if H.objects.filter(calendar=cal).exists():
+                        continue
+                    a, _s = seed_calendar(cal, p['pack'], max(cal.year or _d.today().year, _d.today().year), user)
+                    if a:
+                        added.append({'kind': 'Public holidays', 'name': cal.calendar_title, 'detail': f'{len(a)} holidays'})
+            except Exception as e:   # noqa: BLE001
+                kept.append({'kind': 'Public holidays', 'name': '–', 'detail': f'not set: {e}'})
             # 5. weekend of the rule set on the default weekend calendar (only while it still has the standard Saturday–Sunday)
             if rule and rule.get('weekend_days'):
                 want = set(int(d) for d in rule['weekend_days'])

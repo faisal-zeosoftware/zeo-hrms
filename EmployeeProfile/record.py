@@ -65,14 +65,35 @@ def expiry(d, today=None):
 LEVEL_ORDER = {'expired': 0, 'red': 1, 'amber': 2, 'valid': 3}
 
 
-def doc_cards(ident, emp):
+def doc_cards(ident, emp, allowed=None):
+    """v1.28.1: `allowed` = the identity fields of the company's country pack. A card whose fields are switched off in
+    the pack (for example Residence visa or Labour card for a company outside the UAE) is left out instead of being shown
+    with an empty form (only Save / Cancel); fields that are off are dropped from the remaining cards."""
     out = []
+    lb = {}
+    try:   # card titles follow the company's country pack labels (UAE: unchanged)
+        from CountryPack.services import current_pack
+        cp = current_pack()
+        if cp['pack'] != 'AE' or cp['overridden']['labels']:
+            L = cp['labels']
+            lb = {'emirates_id': L.get('national_id'), 'visa': L.get('residence_visa'), 'labour_card': L.get('work_permit'),
+                  'mohre_contract': L.get('labour_contract')}
+    except Exception:
+        pass
     for key, label, nums, issue, exp, extra in DOCS:
+        label = lb.get(key) or label
+        if allowed is not None:
+            nums = [n for n in nums if n in allowed]
+            issue = issue if issue in allowed else None
+            exp = exp if exp in allowed else None
+            extra = [f for f in extra if f in allowed]
+            if not nums and not exp:
+                continue
         g = (lambda f: getattr(ident, f, None) if ident is not None else None)
         number = ' / '.join(str(g(n)) for n in nums if g(n))
         card = {'key': key, 'label': label, 'number': number, 'numbers': {n: g(n) or '' for n in nums},
                 'issue_date': g(issue) if issue else None, 'expiry_date': g(exp), 'badge': expiry(g(exp)),
-                'extra': {f: (str(g(f)) if g(f) is not None else '') for f in extra}, 'fields': nums + ([issue] if issue else []) + [exp] + extra}
+                'extra': {f: (str(g(f)) if g(f) is not None else '') for f in extra}, 'fields': nums + ([issue] if issue else []) + ([exp] if exp else []) + extra}
         out.append(card)
     if emp.person_id:
         out.append({'key': 'person_id', 'label': 'MOHRE person code', 'number': emp.person_id, 'numbers': {'person_id': emp.person_id},
@@ -196,9 +217,9 @@ def record(request, emp, can_edit):
     info = S.ensure_info(emp)
     contacts = list(EmergencyContact.objects.filter(employee_id=emp.pk).order_by('-is_primary', 'id'))
     comp = S.completeness(emp, ident, bool(contacts))
-    docs = doc_cards(ident, emp)
     G = group_defs()
     fk = lambda g: [f['key'] for f in G.get(g, {}).get('fields', [])]
+    docs = doc_cards(ident, emp, fk('identity'))
 
     # many-row groups
     fam_qs = list(M('EmpManagement', 'emp_family').objects.filter(emp_id=emp).order_by('id'))
@@ -270,9 +291,9 @@ def record(request, emp, can_edit):
                   'address': c.address, 'is_primary': c.is_primary} for c in contacts]
 
     sk = S.skills_json(emp)
-    skills = ([{'id': s['id'], 'kind': 'language', 'type': tr('Language'), 'skill': s['skill'], 'level': s['percentage']} for s in sk['language']] +
-              [{'id': s['id'], 'kind': 'programming', 'type': tr('Technical'), 'skill': s['skill'], 'level': s['percentage']} for s in sk['programming']] +
-              [{'id': s['id'], 'kind': 'marketing', 'type': tr('Marketing'), 'skill': s['skill'], 'level': s['percentage']} for s in sk['marketing']] +
+    skills = ([{'id': s['id'], 'kind': 'language', 'type': tr('Language'), 'skill': s['skill'], 'level': s['percentage'], 'language_skill': s.get('fk'), 'percentage': s['percentage']} for s in sk['language']] +
+              [{'id': s['id'], 'kind': 'programming', 'type': tr('Technical'), 'skill': s['skill'], 'level': s['percentage'], 'program_skill': s.get('fk'), 'percentage': s['percentage']} for s in sk['programming']] +
+              [{'id': s['id'], 'kind': 'marketing', 'type': tr('Marketing'), 'skill': s['skill'], 'level': s['percentage'], 'marketing_skill': s.get('fk'), 'percentage': s['percentage']} for s in sk['marketing']] +
               [{'id': s['id'], 'kind': 'learning', 'type': s['category'] or tr('Skill'), 'skill': s['skill'], 'level': s['level'], 'source': s['source']} for s in sk['learning']])
 
     hdr = header(request, emp, ident, info, comp, docs)
@@ -488,11 +509,17 @@ def directory_rows(request, emps, today=None):
     today = today or date.today()
     ids = [e.pk for e in emps]
     idn = {i.employee_id: i for i in EmployeeIdentity.objects.filter(employee_id__in=ids)}
-    have = set(EmploymentInfo.objects.filter(employee_id__in=ids).values_list('employee_id', flat=True))
-    for e in emps:
-        if e.pk not in have:
-            S.ensure_info(e)
+    S.ensure_info_bulk(emps, today)   # v1.26.0: one bulk insert instead of ensure_info per employee
     infos = {i.employee_id: i for i in EmploymentInfo.objects.filter(employee_id__in=ids)}
+    # v1.26.0: on notice and past the last working day -> final status (was only refreshed when the file was opened)
+    for f in infos.values():
+        if f.status == 'on_notice' and f.date_of_leaving and f.date_of_leaving < today:
+            e = next((x for x in emps if x.pk == f.employee_id), None)
+            if e is not None:
+                try:
+                    infos[f.employee_id] = S.refresh_probation(e, f, today)
+                except Exception:
+                    pass
     contacts = set(EmergencyContact.objects.filter(employee_id__in=ids).values_list('employee_id', flat=True))
     banks = set(M('EmpManagement', 'EmployeeBankDetail').objects.filter(employee_id__in=ids, is_active=True).exclude(iban_number__isnull=True)
                 .exclude(iban_number='').values_list('employee_id', flat=True))
@@ -519,7 +546,7 @@ def directory_rows(request, emps, today=None):
             'nationality': str(e.emp_nationality or '') if e.emp_nationality_id else '', 'nationality_id': e.emp_nationality_id,
             'joined': e.emp_joined_date, 'status': st, 'status_label': dict(EmploymentInfo.STATUS).get(st, st), 'probation_days_left': prob_left,
             'is_active': bool(e.is_active), 'is_ess': bool(e.is_ess), 'mobile': e.emp_mobile_number_1 or '', 'email': e.emp_company_email or e.emp_personal_email or '',
-            'emirates_id': getattr(i, 'emirates_id', '') if i else '', 'manager_id': e.emp_reporting_manager_id,
+            'emirates_id': getattr(i, 'emirates_id', '') if i else '', 'manager_id': e.emp_reporting_manager_id, 'reports_to_id': e.emp_reports_to_id,
             'doc': ({'document': w[0], **w[1]} if w else None), 'completeness': comp['score'], 'missing': comp['missing'][:6],
         })
     return rows
@@ -631,5 +658,8 @@ class LookupsView(Base):
             'nationalities': rows('Core.Nationality', 'N_name'), 'religions': rows('Core.ReligionMaster', 'religion'),
             'countries': rows('Core.cntry_mstr', 'country_name'), 'states': rows('Core.state_mstr', 'state_name'),
             'document_types': rows('EmpManagement.document_type', 'type_name'),
+            # v1.28.1: languages and skills are edited on the record (were: classic view only)
+            'languages': rows('Core.LanguageSkill', 'language'), 'marketing_skills': rows('Core.MarketingSkill', 'marketing'),
+            'programming_skills': rows('Core.ProgrammingLanguageSkill', 'programming_language'),
             'groups': S.profile_groups(),
         })

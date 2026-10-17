@@ -22,6 +22,8 @@ TYPES = [
     ('Unpaid Leave', 'UL', 'unpaid', 'unpaid', True, 'By agreement with the employer'),
     ('Casual Leave', 'CL', 'casual', 'paid', True, 'Company benefit (not in the law) – office staff'),
     ('Compensatory Leave', 'CO', 'compensatory', 'paid', True, 'Days off earned by working on a weekend or public holiday (company practice)'),
+    # v1.26.0 – the Falcon Demo workbook uses it; UAE law: full pay up to 6 months of treatment, half pay the next 6 months
+    ('Work Injury Leave', 'WIL', 'sick', 'paid', False, 'Treatment after a work injury: full pay up to 6 months, then half pay up to 6 months'),
 ]
 
 COMMON = {   # line settings per leave-type name, shared by both policies
@@ -39,6 +41,9 @@ COMMON = {   # line settings per leave-type name, shared by both policies
     'Hajj Leave': dict(days_per_year=30, accrual='none', count_days='calendar', max_per_request=30, max_times_in_service=1, notice_days=30,
                        notes='Practice under the former law; unpaid unless the company decides otherwise'),
     'Unpaid Leave': dict(days_per_year=0, accrual='none', count_days='calendar', notes='Needs approval; reduces pay and gratuity service'),
+    'Work Injury Leave': dict(days_per_year=360, accrual='per_event', count_days='calendar', requires_document=True,
+                              pay_slabs=[[180, 100], [180, 50]], notes='Medical report of the treating doctor; reported to MoHRE',
+                              law_reference='Art. 37; Cabinet Resolution 1/2022'),
     'Compensatory Leave': dict(days_per_year=0, accrual='earned', count_days='calendar', comp_full_day_hours=8, comp_half_day_hours=4,
                                comp_expiry_days=90, notes='Earned by weekend / holiday work: 8 h = 1 day, 4 h = ½ day; use within 90 days'),
 }
@@ -136,4 +141,37 @@ def load(user=None):
             t = by_name.get(tname.lower())
             if t and not Line.objects.filter(policy=pol, leave_type_id=t.pk).exists():
                 Line.objects.create(policy=pol, leave_type_id=t.pk, **settings)
-    return {'created_leave_types': created_types, 'created_policies': created_policies, 'workflows_added': workflows}
+    mapped = map_categories()
+    return {'created_leave_types': created_types, 'created_policies': created_policies, 'workflows_added': workflows,
+            'categories_mapped': mapped}
+
+
+LABOUR_WORDS = ('labour', 'labor', 'worker', 'skilled', 'unskilled', 'semi-skilled', 'site', 'field', 'helper', 'driver', 'operator',
+                'technician', 'blue collar', 'crew', 'cleaner', 'mason', 'carpenter', 'welder', 'loader')
+
+
+def map_categories():
+    """v1.26.0 – every employee category that no policy names goes to Labour (labour / worker / skilled / site / driver …)
+    or Office staff (everything else). Before, the setup only knew its own category names (Office Staff, Skilled Worker …),
+    so a company with Staff / Skilled / Labour / Supervisor had 12 of 314 employees under a policy by category and
+    site labour silently fell under the Office default policy. Existing assignments are never changed."""
+    Policy = M('LeavePolicy', 'LeavePolicy')
+    Cat = M('OrganisationManager', 'ctgry_master')
+    office = Policy.objects.filter(code='OFFICE').first()
+    labour = Policy.objects.filter(code='LABOUR').first()
+    if office is None and labour is None:
+        return []
+    used = set()
+    for p in Policy.objects.all():
+        used.update(p.category_ids or [])
+    out = []
+    for c in Cat.objects.all().order_by('ctgry_title'):
+        if c.pk in used:
+            continue
+        t = (c.ctgry_title or '').lower()
+        target = labour if (labour is not None and any(w in t for w in LABOUR_WORDS)) else (office or labour)
+        target.category_ids = list(target.category_ids or []) + [c.pk]
+        target.save(update_fields=['category_ids'])
+        used.add(c.pk)
+        out.append({'category': c.ctgry_title, 'policy': target.name})
+    return out

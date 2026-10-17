@@ -47,9 +47,7 @@ def r_probation_due(run):
     R = _h()
     from .models import ProbationExtension
     emps = {e.pk: e for e in run.employees}
-    for e in emps.values():
-        if not EmploymentInfo.objects.filter(employee_id=e.pk).exists():
-            S.ensure_info(e)
+    S.ensure_info_bulk(list(emps.values()))   # v1.26.0
     ext = {}
     for x in ProbationExtension.objects.filter(employee_id__in=list(emps)):
         ext[x.employee_id] = ext.get(x.employee_id, 0) + 1

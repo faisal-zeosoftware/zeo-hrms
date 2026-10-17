@@ -159,6 +159,48 @@ NEUTRAL_LEAVE_TYPES = [
 ]
 
 
-def pack_for_code(country_code):
-    cc = (country_code or '').strip().upper()[:2]
+# v1.26.0 – the company country is stored as free text (Core.cntry_mstr.country_code) and live data holds
+# "UAE", "ARE", "971" or an empty code with the name "United Arab Emirates". Taking the first two letters
+# gave "UA" / "AR" / "97" -> GEN, so UAE companies lost WPS, gratuity, visas and holidays. Resolve ISO-2
+# from the code (ISO-2, ISO-3, dialling code, common short forms) and fall back to the country name.
+_ISO_ALIASES = {
+    'AE': ('AE', 'ARE', 'UAE', 'U.A.E', 'U.A.E.', '971', '+971', 'UNITED ARAB EMIRATES', 'EMIRATES', 'THE UNITED ARAB EMIRATES',
+           'دولة الإمارات العربية المتحدة', 'الإمارات العربية المتحدة', 'الإمارات'),
+    'SA': ('SA', 'SAU', 'KSA', '966', '+966', 'SAUDI ARABIA', 'KINGDOM OF SAUDI ARABIA', 'SAUDI', 'المملكة العربية السعودية', 'السعودية'),
+    'QA': ('QA', 'QAT', '974', '+974', 'QATAR', 'STATE OF QATAR', 'قطر'),
+    'OM': ('OM', 'OMN', '968', '+968', 'OMAN', 'SULTANATE OF OMAN', 'عمان', 'سلطنة عمان'),
+    'BH': ('BH', 'BHR', '973', '+973', 'BAHRAIN', 'KINGDOM OF BAHRAIN', 'البحرين'),
+    'KW': ('KW', 'KWT', '965', '+965', 'KUWAIT', 'STATE OF KUWAIT', 'الكويت'),
+}
+_ALIAS_TO_ISO = {a: iso for iso, names in _ISO_ALIASES.items() for a in names}
+
+
+def iso2(code=None, name=None):
+    """ISO-2 code of a country from its stored code and / or name ('' when unknown)."""
+    for raw in (code, name):
+        v = ' '.join(str(raw or '').replace('_', ' ').split()).upper()
+        if not v:
+            continue
+        if v in _ALIAS_TO_ISO:
+            return _ALIAS_TO_ISO[v]
+        if v.startswith('UNITED ARAB EMIRATES'):
+            return 'AE'
+    v = str(code or '').strip().upper()
+    return v if len(v) == 2 and v.isalpha() else ''
+
+
+def iso2_of(country):
+    """ISO-2 code of a Core.cntry_mstr row (or None)."""
+    if country is None:
+        return ''
+    return iso2(getattr(country, 'country_code', ''), getattr(country, 'country_name', ''))
+
+
+def pack_for_code(country_code, country_name=None):
+    cc = iso2(country_code, country_name)
     return cc if cc in PACKS and cc != 'GEN' else 'GEN'
+
+
+def pack_for_country(country):
+    return pack_for_code(getattr(country, 'country_code', '') if country is not None else '',
+                         getattr(country, 'country_name', '') if country is not None else '')

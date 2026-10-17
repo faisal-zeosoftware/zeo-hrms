@@ -63,10 +63,27 @@ class OverviewView(APIView):
 
     def get(self, request):
         from .overview import my_space, overview
+        # v1.26.0: the overview builds ~66 figures from the reports (~18 s for 1,280 employees). The same user asking the same
+        # question within 2 minutes gets the stored answer; ?fresh=1 (the refresh button) recalculates.
+        from django.core.cache import cache
+        from django.db import connection
+        import hashlib
+        qp = request.query_params
+        lang = request.headers.get('Accept-Language', '')[:20]
+        raw = f"{connection.schema_name}|{request.user.pk}|{lang}|" + '&'.join(f'{k}={qp.get(k)}' for k in sorted(qp) if k not in ('fresh', '_'))
+        key = 'zeo:dash:ov:' + hashlib.sha1(raw.encode()).hexdigest()
+        if qp.get('fresh') not in ('1', 'true'):
+            hit = cache.get(key)
+            if hit is not None:
+                return Response(dict(hit, cached=True))
         data = overview(request)
         _localize_links(data, request)
-        if not request.query_params.get('card') and request.query_params.get('me') != '0':   # v1.16.0: ?card=<key>&from&to reloads one card
+        if not qp.get('card') and qp.get('me') != '0':   # v1.16.0: ?card=<key>&from&to reloads one card
             data['me'] = my_space(request)   # v1.17.0: ?me=0 – the HR operations view (the user's own items are on My dashboard)
+        try:
+            cache.set(key, data, 120)
+        except Exception:
+            pass
         return Response(data)
 
 

@@ -5,7 +5,11 @@
              GET  /cloud/api/jobs/<job>/                   progress of a company being made
     users    GET  /cloud/api/status/?schema=               banner, plan and app licences of the open company
              GET  /cloud/api/accounts/<id>/subscription/   owner: plan, limits, usage, apps, extra companies, invoices
-             POST /cloud/api/accounts/<id>/companies/      owner: create a company within the plan → {job}
+             POST /cloud/api/accounts/<id>/companies/      owner: create a company within the plan → {job} (v1.26.0: {db})
+             GET|POST /cloud/api/accounts/<id>/databases/  v1.26.0 owner: own databases; add one {label}
+             POST /cloud/api/accounts/<id>/databases/<key>/ v1.26.0 {action: duplicate | default | rename | remove}
+             GET|POST /cloud/api/accounts/<id>/moves/      v1.26.0 owner: move a company between own databases
+             GET  /cloud/api/db-jobs/<job>/                v1.26.0 progress of a database copy
              POST /cloud/api/accounts/<id>/request/        owner: request an upgrade / app / more employees
              GET|PUT /cloud/api/accounts/<id>/security/    owner: only company e-mails
              POST /cloud/api/notices/seen/
@@ -55,7 +59,8 @@ def plan_json(p):
     return {'id': p.id, 'code': p.code, 'name': p.name, 'included_companies': p.included_companies, 'max_companies': p.max_companies,
             'extra_companies': p.extra_companies, 'max_employees': p.max_employees, 'max_users': p.max_users, 'storage_gb': p.storage_gb,
             'group_features': p.group_features, 'hosting': p.hosting, 'hosting_label': p.get_hosting_display(),
-            'price_year': _num(p.price_year), 'extra_company_price': _num(p.extra_company_price), 'app_price': _num(p.app_price), 'active': p.active}
+            'price_year': _num(p.price_year), 'extra_company_price': _num(p.extra_company_price), 'app_price': _num(p.app_price), 'active': p.active,
+            'database_price': _num(p.database_price)}
 
 
 APPS_INFO = [
@@ -68,6 +73,11 @@ APPS_INFO = [
 ]
 
 
+def _odoo_on():
+    from .odoo import configured
+    return configured()
+
+
 def account_json(acc, full=False, user=None):
     st = S.status_of(acc)
     out = {'id': acc.id, 'name': acc.name, 'owner_email': acc.owner_email, 'owner_name': acc.owner_name, 'owner_id': acc.owner_id, 'plan': plan_json(acc.plan),
@@ -75,13 +85,17 @@ def account_json(acc, full=False, user=None):
            'state': acc.state, 'trial_ends': _iso(acc.trial_ends), 'renews_on': _iso(acc.renews_on), 'grace_days': acc.grace_days,
            'hosting': acc.hosting, 'hosting_label': acc.get_hosting_display(), 'created_at': acc.created_at.isoformat()}
     if full:
+        labels = _db_labels(acc)
         out.update(trn=acc.trn, country=acc.country, notes=acc.notes, allowed_email_domain=acc.allowed_email_domain,
                    extra_companies=acc.extra_companies, max_employees=acc.max_employees, max_users=acc.max_users, storage_gb=acc.storage_gb,
+                   default_db=acc.db_alias, databases=databases_json(acc),
                    limits=S.limits(acc), usage=S.usage(acc), apps=S.apps_for(acc),
                    companies=[{'id': l.company_id, 'name': l.company.name, 'schema_name': l.company.schema_name, 'extra': l.extra,
                                'archived': l.archived, 'where': 'Own database' if l.db_alias else 'Shared cloud', 'db_alias': l.db_alias,
+                               'db_label': labels.get(l.db_alias, l.db_alias),
                                'apps': _apps_of(l.company.schema_name)} for l in S.company_links(acc, include_archived=True)],
                    invoices=[invoice_json(i) for i in acc.invoices.all()[:50]],
+                   odoo=_odoo_on(),   # v1.28.0 invoices can go to Adept's Odoo
                    database=_account_db(acc),
                    history=[{'at': e.at.isoformat(), 'kind': e.kind, 'text': e.text, 'by': e.by.username if e.by else ''}
                             for e in acc.events.select_related('by')[:100]])
@@ -89,10 +103,31 @@ def account_json(acc, full=False, user=None):
 
 
 def _account_db(acc):
-    """v1.24.0: the own database of the account, if any."""
-    from .models import DatabaseServer
-    srv = DatabaseServer.objects.filter(account=acc).exclude(state='retired').first()
+    """v1.24.0: the own database of the account, if any (v1.26.0: the default one)."""
+    from . import owndb
+    dbs = owndb.databases_of(acc)
+    srv = dbs[0] if dbs else None
     return {'key': srv.key, 'name': srv.name, 'state': srv.state, 'note': srv.note[:300]} if srv else None
+
+
+def _db_labels(acc):
+    from .models import DatabaseServer
+    return {d.key: (d.label if d.label and d.label != acc.name else d.name) for d in DatabaseServer.objects.filter(account=acc)}
+
+
+def databases_json(acc, size=False):
+    """v1.26.0: the own databases of an account with their companies, the default one first."""
+    from . import owndb
+    links = list(AccountCompany.objects.select_related('company').filter(account=acc).exclude(db_alias=''))
+    out = []
+    for d in owndb.databases_of(acc):
+        j = server_json(d, size=size)
+        j.update(default=d.key == acc.db_alias, copying=owndb.dup_running(d.key),
+                 title=d.label if d.label and d.label != acc.name else d.name,
+                 company_list=[{'id': l.company_id, 'name': l.company.name, 'archived': l.archived, 'moving': l.moving}
+                               for l in links if l.db_alias == d.key])
+        out.append(j)
+    return out
 
 
 def _apps_of(schema):
@@ -107,7 +142,8 @@ def _apps_of(schema):
 
 def invoice_json(i):
     return {'id': i.id, 'number': i.number, 'issued_on': _iso(i.issued_on), 'period_from': _iso(i.period_from), 'period_to': _iso(i.period_to),
-            'amount': _num(i.amount), 'currency': i.currency, 'state': i.state, 'paid_on': _iso(i.paid_on), 'odoo_ref': i.odoo_ref, 'note': i.note}
+            'amount': _num(i.amount), 'currency': i.currency, 'state': i.state, 'paid_on': _iso(i.paid_on), 'odoo_ref': i.odoo_ref, 'note': i.note,
+            'odoo_state': i.odoo_state, 'pay_url': i.pay_url if i.state == 'unpaid' else '', 'in_odoo': bool(i.odoo_id)}
 
 
 # ------------------------------------------------------------------ permissions
@@ -171,7 +207,8 @@ def my_companies_extra(request, res):
             accounts[acc.id] = {'id': acc.id, 'name': acc.name, 'role': 'owner' if own else 'member', 'plan': acc.plan.name,
                                 'plan_code': acc.plan.code, 'status': st['status'], 'read_only': st['read_only'], 'days_left': st['days_left'],
                                 'group_features': acc.plan.group_features, 'can_create': bool(own and ok), 'next_is_extra': bool(extra),
-                                'create_note': msg, 'banner': S.banner_of(acc, owner=own)}
+                                'create_note': msg, 'banner': S.banner_of(acc, owner=own),
+                                'databases': _db_choices(acc) if own else []}   # v1.26.0
     res['companies'] = keep
     # own account first, then by name
     res['accounts'] = sorted(accounts.values(), key=lambda a: (a['role'] != 'owner', a['name'].lower()))
@@ -182,7 +219,7 @@ def my_companies_extra(request, res):
             res['accounts'].insert(0, {'id': acc.id, 'name': acc.name, 'role': 'owner', 'plan': acc.plan.name, 'plan_code': acc.plan.code,
                                        'status': S.status_of(acc)['status'], 'read_only': False, 'days_left': None,
                                        'group_features': acc.plan.group_features, 'can_create': ok, 'next_is_extra': extra, 'create_note': msg,
-                                       'banner': S.banner_of(acc, owner=True)})
+                                       'banner': S.banner_of(acc, owner=True), 'databases': _db_choices(acc)})
     if S.cloud_on() and not u.is_superuser:
         res['can_create'] = False   # in ZEO Cloud a company is created in an account (owner) or by Adept
     if not (res.get('user') or {}).get('name'):   # logins have no name field: the owner name of the account
@@ -190,6 +227,15 @@ def my_companies_extra(request, res):
         if own:
             res['user']['name'] = own.owner_name
     res['notices'] = [{'id': n.id, 'text': n.text, 'at': n.at.isoformat()} for n in AccessNotice.objects.filter(user=u, seen=False)[:5]]
+
+
+def _db_choices(acc):
+    """v1.26.0: the ready own databases for the database picker on Create company (default first)."""
+    if acc.plan.hosting != 'own':
+        return []
+    from . import owndb
+    labels = _db_labels(acc)
+    return [{'key': d.key, 'label': labels.get(d.key, d.name), 'default': d.key == acc.db_alias} for d in owndb.databases_of(acc) if d.state == 'ready']
 
 
 def duplicate_check(u, src):
@@ -298,6 +344,17 @@ class StatusView(Base):
         u = request.user
         link = S.link_of_schema(schema)
         out = {'cloud': S.cloud_on(), 'linked': False, 'platform_admin': S.is_platform_admin(u)}
+        try:   # v1.28.0 Enterprise licence of this server (own installation with ZEO_EDITION=enterprise)
+            from ZeoLicence import licence as LIC
+            if LIC.edition_on():
+                lst = LIC.current()
+                out['licence'] = {'status': lst['status'], 'admin': bool(u.is_superuser), 'read_only': lst['read_only']}
+                if lst['message'] and lst['status'] in ('expiring', 'grace', 'expired', 'evaluation', 'missing', 'not_yet'):
+                    out['banner'] = {'kind': 'readonly' if lst['read_only'] else ('grace' if lst['status'] == 'grace' else 'trial'),
+                                     'text': lst['message']}
+                out['read_only'] = lst['read_only']
+        except Exception:
+            pass
         if link is None or not u.tenants.filter(schema_name=schema).exists() and not out['platform_admin']:
             return Response(out)
         acc = link.account
@@ -306,7 +363,12 @@ class StatusView(Base):
         out.update(linked=True, owner=own, account={'id': acc.id, 'name': acc.name, 'plan': acc.plan.name, 'plan_code': acc.plan.code,
                                                     'group_features': acc.plan.group_features},
                    status=st['status'], read_only=st['read_only'], days_left=st['days_left'], until=st['until'],
-                   banner=S.banner_of(acc, owner=own), apps=S.apps_for(acc, schema), extra=link.extra)
+                   banner=S.banner_of(acc, owner=own) or (S.db_banner(link.db_alias) if link.db_alias else None),   # v1.26.0
+                   apps=S.apps_for(acc, schema), extra=link.extra)
+        if link.db_alias and not out['read_only']:
+            dst = S.db_status_of_key(link.db_alias)
+            if dst and dst.get('read_only'):
+                out['read_only'] = True
         return Response(out)
 
 
@@ -349,8 +411,171 @@ class AccountCompanyCreateView(Base):
             acc.extra_companies = len([l for l in S.company_links(acc) if l.extra]) + 1   # the owner accepted the extra charge
             acc.save(update_fields=['extra_companies'])
             S.event(acc, 'extra', f'Extra company accepted by the owner – {name}', request.user)
-        job, schema = S.start_company(acc, name, str(d.get('industry') or 'OTH')[:10], apps, request.user, extra=extra, country_id=d.get('country'))
-        return Response({'job': job, 'schema': schema, 'extra': extra}, status=202)
+        db, bad = _pick_db(acc, d.get('db'))
+        if bad:
+            return bad
+        job, schema = S.start_company(acc, name, str(d.get('industry') or 'OTH')[:10], apps, request.user, extra=extra, country_id=d.get('country'), db=db)
+        return Response({'job': job, 'schema': schema, 'extra': extra, 'db': db or acc.db_alias}, status=202)
+
+
+def _pick_db(acc, key):
+    """v1.26.0: ('', None) = the default database; (key, None) = one of the account's ready databases; (_, Response) refused."""
+    key = str(key or '').strip()
+    if not key:
+        return '', None
+    from .models import DatabaseServer
+    if not DatabaseServer.objects.filter(account=acc, key=key, state='ready').exists():
+        return '', Response({'detail': tr('Choose one of the account\'s databases.')}, status=400)
+    return key, None
+
+
+# ------------------------------------------------------------------ v1.26.0 the owner's databases
+def _can_dup(acc, src_key):
+    n = len(S.company_links(acc))
+    k = AccountCompany.objects.filter(account=acc, db_alias=src_key, archived=False).count()
+    cap = S.limits(acc)['companies_cap']
+    if cap is not None and n + k > cap:
+        return tr('The copy adds {0} companies and your plan allows {1} (now {2}).', k, cap, n)
+    return ''
+
+
+class AccountDatabasesView(Base):
+    """GET – the account's own databases; POST {label} – one more, empty database (Premium, within the plan)."""
+    def get(self, request, pk):
+        acc, err = self.account(request, pk)
+        if err:
+            return err
+        ok, msg = S.check_database_add(acc)
+        return Response({'databases': databases_json(acc, size=True), 'default': acc.db_alias, 'can_add': ok, 'add_note': msg,
+                         'premium': acc.plan.hosting == 'own', 'trial_days': S.DB_TRIAL_DAYS, 'currency': 'AED',
+                         'database_price': _num(acc.plan.database_price), 'admin': S.is_platform_admin(request.user)})
+
+    def post(self, request, pk):
+        from . import owndb
+        acc, err = self.account(request, pk)
+        if err:
+            return err
+        ok, msg = S.check_database_add(acc)
+        if not ok:
+            return Response({'detail': msg}, status=409)
+        label = ' '.join(str(request.data.get('label') or '').split())[:120]
+        if len(label) < 2:
+            return Response({'detail': tr('Give the database a name, for example Test or Group 2.')}, status=400)
+        try:
+            srv = owndb.create_own_db(acc, by=request.user, new=True, label=label)
+        except Exception as e:
+            log.exception('new database')
+            return Response({'detail': tr('The database could not be created: {0}', str(e)[:200])}, status=500)
+        cache.delete(f'zeo:cloud:usage:{acc.pk}')
+        return Response({'database': server_json(srv), 'databases': databases_json(acc)}, status=201)
+
+
+class AccountDatabaseView(Base):
+    """POST {action}: duplicate {label, suffix, neutralize} → {job}; default; rename {label}; remove (empty, not default).
+    Adept only: paid {until, price} – the extra database is paid until a date; extend – 14 more trial days."""
+    def post(self, request, pk, key):
+        from . import owndb
+        from .models import DatabaseServer
+        acc, err = self.account(request, pk)
+        if err:
+            return err
+        srv = DatabaseServer.objects.filter(account=acc, key=key).exclude(state='retired').first()
+        if srv is None:
+            return Response({'detail': tr('Not found.')}, status=404)
+        a = request.data.get('action')
+        label = ' '.join(str(request.data.get('label') or '').split())[:120]
+        try:
+            if a == 'duplicate':
+                ok, msg = S.check_database_add(acc)
+                if not ok:
+                    return Response({'detail': msg}, status=409)
+                m = _can_dup(acc, key)
+                if m:
+                    return Response({'detail': m}, status=409)
+                job = owndb.start_duplicate_db(acc, key, label or f'Copy of {srv.label or srv.name}', by=request.user,
+                                               neutralize=bool(request.data.get('neutralize')), suffix=str(request.data.get('suffix') or ''))
+                return Response({'job': job}, status=202)
+            if a == 'default':
+                owndb.set_default_db(acc, key, by=request.user)
+            elif a == 'rename':
+                if len(label) < 2:
+                    return Response({'detail': tr('Enter a name.')}, status=400)
+                srv.label = label
+                srv.save(update_fields=['label'])
+            elif a == 'remove':
+                owndb.remove_db(acc, key, by=request.user)
+                cache.delete(f'zeo:cloud:usage:{acc.pk}')
+            elif a in ('paid', 'extend', 'price'):   # v1.26.0 the subscription of an extra database (Adept)
+                if not S.is_platform_admin(request.user):
+                    return Response({'detail': tr('Only Adept can change the subscription of a database – use Request upgrade.')}, status=403)
+                if not srv.extra:
+                    return Response({'detail': tr('This database is included in Premium.')}, status=409)
+                if a == 'paid':
+                    until = _d(request.data.get('until'))
+                    if not until:
+                        return Response({'detail': tr('Enter the date it is paid until.')}, status=400)
+                    srv.paid_until = until
+                    S.event(acc, 'database', f'Database {srv.label or srv.name} paid until {until}', request.user)
+                elif a == 'extend':
+                    base = max(srv.trial_ends or timezone.localdate(), timezone.localdate())
+                    srv.trial_ends = base + timedelta(days=S.DB_TRIAL_DAYS)
+                    S.event(acc, 'database', f'Database {srv.label or srv.name}: trial extended to {srv.trial_ends}', request.user)
+                if 'price' in request.data:
+                    v = request.data.get('price')
+                    srv.price = None if v in (None, '') else v
+                srv.save(update_fields=['paid_until', 'trial_ends', 'price'])
+                owndb.forget_db(key)
+            else:
+                return Response({'detail': tr('Unknown action.')}, status=400)
+        except owndb.MoveError as e:
+            return Response({'detail': tr(str(e))}, status=409)
+        return Response({'databases': databases_json(acc), 'default': Account.objects.get(pk=acc.pk).db_alias})
+
+
+class DbJobView(Base):
+    """GET – progress of a database copy (owner of the account or Adept)."""
+    def get(self, request, job):
+        from . import owndb
+        st = owndb.dup_status(job)
+        if not st:
+            return Response({'detail': tr('Not found.')}, status=404)
+        acc, err = self.account(request, st.get('account') or 0)
+        if err:
+            return err
+        return Response({k: st.get(k) for k in ('state', 'step', 'source', 'target', 'label', 'companies', 'error', 'failed')})
+
+
+class AccountMovesView(Base):
+    """GET – recent moves of the account; POST {company, db} – the owner moves a company between the account's own
+    databases (to or from the shared cloud stays a plan change, done by Adept)."""
+    def get(self, request, pk):
+        from .models import MoveJob
+        acc, err = self.account(request, pk)
+        if err:
+            return err
+        return Response([move_json(j) for j in MoveJob.objects.filter(account=acc).select_related('company', 'created_by')[:30]])
+
+    def post(self, request, pk):
+        from . import owndb
+        acc, err = self.account(request, pk)
+        if err:
+            return err
+        link = AccountCompany.objects.select_related('company').filter(account=acc, company_id=request.data.get('company')).first()
+        if link is None:
+            return Response({'detail': tr('Not found.')}, status=404)
+        db, bad = _pick_db(acc, request.data.get('db'))
+        if bad:
+            return bad
+        if not db:
+            return Response({'detail': tr('Choose the database.')}, status=400)
+        if not link.db_alias:
+            return Response({'detail': tr('This company is in the shared cloud – Adept moves it with the plan change.')}, status=409)
+        try:
+            job = owndb.start_move(link.company, db, by=request.user, account=acc)
+        except owndb.MoveError as e:
+            return Response({'detail': tr(str(e))}, status=409)
+        S.event(acc, 'move', f'Move started – {link.company.name} to {db}', request.user, job=job.id)
+        return Response(move_json(job), status=202)
 
 
 class RequestView(Base):
@@ -363,6 +588,13 @@ class RequestView(Base):
         if not text:
             return Response({'detail': tr('Write what you need.')}, status=400)
         S.event(acc, 'request', f'Request ({what}): {text}', request.user)
+        if 'enterprise' in what.lower():   # v1.28.0: Enterprise is always through Adept – listed in console → Enterprise
+            try:
+                from ZeoLicence.models import EnterpriseRequest
+                EnterpriseRequest.objects.create(company=acc.name, name=acc.owner_name or acc.owner_email, email=acc.owner_email,
+                                                 country=acc.country, message=text, account=acc)
+            except Exception:
+                pass
         to = getattr(settings, 'ZEO_CLOUD_ADMIN_EMAIL', '') or ''
         if to:
             from django.core.mail import send_mail
@@ -584,6 +816,8 @@ class ConsoleInvoicesView(ConsoleBase):
             return Response({'detail': tr('Not found.')}, status=404)
         d = request.data
         num = str(d.get('number') or '').strip()
+        if not num and d.get('to_odoo'):   # v1.28.0 made in Odoo: Odoo gives the number; ZEO keeps its own reference
+            num = f'ZEO-{acc.pk}-{acc.invoices.count() + 1:03d}'
         if not num:
             return Response({'detail': tr('Enter the invoice number (from Odoo).')}, status=400)
         inv = Invoice.objects.create(account=acc, number=num[:40], amount=d.get('amount') or 0, currency=(d.get('currency') or 'AED')[:3],
@@ -592,7 +826,31 @@ class ConsoleInvoicesView(ConsoleBase):
         S.event(acc, 'invoice', f'Invoice {inv.number} added ({inv.amount} {inv.currency})', request.user)
         if d.get('paid'):
             S.mark_paid(inv, request.user)
+        elif d.get('to_odoo'):   # v1.28.0 straight to Odoo (posted, payment link for the owner)
+            from . import odoo
+            try:
+                odoo.push_invoice(inv, request.user)
+            except odoo.OdooError as e:
+                return Response(dict(account_json(Account.objects.get(pk=acc.pk), full=True), warning=str(e)), status=201)
         return Response(account_json(Account.objects.get(pk=acc.pk), full=True), status=201)
+
+
+class ConsoleInvoiceOdooView(ConsoleBase):
+    """v1.28.0 – POST {action: push | sync}: send the invoice to Adept's Odoo (posted, with the online payment link) or
+    read its payment state from there (paid in Odoo → paid here)."""
+    def post(self, request, pk):
+        from . import odoo
+        inv = Invoice.objects.select_related('account', 'account__plan').filter(pk=pk).first()
+        if inv is None:
+            return Response({'detail': tr('Not found.')}, status=404)
+        try:
+            if request.data.get('action') == 'push':
+                odoo.push_invoice(inv, request.user)
+            else:
+                odoo.sync_invoice(inv, request.user)
+        except odoo.OdooError as e:
+            return Response({'detail': str(e)}, status=400)
+        return Response(account_json(Account.objects.get(pk=inv.account_id), full=True))
 
 
 class ConsoleInvoicePaidView(ConsoleBase):
@@ -639,7 +897,10 @@ class ConsoleCompaniesView(ConsoleBase):
         name = ' '.join(str(d.get('name') or '').split())[:100]
         if len(name) < 2:
             return Response({'detail': tr('Enter the company name.')}, status=400)
-        job, schema = S.start_company(acc, name, d.get('industry') or 'OTH', d.get('apps') or [], request.user, extra=extra, grant_creator=False)
+        db, bad = _pick_db(acc, d.get('db'))
+        if bad:
+            return bad
+        job, schema = S.start_company(acc, name, d.get('industry') or 'OTH', d.get('apps') or [], request.user, extra=extra, grant_creator=False, db=db)
         return Response({'job': job, 'schema': schema, 'extra': extra}, status=202)
 
 
@@ -660,7 +921,7 @@ class ConsolePlansView(ConsoleBase):
         p = Plan.objects.filter(code=d.get('code')).first()
         if p is None:
             return Response({'detail': tr('Not found.')}, status=404)
-        for f in ('name', 'included_companies', 'max_companies', 'max_employees', 'max_users', 'storage_gb', 'price_year', 'extra_company_price', 'app_price'):
+        for f in ('name', 'included_companies', 'max_companies', 'max_employees', 'max_users', 'storage_gb', 'price_year', 'extra_company_price', 'app_price', 'database_price'):
             if f in d:
                 v = d[f]
                 setattr(p, f, None if v in ('', None) else v)
@@ -675,11 +936,22 @@ class ConsolePlansView(ConsoleBase):
 def move_json(j):
     return {'id': j.id, 'schema': j.schema, 'company': j.company.name if j.company else j.schema, 'company_id': j.company_id,
             'source': j.source, 'target': j.target, 'from': 'Own database' if j.source else 'Shared cloud', 'to': 'Own database' if j.target else 'Shared cloud',
+            'from_label': _srv_label(j.source), 'to_label': _srv_label(j.target),
             'state': j.state, 'step': j.step, 'tables': j.tables, 'rows': j.rows, 'old_copy': j.old_copy,
             'keep_until': _iso(j.keep_until), 'error': j.error, 'log': j.log,
             'started_at': j.started_at.isoformat() if j.started_at else None,
             'finished_at': j.finished_at.isoformat() if j.finished_at else None,
             'by': j.created_by.username if j.created_by else '', 'can_back': j.state == 'done' and bool(j.company_id)}
+
+
+def _srv_label(key):
+    if not key:
+        return ''
+    from .models import DatabaseServer
+    d = DatabaseServer.objects.filter(key=key).select_related('account').first()
+    if d is None:
+        return key
+    return d.label if d.label and (not d.account or d.label != d.account.name) else d.name
 
 
 def _db_size(srv):
@@ -696,7 +968,10 @@ def server_json(srv, size=False):
     return {'key': srv.key, 'name': srv.name, 'label': srv.label, 'host': srv.host or '(main server)', 'state': srv.state,
             'account': srv.account.name if srv.account else '', 'account_id': srv.account_id, 'note': srv.note[:300],
             'companies': AccountCompany.objects.filter(db_alias=srv.key).count(), 'created_at': srv.created_at.isoformat(),
-            'size_mb': _db_size(srv) if size and srv.state == 'ready' else None}
+            'size_mb': _db_size(srv) if size and srv.state == 'ready' else None,
+            # v1.26.0 the subscription of the database: included with Premium, or an extra one (trial / paid until)
+            'extra': srv.extra, 'trial_ends': _iso(srv.trial_ends), 'paid_until': _iso(srv.paid_until),
+            'price': S.db_price(srv) if srv.extra else None, 'sub': S.db_status(srv)}
 
 
 class ConsoleDatabasesView(ConsoleBase):
@@ -731,7 +1006,10 @@ class ConsoleMovesView(ConsoleBase):
             if to == 'own':
                 if acc.plan.hosting != 'own':
                     return Response({'detail': tr('Own databases are part of Premium – change the plan first.')}, status=409)
-                target = owndb.create_own_db(acc, by=request.user).key
+                db, bad = _pick_db(acc, request.data.get('db'))   # v1.26.0: one of several own databases
+                if bad:
+                    return bad
+                target = db or owndb.create_own_db(acc, by=request.user).key
             elif to == 'shared':
                 target = ''
             else:

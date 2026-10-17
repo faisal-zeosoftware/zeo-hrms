@@ -459,7 +459,8 @@ def country_policy_for(branch_id):
     c = getattr(b, 'br_country', None) if b else None
     if c is None:
         return None
-    code = (c.country_code or '').strip().upper()[:2]
+    from CountryPack.packs import iso2_of   # v1.26.0: ISO-2 from code / ISO-3 / name
+    code = iso2_of(c)
     qs = CountryPolicy.objects.filter(active=True)
     return (qs.filter(country_code=code).order_by('-is_standard', 'id').first() if len(code) == 2 else None) or \
         qs.filter(country_name__iexact=c.country_name).order_by('-is_standard', 'id').first()

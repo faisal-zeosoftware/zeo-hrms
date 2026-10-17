@@ -29,6 +29,8 @@ class Plan(models.Model):
     price_year = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     extra_company_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     app_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text='Price of one paid app per company per year')
+    database_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
+                                         help_text='v1.26.0 Premium: price per year of each extra own database (no limit; 14-day trial each)')
     active = models.BooleanField(default=True, help_text='Offered on the sign-up page')
 
     class Meta:
@@ -121,6 +123,11 @@ class Invoice(models.Model):
     paid_on = models.DateField(null=True, blank=True)
     odoo_ref = models.CharField(max_length=60, blank=True, default='')
     note = models.CharField(max_length=255, blank=True, default='')
+    # v1.28.0 Odoo link: the invoice in Adept's Odoo, its payment state and the customer's online payment page
+    odoo_id = models.IntegerField(null=True, blank=True)
+    odoo_state = models.CharField(max_length=20, blank=True, default='')
+    pay_url = models.CharField(max_length=500, blank=True, default='')
+    synced_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-issued_on', '-id']
@@ -156,7 +163,8 @@ def plus_days(d, n):
 
 # ---------------------------------------------------------------- v1.24.0 own databases
 class DatabaseServer(models.Model):
-    """A PostgreSQL database that holds companies – the main one ('control') is not listed. One per Premium account.
+    """A PostgreSQL database that holds companies – the main one ('control') is not listed. v1.26.0: a Premium account may
+    have several (Account.db_alias is the default one, where new companies go).
 
     The password is never stored here: `password_env` names an environment variable; empty = the main database's.
     """
@@ -171,6 +179,12 @@ class DatabaseServer(models.Model):
     password_env = models.CharField(max_length=80, blank=True, default='', help_text='Environment variable with the password')
     state = models.CharField(max_length=10, choices=STATES, default='creating')
     note = models.TextField(blank=True, default='')
+    # v1.26.0 the first database comes with Premium; every further one is an extra database with its own subscription:
+    # a 14-day trial, then paid per year (paid_until) – unpaid after the trial, its companies are read-only
+    extra = models.BooleanField(default=False)
+    trial_ends = models.DateField(null=True, blank=True)
+    paid_until = models.DateField(null=True, blank=True)
+    price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text='Price per year (empty = the plan\'s)')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -203,3 +217,47 @@ class MoveJob(models.Model):
 
     class Meta:
         ordering = ['-id']
+
+
+# ---------------------------------------------------------------- v1.26.0 invitations of an existing login
+class UserInvite(models.Model):
+    """One login (e-mail) is shared by every ZEO company. When a company adds an e-mail that already has a login, the
+    person is invited instead: the company is added to their login only after they accept (company list)."""
+    STATES = [('pending', 'Pending'), ('accepted', 'Accepted'), ('declined', 'Declined'), ('cancelled', 'Cancelled')]
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='zeo_invites')
+    company = models.ForeignKey('UserManagement.company', on_delete=models.CASCADE, related_name='+')
+    email = models.EmailField(blank=True, default='')
+    is_staff = models.BooleanField(default=False)
+    is_superuser = models.BooleanField(default=False)
+    state = models.CharField(max_length=10, choices=STATES, default='pending')
+    note = models.CharField(max_length=300, blank=True, default='')
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    answered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-id']
+
+    def __str__(self):
+        return f'{self.email} → {self.company} ({self.state})'
+
+
+class CompanyAccess(models.Model):
+    """v1.26.0 – rights of an invited login in one company.
+    ZEO keeps one rights record per login (UserTenantPermissions: administrator flag and permission groups, in the shared
+    schema and so the same in all its companies). For a login invited from another account (UserInvite) the rights for
+    the inviting company are kept here and replace that record while the company is open (ZeoCloud/rights.py) – an
+    invitation, and rights given in Users → Assign permissions for an invited login, never change what the person may
+    do in their own account."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='zeo_company_access')
+    company = models.ForeignKey('UserManagement.company', on_delete=models.CASCADE, related_name='+')
+    admin = models.BooleanField(default=False)
+    groups = models.JSONField(default=list, blank=True, help_text='Permission group names in this company')
+    invite = models.ForeignKey(UserInvite, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('user', 'company')]
+
+    def __str__(self):
+        return f'{self.user_id} @ {self.company_id}'

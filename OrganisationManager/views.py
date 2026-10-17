@@ -286,7 +286,7 @@ class DeptBulkUploadViewSet(viewsets.ModelViewSet):
 
             # Handle CSV
             if file_name.endswith('.csv'):
-                dataset.load(uploaded_file.read().decode('utf-8'), format='csv')
+                dataset.load(uploaded_file.read().decode('utf-8-sig'), format='csv')
 
             # Handle Excel
             elif file_name.endswith('.xlsx') or file_name.endswith('.xls'):
@@ -444,7 +444,7 @@ class DesignationBulkUploadViewSet(viewsets.ModelViewSet):
 
             # Handle CSV
             if file_name.endswith('.csv'):
-                dataset.load(uploaded_file.read().decode('utf-8'), format='csv')
+                dataset.load(uploaded_file.read().decode('utf-8-sig'), format='csv')
 
             # Handle Excel
             elif file_name.endswith('.xlsx') or file_name.endswith('.xls'):
@@ -521,7 +521,7 @@ class CategoryBulkUploadViewSet(viewsets.ModelViewSet):
 
             # Handle CSV
             if file_name.endswith('.csv'):
-                dataset.load(uploaded_file.read().decode('utf-8'), format='csv')
+                dataset.load(uploaded_file.read().decode('utf-8-sig'), format='csv')
 
             # Handle Excel
             elif file_name.endswith('.xlsx') or file_name.endswith('.xls'):
@@ -658,6 +658,45 @@ def approver_codes(user):
 class permissionviewset(viewsets.ModelViewSet):
     queryset = UserTenantPermissions.objects.all()
     serializer_class = PermissionSerializer
+
+    # v1.26.0: a login invited from another ZEO account keeps its rights for this company apart (ZeoCloud
+    # CompanyAccess) – changing them here must not change its rights in its own account
+    def _invited(self, instance):
+        try:
+            from ZeoCloud.rights import access_of
+            return access_of(instance.profile_id) is not None
+        except ImportError:
+            return False
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not self._invited(instance):
+            return super().update(request, *args, **kwargs)
+        from django.contrib.auth.models import Group
+        from django.db import connection
+        from ZeoCloud.models import CompanyAccess
+        from ZeoCloud import rights as overlay
+        ca = CompanyAccess.objects.get(user_id=instance.profile_id, company__schema_name=connection.schema_name)
+        if 'groups' in request.data:
+            ids = [g.get('id') if isinstance(g, dict) else g for g in (request.data.get('groups') or [])]
+            ca.groups = list(Group.objects.filter(id__in=[i for i in ids if str(i).isdigit()]).values_list('name', flat=True))
+        if 'is_superuser' in request.data:
+            ca.admin = str(request.data.get('is_superuser')).lower() in ('1', 'true', 'yes')
+        ca.save()
+        overlay.forget()
+        fresh = UserTenantPermissions.objects.get(pk=instance.pk)
+        return Response(self.get_serializer(fresh).data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not self._invited(instance):
+            return super().destroy(request, *args, **kwargs)
+        from django.db import connection
+        from ZeoCloud.models import CompanyAccess
+        CompanyAccess.objects.filter(user_id=instance.profile_id, company__schema_name=connection.schema_name).update(groups=[], admin=False)
+        from ZeoCloud import rights as overlay
+        overlay.forget()
+        return Response(status=status.HTTP_204_NO_CONTENT)
     def get_serializer_class(self):
         return PermissionSerializer
 
@@ -686,7 +725,15 @@ class permissionviewset(viewsets.ModelViewSet):
             from django.db import connection
             fast = UserTenantPermissions.objects.select_related('profile').prefetch_related('groups__permissions', 'user_permissions')
             mine = self.request.query_params.get('me') in ('1', 'true')
-            if user.is_superuser and not mine:
+            sch0 = getattr(connection, 'schema_name', 'public')
+            company_admin = False
+            if not user.is_superuser and not mine and sch0 != 'public' and user.tenants.filter(schema_name=sch0).exists():
+                try:   # v1.26.0: the company administrator (e.g. a ZEO Cloud account owner) manages the rights of this company's users
+                    from ZeoCloud.rights import is_admin
+                    company_admin = is_admin(user, sch0)
+                except ImportError:
+                    company_admin = False
+            if (user.is_superuser or company_admin) and not mine:
                 # Superusers see the permissions of the users of this company (v1.22.0: not of every company – that
                 # listed thousands of rows and the menu waited minutes for it)
                 sch = getattr(connection, 'schema_name', 'public')
@@ -715,7 +762,12 @@ def company_group_ids():
         mine = set(CompanyGroup.objects.values_list('group_id', flat=True))
     except Exception:
         mine = set()
-    q = Q(name__in=STANDARD_GROUP_NAMES) | Q(pk__in=mine) | Q(user__profile__tenants__schema_name=connection.schema_name)
+    # v1.28.1: groups of the company's OWN users only – a user allocated to several companies (an administrator) pulled
+    # the groups of every company they could open into each of them ("permission grouping can be seen in all companies")
+    from django.db.models import Count
+    from UserManagement.models import CustomUser
+    own_users = CustomUser.objects.filter(tenants__schema_name=connection.schema_name).annotate(_n=Count('tenants')).filter(_n=1).values('pk')
+    q = Q(name__in=STANDARD_GROUP_NAMES) | Q(pk__in=mine) | Q(user__profile__in=own_users)
     for p in STANDARD_GROUP_PREFIXES:
         q |= Q(name__startswith=p)
     return set(Group.objects.filter(q).values_list('pk', flat=True))
@@ -741,7 +793,7 @@ class Groupviewset(viewsets.ModelViewSet):
             pass
 
 class permviewset(viewsets.ModelViewSet):
-    queryset = Permission.objects.all().order_by('id')
+    queryset = Permission.objects.select_related('content_type').order_by('id')
     serializer_class=permserializer
 
 class DocNumberingviewset(BranchAccessMixin,viewsets.ModelViewSet):

@@ -64,6 +64,22 @@ class APViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(Q(**{f'{self.branch_field}__in': x.branches}) | Q(**{f'{self.branch_field}__isnull': True}))
         return qs
 
+    def list(self, request, *args, **kwargs):
+        # v1.26.0: the employees of all rows in one query (the serializer read them one row at a time)
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        items = page if page is not None else list(qs)
+        ctx = self.get_serializer_context()
+        try:
+            from .serializers import _emp_map
+            ids = list({getattr(o, 'employee_id', None) for o in items} - {None})
+            if ids:
+                _emp_map(ctx, ids)
+        except Exception:
+            pass
+        ser = self.get_serializer_class()(items, many=True, context=ctx)
+        return self.get_paginated_response(ser.data) if page is not None else Response(ser.data)
+
     def _check_branch(self, serializer):
         if self.branch_field:
             b = serializer.validated_data.get(self.branch_field, getattr(serializer.instance, self.branch_field, None))
@@ -372,7 +388,11 @@ class PunchViewSet(APViewSet):
         commit = str(request.data.get('commit') or request.query_params.get('commit') or '').lower() in ('1', 'true', 'yes')
         res = S.import_punches(rows, commit=commit, user_id=request.user.id, allowed_ids=hr_employee_ids(request))
         tot = {k: sum(1 for r in res if r['status'] == k) for k in ('ok', 'duplicate', 'error', 'imported')}
-        return Response({'committed': commit, 'totals': tot, 'rows': res})
+        # v1.26.0: a month of daily rows is tens of thousands of punches – send the errors and the first rows only
+        note = res[0].get('note', '') if res else ''
+        shown = [r for r in res if r['status'] == 'error'][:1000] + [r for r in res if r['status'] != 'error'][:300]
+        shown.sort(key=lambda r: r['row'])
+        return Response({'committed': commit, 'totals': tot, 'rows': shown, 'total_rows': len(res), 'note': note})
 
 
 # ----------------------------------------------------------------------------- daily results

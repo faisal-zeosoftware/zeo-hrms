@@ -25,26 +25,51 @@ class CustomUserSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True, 'required': False, 'allow_null': True, 'default': None}
         }
+    def _visible_ids(self):
+        """v1.26.0: an administrator sees only their own companies of a login shared with another account."""
+        req = self.context.get('request') if hasattr(self, 'context') else None
+        u = getattr(req, 'user', None)
+        if u is None or not getattr(u, 'is_authenticated', False) or u.is_superuser:
+            return None
+        try:
+            from ZeoCloud.services import is_platform_admin
+            if is_platform_admin(u):
+                return None
+        except Exception:
+            pass
+        return set(u.tenants.values_list('id', flat=True))
+
     def get_allocated_tenants(self, obj):
-        tenants = obj.tenants.all()
+        tenants = obj.tenants.all().select_related('country', 'currency')   # v1.28.1
+        ids = self._visible_ids()
+        if ids is not None and obj.pk != self.context['request'].user.pk:
+            tenants = tenants.filter(id__in=ids)
         serializer = UserAllocatedCompanySerializer(
             tenants,
             many=True,
-            context={"user": obj}
+            context={"user": obj, "request": self.context.get('request') if hasattr(self, 'context') else None}
         )
         return serializer.data
     def get_user_groups(self, obj):
         """Retrieve assigned groups for the user via UserTenantPermissions."""
+        req = self.context.get('request') if hasattr(self, 'context') else None
+        sch = req.query_params.get('schema') if req is not None and hasattr(req, 'query_params') else None
+        if sch and sch != 'public':   # v1.26.0: the groups of the open company (an invited login has its own there)
+            try:
+                with schema_context(sch):
+                    utp = UserTenantPermissions.objects.get(profile=obj)
+                    return [g.name for g in utp.groups.all()]
+            except Exception:
+                pass
         try:
             user_tenant_permissions = UserTenantPermissions.objects.get(profile=obj)
             return [group.name for group in user_tenant_permissions.groups.all()]  # Fetch group names
         except UserTenantPermissions.DoesNotExist:
             return []  # Return empty if no groups assigned
     def to_representation(self, instance):
-        rep = super().to_representation(instance)
-        rep['allocated_tenants'] = self.get_allocated_tenants(instance)
-        rep['user_groups'] = self.get_user_groups(instance)  # Include group names
-        return rep
+        # v1.28.1: allocated_tenants and user_groups are SerializerMethodFields already – computing them a second
+        # time here doubled the work of every /users/api/user/<id>/ call
+        return super().to_representation(instance)
 
     def create(self, validated_data):
         tenants_data = validated_data.pop('tenants', [])
@@ -75,6 +100,10 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
         # Update tenants if provided
         if tenants_data is not None:
+            ids = self._visible_ids()
+            if ids is not None:   # v1.26.0: companies the requester does not manage are kept (a shared login keeps its other account)
+                keep = [c for c in instance.tenants.all() if c.pk not in ids]
+                tenants_data = [c for c in tenants_data if c.pk in ids] + keep
             instance.tenants.set(tenants_data)
         
         return instance
@@ -151,6 +180,20 @@ class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = company
         fields = '__all__'
+
+    def validate_name(self, v):
+        """v1.28.1: two companies cannot carry the same name (ignoring case and spacing) – the second one could not be
+        told apart in "Choose a company", imports and reports."""
+        name = ' '.join(str(v or '').split())
+        if not name:
+            raise serializers.ValidationError('Enter the company name.')
+        qs = company.objects.filter(name__iexact=name)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(f'A company named "{name}" already exists. Use a different name (for example add the emirate or the branch).')
+        return name
+
     def get_branches(self, obj):
         from OrganisationManager.models import brnch_mstr
         from django_tenants.utils import schema_context
@@ -168,7 +211,7 @@ class CompanySerializer(serializers.ModelSerializer):
                     from tenant_users.tenants.models import UserTenantPermissions
                     from OrganisationManager.models import UserBranchAccess
                     from EmpManagement.models import emp_master
-                    if not UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists():
+                    if not _zeo_is_admin(user):
                         ids = [i for i in UserBranchAccess.objects.filter(user=user).values_list('branch__id', flat=True) if i]
                         if not ids:
                             ids = list(emp_master.objects.filter(users=user).values_list('emp_branch_id', flat=True))
@@ -178,7 +221,7 @@ class CompanySerializer(serializers.ModelSerializer):
             return []
     def get_states(self, obj):
         if obj.country:
-            states = state_mstr.objects.filter(country=obj.country, is_active=True)
+            states = state_mstr.objects.filter(country=obj.country, is_active=True).select_related('country')   # v1.28.1
             return StateSerializer(states, many=True).data
         return []
     def get_tax_details(self, obj):
@@ -202,11 +245,15 @@ class CompanySerializer(serializers.ModelSerializer):
         return None
     def get_state_label(self, obj):
         return obj.country.get_state_label() if obj.country else None  # Use method from model
+    def _want_notifications(self):
+        req = self.context.get('request') if hasattr(self, 'context') else None
+        return bool(req is not None and hasattr(req, 'query_params') and req.query_params.get('notifications'))
+
     def get_notification_count(self, obj):
 
         user = self.context.get("user")
 
-        if not user:
+        if not user or not self._want_notifications():   # v1.28.1 only when asked (?notifications=1)
             return 0
 
         total_count = 0
@@ -248,7 +295,7 @@ class CompanySerializer(serializers.ModelSerializer):
 
         user = self.context.get("user")
 
-        if not user:
+        if not user or not self._want_notifications():   # v1.28.1 only when asked (?notifications=1)
             return []
 
         notifications = []
@@ -471,6 +518,15 @@ class UserAllocatedCompanySerializer(CompanySerializer):
 
                 branch_data = []
 
+                # v1.28.1: the notification counts and the latest notifications are read only when the caller asks
+                # (?notifications=1 – the top bar does); every other screen only needs the branch list, which makes
+                # this call ~20x cheaper (it was 1.3 s on a 22-company login and runs on almost every page)
+                req = self.context.get('request') if hasattr(self, 'context') else None
+                want_notif = bool(req is not None and hasattr(req, 'query_params') and req.query_params.get('notifications'))
+                if not want_notif:
+                    return [{"id": b.id, "branch_name": b.branch_name, "notification_count": 0, "notification_summary": [], "notifications": []}
+                            for b in branches]
+
                 for branch in branches:
 
                     notifications = (
@@ -538,8 +594,8 @@ class UserAllocatedCompanySerializer(CompanySerializer):
 
         user = self.context.get("user")
 
-        if not user:
-            return {}
+        if not user or not self._want_notifications():   # v1.28.1 only when asked (?notifications=1)
+            return {"total_unread": 0, "request_wise_counts": {}, "latest_notifications": []}
 
         notifications = UserNotificationInbox.objects.filter(
             user=user,
@@ -610,4 +666,13 @@ class ESSChangePasswordSerializer(serializers.Serializer):
                 "Password must be at least 8 characters."
             )
         return value
-    
+
+
+def _zeo_is_admin(user):
+    """v1.26.0: company administrator in the open company – an invited login's rights for this company included."""
+    try:
+        from ZeoCloud.rights import is_admin
+        return is_admin(user)
+    except ImportError:
+        from tenant_users.tenants.models import UserTenantPermissions
+        return UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists()

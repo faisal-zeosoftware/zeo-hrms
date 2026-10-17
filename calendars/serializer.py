@@ -452,11 +452,9 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
             })
 
         # ---------------- REPORTING MANAGER ----------------
-        if workflow.approval_type == 'reporting_manager':
-            if not employee.emp_reporting_manager:
-                raise serializers.ValidationError({
-                    "employee": "No reporting manager assigned."
-                })
+        # v1.26.0: an employee without a reporting manager no longer blocks the request. The approver comes from
+        # Reports-to (employee), else branch HR → company HR → company admin (Leave policies → Approvers), as that
+        # screen says. Before, every employee loaded by the bulk upload got "No reporting manager assigned."
 
         # ---------------- MULTI APPROVAL ----------------
         if workflow.approval_type == 'multi_approval':
@@ -468,9 +466,16 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
                 })
 
             if not first_level.approver:
-                raise serializers.ValidationError({
-                    "approver": f"No approver assigned for level {first_level.level}"
-                })
+                # v1.26.0: a level may name a role (LevelRole); a missing person goes to the fallback chain
+                try:
+                    from LeavePolicy.models import LevelRole
+                    has_role = LevelRole.objects.filter(level_id=first_level.pk).exclude(role='user').exists()
+                except Exception:
+                    has_role = False
+                if not has_role:
+                    raise serializers.ValidationError({
+                        "approver": f"No approver assigned for level {first_level.level}"
+                    })
 
         return data
     
@@ -508,6 +513,7 @@ class EmployeeLeaveBalanceSerializer(serializers.ModelSerializer):
             rep['leave_type'] = instance.leave_type.name
         if instance.employee:  
             rep['employee'] = instance.employee.emp_code
+            rep['employee_name'] = ' '.join(x for x in (instance.employee.emp_first_name, instance.employee.emp_last_name) if x)   # v1.26.0
            
         return rep
 class AttendanceLogSerializer(serializers.ModelSerializer):
@@ -1081,7 +1087,24 @@ class LvApprovalSerializer(serializers.ModelSerializer):
         fields = '__all__'
         
     def get_request_details(self, obj):
-        return LeaveRequestSerializer(obj.leave_request).data
+        d = dict(LeaveRequestSerializer(obj.leave_request, context=self.context).data) if obj.leave_request else {}
+        # v1.26.0: what the approver needs to decide – the balance of that leave type and the attachment link
+        lr = obj.leave_request
+        if lr is not None:
+            try:
+                b = emp_leave_balance.objects.filter(employee_id=lr.employee_id, leave_type_id=lr.leave_type_id).first()
+                d['balance'] = float(b.balance) if b is not None and b.balance is not None else None
+            except Exception:
+                d['balance'] = None
+            d['leave_type_name'] = getattr(lr.leave_type, 'name', '')
+            d['days'] = lr.number_of_days
+            req = self.context.get('request')
+            if lr.lv_document:
+                try:
+                    d['document_url'] = req.build_absolute_uri(lr.lv_document.url) if req else lr.lv_document.url
+                except Exception:
+                    d['document_url'] = ''
+        return d
 
     def get_delegation_details(self, obj):
         return {
@@ -1159,6 +1182,9 @@ class LVApprovalWorkflowSerializer(serializers.ModelSerializer):
         rep['branch'] = [
             b.branch_name for b in instance.branch.all()
         ] if instance.branch.exists() else []
+        # v1.26.0: the ids too – the edit dialog matched names back to ids and opened with an empty leave type / branch
+        rep['request_type_id'] = instance.request_type_id
+        rep['branch_ids'] = [b.pk for b in instance.branch.all()]
 
         return rep
 

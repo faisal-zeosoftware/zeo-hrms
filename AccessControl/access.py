@@ -37,6 +37,8 @@ PUBLIC_PATHS = (
     '/users/send-reset-otp/', '/users/verify-reset-otp/', '/users/reset-password/',
     '/users/ess-send-reset-otp/', '/users/ess-verify-reset-otp/', '/users/ess-reset-password/',
     '/cloud/api/signup/', '/cloud/api/jobs/',   # v1.23.0 ZEO Cloud sign-up (before a login exists)
+    '/mobile/api/info/', '/mobile/api/unlock/',
+    '/licence/api/enterprise-request/',   # v1.28.0 Enterprise request (sign-up page, before a login exists)   # v1.25.0 mobile app: server check, fingerprint unlock
 )
 # APIViews without a model that show company-wide data: back-office users only
 BACKOFFICE_VIEWS = {
@@ -250,7 +252,7 @@ class ZeoAccess(permissions.BasePermission):
                     if comp is None:
                         continue
                     with schema_context(comp.schema_name):
-                        ok = UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists()
+                        ok = _zeo_is_admin(user)
                     if not ok or not user.tenants.filter(pk=comp.pk).exists():
                         self.message = tr('You can only add users to companies you administer.')
                         return False
@@ -304,7 +306,7 @@ class ZeoAccess(permissions.BasePermission):
             from django_tenants.utils import schema_context
             from tenant_users.tenants.models import UserTenantPermissions
             with schema_context(obj.schema_name):
-                ok = UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists()
+                ok = _zeo_is_admin(user)
             ok = ok and user.tenants.filter(pk=obj.pk).exists()
             if not ok:
                 self.message = tr('Only the company administrator can change company details.')
@@ -381,6 +383,24 @@ def branch_filter(qs, model, branches):
     return qs.distinct() if (m2m or '__' in bp) else qs
 
 
+def _branch_or_mine(qs, model, branches, user):
+    """v1.28.1: rows of the user's branches – and, for approval / delegation tables, the rows addressed to the user
+    (approver, delegate, assignee) whatever branch the request came from: an HR manager of branch B who is the level-1
+    approver of a request raised in branch A saw an empty approvals page (the row was scoped out by branch)."""
+    if branches is None:
+        return qs
+    uf = user_fields(model)
+    if not uf:
+        return branch_filter(qs, model, branches)
+    bp, m2m = branch_path(model)
+    if not bp:
+        return qs
+    cond = Q(id__in=branches) if bp == 'id' else (Q(**{f'{bp}__in': branches}) | Q(**{f'{bp}__isnull': True}))
+    for f in uf:
+        cond |= Q(**{f: user})
+    return qs.filter(cond).distinct()
+
+
 def scope_queryset(request, view, qs):
     model = getattr(qs, 'model', None)
     if model is None or getattr(view, 'zeo_scope', True) is False:
@@ -408,9 +428,9 @@ def scope_queryset(request, view, qs):
         return qs
     name = model._meta.model_name
     if f'view_{name}' in c.codes:
-        return branch_filter(qs, model, c.branches)
+        return _branch_or_mine(qs, model, c.branches, user)
     if 'list' in (getattr(view, 'self_service_actions', None) or ()):
-        return branch_filter(qs, model, c.branches)  # the view declares the list open to all staff
+        return _branch_or_mine(qs, model, c.branches, user)  # the view declares the list open to all staff
     q = Q()
     linked = False
     ep = emp_path(model)
@@ -615,3 +635,13 @@ def company_perms():
     if sch and sch != 'public':
         qs = qs.filter(profile__tenants__schema_name=sch).distinct()
     return qs
+
+
+def _zeo_is_admin(user):
+    """v1.26.0: company administrator in the open company – an invited login's rights for this company included."""
+    try:
+        from ZeoCloud.rights import is_admin
+        return is_admin(user)
+    except ImportError:
+        from tenant_users.tenants.models import UserTenantPermissions
+        return UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists()

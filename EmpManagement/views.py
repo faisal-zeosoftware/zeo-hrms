@@ -30,6 +30,7 @@ from .permissions import (IsSuperUserOrHasGeneralRequestPermission,IsSuperUserOr
                         EmployeeMarketingSkillPermission,EmployeeProgramSkillPermission,EmployeeLangSkillPermission,NotificationPermission,ApprovalLevelPermission,EmployeeMarketingSkillPermission,RequestTypePermission,
                         CanViewApprovedResignations,CanCreateEOS,EmployeeResignationPermission,DocTypePermission)
 from django.core.exceptions import ValidationError
+from Translations.i18n import tr   # v1.28.1
 from rest_framework.decorators import action
 from phonenumber_field.modelfields import PhoneNumberField
 from rest_framework import viewsets,filters
@@ -624,9 +625,26 @@ class EmpViewSet(viewsets.ModelViewSet):
         leave_balance_serializer = EmployeeLeaveBalanceSerializer(leave_balance, many=True)
         leave_type_serializer = LeaveTypeSerializer(available_leave_types, many=True)
 
+        # v1.26.0: the leave types this employee can request – every line of their leave policy (gender rule applied), also
+        # per-event and unpaid types that never have a balance row (maternity, parental, bereavement, unpaid, Hajj …), plus
+        # every type that has a balance. The screens offered only types with a balance, so those could never be requested.
+        applicable = set(b.leave_type_id for b in leave_balance)
+        try:
+            from LeavePolicy.engine import policy_for
+            pol = policy_for(user)
+            if pol is not None:
+                g = (user.emp_gender or '').upper()[:1]
+                for line in pol.lines.all():
+                    if getattr(line, 'gender', 'B') in ('B', '', None) or line.gender == g:
+                        applicable.add(line.leave_type_id)
+            else:
+                applicable |= set(available_leave_types.values_list('id', flat=True))
+        except Exception:
+            applicable |= set(available_leave_types.values_list('id', flat=True))
         return Response({
             "leave_balance": leave_balance_serializer.data,
             "available_leave_types": leave_type_serializer.data,
+            "applicable_type_ids": sorted(applicable),
         }, status=status.HTTP_200_OK)
     
     @action(detail=True, methods=['GET'])
@@ -1714,6 +1732,78 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
     serializer_class = EmpBulkUploadSerializer
     parser_classes = (MultiPartParser, FormParser)
 
+    # ---------------- v1.26.0: new importer (background job, partial import, error file, more columns) ----------------
+    @action(detail=False, methods=['post'], url_path='import', parser_classes=[MultiPartParser, FormParser])
+    def import_employees(self, request):
+        """file=<xlsx|csv>, mode=partial|all, dry_run=1 -> 202 {job}; poll import-status/?job=…"""
+        from . import bulk_import
+        f = request.FILES.get('file')
+        if f is None:
+            return Response({"error": "Please provide a file."}, status=400)
+        if f.size > 20 * 1024 * 1024:
+            return Response({"error": "The file is larger than 20 MB."}, status=400)
+        mode = 'all' if str(request.data.get('mode', '')).lower() in ('all', 'all_or_nothing') else 'partial'
+        dry = str(request.data.get('dry_run', '')).lower() in ('1', 'true', 'yes')
+        sync = str(request.data.get('sync', '')).lower() in ('1', 'true', 'yes')
+        job = bulk_import.start(f.name, f.read(), mode=mode, dry_run=dry, user=request.user, run_now=sync)
+        if sync:
+            return Response(dict(bulk_import.status(job) or {}, job=job))
+        return Response({"job": job, "status_url": f"/employee/api/emp-bulkupload/import-status/?job={job}"}, status=202)
+
+    @action(detail=False, methods=['get'], url_path='import-status')
+    def import_status(self, request):
+        from . import bulk_import
+        st = bulk_import.status(request.query_params.get('job', ''))
+        if not st:
+            return Response({"detail": "Unknown or expired job."}, status=404)
+        if st.get('by') and st['by'] != request.user.pk and not request.user.is_superuser:
+            return Response({"detail": "Not your upload."}, status=403)
+        out = {k: v for k, v in st.items() if k not in ('by',)}
+        if request.query_params.get('brief'):
+            out['errors'] = (out.get('errors') or [])[:200]
+        return Response(out)
+
+    @action(detail=False, methods=['get'], url_path='import-errors')
+    def import_errors(self, request):
+        from django.http import HttpResponse
+        from . import bulk_import
+        st = bulk_import.status(request.query_params.get('job', ''))
+        if not st:
+            return Response({"detail": "Unknown or expired job."}, status=404)
+        resp = HttpResponse(bulk_import.error_csv(st), content_type='text/csv; charset=utf-8')
+        resp['Content-Disposition'] = 'attachment; filename="employee_upload_errors.csv"'
+        return resp
+
+    @action(detail=False, methods=['get'], url_path='import-template')
+    def import_template(self, request):
+        import openpyxl
+        from django.http import HttpResponse
+        from . import bulk_import
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'EmployeeMaster'
+        ws.append(bulk_import.TEMPLATE_HEADERS)
+        ws.append(['EMP-0001', 'Ahmed', '', 'Khan', 'Male', '15/04/1990', '01/09/2024', 'PAKISTANI', 'Head Office', 'Finance', 'Accountant',
+                   'Staff', '', 'ahmed@example.com', '', '0501234567', 'Married', 'Islam', 'United Arab Emirates', 'Dubai', 'False', 'False',
+                   'manual', '', 'Emirates NBD', 'AE070331234567890123456', '', '302620122', '', 'WPS', '784-1990-1234567-1', '01/09/2027',
+                   'AB1234567', '01/01/2030', '201/2024/1234567', '01/09/2026', '12345678', '01/09/2026', '6000', '2500', '800', '500', 'Active', ''])
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = max(14, len(str(col[0].value)) + 2)
+        notes = wb.create_sheet('Read me')
+        for line in ['Required columns end with *. Dates as dd/mm/yyyy.',
+                     'Nationality: the nationality (FILIPINO) or the country (Philippines) – both work.',
+                     'Branch / Department / Designation / Category: the name or the code.',
+                     'Reports To: the employee code of the line manager (may be further down the file).',
+                     'Salary: one column per salary component, named as in Payroll → Salary components (Basic Salary, Housing Allowance …).',
+                     'Status Left / Exit date in the past: the employee is imported as a leaver (not active).',
+                     'Rows with errors are listed after the upload with the reason; the other rows are imported.']:
+            notes.append([line])
+        out = io.BytesIO()
+        wb.save(out)
+        resp = HttpResponse(out.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        resp['Content-Disposition'] = 'attachment; filename="employee_upload_template.xlsx"'
+        return resp
+
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def bulk_upload(self, request):
         if 'file' not in request.FILES:
@@ -1760,7 +1850,7 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
 
             # ---------------- CSV ----------------
             elif filename.endswith('.csv'):
-                file_data = upload_file.read().decode("utf-8")
+                file_data = upload_file.read().decode("utf-8-sig")
                 csv_reader = csv.DictReader(io.StringIO(file_data))
                 headers = csv_reader.fieldnames
 
@@ -2551,7 +2641,7 @@ class Bulkupload_DocumentViewSet(viewsets.ModelViewSet):
 
             # ---------------- CSV ----------------
             elif filename.endswith('.csv'):
-                file_data = upload_file.read().decode("utf-8")
+                file_data = upload_file.read().decode("utf-8-sig")
                 csv_reader = csv.DictReader(io.StringIO(file_data))
                 headers = csv_reader.fieldnames
 
@@ -2649,7 +2739,8 @@ class Bulkupload_DocumentViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=400)
 
 class EmplistViewSet(BranchAccessMixin,viewsets.ReadOnlyModelViewSet):  # Read-only API (GET only)
-    queryset = emp_master.objects.filter(is_active=True)
+    # v1.26.0: linked names in the same query (was 4 queries per employee); ordered by code
+    queryset = emp_master.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id').order_by('emp_code')
     serializer_class = EmplistSerializer
     permission_classes = [EmployeePermission]
     
@@ -3561,7 +3652,7 @@ class EmpBankBulkuploadViewSet(viewsets.ModelViewSet):
 
             elif filename.endswith('.csv'):
 
-                file_data = upload_file.read().decode("utf-8")
+                file_data = upload_file.read().decode("utf-8-sig")
 
                 csv_reader = csv.DictReader(
                     io.StringIO(file_data)
@@ -4360,9 +4451,22 @@ class EndOfServiceViewset(viewsets.ModelViewSet):
             return Response(serializer.data)
         except EndOfService.DoesNotExist:
             return Response({"detail": "End of service not found for this employee."}, status=status.HTTP_404_NOT_FOUND)
+    def _eos_or_404(self, pk):
+        """v1.28.1: the End of service screen sends the EMPLOYEE id to /end-of-service/<id>/ and /final-settlement-data/;
+        the record is found by its own id first and then by the employee, with a message that says what is missing."""
+        qs = self.filter_queryset(self.get_queryset())
+        eos = qs.filter(pk=pk).first() or qs.filter(resignation__employee_id=pk).order_by('-id').first()
+        if eos is None:
+            from rest_framework.exceptions import NotFound
+            raise NotFound(tr('No end of service record for this employee yet. Approve the resignation and create the end of service record first (Exit › End of service).'))
+        return eos
+
+    def retrieve(self, request, *args, **kwargs):
+        return Response(self.get_serializer(self._eos_or_404(kwargs.get('pk'))).data)
+
     @action(detail=True, methods=['get'], url_path='final-settlement-data')
     def final_settlement_data(self, request, pk=None):
-        eos = get_object_or_404(self.filter_queryset(self.get_queryset()), pk=pk)  # v1.13.0: scoped (was any record)
+        eos = self._eos_or_404(pk)
         resignation = eos.resignation
         employee = resignation.employee
 
@@ -4370,7 +4474,7 @@ class EndOfServiceViewset(viewsets.ModelViewSet):
         payslip = employee.payslips.filter(status='Approved').order_by('-created_at').first()
 
         if not payslip:
-            return Response({"detail": "Approved payslip not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": tr('The final settlement needs an approved payslip of {0}: run and approve the last month\'s payroll first (Payroll › Payslip approvals).', employee.emp_code)}, status=status.HTTP_404_NOT_FOUND)
 
         # Payslip component details
         components = payslip.components.all()

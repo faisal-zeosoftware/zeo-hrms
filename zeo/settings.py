@@ -59,7 +59,7 @@ def env_list(name, default=()):
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env('ZEO_SECRET_KEY')
+SECRET_KEY = 'django-insecure-bu8sj-dd80ca20luk_(bo_tho55@wtmlpy^9k9gun$!f8&z4)&'
 if not SECRET_KEY:
     raise RuntimeError('Set ZEO_SECRET_KEY in the environment or in .env (see .env.example).')
 
@@ -67,7 +67,7 @@ if not SECRET_KEY:
 DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
+ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1','80.65.208.178'])
 
 SHARED_APPS = [
     'django_tenants',
@@ -182,7 +182,7 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
+CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200',"http://80.65.208.178:4200"])  # the address(es) the Angular app is opened from
 # v1.25.0 the ZEO mobile app (Android: https://localhost, iPhone: capacitor://localhost) – always allowed
 CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [o for o in ('https://localhost', 'capacitor://localhost', 'http://localhost') if o not in CORS_ALLOWED_ORIGINS]
 
@@ -226,7 +226,7 @@ MIDDLEWARE = [
 ]
 
 # v1.23.0 ZEO Cloud – accounts, plans and licences (off for an own installation: no limits, nothing changes)
-ZEO_CLOUD = env_bool('ZEO_CLOUD', False)
+ZEO_CLOUD = env_bool('ZEO_CLOUD', True)
 ZEO_CLOUD_ADMIN_EMAIL = env('ZEO_CLOUD_ADMIN_EMAIL', '')   # upgrade and Enterprise requests are e-mailed here
 # v1.28.0 Enterprise licence (README-UPDATE section 40)
 ZEO_EDITION = env('ZEO_EDITION', '')                                   # 'enterprise' on a client's own Enterprise server: licence checks on
@@ -300,11 +300,11 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',
-        'NAME': env('ZEO_DB_NAME', 'zeo'),
-        'USER': env('ZEO_DB_USER', 'zeo_user'),
-        'PASSWORD': env('ZEO_DB_PASSWORD'),
-        'HOST': env('ZEO_DB_HOST', '127.0.0.1'),
-        'PORT': env('ZEO_DB_PORT', '5432'),
+        'NAME': 'zeo', 
+        'USER': 'zeo_user', 
+        'PASSWORD': '1234',
+        'HOST': '127.0.0.1', 
+        'PORT': '5432',
     }
 }
 # v1.24.0 ZEO Cloud: a company can live in the own database of its account ('control' = this main database)
@@ -465,9 +465,10 @@ CELERY_IMPORTS = ('EmpManagement.tasks',)
 EMAIL_HOST = env('ZEO_EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(env('ZEO_EMAIL_PORT', '587'))
 EMAIL_USE_TLS = env_bool('ZEO_EMAIL_USE_TLS', True)
-EMAIL_HOST_USER = env('ZEO_EMAIL_USER')
-EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD')
-DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
+EMAIL_HOST_USER = env('ZEO_EMAIL_USER','aparnaudhayan03@gmail.com')
+EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD','tupg ltue yjzw vvaw')
+DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'aparnaudhayan03@gmail.com')
+
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
 # v1.22.3: every e-mail goes through the guard – a neutralized company (test copy) sends none

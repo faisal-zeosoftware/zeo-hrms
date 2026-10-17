@@ -64,7 +64,7 @@ if not SECRET_KEY:
     raise RuntimeError('Set ZEO_SECRET_KEY in the environment or in .env (see .env.example).')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool('ZEO_DEBUG', False)
+DEBUG = env_bool('ZEO_DEBUG', True)
 
 CORS_ALLOW_CREDENTIALS = True
 ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1','80.65.208.178'])

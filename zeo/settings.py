@@ -187,7 +187,7 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200','http://80.65.208.178',])  # the address(es) the Angular app is opened from
+CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200','http://80.65.208.178:4200',])  # the address(es) the Angular app is opened from
 # v1.25.0 the ZEO mobile app (Android: https://localhost, iPhone: capacitor://localhost) – always allowed
 CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [o for o in ('https://localhost', 'capacitor://localhost', 'http://localhost') if o not in CORS_ALLOWED_ORIGINS]
 

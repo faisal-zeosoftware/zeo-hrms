@@ -373,6 +373,7 @@ class _check_access:
 # v1.28.1: template columns per list that differ from the serializer – the company import had Schema name, Employer unique
 # ID and Bank routing code (not asked when a company is created) and no way to say which apps the company uses.
 TEMPLATE_OVERRIDES = {
+    '/organisation/api/asset-type/': {'hide': ['min_approvals_required']},   # v1.37.1: not asked on the screen either
     '/users/api/company/': {
         'hide': ['schema_name', 'employer_unique_id', 'bank_routing_code', 'paid_until', 'logo', 'cloud', 'db_alias', 'timezone'],
         'extra': [{'key': 'apps', 'label': 'Apps for this company', 'required': False, 'many': True, 'type': 'text',

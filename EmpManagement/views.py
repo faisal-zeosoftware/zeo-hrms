@@ -2901,7 +2901,7 @@ class GeneralRequestViewset(viewsets.ModelViewSet):
                         )
             else:
                 # ✅ Auto-generate
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(GeneralRequest)   # v1.37.1: skips numbers already used
 
             serializer.save(document_number=document_number)
 
@@ -3822,7 +3822,7 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
 
             else:
                 # ✅ Auto-generate document number
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(DocumentRequest)   # v1.37.1: skips numbers already used
 
             # ✅ Save document request
             serializer.save(
@@ -4103,7 +4103,7 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
 
             else:
                 # ✅ Auto-generate document number
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(EmployeeResignation)   # v1.37.1: skips numbers already used
 
             serializer.save(document_number=document_number)
 

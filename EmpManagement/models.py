@@ -1519,25 +1519,15 @@ def create_initial_approval(sender, instance, created, **kwargs):
                     "Common approval workflow has no levels / approvers. Add them in Settings or switch the request type to its own workflow."
                 )
         else:
-            workflow = ApprovalWorkflow.objects.filter(
-                request_type=instance.request_type,
-                branch=instance.employee.emp_branch_id
-                ).first()
-            
-            if not workflow:
-                raise ValidationError(
-                    f"No Approval Workflow configured for '{instance.request_type.name}'."
-                )
+            workflow = (ApprovalWorkflow.objects.filter(request_type=instance.request_type, branch=instance.employee.emp_branch_id).first()
+                        or ApprovalWorkflow.objects.filter(request_type=instance.request_type).first())   # v1.37.1: any branch's workflow as a fallback
+            # v1.37.1: no workflow / no level for this request type → the request is approved automatically (it used to be refused)
+            first_level = workflow.levels.order_by('level').first() if workflow else None
 
-            first_level = workflow.levels.order_by('level').first()
-
-            if not first_level:
-                raise ValidationError(
-                    f"No Approval Level configured for '{instance.request_type.name}'."
-                )
-                
         if workflow:
             approval_type = workflow.approval_type
+            if approval_type == 'multi_approval' and not (first_level and first_level.approver):
+                approval_type = 'no_approval'
         else:
             approval_type = 'multi_approval' if instance.request_type.use_common_workflow else 'no_approval'
 
@@ -2149,8 +2139,11 @@ def create_initial_approval(sender, instance, created, **kwargs):
             workflow = DocumentApprovalWorkflow.objects.filter(
                 request_type=instance.request_type
                 ).first()
-            
-        approval_type = workflow.approval_type
+
+        # v1.37.1: no workflow / no level for this document type → approved automatically (it used to fail with a server error)
+        approval_type = workflow.approval_type if workflow else 'no_approval'
+        if approval_type == 'multi_approval' and not workflow.document_levels.exclude(approver=None).exists():
+            approval_type = 'no_approval'
 
         # -------------------------------------------------
         # NO APPROVAL
@@ -2162,10 +2155,8 @@ def create_initial_approval(sender, instance, created, **kwargs):
                 level=1
             ).exists():
 
-                approver = instance.created_by
-
-                if not approver and hasattr(instance.employee, "user"):
-                    approver = instance.employee.user
+                approver = (instance.created_by or getattr(instance.employee, 'users', None)
+                            or get_user_model().objects.filter(is_superuser=True, tenants__schema_name=__import__('django.db').db.connection.schema_name).first())   # v1.37.1
 
                 DocumentApproval.objects.create(
                     document_request=instance,

@@ -362,11 +362,11 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
                         raise ValidationError("The document number cannot be assigned outside the valid date range.")
             else:
                 # Generate the document number automatically
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(employee_leave_request)   # v1.37.1: skips numbers already used
                 # v1.10.0: branches that share a prefix produced the same number (save failed); take the next free one
                 tries = 0
                 while employee_leave_request.objects.filter(document_number=document_number).exists() and tries < 500:
-                    document_number = doc_config.get_next_number()
+                    document_number = doc_config.next_unused(employee_leave_request)   # v1.37.1: skips numbers already used
                     tries += 1
 
             # v1.18.0: who entered the request (the employee, or HR on their behalf) – the notice-period rule uses it
@@ -3948,7 +3948,7 @@ class LateinEarlyoutRequestViewset(viewsets.ModelViewSet):
                         )
             else:
                 # ✅ Auto-generate
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(LateinEarlyoutRequest)   # v1.37.1: skips numbers already used
 
             serializer.save(
                 document_number=document_number,

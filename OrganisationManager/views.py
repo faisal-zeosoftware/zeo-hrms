@@ -1261,7 +1261,7 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
                         )
             else:
                 # ✅ Auto-generate document number
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(AssetRequest)   # v1.37.1: skips numbers already used
 
             serializer.save(
                 document_number=document_number,

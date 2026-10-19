@@ -93,6 +93,9 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
         class _R:
             query_params = _Q()
             user = request.user
+            # v1.37.1: the company logo (ImageField) is rendered as an absolute URL – the stand-in request must offer it
+            def build_absolute_uri(self, location=None):
+                return request.build_absolute_uri(location)
         serializer = UserAllocatedCompanySerializer(
             tenants.select_related('country', 'currency'),
             many=True,

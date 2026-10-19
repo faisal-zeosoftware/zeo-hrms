@@ -260,6 +260,16 @@ class DocumentNumbering(models.Model):
 
             return final_number
 
+    def next_unused(self, model, field='document_number'):
+        """v1.37.1: the next number that no record of `model` uses yet – a number typed by hand does not advance the
+        counter, so the automatic numbers after it used to collide ("duplicate key … document_number")."""
+        number = self.get_next_number()
+        tries = 0
+        while model._default_manager.filter(**{field: number}).exists() and tries < 1000:
+            number = self.get_next_number()
+            tries += 1
+        return number
+
     @classmethod
     def next_for(cls, branch, doc_type, taken=None):
         """v1.22.1: the next number from the branch's Document Numbering setup, for records made without the screen

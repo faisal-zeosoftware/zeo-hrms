@@ -24,6 +24,7 @@ from django.db import connection, transaction
 from django.db.models import Count, Q, Sum
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
+from rest_framework import serializers as _drf_serializers
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import BasePermission
@@ -35,6 +36,7 @@ from .models import (AllocationExtra, AssetDamage, AssetDisposal, AssetEvent, As
                      AssetReturn, AssetTransfer, AssetTypeConfig, ClearanceWaiver, MaintenanceRecord, MaintenanceSchedule,
                      RecoveryInstalment, SharedAllocation)
 from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
+from OrganisationManager.models import Asset as _OrgAsset, AssetType, brnch_mstr, dept_master   # v1.37.1 import serializer
 
 R = {
     'master_view': ('view_asset', 'view_assetprofile'),
@@ -651,8 +653,43 @@ def save_files(request, asset_id, kind, record_type='', record_id=None, key='fil
 
 
 # ------------------------------------------------------------------ asset master
+class AssetImportSerializer(_drf_serializers.Serializer):
+    """v1.37.1: the columns of the register's Excel / CSV import (template and checked upload through DataTools).
+    The rows are posted to `create` as they are – the keys are the ones `validate_base` / `apply_profile` read."""
+    name = _drf_serializers.CharField(max_length=200, label='Asset name')
+    asset_type = _drf_serializers.PrimaryKeyRelatedField(queryset=AssetType.objects.all(), label='Asset type')
+    serial_number = _drf_serializers.CharField(max_length=100, required=False, allow_blank=True, label='Serial number')
+    model = _drf_serializers.CharField(max_length=100, required=False, allow_blank=True, label='Model')
+    purchase_date = _drf_serializers.DateField(label='Purchase date')
+    condition = _drf_serializers.ChoiceField(choices=[('healthy', 'Healthy'), ('minor_damage', 'Minor damage'), ('major_damage', 'Major damage')], required=False, label='Condition')
+    asset_code = _drf_serializers.CharField(max_length=40, required=False, allow_blank=True, label='Asset code', help_text='Blank = next code of the type')
+    branch_id = _drf_serializers.PrimaryKeyRelatedField(queryset=brnch_mstr.objects.all(), required=False, allow_null=True, label='Branch')
+    department_id = _drf_serializers.PrimaryKeyRelatedField(queryset=dept_master.objects.all(), required=False, allow_null=True, label='Department')
+    location = _drf_serializers.CharField(max_length=120, required=False, allow_blank=True)
+    purchase_cost = _drf_serializers.DecimalField(max_digits=14, decimal_places=2, required=False, label='Purchase cost')
+    currency = _drf_serializers.CharField(max_length=3, required=False, allow_blank=True, help_text='3-letter code, e.g. AED')
+    vendor = _drf_serializers.CharField(max_length=150, required=False, allow_blank=True)
+    invoice_no = _drf_serializers.CharField(max_length=60, required=False, allow_blank=True, label='Invoice no.')
+    purchase_order = _drf_serializers.CharField(max_length=60, required=False, allow_blank=True, label='Purchase order')
+    warranty_start = _drf_serializers.DateField(required=False, allow_null=True, label='Warranty start')
+    warranty_end = _drf_serializers.DateField(required=False, allow_null=True, label='Warranty end')
+    insurance_provider = _drf_serializers.CharField(max_length=150, required=False, allow_blank=True, label='Insurance provider')
+    insurance_policy_no = _drf_serializers.CharField(max_length=60, required=False, allow_blank=True, label='Insurance policy no.')
+    insurance_expiry = _drf_serializers.DateField(required=False, allow_null=True, label='Insurance expiry')
+    depreciation_method = _drf_serializers.ChoiceField(choices=[('straight_line', 'Straight line'), ('declining', 'Declining balance'), ('none', 'No depreciation')], required=False, label='Depreciation method')
+    depreciation_start = _drf_serializers.DateField(required=False, allow_null=True, label='Depreciation start')
+    useful_life_months = _drf_serializers.IntegerField(required=False, allow_null=True, label='Useful life (months)')
+    salvage_value = _drf_serializers.DecimalField(max_digits=14, decimal_places=2, required=False, label='Salvage value')
+    notes = _drf_serializers.CharField(required=False, allow_blank=True)
+
+
 class AssetViewSet(Base, viewsets.ViewSet):
     """Asset register: base asset + profile + custom fields in one record, and every life-cycle action."""
+
+    queryset = _OrgAsset.objects.none()   # v1.37.1: the model for the import rights check (add_asset)
+
+    def get_serializer(self, *args, **kwargs):   # v1.37.1: lets the list import (DataTools) describe and check the columns
+        return AssetImportSerializer(*args, **kwargs)
 
     def _rows(self, request, qs):
         assets = list(qs)

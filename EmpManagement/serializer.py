@@ -1380,6 +1380,8 @@ class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('document_levels', [])
         branches = validated_data.pop('branch', [])
 
+        if not validated_data.get('request_type'):   # v1.37.1: a workflow without a document type could be saved and was never used
+            raise serializers.ValidationError({'request_type': 'Choose the document request type (Requests → Setup → Doc. request types).'})
         replace_existing_workflows(DocumentApprovalWorkflow, branches, request_type=validated_data.get('request_type'))  # latest configuration wins
         workflow = DocumentApprovalWorkflow.objects.create(**validated_data)
         workflow.branch.set(branches)

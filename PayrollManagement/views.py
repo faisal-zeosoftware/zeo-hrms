@@ -869,7 +869,7 @@ class LoanApplicationviewset(viewsets.ModelViewSet):
 
             else:
                 # ✅ Auto-generate
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(LoanApplication)   # v1.37.1: skips numbers already used
 
             serializer.save(document_number=document_number)
 
@@ -1359,7 +1359,7 @@ class AdvanceSalaryRequestViewset(viewsets.ModelViewSet):
                         raise ValidationError("Document number cannot be assigned outside the valid date range.")
             else:
                 # If no document number is entered, generate one automatically
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(AdvanceSalaryRequest)   # v1.37.1: skips numbers already used
 
             serializer.save(document_number=document_number)
     @action(detail=True, methods=['post'])
@@ -1629,7 +1629,7 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
                             "Document number cannot be assigned outside the valid date range."
                         )
             else:
-                document_number = doc_config.get_next_number()
+                document_number = doc_config.next_unused(AirTicketRequest)   # v1.37.1: skips numbers already used
 
             serializer.save(
                 document_number=document_number,

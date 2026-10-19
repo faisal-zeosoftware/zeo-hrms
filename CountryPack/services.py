@@ -373,6 +373,12 @@ def gratuity_breakdown(years, basic_monthly, termination='termination', branch_i
     out['uae'] = uae
     slabs = g.get('slabs') or []
     daily = basic * 12 / 365 if uae else basic / 30
+    # v1.31.0: India – 15 days per year on (basic + DA) / 26 (Payment of Gratuity Act): rule set "divisor": 26
+    try:
+        if g.get('divisor'):
+            daily = basic / float(g['divisor'])
+    except Exception:
+        pass
     # the slab of the current service year (monthly accrual), also below the minimum service
     for s in slabs:
         lo = float(s.get('from_year') or 1) - 1
@@ -405,6 +411,12 @@ def gratuity_breakdown(years, basic_monthly, termination='termination', branch_i
     amount = daily * days * share
     if cap:
         amount = min(amount, out['cap'])
+    try:   # v1.31.0: absolute cap (India: ₹ 20,00,000)
+        if g.get('cap_amount'):
+            amount = min(amount, float(g['cap_amount']))
+            out['cap'] = min(out['cap'], float(g['cap_amount'])) if out.get('cap') else float(g['cap_amount'])
+    except Exception:
+        pass
     out.update(days=round(days, 2), amount=round(amount, 2))
     return out
 
@@ -616,6 +628,22 @@ def apply_defaults(user=None, schema_name=None):
                                       deduct_leave=False, show_in_payslip=True, branch=branches[0] if len(branches) == 1 else None,
                                       description='Employee share of the GPSSA pension for UAE nationals (5 % / 11 % of basic + housing + transport)')
                     added.append({'kind': 'Salary component', 'name': 'Pension – GPSSA (employee)', 'detail': 'UAE nationals – Federal Decree-Law 57/2023'})
+            # 4a. v1.31.0 – statutory schemes of the country (GOSI, GRSIA, PASI, SIO, PIFSS, EPF / ESI / PT / TDS …) and their
+            #     salary components (employee deduction + hidden employer contribution)
+            try:
+                from PayrollPlus import statutory as _st
+                a1, k1 = _st.seed(p['pack'], user)
+                for n in a1:
+                    added.append({'kind': 'Statutory scheme', 'name': n, 'detail': 'Payroll → Statutory schemes – verify the rate'})
+                for n in k1:
+                    kept.append({'kind': 'Statutory scheme', 'name': n, 'detail': 'already there'})
+                a2, k2 = _st.apply_components(user)
+                for n in a2:
+                    added.append({'kind': 'Salary component', 'name': n, 'detail': 'statutory – formula stat_<code>_emp / _er'})
+                for n in k2:
+                    kept.append({'kind': 'Salary component', 'name': n, 'detail': 'already there'})
+            except Exception as e:   # noqa: BLE001
+                kept.append({'kind': 'Statutory schemes', 'name': '–', 'detail': f'not set: {e}'})
             # 4b. v1.26.0 – UAE salary components every UAE payroll uses (Housing, Transport, Other / Food allowance)
             if p['pack'] == 'AE':
                 SC = M('PayrollManagement', 'SalaryComponent')

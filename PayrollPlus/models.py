@@ -109,3 +109,50 @@ class ExitSettlement(models.Model):
                        ('pay_exitsettlement', 'Can mark final settlements as paid (Finance)'),
                        ('finance_check_leaveencashment', 'Can verify leave encashment amounts (Finance)'),
                        ('approve_leaveencashment_final', 'Can give the final approval of leave encashments (management)')]
+
+
+# ------------------------------------------------------------------ v1.31.0 statutory payroll schemes per country
+class StatutoryScheme(models.Model):
+    """A statutory contribution / deduction of the company country (GPSSA, GOSI, GRSIA, PASI, SIO, PIFSS, EPF, ESI, professional
+    tax, income tax …). Seeded by "Apply country defaults" (Settings → Country settings) from CountryPack.statutory, editable here.
+    Payroll formulas get, per employee: stat_<code>_base, stat_<code>_emp, stat_<code>_er and the totals
+    statutory_employee_total / statutory_employer_total; the salary components made by "Apply" use them."""
+    KINDS = [('percent', 'Percentage of a wage base'), ('fixed', 'Fixed amount per month'), ('slab', 'Monthly slab on the base'),
+             ('annual_slab', 'Annual income-tax slabs (monthly = yearly tax ÷ 12)')]
+    APPLIES = [('all', 'Every employee'), ('nationals', 'Nationals only'), ('expats', 'Expatriates only')]
+    BASES = [('basic', 'Basic salary'), ('basic_housing_transport', 'Basic + housing + transport'), ('basic_da', 'Basic + dearness allowance'),
+             ('gross', 'Gross salary (all additions)')]
+    code = models.CharField(max_length=20, help_text='Formula name: stat_<code>_emp / _er (letters, digits, _)')
+    name = models.CharField(max_length=120)
+    country = models.CharField(max_length=3, blank=True, default='', help_text='ISO-2 of the pack it came from')
+    authority = models.CharField(max_length=80, blank=True, default='')
+    kind = models.CharField(max_length=12, choices=KINDS, default='percent')
+    applies_to = models.CharField(max_length=10, choices=APPLIES, default='all')
+    base = models.CharField(max_length=24, choices=BASES, default='basic')
+    min_base = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    max_base = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, help_text='Wage ceiling')
+    eligible_gross_max = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, help_text='Only when the gross is at most this (ESI)')
+    employee_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, help_text='Percent, e.g. 11 = 11 %')
+    employer_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0)
+    employee_fixed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    employer_fixed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    slabs = models.JSONField(default=list, blank=True, help_text='[{"to": 7500, "employee": 0, "employer": 0, "rate": 5}] – amounts (slab) or percent rates (annual_slab)')
+    standard_deduction = models.DecimalField(max_digits=12, decimal_places=2, default=0, help_text='annual_slab: deducted from yearly income first')
+    rebate_income_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0, help_text='annual_slab: no tax when taxable income is at most this')
+    cess_rate = models.DecimalField(max_digits=6, decimal_places=3, default=0, help_text='annual_slab: percent added to the tax (India: 4 % cess)')
+    employee_component = models.CharField(max_length=20, blank=True, default='', help_text='Salary component code of the employee deduction')
+    employer_component = models.CharField(max_length=20, blank=True, default='', help_text='Salary component code of the employer contribution (hidden from the payslip)')
+    active = models.BooleanField(default=True)
+    effective_from = models.DateField(null=True, blank=True)
+    law_reference = models.CharField(max_length=400, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    is_standard = models.BooleanField(default=False, help_text='Seeded from the country pack')
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by_id = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['country', 'code']
+        unique_together = [('code',)]
+
+    def __str__(self):
+        return f'{self.name} ({self.code})'

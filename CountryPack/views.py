@@ -51,7 +51,14 @@ class CurrentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(S.public_pack(S.current_pack(_tenant(request) or 'public')))
+        p = S.current_pack(_tenant(request) or 'public')
+        out = S.public_pack(p)
+        try:   # v1.31.0: company / branch registration captions of the pack
+            from .packs import registrations_for
+            out['registrations'] = registrations_for(p['pack'])
+        except Exception:
+            pass
+        return Response(out)
 
 
 class PacksView(_Admin):

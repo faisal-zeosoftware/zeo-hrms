@@ -81,7 +81,7 @@ def fill_branches(default_code=None):
     order = ['Contact', 'Building', 'Location', 'Listing', 'Unit', 'Agreement', 'Opportunity', 'Asset', 'Reservation', 'Lease', 'SaleContract',
              'PreventivePlan', 'Inspection', 'WorkOrder', 'Activity', 'Viewing', 'Offer', 'Bill', 'Cheque', 'Receipt', 'Commission', 'MoveOut',
              'OwnerStatement', 'Quote', 'CostLine']
-    models = [m for lbl in ('ZeoCRM', 'ZeoProperty', 'ZeoMaintenance') if apps.is_installed(lbl)
+    models = [m for lbl in ('ZeoCRM', 'ZeoProperty', 'ZeoMaintenance', 'ZeoAssets') if apps.is_installed(lbl)
               for m in apps.get_app_config(lbl).get_models() if has_branch(m)]
     models.sort(key=lambda m: order.index(m.__name__) if m.__name__ in order else 99)
     for m in models:

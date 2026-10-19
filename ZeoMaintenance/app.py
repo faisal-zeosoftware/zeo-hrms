@@ -23,7 +23,9 @@ app = App(
     pack_models={'category': (Category, 'code'), 'checklist': (Checklist, 'code')},
     links=(('ZeoProperty', 'Property', 'Work on Property units; tenant and buyer requests from the portal; owner approval above the '
             'agreement limit; costs charged to the tenant or the owner as billing records; move-in / move-out / unit-ready / snag inspections.'),
-           ('ZeoCRM', 'CRM', 'Service requests and complaints sent from CRM contacts and opportunities.')),
+           ('ZeoCRM', 'CRM', 'Service requests and complaints sent from CRM contacts and opportunities.'),
+           ('ZeoAssets', 'Asset Management', 'v1.33.0: assets registered in Asset Management are sent here (critical ones or all); '
+            '"Report a fault" on an asset opens a work order on it.')),
     page=PAGE,
 )
 app.settings_fields = ('approval_limit', 'markup_percent', 'currency', 'verify_by_requester')
@@ -68,6 +70,7 @@ app.option('inspections', lambda: Inspection.objects.all(), lambda x: f'{x.numbe
 app.option('plans', lambda: PreventivePlan.objects.all(), lambda x: f'{x.number} {x.name}', ('number', 'name'), PreventivePlan)
 app.provide('maintenance.work_orders', lambda: WorkOrder.objects.all(), lambda x: f'{x.number} {x.title} ({x.get_status_display()})', ('number', 'title'))
 app.provide('maintenance.inspections', lambda: Inspection.objects.all(), lambda x: f'{x.number} {x.get_kind_display()} ({x.get_status_display()})', ('number',))
+app.provide('maintenance.assets', lambda: Asset.objects.all(), lambda x: f'{x.code} {x.name}', ('code', 'name', 'serial'))
 app.provide('maintenance.locations', lambda: Location.objects.filter(is_active=True), lambda x: f'{x.code} {x.name}', ('code', 'name'))
 
 
@@ -498,7 +501,8 @@ for key, model, label, plural, cols in (('category', Category, 'Category', 'Cate
 
 
 # ------------------------------------------------------------------ hooks other apps call (only while linked)
-def h_request(*, title, description='', unit_id=None, requester='', email='', phone='', source='staff', ref='', user=None, files=(), snag=False, access='', branch_id=None):
+def h_request(*, title, description='', unit_id=None, requester='', email='', phone='', source='staff', ref='', user=None, files=(), snag=False, access='', branch_id=None,
+              asset_id=None):
     cat = None
     if snag:
         cat = Category.objects.filter(code='SNAG', is_active=True).first()
@@ -507,6 +511,14 @@ def h_request(*, title, description='', unit_id=None, requester='', email='', ph
                    category=cat, access=access[:200], who_pays='warranty' if snag else 'company')
     if cat:
         wo.priority = cat.priority
+    if asset_id:   # v1.33.0: fault reported from Asset Management
+        a = Asset.objects.filter(pk=asset_id).first()
+        if a is not None:
+            wo.asset, wo.location = a, a.location
+            wo.property_unit_id = wo.property_unit_id or a.property_unit_id
+            if a.status == 'working':
+                a.status = 'faulty'
+                a.save(update_fields=['status'])
     if branch_id:   # v1.22.0: the branch of the record that asked (otherwise taken from the unit by the pre-save signal)
         wo.branch_id = branch_id
     sla(wo)
@@ -558,6 +570,38 @@ def h_unit_work_orders(unit_id):
     return [wo_public(o) for o in WorkOrder.objects.filter(property_unit_id=unit_id).order_by('-created_at')[:20]]
 
 
+def h_asset_upsert(*, mnt_id=None, code='', title='', serial='', make='', model_no='', warranty_until=None, status='working', branch_id=None,
+                   property_unit_id=None, location=''):
+    """v1.33.0: Asset Management keeps its assets here (same code); returns {'id'}."""
+    a = Asset.objects.filter(pk=mnt_id).first() if mnt_id else None
+    a = a or (Asset.objects.filter(code=code).first() if code else None) or Asset(code=code or app.next_number('asset', 'AS'))
+    a.name, a.serial, a.make, a.model_no = title[:150], (serial or '')[:80], (make or '')[:80], (model_no or '')[:80]
+    a.warranty_until = warranty_until
+    if status == 'retired' or a.status == 'retired' or not a.pk:
+        a.status = status
+    if property_unit_id:
+        a.property_unit_id = property_unit_id
+    if branch_id:
+        a.branch_id = branch_id
+    if location and not a.location_id:
+        a.location = Location.objects.filter(name__iexact=location.split(' › ')[-1]).first()
+    a.save()
+    return {'id': a.pk, 'code': a.code}
+
+
+def h_asset_work_orders(asset_id):
+    return [wo_public(o) for o in WorkOrder.objects.filter(asset_id=asset_id).order_by('-created_at')[:20]]
+
+
+def h_work_order_status(work_order_id):
+    """v1.34.0: Asset Management follows the work orders it handed over."""
+    o = WorkOrder.objects.filter(pk=work_order_id).first()
+    if o is None:
+        return None
+    return dict(wo_public(o), cost=float(total_cost(o) or o.cost or 0), work_note=o.work_note or '')
+
+
+app.hooks.update({'asset_upsert': h_asset_upsert, 'asset_work_orders': h_asset_work_orders, 'work_order_status': h_work_order_status})
 app.hooks.update({'request': h_request, 'requests_for': h_requests_for, 'owner_pending': h_owner_pending, 'owner_decision': h_owner_decision,
                   'inspection': h_inspection, 'unit_work_orders': h_unit_work_orders})
 

@@ -592,6 +592,14 @@ def pick_report(q, suite):
     return hr or weak
 
 
+def _wf_log(request, question, kind):
+    try:
+        from ZeoAI.models import AILog
+        AILog.objects.create(kind='ask', by=getattr(request, 'user', None), summary=question[:300], data={'kind': kind, 'via': 'assistant'})
+    except Exception:
+        pass
+
+
 def ask_basic(request, question, branch, suite=''):
     """Without an AI key: find the report by its words, the period and values named in the question; give the count and totals."""
     from .reports import REPORTS
@@ -618,6 +626,16 @@ def ask_basic(request, question, branch, suite=''):
         ps = d.get('payslip')
         return (f"**Your leave balance:** {bal}.\n\n" + (f"**Last payslip:** {ps['period']} – net AED {float(ps['net']):,.0f}.\n\n" if ps else '')
                 + f"Documents: {len(d.get('documents') or [])} · assets with you: {len(d.get('assets') or [])}."), tools.links
+    if not pj and not hrms_off and suite in ('', 'hrms', 'hr'):   # v1.37.0 workforce analytics (forecasts, hot-spots, hiring needs, cost comparison)
+        try:
+            from ZeoAI import workforce as _wf
+            if re.search(r'forecast|budget|turnover|attrition|absentee|hot.?spot|hiring need|hires|headcount|compare|workforce|manpower|recruitment need', q):
+                got = _wf.answer(question, getattr(request, 'user', None))
+                if got is not None:
+                    _wf_log(request, question, got[2])
+                    return got[0], [{'label': 'AI assistants › Workforce', 'url': '/hr-modules/zeo-ai/workforce'}]
+        except ImportError:
+            pass
     if not pj and hse_on() and (suite == 'hse' or not key):   # v1.21.0 HSE questions (incidents, permits, actions, audits…)
         from ZeoHSE import ask
         hp = next(((a, b) for pat, f in PERIODS if re.search(pat, q) for a, b in [f(t)]), (None, None))

@@ -218,6 +218,13 @@ class DocumentNumbering(models.Model):
             
     def get_next_number(self):
         """Generate the next document number with a fixed total length, without using the year field."""
+        try:   # v1.30.0 location level: the working location's own series, when it has one
+            from OrgStructure.location import override_number
+            num = override_number(self.type, self.branch_id_id)
+            if num:
+                return num
+        except Exception:
+            pass
         current_date = timezone.now().date()
         if self.start_date and self.end_date:
             if not (self.start_date <= current_date <= self.end_date):

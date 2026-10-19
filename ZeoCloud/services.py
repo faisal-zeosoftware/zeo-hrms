@@ -19,7 +19,7 @@ from .models import (APP_KEYS, AccessNotice, Account, AccountCompany, AccountEve
 
 log = logging.getLogger(__name__)
 APP_TITLES = {'hrms': 'HR', 'payroll': 'Payroll', 'projects': 'Projects', 'crm': 'CRM', 'property': 'Property',
-              'maintenance': 'Maintenance', 'hse': 'HSE'}
+              'maintenance': 'Maintenance', 'assets': 'Asset Management', 'people': 'People', 'hse': 'HSE'}
 
 
 def cloud_on():

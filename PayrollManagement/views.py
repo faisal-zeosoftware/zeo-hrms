@@ -97,7 +97,9 @@ class SalaryComponentViewSet(viewsets.ModelViewSet):
         known = known_names()
         comps = [{'name': k, 'label': v} for k, v in known.items() if v.startswith('Component:')]
         leaves = [{'name': k, 'label': v} for k, v in known.items() if k.startswith('leave_balance_')]
-        return Response({'variables': [{'name': k, 'label': v} for k, v in VARIABLES.items()], 'components': comps, 'leave_balances': leaves,
+        stat = [{'name': k, 'label': v} for k, v in known.items() if k.startswith('stat_') or k.startswith('statutory_')]   # v1.31.0
+        return Response({'variables': [{'name': k, 'label': v} for k, v in VARIABLES.items()] + stat, 'components': comps, 'leave_balances': leaves,
+                         'statutory': stat,
                          'functions': [{'name': k, 'label': v} for k, v in FUNCTIONS.items()], 'operators': OPERATORS})
 
     @action(detail=False, methods=['post'], url_path='check-formula')

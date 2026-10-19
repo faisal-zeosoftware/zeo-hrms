@@ -209,9 +209,57 @@ class MasterSerializer(serializers.ModelSerializer):
 class LocationSerializer(MasterSerializer):
     country_name = serializers.SerializerMethodField()
     employees = serializers.SerializerMethodField()
+    branch_name = serializers.SerializerMethodField()      # v1.30.0 location level
+    manager_name = serializers.SerializerMethodField()
 
     class Meta(MasterSerializer.Meta):
         model = Location
+
+    def get_branch_name(self, o):
+        return self.maps()['branch'].get(o.branch_id, '') if o.branch_id else ''
+
+    def get_manager_name(self, o):
+        if not o.manager_user_id:
+            return ''
+        u = M('UserManagement', 'CustomUser').objects.filter(pk=o.manager_user_id).first()
+        return u.username if u else ''
+
+    def validate_branch_id(self, v):
+        if v in (None, ''):
+            return None
+        v = int(v)
+        if v not in self.maps()['branch']:
+            raise serializers.ValidationError(tr('Branch {0} does not exist.', v))
+        allowed = self.context.get('allowed_branches')
+        if allowed is not None and v not in allowed:
+            raise serializers.ValidationError(tr('You can only use your own branches.'))
+        return v
+
+    def validate_manager_user_id(self, v):
+        if v in (None, ''):
+            return None
+        if not M('UserManagement', 'CustomUser').objects.filter(pk=v).exists():
+            raise serializers.ValidationError(tr('Choose a user from the list.'))
+        return int(v)
+
+    # v1.31.0 optional site details
+    def validate_in_charge_employee_id(self, v):
+        return self._check_emp(v, 'Site in-charge')
+
+    def validate_project_id(self, v):
+        if v in (None, ''):
+            return None
+        try:
+            if not M('ProjectManagement', 'project').objects.filter(pk=v).exists():
+                raise serializers.ValidationError(tr('Project {0} does not exist.', v))
+        except LookupError:
+            pass
+        return int(v)
+
+    def validate_shift_id(self, v):
+        if v in (None, ''):
+            return None
+        return int(v)
 
     def get_country_name(self, o):
         if not o.country_id:
@@ -242,7 +290,31 @@ class LocationSerializer(MasterSerializer):
         lng = d.get('longitude', getattr(self.instance, 'longitude', None))
         if (lat is None) != (lng is None):
             raise serializers.ValidationError({'longitude': tr('Enter both latitude and longitude, or neither.')})
+        # v1.30.0 location level: a location belongs to one branch; the branch list follows it
+        from . import location as L
+        b = d.get('branch_id', getattr(self.instance, 'branch_id', None))
+        if L.enabled() and not b:
+            raise serializers.ValidationError({'branch_id': tr('Choose the branch of this location (location-level control is on).')})
+        if b:
+            d['branch_ids'] = [int(b)]
+        elif 'branch_id' in d and not b and 'branch_ids' not in d:
+            pass
         return d
+
+    def create(self, data):
+        obj = super().create(data)
+        self._only_default(obj)
+        return obj
+
+    def update(self, obj, data):
+        obj = super().update(obj, data)
+        self._only_default(obj)
+        return obj
+
+    @staticmethod
+    def _only_default(obj):
+        if obj.is_default and obj.branch_id:
+            Location.objects.filter(branch_id=obj.branch_id, is_default=True).exclude(pk=obj.pk).update(is_default=False)
 
 
 class DivisionSerializer(MasterSerializer):
@@ -611,6 +683,20 @@ class LocationViewSet(MasterViewSet):
     model = Location
     queryset = Location.objects.all()
     serializer_class = LocationSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        q = self.request.query_params
+        if q.get('of_branch'):   # v1.30.0: locations that belong to the branch (not merely available in it)
+            try:
+                qs = qs.filter(branch_id=int(q['of_branch']))
+            except ValueError:
+                pass
+        from . import location as L
+        allowed = L.allowed_locations(self.request)
+        if allowed is not None and q.get('mine') in ('1', 'true'):
+            qs = qs.filter(id__in=allowed)
+        return qs
 
 
 class DivisionViewSet(MasterViewSet):

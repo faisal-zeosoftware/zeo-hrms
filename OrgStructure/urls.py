@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views as v
+from . import location_views as lv   # v1.30.0 location level
 
 router = DefaultRouter()
 router.register(r'locations', v.LocationViewSet, basename='org-location')
@@ -12,6 +13,7 @@ router.register(r'grades', v.GradeViewSet, basename='org-grade')
 router.register(r'positions', v.PositionViewSet, basename='org-position')
 router.register(r'employment-types', v.EmploymentTypeViewSet, basename='org-employmenttype')
 router.register(r'country-policies', v.CountryPolicyViewSet, basename='org-countrypolicy')
+router.register(r'location-numbering', lv.LocationNumberingViewSet, basename='org-locationnumbering')
 
 urlpatterns = [
     path('api/settings/', v.SettingsView.as_view()),
@@ -31,5 +33,13 @@ urlpatterns = [
     path('api/my-policies/<int:pk>/file/', v.MyPolicyFileView.as_view()),
     path('api/branch-country-policies/', v.BranchCountryPolicyView.as_view()),
     path('api/headcount/', v.HeadcountView.as_view()),
+    path('api/location-control/', lv.LocationControlView.as_view()),      # v1.30.0
+    path('api/location-access/', lv.LocationAccessView.as_view()),
+    path('api/record-location/', lv.RecordLocationView.as_view()),
+    path('api/my-locations/', lv.MyLocationsView.as_view()),
+    path('api/location-report/', lv.LocationReportView.as_view()),
+    path('api/company-profile/', lv.CompanyProfileView.as_view()),             # v1.31.0
+    path('api/branch-profile/<int:branch_id>/', lv.BranchProfileView.as_view()),
+    path('api/registration-expiry/', lv.ExpiryView.as_view()),
     path('api/', include(router.urls)),
 ]

@@ -12,13 +12,13 @@ from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Avg, Count, Q, Sum
 
 log = logging.getLogger(__name__)
 
 # report key prefix → the app (Settings → Apps) it belongs to
-PREFIX_APP = {'crm-': 'crm', 'prop-': 'property', 'mnt-': 'maintenance', 'hse-': 'hse', 'pj-': 'projects'}
-SLUG_PAGE = {'crm': '/main-sidebar/zeo-crm/', 'property': '/main-sidebar/zeo-property/', 'maintenance': '/main-sidebar/zeo-maintenance/',
+PREFIX_APP = {'crm-': 'crm', 'prop-': 'property', 'mnt-': 'maintenance', 'ast-': 'assets', 'ppl-': 'people', 'hse-': 'hse', 'pj-': 'projects'}
+SLUG_PAGE = {'crm': '/main-sidebar/zeo-crm/', 'property': '/main-sidebar/zeo-property/', 'maintenance': '/main-sidebar/zeo-maintenance/', 'assets': '/main-sidebar/zeo-assets/', 'people': '/main-sidebar/zeo-people/',
              'hse': '/main-sidebar/zeo-hse/', 'projects': '/main-sidebar/zeo-projects/'}
 DATE_FIELDS = ('date', 'occurred_at', 'reported_at', 'scheduled_at', 'due_date', 'start', 'start_date', 'cheque_date', 'created_at', 'requested_at')
 
@@ -132,7 +132,8 @@ def kit_reports():
         return out
     import importlib
     for label, key, prefix, section in (('ZeoCRM', 'crm', 'crm-', 'CRM'), ('ZeoProperty', 'property', 'prop-', 'Property'),
-                                        ('ZeoMaintenance', 'maintenance', 'mnt-', 'Maintenance')):
+                                        ('ZeoMaintenance', 'maintenance', 'mnt-', 'Maintenance'),
+                                        ('ZeoAssets', 'assets', 'ast-', 'Asset Management'), ('ZeoPeople', 'people', 'ppl-', 'People')):
         try:
             importlib.import_module(f'{label}.app')
         except Exception:
@@ -199,9 +200,110 @@ def _crm(a):
         return [('source', 'Lead source', 'text'), ('enquiries', 'Enquiries', 'number'), ('won', 'Won', 'number'),
                 ('conversion', 'Conversion %', 'number'), ('won_value', 'Won value', 'number')], rows
 
+    # ---------------------------------------------------------------- v1.33.0 sales management
+    from ZeoCRM.models import Lead, Quotation, QuotationLine, SalesOrderLine, SalesTarget
+    from ZeoCRM.app import SALES
+
+    def forecast(run):
+        qs = _branch_pick(run, a.regs['opportunity'].scope(run.request), 'branch').filter(status='open').select_related('stage', 'owner', 'pipeline')
+        data = defaultdict(lambda: {'open': 0, 'value': 0.0, 'weighted': 0.0, 'best': 0.0})
+        for o in qs:
+            m = o.expected_close.strftime('%Y-%m') if o.expected_close else 'No close date'
+            owner = ' '.join(x for x in (getattr(o.owner, 'emp_first_name', ''), getattr(o.owner, 'emp_last_name', '')) if x) or 'Unassigned'
+            k = (m, owner)
+            p = o.stage.probability if o.stage_id else 0
+            v = float(o.value or 0)
+            data[k]['open'] += 1
+            data[k]['value'] += v
+            data[k]['weighted'] += v * p / 100
+            if p >= 50:
+                data[k]['best'] += v
+        rows = [{'month': k[0], 'agent': k[1], **{x: round(y, 2) for x, y in v.items()}} for k, v in sorted(data.items())]
+        return [('month', 'Expected close', 'text'), ('agent', 'Agent', 'text'), ('open', 'Open opportunities', 'number'), ('value', 'Pipeline value', 'number'),
+                ('weighted', 'Weighted (× probability)', 'number'), ('best', 'Likely (≥ 50%)', 'number')], rows
+
+    def targets(run):
+        qs = _branch_pick(run, a.regs['target'].scope(run.request), 'branch').filter(is_active=True, period_end__gte=run.date_from, period_start__lte=run.date_to).select_related('owner', 'territory')
+        rows = []
+        for t in qs:
+            act = float(SALES['attainment'](t))
+            tgt = float(t.target or 0)
+            rows.append({'target': t.name, 'agent': ' '.join(x for x in (getattr(t.owner, 'emp_first_name', ''), getattr(t.owner, 'emp_last_name', '')) if x) or (t.territory.name if t.territory_id else 'Team'),
+                         'period': f'{t.period_start} – {t.period_end}', 'measure': t.get_measure_display(), 'target_value': tgt, 'actual': act,
+                         'gap': round(tgt - act, 2), 'attainment': round(100 * act / tgt, 1) if tgt else 0, '_url': f'{page}r/target/{t.pk}', '_m': t._meta.label, '_id': t.pk})
+        rows.sort(key=lambda r: -r['attainment'])
+        return [('target', 'Target', 'text'), ('agent', 'Agent / territory', 'text'), ('period', 'Period', 'text'), ('measure', 'Measure', 'text'),
+                ('target_value', 'Target', 'number'), ('actual', 'Actual', 'number'), ('gap', 'Gap', 'number'), ('attainment', 'Attainment %', 'number')], rows
+
+    def products(run):
+        ql = QuotationLine.objects.filter(quotation__in=_branch_pick(run, a.regs['quotation'].scope(run.request), 'branch').filter(date__gte=run.date_from, date__lte=run.date_to))
+        sl = SalesOrderLine.objects.filter(sales_order__in=_branch_pick(run, a.regs['sales_order'].scope(run.request), 'branch').filter(date__gte=run.date_from, date__lte=run.date_to).exclude(status='cancelled'))
+        data = defaultdict(lambda: {'quoted_qty': 0.0, 'quoted': 0.0, 'quotes': 0, 'ordered_qty': 0.0, 'ordered': 0.0, 'orders': 0})
+        for x in ql.values('product__name', 'description').annotate(q=Sum('qty'), v=Sum('net'), n=Count('quotation_id', distinct=True)):
+            k = x['product__name'] or x['description'] or 'No product'
+            data[k]['quoted_qty'] += float(x['q'] or 0); data[k]['quoted'] += float(x['v'] or 0); data[k]['quotes'] += x['n']
+        for x in sl.values('product__name', 'description').annotate(q=Sum('qty'), v=Sum('net'), n=Count('sales_order_id', distinct=True)):
+            k = x['product__name'] or x['description'] or 'No product'
+            data[k]['ordered_qty'] += float(x['q'] or 0); data[k]['ordered'] += float(x['v'] or 0); data[k]['orders'] += x['n']
+        rows = sorted(({'product': k, **{x: round(y, 2) for x, y in v.items()}} for k, v in data.items()), key=lambda r: -r['ordered'])
+        return [('product', 'Product', 'text'), ('quotes', 'Quotations', 'number'), ('quoted_qty', 'Quoted qty', 'number'), ('quoted', 'Quoted value', 'number'),
+                ('orders', 'Orders', 'number'), ('ordered_qty', 'Ordered qty', 'number'), ('ordered', 'Ordered value', 'number')], rows
+
+    def competitors(run):
+        qs = _branch_pick(run, a.regs['opportunity'].scope(run.request), 'branch').filter(created_at__date__gte=run.date_from, created_at__date__lte=run.date_to).prefetch_related('competitors')
+        data = defaultdict(lambda: {'faced': 0, 'won': 0, 'lost': 0, 'open': 0, 'lost_value': 0.0})
+        for o in qs:
+            for c in o.competitors.all():
+                d_ = data[c.name]
+                d_['faced'] += 1
+                d_[o.status] += 1
+                if o.status == 'lost':
+                    d_['lost_value'] += float(o.value or 0)
+        rows = [{'competitor': k, **v, 'win_rate': round(100 * v['won'] / (v['won'] + v['lost']), 1) if (v['won'] + v['lost']) else 0} for k, v in data.items()]
+        rows.sort(key=lambda r: -r['faced'])
+        return [('competitor', 'Competitor', 'text'), ('faced', 'Opportunities faced', 'number'), ('won', 'Won', 'number'), ('lost', 'Lost', 'number'),
+                ('open', 'Open', 'number'), ('win_rate', 'Win rate %', 'number'), ('lost_value', 'Lost value', 'number')], rows
+
+    def leads(run):
+        qs = _branch_pick(run, a.regs['lead'].scope(run.request), 'branch').filter(created_at__date__gte=run.date_from, created_at__date__lte=run.date_to)
+        rows = []
+        for x in qs.values('source__name', 'campaign__name').annotate(n=Count('id'), q=Count('id', filter=Q(status__in=('qualified', 'converted'))),
+                                                                     c=Count('id', filter=Q(status='converted')), dq=Count('id', filter=Q(status='disqualified')), sc=Avg('score')).order_by('-n'):
+            rows.append({'source': x['source__name'] or 'No source', 'campaign': x['campaign__name'] or '', 'leads': x['n'], 'qualified': x['q'], 'converted': x['c'],
+                         'disqualified': x['dq'], 'conversion': round(100 * x['c'] / x['n'], 1) if x['n'] else 0, 'avg_score': round(float(x['sc'] or 0), 1)})
+        return [('source', 'Lead source', 'text'), ('campaign', 'Campaign', 'text'), ('leads', 'Leads', 'number'), ('qualified', 'Qualified', 'number'),
+                ('converted', 'Converted', 'number'), ('disqualified', 'Disqualified', 'number'), ('conversion', 'Conversion %', 'number'), ('avg_score', 'Average score', 'number')], rows
+
+    def quotes(run):
+        qs = _branch_pick(run, a.regs['quotation'].scope(run.request), 'branch').filter(date__gte=run.date_from, date__lte=run.date_to).select_related('owner')
+        data = defaultdict(lambda: {'quotations': 0, 'value': 0.0, 'accepted': 0, 'accepted_value': 0.0, 'rejected': 0, 'open': 0, 'discount': 0.0})
+        for q in qs:
+            k = ' '.join(x for x in (getattr(q.owner, 'emp_first_name', ''), getattr(q.owner, 'emp_last_name', '')) if x) or 'Unassigned'
+            d_ = data[k]
+            d_['quotations'] += 1
+            d_['value'] += float(q.total or 0)
+            d_['discount'] += float(q.discount_total or 0)
+            if q.status == 'accepted':
+                d_['accepted'] += 1
+                d_['accepted_value'] += float(q.total or 0)
+            elif q.status in ('rejected', 'expired', 'cancelled'):
+                d_['rejected'] += 1
+            else:
+                d_['open'] += 1
+        rows = [{'agent': k, **{x: round(y, 2) for x, y in v.items()}, 'hit_rate': round(100 * v['accepted'] / (v['accepted'] + v['rejected']), 1) if (v['accepted'] + v['rejected']) else 0} for k, v in data.items()]
+        rows.sort(key=lambda r: -r['accepted_value'])
+        return [('agent', 'Agent', 'text'), ('quotations', 'Quotations', 'number'), ('value', 'Quoted value', 'number'), ('discount', 'Discount given', 'number'),
+                ('accepted', 'Accepted', 'number'), ('accepted_value', 'Accepted value', 'number'), ('rejected', 'Rejected / expired', 'number'), ('open', 'Open', 'number'), ('hit_rate', 'Hit rate %', 'number')], rows
+
     return {'crm-pipeline': ('Sales pipeline by stage', 'CRM', 'Open opportunities and their value per pipeline stage.', pipeline, None, codes),
             'crm-agents': ('Won and lost by agent', 'CRM', 'Deals closed in the period per agent: won, lost, win rate and won value.', by_agent, 'year', codes),
-            'crm-sources': ('Lead source effectiveness', 'CRM', 'Enquiries in the period per lead source with conversion to won deals.', sources, 'year', codes)}
+            'crm-sources': ('Lead source effectiveness', 'CRM', 'Enquiries in the period per lead source with conversion to won deals.', sources, 'year', codes),
+            'crm-forecast': ('Sales forecast', 'CRM', 'Open opportunities by expected close month and agent: pipeline value, weighted by stage probability, and likely (≥ 50%).', forecast, None, codes),
+            'crm-targets': ('Targets vs actual', 'CRM', 'Sales targets active in the period with the actual figure, gap and attainment %.', targets, 'year', codes),
+            'crm-products': ('Sales by product', 'CRM', 'Quoted and ordered quantity and value per product in the period (quotation and sales order lines).', products, 'year', codes),
+            'crm-competitors': ('Lost to competitors', 'CRM', 'Opportunities in the period where a competitor was noted: won, lost, win rate and value lost.', competitors, 'year', codes),
+            'crm-leads-funnel': ('Lead funnel by source and campaign', 'CRM', 'Leads in the period: qualified, converted, disqualified, conversion % and average score.', leads, 'year', codes),
+            'crm-quotations-agent': ('Quotations by agent', 'CRM', 'Quotations in the period per agent: value, discount given, accepted, hit rate.', quotes, 'year', codes)}
 
 
 def _property(a):
@@ -286,7 +388,74 @@ def _maintenance(a):
             'mnt-technicians': ('Technician workload', 'Maintenance', 'Work orders raised in the period per technician or vendor.', technicians, 'year', codes)}
 
 
-KIT_EXTRA = {'crm': _crm, 'property': _property, 'maintenance': _maintenance}
+def _people(a):
+    from ZeoPeople.models import Enrolment, Recognition, Survey, SurveyResponse, Review360
+    codes = [a.code(r) for r, _ in a.roles]
+    page = SLUG_PAGE['people']
+
+    def benefits_cost(run):
+        qs = _branch_pick(run, a.regs['enrolment'].scope(run.request), 'branch').filter(status='active').select_related('plan')
+        data = defaultdict(lambda: {'enrolled': 0, 'employee_share': 0.0, 'employer_cost': 0.0})
+        for e in qs:
+            d_ = data[e.plan.name]
+            d_['enrolled'] += 1
+            d_['employee_share'] += float(e.employee_cost or 0)
+            d_['employer_cost'] += float(e.plan.employer_cost or 0)
+        rows = [{'plan': k, **{x: round(y, 2) for x, y in v.items()}, 'total_month': round(v['employee_share'] + v['employer_cost'], 2), 'total_year': round(12 * (v['employee_share'] + v['employer_cost']), 2)} for k, v in data.items()]
+        return [('plan', 'Plan', 'text'), ('enrolled', 'Enrolled', 'number'), ('employee_share', 'Employee share / month', 'number'), ('employer_cost', 'Employer cost / month', 'number'),
+                ('total_month', 'Total / month', 'number'), ('total_year', 'Total / year', 'number')], rows
+
+    def engagement(run):
+        rows = []
+        for s in _branch_pick(run, a.regs['survey'].scope(run.request), 'branch').exclude(status='draft'):
+            rs = list(s.responses.all())
+            favs = []
+            for i, q in enumerate(s.questions or []):
+                if q.get('type') == 'rating':
+                    nums = [float(r.answers[i]) for r in rs if i < len(r.answers or []) and str(r.answers[i]).replace('.', '').isdigit()]
+                    if nums:
+                        favs.append(100 * sum(1 for n in nums if n >= 4) / len(nums))
+            from ZeoPeople.app import audience
+            tot = audience(s).count()
+            rows.append({'survey': s.title, 'kind': s.get_kind_display(), 'status': s.get_status_display(), 'responses': len(rs), 'invited': tot,
+                         'rate': round(100 * len(rs) / tot, 1) if tot else 0, 'engagement': round(sum(favs) / len(favs)) if favs else None,
+                         '_url': f'{page}survey/{s.pk}/results', '_m': s._meta.label, '_id': s.pk})
+        return [('survey', 'Survey', 'text'), ('kind', 'Kind', 'text'), ('status', 'Status', 'text'), ('responses', 'Responses', 'number'), ('invited', 'Invited', 'number'),
+                ('rate', 'Response %', 'number'), ('engagement', 'Favourable %', 'number')], rows
+
+    def leaders(run):
+        qs = _branch_pick(run, a.regs['recognition'].scope(run.request), 'branch').filter(status='published', created_at__date__gte=run.date_from, created_at__date__lte=run.date_to)
+        data = defaultdict(lambda: {'received': 0, 'points': 0, 'given': 0})
+        for r in qs.select_related('employee', 'given_by'):
+            k = ' '.join(x for x in (getattr(r.employee, 'emp_first_name', ''), getattr(r.employee, 'emp_last_name', '')) if x)
+            data[k]['received'] += 1
+            data[k]['points'] += r.points
+            if r.given_by_id:
+                g = ' '.join(x for x in (getattr(r.given_by, 'emp_first_name', ''), getattr(r.given_by, 'emp_last_name', '')) if x)
+                data[g]['given'] += 1
+        rows = sorted(({'employee': k, **v} for k, v in data.items()), key=lambda r: -r['points'])
+        return [('employee', 'Employee', 'text'), ('received', 'Recognitions received', 'number'), ('points', 'Points', 'number'), ('given', 'Given to others', 'number')], rows
+
+    def reviews(run):
+        qs = _branch_pick(run, a.regs['review_360'].scope(run.request), 'branch').filter(status__in=('closed', 'shared')).select_related('employee')
+        rows = []
+        for r in qs:
+            comps = (r.summary or {}).get('competencies', [])
+            low = sorted([c for c in comps if c.get('avg')], key=lambda c: c['avg'])[:2]
+            high = sorted([c for c in comps if c.get('avg')], key=lambda c: -c['avg'])[:2]
+            rows.append({'employee': ' '.join(x for x in (r.employee.emp_first_name, r.employee.emp_last_name) if x), 'cycle': r.cycle_name, 'overall': float(r.overall or 0),
+                         'strengths': ', '.join(c['name'] for c in high), 'to_develop': ', '.join(c['name'] for c in low), 'reviewers': r.reviewers.filter(status='done').count(),
+                         '_url': f'{page}r/review_360/{r.pk}', '_m': r._meta.label, '_id': r.pk})
+        rows.sort(key=lambda x: -x['overall'])
+        return [('employee', 'Employee', 'text'), ('cycle', 'Cycle', 'text'), ('overall', 'Overall (1–5)', 'number'), ('strengths', 'Strengths', 'text'), ('to_develop', 'To develop', 'text'), ('reviewers', 'Reviewers', 'number')], rows
+
+    return {'ppl-benefits-cost': ('Benefits cost by plan', 'People', 'Active enrolments per plan with the employee share and employer cost per month and year.', benefits_cost, None, codes),
+            'ppl-engagement': ('Survey engagement', 'People', 'Every survey with response rate and favourable % (ratings of 4 and 5).', engagement, None, codes),
+            'ppl-recognition-leaders': ('Recognition leaders', 'People', 'Recognitions and points per employee in the period, and how many each person gave.', leaders, 'year', codes),
+            'ppl-360-summary': ('360° review summary', 'People', 'Closed reviews with the overall score, strongest and weakest competencies.', reviews, None, codes)}
+
+
+KIT_EXTRA = {'crm': _crm, 'property': _property, 'maintenance': _maintenance, 'people': _people}
 
 
 # ------------------------------------------------------------------ HSE

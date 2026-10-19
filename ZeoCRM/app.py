@@ -1,4 +1,5 @@
-"""ZEO CRM on the app kit: registers, workflow, packs, links (to Property and Maintenance), dashboard, daily jobs."""
+"""ZEO CRM on the app kit: registers, workflow, packs, links (to Property and Maintenance), dashboard, daily jobs.
+v1.33.0: sales management (leads, accounts, products, quotations, sales orders, targets, forecast) in sales.py."""
 from datetime import timedelta
 from decimal import Decimal
 
@@ -7,7 +8,7 @@ from django.db.models import Count, Q, Sum
 from zeo.appkit.engine import (in_branches, dash_period, Act, App, AppError, Reg, call, d, emp_name, linked, link_label, local, now, num, today, user_name)
 from zeo.appkit.models import REVIEW  # noqa: F401
 
-from .models import (CRMEvent, CRMFile, CRMSequence, CRMSettings, ROLES, Activity, Contact, Listing, LostReason, Offer, Opportunity, Pipeline,
+from .models import (CRMEvent, CRMFile, CRMSequence, CRMSettings, ROLES, Activity, Contact, LeadScoreRule, Listing, LostReason, Offer, Opportunity, Pipeline,
                      Source, Stage, Viewing)
 from .packs import PACKS
 
@@ -18,13 +19,14 @@ app = App(
     file_model=CRMFile, roles=ROLES, role_prefix='crm_', manager_role='crm_manager', packs=PACKS,
     pack_labels={k: v['label'] for k, v in PACKS.items()}, pack_descriptions={k: v['description'] for k, v in PACKS.items()},
     industry_from_company={'PM': 'property_management'},
-    pack_models={'source': (Source, 'code'), 'pipeline': (Pipeline, 'code'), 'stage': (Stage, 'code'), 'lost_reason': (LostReason, 'code')},
+    pack_models={'source': (Source, 'code'), 'pipeline': (Pipeline, 'code'), 'stage': (Stage, 'code'), 'lost_reason': (LostReason, 'code'),
+                 'score_rule': (LeadScoreRule, 'name')},
     links=(('ZeoProperty', 'Property', 'Pick Property units on opportunities, viewings and offers; reserve the unit from a won deal; '
             'renewal opportunities before leases end; listing status follows the unit.'),
            ('ZeoMaintenance', 'Maintenance', 'Send a customer complaint or service request to Maintenance as a work order.')),
     page=PAGE,
 )
-app.settings_fields = ('first_contact_hours', 'duplicate_check', 'auto_assign', 'renewal_days', 'currency')
+app.settings_fields = ('first_contact_hours', 'duplicate_check', 'auto_assign', 'assign_leads', 'renewal_days', 'currency', 'discount_limit_pct', 'qualify_score', 'quote_validity_days', 'quote_terms', 'capture_key')
 
 MANAGE = ('crm_manager', 'crm_team_lead')
 VIEW = ('crm_viewer',)
@@ -566,6 +568,28 @@ app.hooks.update({'deal_won': h_deal_won, 'deal_reopen': h_deal_reopen, 'renewal
                   'unit_status': h_unit_status, 'contact_info': h_contact_info, 'party_saved': h_party_saved, 'contact_summary': h_contact_summary})
 
 
+# ------------------------------------------------------------------ v1.33.0 sales management (leads, masters, quotations, orders, targets)
+from . import sales as _sales   # noqa: E402
+SALES = _sales.setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_phone)
+
+_install = app.install
+
+
+def install_with_masters(code, user=None, primary=False):
+    """v1.33.0: an industry pack also loads the standard masters of the company's country (tax codes, units, payment terms)."""
+    out = _install(code, user, primary)
+    try:
+        from ZeoMasters.seed import country_code, seed
+        seed(country_code(), user)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('masters seed')
+    return out
+
+
+app.install = install_with_masters
+
+
 # ------------------------------------------------------------------ dashboard, my work, daily
 def dashboard(request):
     reg = app.regs['opportunity']
@@ -585,8 +609,24 @@ def dashboard(request):
         if any(i['value'] for i in items) or p.order == 1:
             funnel.append({'title': f'{p.name} pipeline (open)', 'items': items})
     lost = month.filter(status='lost').values('lost_reason__name').annotate(n=Count('id')).order_by('-n')
+    # v1.33.0
+    from .models import Lead, Quotation
+    from django.db.models import F
+    leads = app.regs['lead'].scope(request)
+    new_leads = leads.filter(status__in=('new', 'working', 'qualified', 'nurture'))
+    quotes = app.regs['quotation'].scope(request)
+    approvals = quotes.filter(status='approval')
+    weighted = sum((float(o.value or 0) * (o.stage.probability if o.stage_id else 0) / 100) for o in open_.select_related('stage'))
+    targets = app.regs['target'].scope(request).filter(is_active=True, period_start__lte=t, period_end__gte=t)
+    att = [(x, SALES['attainment'](x)) for x in targets[:20]]
+    tgt_sum = sum(float(x.target) for x, _ in att if x.measure == 'won_value')
+    act_sum = sum(float(a) for x, a in att if x.measure == 'won_value')
     return {
         'cards': [
+            {'label': 'Open leads', 'value': new_leads.count(), 'link': 'r/lead?open=1', 'hint': f'{new_leads.filter(rating="hot").count()} hot'},
+            {'label': f'Weighted pipeline ({cur})', 'value': f'{weighted:,.0f}', 'hint': 'value × stage probability'},
+            {'label': 'Quotations to approve', 'value': approvals.count(), 'tone': 'bad' if approvals.exists() else 'ok', 'link': 'r/quotation?status=approval'},
+            {'label': 'Target attainment', 'value': f'{(100 * act_sum / tgt_sum):.0f}%' if tgt_sum else '–', 'hint': f'{cur} {act_sum:,.0f} of {tgt_sum:,.0f}' if tgt_sum else 'no active won-value target', 'link': 'r/target'},
             {'label': 'Open opportunities', 'value': open_.count(), 'link': 'r/opportunity?status=open'},
             {'label': f'Open value ({cur})', 'value': f"{float(open_.aggregate(s=Sum('value'))['s'] or 0):,.0f}"},
             {'label': 'Won in period', 'value': month.filter(status='won').count(), 'link': 'r/opportunity?status=won' + pq, 'hint': f'{cur} {float(month.filter(status="won").aggregate(s=Sum("value"))["s"] or 0):,.0f}'},
@@ -599,6 +639,8 @@ def dashboard(request):
         ],
         'bars': funnel + ([{'title': 'Lost in period – reasons', 'items': [{'label': x['lost_reason__name'] or 'No reason', 'value': x['n']} for x in lost]}] if lost else []),
         'lists': [
+            {'title': 'Quotations waiting for approval', 'kind': 'quotation', 'rows': [{'id': q.pk, 'title': f'{q.number} {q.account.name if q.account_id else (q.contact.name if q.contact_id else "")}', 'sub': q.approval_note, 'badge': f'{cur} {float(q.total):,.0f}'} for q in approvals.select_related('account', 'contact')[:10]]} if approvals.exists() else
+            {'title': 'Hot leads', 'kind': 'lead', 'rows': [{'id': l.pk, 'title': f'{l.number} {l.name}', 'sub': f'{l.company_name} · {emp_name(l.owner) or "unassigned"}', 'badge': f'score {l.score}'} for l in new_leads.filter(rating='hot').select_related('owner')[:10]]},
             {'title': 'First contact overdue', 'kind': 'opportunity', 'rows': [{'id': o.pk, 'title': f'{o.number} {o.title}', 'sub': f'{o.contact.name} · {emp_name(o.owner) or "unassigned"}', 'badge': 'late'} for o in late.select_related('contact', 'owner')[:10]]},
             {'title': 'Upcoming viewings', 'kind': 'viewing', 'rows': [{'id': v.pk, 'title': f'{v.number} {v.opportunity.contact.name}', 'sub': local(v.scheduled_at).strftime('%d %b %Y, %H:%M'), 'badge': emp_name(v.agent)} for v in views.select_related('opportunity__contact', 'agent').order_by('scheduled_at')[:10]]},
         ],
@@ -611,7 +653,10 @@ def my_work(request):
         return []
     acts = in_branches(Activity.objects.all(), request).filter(owner=me, status='open').order_by('due_at')[:30]
     opps = in_branches(Opportunity.objects.all(), request).filter(owner=me, status='open').select_related('contact', 'stage')[:30]
-    return [{'title': 'My activities', 'kind': 'activity', 'rows': [{'id': a.pk, 'title': a.subject, 'sub': a.get_kind_display(), 'badge': (d(a.due_at) or '')[:10]} for a in acts]},
+    from .models import Lead
+    leads = in_branches(Lead.objects.all(), request).filter(owner=me, status__in=('new', 'working', 'qualified')).order_by('-score')[:30]
+    return [{'title': 'My leads', 'kind': 'lead', 'rows': [{'id': l.pk, 'title': f'{l.number} {l.name}', 'sub': l.company_name or l.email or l.phone, 'badge': l.get_rating_display() if l.rating else l.get_status_display()} for l in leads]},
+            {'title': 'My activities', 'kind': 'activity', 'rows': [{'id': a.pk, 'title': a.subject, 'sub': a.get_kind_display(), 'badge': (d(a.due_at) or '')[:10]} for a in acts]},
             {'title': 'My opportunities', 'kind': 'opportunity', 'rows': [{'id': o.pk, 'title': f'{o.number} {o.title}', 'sub': o.contact.name, 'badge': o.stage.name if o.stage else ''} for o in opps]}]
 
 
@@ -627,6 +672,18 @@ def daily():
         x.save(update_fields=['status'])
         app.event('offer', x.pk, 'Expired (valid-until date passed)', None)
         out['offers_expired'] += 1
+    # v1.33.0
+    from .models import Lead, Quotation
+    out['quotes_expired'] = out['late_leads'] = 0
+    for q in Quotation.objects.filter(status__in=('draft', 'approval', 'approved', 'sent'), valid_until__lt=today()):
+        q.status = 'expired'
+        q.save(update_fields=['status'])
+        app.event('quotation', q.pk, 'Expired (valid-until date passed)', None)
+        out['quotes_expired'] += 1
+    for l in Lead.objects.filter(status__in=('new', 'qualified'), first_contact_due__lt=now(), first_contacted_at__isnull=True):
+        for u in leads:
+            app.todo(u, f'Late first contact (lead): {l.name}', 'lead', l.pk, f'{l.number} {l.name}', PAGE + f'r/lead/{l.pk}')
+        out['late_leads'] += 1
     return out
 
 

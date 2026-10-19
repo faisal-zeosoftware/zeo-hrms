@@ -51,6 +51,10 @@ urlpatterns = [
     path('zeo-crm/', include('ZeoCRM.urls')),                    # v1.21.0 CRM
     path('zeo-property/', include('ZeoProperty.urls')),          # v1.21.0 Property
     path('zeo-maintenance/', include('ZeoMaintenance.urls')),    # v1.21.0 Maintenance
+    path('zeo-people/', include('ZeoPeople.urls')),               # v1.36.0 People
+    path('zeo-ai/', include('ZeoAI.urls')),                       # v1.37.0 AI assistants
+    path('accounting/', include('ZeoAccounting.urls')),          # v1.35.0 accounting integration
+    path('zeo-assets/', include('ZeoAssets.urls')),              # v1.33.0 Asset Management
     path('self-service/', include('SelfService.urls')),          # v1.13.0
     path('country-pack/', include('CountryPack.urls')),          # v1.14.0
     path('language/', include('LanguagePack.urls')),            # v1.15.0

@@ -28,36 +28,11 @@ class _G(APIView):
         return super().handle_exception(exc)
 
 
-# class GroupsView(_G):
-#     """The groups of the signed-in person (company list tile)."""
-#     def get(self, request):
-#         return Response({'groups': [as_json(g) for g in groups_for(request.user)]})
-import logging
-
-logger = logging.getLogger(__name__)
-
 class GroupsView(_G):
+    """The groups of the signed-in person (company list tile)."""
     def get(self, request):
-        logger.warning(
-            "Groups API: user_id=%s username=%s "
-            "authenticated=%s is_superuser=%s",
-            request.user.pk,
-            request.user.get_username(),
-            request.user.is_authenticated,
-            request.user.is_superuser,
-        )
+        return Response({'groups': [as_json(g) for g in groups_for(request.user)]})
 
-        groups = groups_for(request.user)
-
-        logger.warning(
-            "Groups API: user_id=%s groups_count=%s",
-            request.user.pk,
-            len(groups),
-        )
-
-        return Response({
-            'groups': [as_json(g) for g in groups]
-        })
 
 class DashboardView(_G):
     need = 'dashboard'

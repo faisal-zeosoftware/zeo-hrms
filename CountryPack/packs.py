@@ -131,6 +131,21 @@ PACKS = {
         'document_types': ['Civil ID', 'Passport'],
         'id_format': None,
     },
+    'IN': {   # v1.31.0
+        'name': 'India', 'country_code': 'IN', 'currency': 'INR',
+        'labels': _l(national_id='Aadhaar', national_id_no='Aadhaar number', national_id_expiry='Aadhaar (no expiry)',
+                     work_permit='PAN', work_permit_no='PAN', work_permit_expiry='PAN (no expiry)',
+                     labour_contract='Appointment letter', labour_authority='Labour Commissioner', residence_visa='Employment visa (foreign nationals)',
+                     visa_uid='FRRO registration no.', visa_file_no='Visa number', wps='Salary bank transfer', wps_file='Bank salary file',
+                     employer_id='EPFO establishment code', routing_code='IFSC code', gratuity='Gratuity (Payment of Gratuity Act)',
+                     end_of_service='Gratuity (15 days per year after 5 years)', nationals='Indian', nationals_plural='Indian nationals',
+                     state='State', states='States / union territories', insurance_card='ESIC / health card', tax_id='GSTIN'),
+        'features': {'national_id': True, 'work_permit': True, 'labour_contract': False, 'residence_visa': False, 'wps': False,
+                     'wps_sif': False, 'gratuity': True, 'nationals_reports': False, 'states': True},
+        'nationality_words': ['INDIA'], 'nationality_exact': ['IND'],
+        'document_types': ['Aadhaar', 'PAN card', 'Passport', 'UAN / PF', 'ESIC card'],
+        'id_format': 'aadhaar',
+    },
     'GEN': {
         'name': 'Other country (neutral)', 'country_code': '', 'currency': '',
         'labels': dict(NEUTRAL_LABELS), 'features': dict(GEN_FEATURES),
@@ -139,7 +154,7 @@ PACKS = {
         'id_format': None,
     },
 }
-PACK_ORDER = ['AE', 'SA', 'QA', 'OM', 'BH', 'KW', 'GEN']
+PACK_ORDER = ['AE', 'SA', 'QA', 'OM', 'BH', 'KW', 'IN', 'GEN']
 
 # v1.15.1 – public holidays per pack (CountryPack/holidays.py: fixed national days + expected Islamic holidays)
 from .holidays import holidays_for as _holidays_for  # noqa: E402
@@ -171,6 +186,7 @@ _ISO_ALIASES = {
     'OM': ('OM', 'OMN', '968', '+968', 'OMAN', 'SULTANATE OF OMAN', 'عمان', 'سلطنة عمان'),
     'BH': ('BH', 'BHR', '973', '+973', 'BAHRAIN', 'KINGDOM OF BAHRAIN', 'البحرين'),
     'KW': ('KW', 'KWT', '965', '+965', 'KUWAIT', 'STATE OF KUWAIT', 'الكويت'),
+    'IN': ('IN', 'IND', '91', '+91', 'INDIA', 'REPUBLIC OF INDIA', 'BHARAT', 'भारत'),
 }
 _ALIAS_TO_ISO = {a: iso for iso, names in _ISO_ALIASES.items() for a in names}
 
@@ -204,3 +220,116 @@ def pack_for_code(country_code, country_name=None):
 def pack_for_country(country):
     return pack_for_code(getattr(country, 'country_code', '') if country is not None else '',
                          getattr(country, 'country_name', '') if country is not None else '')
+
+
+# ---------------------------------------------------------------- v1.31.0 company / branch registration captions per pack
+# keys = CompanyProfile fields; 'extra' = country-specific registrations kept in CompanyProfile.extra_regs
+REG_NEUTRAL = {
+    'licence_no': 'Business registration / licence no.', 'authority': 'Registering authority', 'establishment_no': 'Labour-authority establishment no.',
+    'tax_id': 'Tax ID', 'corporate_tax_no': 'Corporate income tax no.', 'pension_reg_no': 'Social security employer no.',
+    'insurance_reg_no': 'Other scheme registration', 'chamber_no': 'Chamber of commerce no.', 'extra': [],
+}
+REGISTRATIONS = {
+    'AE': {'licence_no': 'Trade licence no.', 'authority': 'Licensing authority (DED / free zone)', 'establishment_no': 'Establishment card no. (MoHRE / immigration)',
+           'tax_id': 'TRN (VAT)', 'corporate_tax_no': 'Corporate tax registration no. (FTA)', 'pension_reg_no': 'GPSSA employer registration no.',
+           'insurance_reg_no': 'ILOE (unemployment insurance) group policy no.', 'chamber_no': 'Chamber of commerce membership no.',
+           'extra': [{'key': 'immigration_file', 'label': 'Immigration establishment file no.'}, {'key': 'mohre_company_no', 'label': 'MoHRE company number'}]},
+    'SA': {'licence_no': 'Commercial registration (CR) no.', 'authority': 'Ministry of Commerce / MISA licence', 'establishment_no': 'MHRSD establishment no. (Qiwa)',
+           'tax_id': 'VAT registration no. (ZATCA)', 'corporate_tax_no': 'Zakat / income tax no. (ZATCA)', 'pension_reg_no': 'GOSI subscription no.',
+           'insurance_reg_no': 'Medical insurance policy no. (CCHI)', 'chamber_no': 'Chamber of commerce no.',
+           'extra': [{'key': 'unified_national_no', 'label': 'Unified national number (700…)'}, {'key': 'muqeem', 'label': 'Muqeem / Absher establishment no.'}]},
+    'QA': {'licence_no': 'Commercial registration (CR) no.', 'authority': 'Ministry of Commerce and Industry / QFC', 'establishment_no': 'Establishment card (computer card) no.',
+           'tax_id': 'Tax identification no. (TIN)', 'corporate_tax_no': 'Corporate income tax no. (GTA)', 'pension_reg_no': 'GRSIA employer no.',
+           'insurance_reg_no': 'Health insurance policy no.', 'chamber_no': 'Qatar Chamber no.',
+           'extra': [{'key': 'trade_licence', 'label': 'Trade licence no. (municipality)'}, {'key': 'labour_file', 'label': 'Ministry of Labour establishment ID'}]},
+    'OM': {'licence_no': 'Commercial registration (CR) no.', 'authority': 'Ministry of Commerce, Industry & Investment Promotion', 'establishment_no': 'Ministry of Labour establishment no.',
+           'tax_id': 'VAT registration no. (OTA)', 'corporate_tax_no': 'Tax card no.', 'pension_reg_no': 'PASI / Social Protection Fund employer no.',
+           'insurance_reg_no': 'Health insurance policy no.', 'chamber_no': 'OCCI membership no.',
+           'extra': [{'key': 'municipality_licence', 'label': 'Municipality licence no.'}]},
+    'BH': {'licence_no': 'Commercial registration (CR) no.', 'authority': 'Ministry of Industry and Commerce (Sijilat)', 'establishment_no': 'LMRA establishment no.',
+           'tax_id': 'VAT account no. (NBR)', 'corporate_tax_no': '–', 'pension_reg_no': 'SIO employer no.',
+           'insurance_reg_no': 'Health insurance policy no.', 'chamber_no': 'Bahrain Chamber no.', 'extra': []},
+    'KW': {'licence_no': 'Commercial licence no.', 'authority': 'Ministry of Commerce and Industry', 'establishment_no': 'PAM establishment file no.',
+           'tax_id': '– (no VAT)', 'corporate_tax_no': 'Tax card no. (foreign companies)', 'pension_reg_no': 'PIFSS employer no.',
+           'insurance_reg_no': 'Health insurance policy no.', 'chamber_no': 'Kuwait Chamber no.',
+           'extra': [{'key': 'civil_id_company', 'label': 'Company civil ID (PACI)'}]},
+    'IN': {'licence_no': 'CIN (Companies Act) / registration no.', 'authority': 'Registrar of Companies (MCA) / Shops & Establishments', 'establishment_no': 'Shops & Establishments registration no.',
+           'tax_id': 'GSTIN', 'corporate_tax_no': 'PAN', 'pension_reg_no': 'EPFO establishment code',
+           'insurance_reg_no': 'ESIC employer code', 'chamber_no': 'Udyam / MSME registration no.',
+           'extra': [{'key': 'tan', 'label': 'TAN (TDS)'}, {'key': 'pt_registration', 'label': 'Professional tax registration (PTRC / PTEC)'},
+                     {'key': 'lin', 'label': 'Labour Identification Number (Shram Suvidha)'}, {'key': 'lwf', 'label': 'Labour Welfare Fund registration'},
+                     {'key': 'factory_licence', 'label': 'Factory licence no.'}]},
+    'GEN': dict(REG_NEUTRAL),
+}
+
+
+def registrations_for(pack):
+    d = dict(REG_NEUTRAL)
+    d.update(REGISTRATIONS.get(pack, {}))
+    return d
+
+
+# ---------------------------------------------------------------- v1.31.0 statutory payroll schemes per pack (PayrollPlus.StatutoryScheme)
+# Rates as published at the time of writing – every value can be changed in Payroll → Statutory schemes. Verify before the first run.
+VERIFY = 'Statutory rate as published – verify against the current law before the first payroll run.'
+STATUTORY = {
+    'AE': [
+        {'code': 'gpssa', 'name': 'GPSSA pension (UAE nationals)', 'authority': 'GPSSA', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+         'min_base': 3000, 'max_base': 70000, 'employee_rate': 11, 'employer_rate': 12.5,
+         'law_reference': 'Federal Decree-Law 57/2023 (employees registered from 31 Oct 2023: 11 % employee, 15 % employer of which 2.5 % paid by the government); older registrations 5 % / 12.5 %',
+         'notes': 'The formula variable pension_employee_rate already applies 5 % to employees registered before 31 Oct 2023.'},
+        {'code': 'iloe', 'name': 'ILOE unemployment insurance', 'authority': 'ILOE', 'kind': 'slab', 'applies_to': 'all', 'base': 'basic',
+         'slabs': [{'to': 16000, 'employee': 5, 'employer': 0}, {'to': None, 'employee': 10, 'employer': 0}],
+         'law_reference': 'Federal Decree-Law 13/2022: AED 5 / month (basic ≤ 16,000) or AED 10 / month; paid by the employee (often by the employer on their behalf)'},
+    ],
+    'SA': [
+        {'code': 'gosi', 'name': 'GOSI annuities (Saudi nationals)', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+         'min_base': 1500, 'max_base': 45000, 'employee_rate': 9, 'employer_rate': 9,
+         'law_reference': 'Social Insurance Law; new entrants from 3 July 2024 move in 0.5 % steps to 11 % / 11 % (Royal Decree M/273)'},
+        {'code': 'gosi_oh', 'name': 'GOSI occupational hazards', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'all', 'base': 'basic_housing_transport',
+         'min_base': 400, 'max_base': 45000, 'employee_rate': 0, 'employer_rate': 2, 'law_reference': 'Occupational hazards branch: employer 2 % for Saudis and expatriates'},
+        {'code': 'saned', 'name': 'SANED unemployment insurance (Saudi nationals)', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+         'min_base': 1500, 'max_base': 45000, 'employee_rate': 0.75, 'employer_rate': 0.75, 'law_reference': 'SANED: 0.75 % employee + 0.75 % employer'},
+    ],
+    'QA': [
+        {'code': 'grsia', 'name': 'GRSIA pension (Qatari nationals)', 'authority': 'GRSIA', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+         'employee_rate': 7, 'employer_rate': 14, 'law_reference': 'Law No. 1 of 2022 on social insurance: employee 7 %, employer 14 % of the pension salary (basic + social + housing allowance)'},
+    ],
+    'OM': [
+        {'code': 'pasi', 'name': 'Social Protection Fund – insurance (Omani nationals)', 'authority': 'Social Protection Fund (ex-PASI)', 'kind': 'percent', 'applies_to': 'nationals',
+         'base': 'basic_housing_transport', 'min_base': 325, 'max_base': 3000, 'employee_rate': 7.5, 'employer_rate': 11.5,
+         'law_reference': 'Social Protection Law (RD 52/2023): employee 7 % pension + 0.5 % job security; employer 10.5 % pension + 1 % occupational injury (job security 1 %)'},
+    ],
+    'BH': [
+        {'code': 'sio', 'name': 'SIO social insurance (Bahraini nationals)', 'authority': 'SIO', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+         'employee_rate': 7, 'employer_rate': 15, 'law_reference': 'Law 32/2022: employer share rises 1 % a year from 2023 to 20 % in 2028; unemployment insurance 1 % each included in the SIO return'},
+        {'code': 'sio_exp', 'name': 'SIO work injury (expatriates)', 'authority': 'SIO', 'kind': 'percent', 'applies_to': 'expats', 'base': 'basic_housing_transport',
+         'employee_rate': 1, 'employer_rate': 3, 'law_reference': 'Expatriates: employer 3 % work injury; employee 1 % unemployment insurance'},
+    ],
+    'KW': [
+        {'code': 'pifss', 'name': 'PIFSS social security (Kuwaiti nationals)', 'authority': 'PIFSS', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+         'max_base': 2750, 'employee_rate': 8, 'employer_rate': 11.5, 'law_reference': 'Law 61/1976 as amended: employee 8 % (incl. 0.5 % unemployment), employer 11.5 %, salary ceiling KWD 2,750'},
+    ],
+    'IN': [
+        {'code': 'epf', 'name': 'Employees’ Provident Fund (EPF)', 'authority': 'EPFO', 'kind': 'percent', 'applies_to': 'all', 'base': 'basic_da',
+         'max_base': 15000, 'employee_rate': 12, 'employer_rate': 12,
+         'law_reference': 'EPF & MP Act 1952: 12 % employee, 12 % employer (8.33 % EPS + 3.67 % EPF) on basic + DA up to ₹ 15,000 (higher by option); employer also pays EDLI 0.5 % and admin 0.5 %',
+         'notes': 'Remove the wage ceiling (max base) if the company contributes on the full basic.'},
+        {'code': 'epf_admin', 'name': 'EPF admin + EDLI charges (employer)', 'authority': 'EPFO', 'kind': 'percent', 'applies_to': 'all', 'base': 'basic_da',
+         'max_base': 15000, 'employee_rate': 0, 'employer_rate': 1, 'law_reference': 'EDLI 0.5 % + administrative charges 0.5 % (min ₹ 500 / month per establishment)'},
+        {'code': 'esi', 'name': 'Employees’ State Insurance (ESI)', 'authority': 'ESIC', 'kind': 'percent', 'applies_to': 'all', 'base': 'gross',
+         'eligible_gross_max': 21000, 'employee_rate': 0.75, 'employer_rate': 3.25, 'law_reference': 'ESI Act 1948: gross wage ≤ ₹ 21,000 (₹ 25,000 for disabled): employee 0.75 %, employer 3.25 %'},
+        {'code': 'pt', 'name': 'Professional tax (state slabs – Maharashtra default)', 'authority': 'State government', 'kind': 'slab', 'applies_to': 'all', 'base': 'gross',
+         'slabs': [{'to': 7500, 'employee': 0, 'employer': 0}, {'to': 10000, 'employee': 175, 'employer': 0}, {'to': None, 'employee': 200, 'employer': 0}],
+         'law_reference': 'Maharashtra State Tax on Professions Act (₹ 300 in February; women earning ≤ ₹ 25,000 exempt). Replace the slabs with your state’s.'},
+        {'code': 'tds', 'name': 'Income tax (TDS – new regime FY 2025-26)', 'authority': 'Income Tax Department', 'kind': 'annual_slab', 'applies_to': 'all', 'base': 'gross',
+         'standard_deduction': 75000, 'rebate_income_limit': 1200000, 'cess_rate': 4,
+         'slabs': [{'to': 400000, 'rate': 0}, {'to': 800000, 'rate': 5}, {'to': 1200000, 'rate': 10}, {'to': 1600000, 'rate': 15}, {'to': 2000000, 'rate': 20}, {'to': 2400000, 'rate': 25}, {'to': None, 'rate': 30}],
+         'law_reference': 'Finance Act 2025, section 115BAC: standard deduction ₹ 75,000, rebate u/s 87A up to ₹ 12,00,000 taxable income, 4 % health & education cess. Monthly TDS = yearly tax ÷ 12 on the annualised salary; declarations and other income are not considered.'},
+    ],
+    'GEN': [],
+}
+
+
+def statutory_for(pack):
+    return [dict(x) for x in STATUTORY.get(pack, [])]

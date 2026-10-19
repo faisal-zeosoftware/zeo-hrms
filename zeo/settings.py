@@ -126,9 +126,14 @@ TENANT_APPS = [
     'ZeoProjects',       # v1.20.0 Projects app (ZEO Projects add-on 1.15.0): customers, tickets with SLA, AMC, delivery, customer portal
     'ZeoApps',           # v1.21.0 apps of the company: which apps are active (HRMS, Projects, CRM, Property, Maintenance, HSE) and their industry
     'ZeoHSE',            # v1.21.0 HSE app (ZEO HSE add-on 1.17.0): risk, permits to work, incidents, inspections, CAPA, industry packs
+    'ZeoMasters',        # v1.33.0 shared masters: accounts, products, units, tax codes, price books, payment terms (CRM now; Sales / Inventory later)
     'ZeoCRM',            # v1.21.0 CRM app (ZEO apps add-on 1.18.0): contacts, pipelines, opportunities, viewings, offers, listings
     'ZeoProperty',       # v1.21.0 Property app: buildings, units, owners, leases, sales, billing, cheques, tenant / owner / buyer portals
     'ZeoMaintenance',    # v1.21.0 Maintenance app: work orders, quotes, preventive plans, inspections
+    'ZeoPeople',         # v1.36.0 People: benefits, e-signature, forms, surveys, recognition, chat, 360° reviews, development plans
+    'ZeoAI',             # v1.37.0 AI assistants: payroll auditor, attendance & shifts, recruitment, performance, workforce analytics
+    'ZeoAccounting',     # v1.35.0 accounting integration: Odoo, Zoho Books, Excel / CSV, ZEO API – department / employee posting
+    'ZeoAssets',         # v1.33.0 Asset Management app: one register with HR assets, labels, counts, depreciation
     'CountryPack',       # v1.14.0 country packs (captions, features, rules and defaults per company country)
     'Translations',      # v1.15.0 translated master data, messages / PDFs in the user's language
     'AISettings',        # v1.16.0 AI settings (built-in free by default, optional external) + document reader
@@ -182,13 +187,15 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200',"http://80.65.208.178:4200"])  # the address(es) the Angular app is opened from
+CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200','http://80.65.208.178',])  # the address(es) the Angular app is opened from
 # v1.25.0 the ZEO mobile app (Android: https://localhost, iPhone: capacitor://localhost) – always allowed
 CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [o for o in ('https://localhost', 'capacitor://localhost', 'http://localhost') if o not in CORS_ALLOWED_ORIGINS]
 
 FORMAT_MODULE_PATH = ['LanguagePack.formats']   # v1.15.0
 CORS_ALLOW_HEADERS = [
     'x-language',        # v1.15.0
+    'x-zeo-location',    # v1.30.0 location level: the working location
+    'x-zeo-locations',   # v1.30.0 location level: the ticked locations
     'x-zeo-app',         # v1.25.0 mobile app version
     'content-type',
     'Authorization',  # Add this if you're using authorization headers
@@ -412,6 +419,9 @@ CELERY_BEAT_SCHEDULE = {
     'zeoflow-run-due': {'task': 'ZeoFlow.tasks.run_due', 'schedule': crontab(minute='*/15')},   # v1.29.0 workflow automation scheduler
     'zeohse-daily': {'task': 'ZeoHSE.tasks.daily', 'schedule': crontab(hour=7, minute=40)},        # v1.21.0 HSE daily jobs
     'zeoapps-daily': {'task': 'ZeoApps.tasks.daily', 'schedule': crontab(hour=7, minute=45)},      # v1.21.0 CRM / Property / Maintenance daily jobs
+    'zeoaccounting-hourly': {'task': 'ZeoAccounting.tasks.hourly', 'schedule': crontab(minute=20)},   # v1.35.0 retry failed postings
+    'zeoaccounting-month': {'task': 'ZeoAccounting.tasks.month_start', 'schedule': crontab(minute=40, hour=3, day_of_month=1)},   # v1.35.0 month-end provisions
+    'zeoassets-frequent': {'task': 'ZeoAssets.tasks.frequent', 'schedule': crontab(minute='*/15')},   # v1.34.0 Asset Management helpdesk SLA, e-mail, Maintenance status
     'zeocloud-daily': {'task': 'ZeoCloud.tasks.daily', 'schedule': crontab(hour=6, minute=50)},   # v1.23.0 ZEO Cloud reminders
     'zeocloud-odoo-sync': {'task': 'ZeoCloud.tasks.odoo_sync', 'schedule': crontab(minute=17)},   # v1.28.0 invoices paid in Odoo
     'schedule-document-expiry-notifications-for-all-tenants': {
@@ -462,13 +472,13 @@ CELERY_IMPORTS = ('EmpManagement.tasks',)
 
 #default email settings
 # Fallback sender (each company can also set its own mail server under Settings → E-mail configuration).
-EMAIL_HOST = env('ZEO_EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(env('ZEO_EMAIL_PORT', '587'))
-EMAIL_USE_TLS = env_bool('ZEO_EMAIL_USE_TLS', True)
-EMAIL_HOST_USER = env('ZEO_EMAIL_USER','aparnaudhayan03@gmail.com')
-EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD','tupg ltue yjzw vvaw')
-DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'aparnaudhayan03@gmail.com')
-
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'aparnaudhayan03@gmail.com'
+EMAIL_HOST_PASSWORD = 'tupg ltue yjzw vvaw'
+DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
 # v1.22.3: every e-mail goes through the guard – a neutralized company (test copy) sends none

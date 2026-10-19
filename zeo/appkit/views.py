@@ -160,7 +160,7 @@ class PackView(Base):
         need(can_setup(a, request), 'Only a manager or an administrator can install packs.')
         f = In(request)
         code = f.s('code')
-        added = P.install(a, code, request.user, primary=f.b('primary'))
+        added = a.install(code, request.user, primary=f.b('primary'))   # v1.33.0: through the app (CRM also seeds the masters)
         if f.b('primary'):
             s = a.settings()
             _, _, sug = P.suggested(a)

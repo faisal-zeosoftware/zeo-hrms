@@ -9,7 +9,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
-APP_KEYS = ['payroll', 'projects', 'crm', 'property', 'maintenance', 'hse']      # paid apps
+APP_KEYS = ['payroll', 'projects', 'crm', 'property', 'maintenance', 'assets', 'hse']      # paid apps
 FREE_APPS = ['hrms']                                                             # HR: free with any app
 HOSTING = [('shared', 'Shared cloud'), ('own', 'Own database'), ('enterprise', 'Own servers')]
 

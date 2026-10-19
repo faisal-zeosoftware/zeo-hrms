@@ -10,6 +10,7 @@ its data is kept.
     crm         CRM (contacts, pipelines, opportunities)              state: ZeoCRM.CRMSettings (app kit)
     property    Property (buildings, units, leases, sales, portals)   state: ZeoProperty.PropertySettings (app kit)
     maintenance Maintenance (work orders, preventive plans)           state: ZeoMaintenance.MaintSettings (app kit)
+    assets      Asset Management (register, labels, counts, depreciation) state: ZeoAssets.AssetSettings (app kit) – v1.33.0
     hse         HSE (risk, permits, incidents, CAPA …)                state: ZeoHSE.HSESettings
 """
 import importlib
@@ -28,12 +29,15 @@ APPS = [
     # v1.23.0: Payroll is its own app; with HR it is the same menu as ZEO HRMS before
     ('payroll', 'PayrollManagement', 'Payroll', 'payments', 'Salaries, payslips, WPS, gratuity, loans and final settlement', 'core', '/main-sidebar/salary-options/pay-roll'),
     ('projects', 'ZeoProjects', 'Projects', 'account_tree', 'Support tickets with SLA, customers and AMC contracts, project delivery', 'core', '/main-sidebar/zeo-projects/dashboard'),
-    ('crm', 'ZeoCRM', 'CRM', 'handshake', 'Contacts, pipelines, opportunities, viewings, offers and listings', 'kit', '/main-sidebar/zeo-crm/home'),
+    ('crm', 'ZeoCRM', 'CRM', 'handshake', 'Leads, accounts, contacts, pipelines, opportunities, quotations, sales orders, targets and forecast', 'kit', '/main-sidebar/zeo-crm/home'),
     ('property', 'ZeoProperty', 'Property', 'apartment', 'Buildings, units, owners, leases, sales, billing, cheques and portals', 'kit', '/main-sidebar/zeo-property/home'),
     ('maintenance', 'ZeoMaintenance', 'Maintenance', 'build', 'Work orders, quotes, preventive plans, assets and inspections', 'kit', '/main-sidebar/zeo-maintenance/home'),
+    ('assets', 'ZeoAssets', 'Asset Management', 'inventory_2', 'Asset register shared with HR, QR labels and scanning, check-out, reservations, physical counts and depreciation', 'kit', '/main-sidebar/zeo-assets/home'),
+    ('people', 'ZeoPeople', 'People', 'diversity_3', 'Benefits, e-signature, forms, surveys, recognition and rewards, chat, 360° reviews and development plans', 'kit', '/main-sidebar/zeo-people/home'),
     ('hse', 'ZeoHSE', 'HSE', 'health_and_safety', 'Risk, permits to work, incidents, inspections, audits and corrective actions', 'hse', '/main-sidebar/zeo-hse/home'),
 ]
 KEYS = [a[0] for a in APPS]
+KIT_KEYS = ('crm', 'property', 'maintenance', 'assets', 'people')   # apps on the app kit (zeo.appkit)
 CORE = ('hrms', 'projects', 'payroll')   # state in ZeoApps.AppState
 BY_KEY = {a[0]: a for a in APPS}
 BY_LABEL = {a[1]: a[0] for a in APPS}
@@ -97,7 +101,7 @@ def model_of(key):
     if key == 'hse':
         from ZeoHSE.models import HSESettings
         return HSESettings
-    if key in ('crm', 'property', 'maintenance'):
+    if key in KIT_KEYS:
         return kit(key).settings_model
     from .models import AppState
     return AppState
@@ -134,7 +138,7 @@ def industries_of(key):
     if key == 'hse':
         from ZeoHSE.models import INDUSTRIES, INDUSTRY_FROM_COMPANY
         return list(INDUSTRIES), INDUSTRY_FROM_COMPANY.get(code, 'general')
-    if key in ('crm', 'property', 'maintenance'):
+    if key in KIT_KEYS:
         a = kit(key)
         return [(c, a.packs[c]['label']) for c in a.packs], a.industry_from_company.get(code, 'general')
     from UserManagement.models import company as C
@@ -193,7 +197,9 @@ def active_keys():
 LINKS_WITH = {
     'hrms': [('payroll', 'Unpaid leave becomes a deduction, attendance gives overtime and absence, leave encashment and final settlement go to payroll, expenses are paid in payroll, payslips in self service.'),
              ('projects', 'Employees are project team members; timesheets, project cost and profitability come from salaries.'),
-             ('hse', 'Training certificates, attendance hours, sick leave, assets, shift roster, muster list and HSE induction for new joiners.')],
+             ('hse', 'Training certificates, attendance hours, sick leave, assets, shift roster, muster list and HSE induction for new joiners.'),
+             ('assets', 'One asset register: HR → Assets and Asset Management show the same assets; custody, requests, recoveries and exit clearance stay in HR.'),
+             ('people', 'Benefit deductions and paid claims go to payroll; HR letters, offers and policies can be e-signed; 360° reviews sit next to Performance; forms, surveys, recognition and chat for every employee.')],
     'payroll': [('hrms', 'Leave, attendance, encashment, exits and expenses from HR; payslips and salary certificate in self service.')],
     'projects': [('hrms', 'Team members, timesheets and employee cost come from HRMS.'),
                  ('hse', 'A site belongs to a project; each project shows an HSE tab; serious incidents add a project issue; settled claims add a project cost.')],
@@ -204,9 +210,12 @@ LINKS_WITH = {
 
 def links_of(key):
     out = []
-    if key in ('crm', 'property', 'maintenance'):
+    if key in KIT_KEYS:
         try:
             pairs = [(BY_LABEL.get(lbl), what) for lbl, _t, what in kit(key).links]
+            if key == 'assets':   # v1.33.0: Asset Management always works on the HR asset register
+                pairs = [('hrms', 'The same assets as HR → Assets: check-out, transfers, disposal and counts go through HR, so payroll '
+                                  'recovery, exit clearance and HSE see them.')] + pairs
         except Exception:
             pairs = []
     else:
@@ -221,7 +230,7 @@ def links_of(key):
 
 
 # ------------------------------------------------------------------ role groups (Settings → Permission groups)
-ROLE_PREFIX = {'projects': 'Projects – ', 'crm': 'CRM – ', 'property': 'Property – ', 'maintenance': 'Maintenance – ', 'hse': 'HSE – '}
+ROLE_PREFIX = {'projects': 'Projects – ', 'crm': 'CRM – ', 'property': 'Property – ', 'maintenance': 'Maintenance – ', 'assets': 'Asset Management – ', 'people': 'People – ', 'hse': 'HSE – '}
 
 
 def role_groups(key):
@@ -233,7 +242,7 @@ def role_groups(key):
 
 def make_roles(key):
     """Create the app's role groups "<App> – <role>" (safe to run again)."""
-    if key in ('crm', 'property', 'maintenance'):
+    if key in KIT_KEYS:
         from zeo.appkit.command import make_roles as mk
         return mk(kit(key))
     if key == 'hse':

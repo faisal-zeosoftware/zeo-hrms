@@ -74,7 +74,8 @@ def drill(report, f=None, **period):
 
 
 def emp_cols(e):
-    """The same five employee columns in every report."""
+    """The same five employee columns in every report (the switched-on org fields – Location, Division … – are added by
+    OrgStructure.reports.extend_report)."""
     return {'_emp': e.id if e else None,
         'employee': full_name(e),
         'branch': e.emp_branch_id.branch_name if e and e.emp_branch_id_id else '',
@@ -168,8 +169,39 @@ class Run:
                                         'emp_reporting_manager')
         if self.branches is not None:
             qs = qs.filter(emp_branch_id__in=self.branches)
+        # v1.31.1 location level: ?location=1,2 (within the user's locations) or the switcher's selection; employees of those
+        # locations (and employees without a location) – the same rule as the lists; a Location column on every employee row
+        self.locations = None
+        try:
+            from OrgStructure import location as L
+            if L.enabled():
+                allowed = L.allowed_locations(request)
+                picked = [int(x) for x in re.findall(r'\d+', q.get('location', '') or '')]
+                if allowed is not None:
+                    picked = [x for x in picked if x in allowed]
+                eff = picked or L.effective_locations(request)
+                self.locations = eff or None
+                if self.locations is not None:
+                    qs = qs.filter(id__in=L.loc_emp_ids(self.locations))
+        except Exception:
+            import logging as _lg2; _lg2.getLogger(__name__).exception('report location scope')
         self.all_employees = qs
         self.employees = qs.filter(is_active=True)
+
+    def loc_q(self, model, field='id'):
+        """v1.31.1: records tagged with another location are left out (records without a tag stay)."""
+        if self.locations is None:
+            return Q()
+        try:
+            from OrgStructure import location as L
+            from OrgStructure.models import RecordLocation
+            key = L.model_key(model)
+            if key not in L.location_models():
+                return Q()
+            out = RecordLocation.objects.filter(model=key).exclude(location_id__in=self.locations).values('record_id')
+            return ~Q(**{f'{field}__in': out})
+        except Exception:
+            return Q()
 
     def emp_q(self, field='employee'):
         """Filter for records of the employees the user may see."""
@@ -2007,6 +2039,7 @@ class ReportView(APIView):
         return Response(_lang_report(_country_report({'key': key, 'title': title, 'section': section, 'description': description, 'period': shown,
                                           'has_period': period is not None, 'as_of': run_as_of(request) if key in AS_OF_REPORTS else None,   # v1.20.2
                                           'columns': columns, 'rows': rows, 'totals': totals, 'count': len(rows),
+                                          'location': run.locations,   # v1.31.1 location level: the locations the report was run for
                                           'notes': [n for n in (extra.get('notes') or []) if n],
                                           'filters': [f for f in (extra.get('filters') or []) if any(c['key'] == f for c in columns)]}), request))   # v1.16.0 filter row
 

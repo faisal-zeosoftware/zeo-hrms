@@ -24,6 +24,16 @@ TYPES = [
     ('Compensatory Leave', 'CO', 'compensatory', 'paid', True, 'Days off earned by working on a weekend or public holiday (company practice)'),
     # v1.26.0 – the Falcon Demo workbook uses it; UAE law: full pay up to 6 months of treatment, half pay the next 6 months
     ('Work Injury Leave', 'WIL', 'sick', 'paid', False, 'Treatment after a work injury: full pay up to 6 months, then half pay up to 6 months'),
+    # v1.32.0 – the rest of the UAE law leaves and the leaves companies of every business type give in practice
+    ('National Service Leave', 'NSL', 'casual', 'paid', False, 'Emirati employees called for national / reserve service: full pay for the service period (Art. 32(1)(a); Federal Law 6/2014)'),
+    ('Marriage Leave', 'MRL', 'casual', 'paid', False, 'Company benefit (not in the law): usually 3–5 days once in service, on the marriage certificate'),
+    ('Emergency Leave', 'EML', 'casual', 'paid', True, 'Company benefit: a few paid days a year for a sudden family / personal emergency, no notice'),
+    ('Umrah Leave', 'UMR', 'unpaid', 'unpaid', False, 'Company practice: up to 10 days without pay for Umrah, once a year, with the visa / ticket'),
+    ('Medical Appointment', 'MED', 'casual', 'paid', True, 'Half day with pay for a medical / dental appointment, on the appointment proof'),
+    ('Short Leave (hours)', 'SLV', 'casual', 'paid', False, 'Permission for a few hours in the day (bank, government office, school); counted in hours'),
+    ('Sabbatical / Extended Unpaid Leave', 'SAB', 'unpaid', 'unpaid', False, 'Long leave without pay by agreement (up to 90 days); gratuity service stops for the period'),
+    ('Academic Break', 'ACB', 'annual', 'paid', False, 'Education: the term / summer breaks of the academic calendar as the annual leave of teaching staff'),
+    ('Quarantine / Isolation Leave', 'QIL', 'sick', 'paid', False, 'Paid isolation ordered by a health authority, with the official notice (not counted against sick leave)'),
 ]
 
 COMMON = {   # line settings per leave-type name, shared by both policies
@@ -46,7 +56,27 @@ COMMON = {   # line settings per leave-type name, shared by both policies
                               law_reference='Art. 37; Cabinet Resolution 1/2022'),
     'Compensatory Leave': dict(days_per_year=0, accrual='earned', count_days='calendar', comp_full_day_hours=8, comp_half_day_hours=4,
                                comp_expiry_days=90, notes='Earned by weekend / holiday work: 8 h = 1 day, 4 h = ½ day; use within 90 days'),
+    # v1.32.0
+    'National Service Leave': dict(days_per_year=0, accrual='none', count_days='calendar', requires_document=True, law_reference='Art. 32(1)(a); Federal Law 6/2014',
+                                   notes='Emirati employees only; full pay for the call-up period on the official notice'),
+    'Marriage Leave': dict(days_per_year=3, accrual='per_event', count_days='working', max_per_request=3, max_times_in_service=1, requires_document=True,
+                           notes='Company benefit – marriage certificate'),
+    'Emergency Leave': dict(days_per_year=3, accrual='yearly', count_days='working', max_per_request=2, notice_days=0, excess_action='lapse', notes='Company benefit'),
+    'Umrah Leave': dict(days_per_year=10, accrual='none', count_days='calendar', max_per_request=10, max_per_year=10, notice_days=14, requires_document=True,
+                        notes='Company practice; unpaid'),
+    'Medical Appointment': dict(days_per_year=6, accrual='yearly', count_days='working', max_per_request=0.5, requires_document=True, excess_action='lapse',
+                                notes='Half days only'),
+    'Short Leave (hours)': dict(days_per_year=24, accrual='yearly', count_days='working', excess_action='lapse',
+                                notes='Hours: 24 hours a year (3 working days); 1 unit = 1 hour'),
+    'Sabbatical / Extended Unpaid Leave': dict(days_per_year=90, accrual='none', count_days='calendar', max_per_request=90, min_service_months=12, notice_days=30,
+                                               notes='Needs management approval; no pay, no gratuity accrual for the period'),
+    'Quarantine / Isolation Leave': dict(days_per_year=14, accrual='per_event', count_days='calendar', max_per_request=14, requires_document=True,
+                                         notes='Health-authority notice; paid, not deducted from sick leave'),
 }
+
+# which of the practice leaves each business type gives (law leaves come from COMMON for everybody)
+PRACTICE = ('Marriage Leave', 'Emergency Leave', 'Umrah Leave', 'Medical Appointment', 'Short Leave (hours)', 'Sabbatical / Extended Unpaid Leave',
+            'Quarantine / Isolation Leave', 'National Service Leave')
 
 POLICIES = {
     'office': dict(name='Office staff', code='OFFICE', kind='office', categories=['Office Staff', 'Management', 'Technical', 'Non-Technical'], is_default=True,
@@ -55,12 +85,61 @@ POLICIES = {
                    lines={'Annual Leave': dict(days_per_year=30, accrual='monthly', first_year_uae=True, count_days='calendar', notice_days=14,
                                                carry_forward_max=15, excess_action='encash', encashable=True, encash_max_per_year=15, law_reference='Art. 29'),
                           'Casual Leave': dict(days_per_year=6, accrual='yearly', count_days='working', max_per_request=2, notice_days=0, excess_action='lapse',
-                                               notes='Company benefit; does not carry forward')}),
+                                               notes='Company benefit; does not carry forward')},
+                   skip=('Academic Break',)),
     'labour': dict(name='Labour', code='LABOUR', kind='labour', categories=['Skilled Worker', 'Unskilled Worker', 'Field / Site Staff'], is_default=False,
                    description='Site and labour staff. UAE law minimums, annual leave usually taken in one block with the home trip: '
                                '30 days notice, up to 60 days kept for the 2-year vacation, encashment only above that.',
                    lines={'Annual Leave': dict(days_per_year=30, accrual='monthly', first_year_uae=True, count_days='calendar', notice_days=30,
-                                               carry_forward_max=60, excess_action='keep', encashable=True, encash_max_per_year=30, prorate='fixed', law_reference='Art. 29')}),
+                                               carry_forward_max=60, excess_action='keep', encashable=True, encash_max_per_year=30, prorate='fixed', law_reference='Art. 29')},
+                   skip=('Marriage Leave', 'Medical Appointment', 'Short Leave (hours)', 'Sabbatical / Extended Unpaid Leave', 'Academic Break')),
+    # v1.32.0 – policies for the other business types (all on the UAE law minimums; practice leaves differ)
+    'retail': dict(name='Retail & hospitality (shift staff)', code='RETAIL', kind='other', categories=['Shift Staff', 'Sales Staff', 'Hospitality Staff', 'Store Staff'], is_default=False,
+                   description='Shops, restaurants, hotels and other shift businesses: 30 days annual leave in calendar days with 30 days notice, '
+                               'up to 30 days carried forward, no casual leave; emergency leave and compensatory off for holiday work.',
+                   lines={'Annual Leave': dict(days_per_year=30, accrual='monthly', first_year_uae=True, count_days='calendar', notice_days=30,
+                                               carry_forward_max=30, excess_action='encash', encashable=True, encash_max_per_year=15, law_reference='Art. 29')},
+                   skip=('Marriage Leave', 'Sabbatical / Extended Unpaid Leave')),
+    'health': dict(name='Healthcare & clinics', code='HEALTH', kind='office', categories=['Medical Staff', 'Nursing Staff', 'Clinical Staff', 'Paramedical Staff'], is_default=False,
+                   description='Hospitals, clinics and labs: office terms plus CME / exam study leave, quarantine leave and medical appointments; '
+                               'annual leave 30 days with 30 days notice because of the duty roster.',
+                   lines={'Annual Leave': dict(days_per_year=30, accrual='monthly', first_year_uae=True, count_days='calendar', notice_days=30,
+                                               carry_forward_max=15, excess_action='encash', encashable=True, encash_max_per_year=15, law_reference='Art. 29'),
+                          'Casual Leave': dict(days_per_year=4, accrual='yearly', count_days='working', max_per_request=2, excess_action='lapse', notes='Company benefit'),
+                          'Study Leave': dict(days_per_year=10, accrual='yearly', count_days='working', min_service_months=12, requires_document=True, excess_action='lapse',
+                                              law_reference='Art. 32(1)(d)', notes='Exams and CME / licence renewal')}),
+    'education': dict(name='Education (academic staff)', code='EDU', kind='other', categories=['Teaching Staff', 'Academic Staff', 'Faculty'], is_default=False,
+                      description='Schools, nurseries and institutes: teaching staff take their annual leave in the term and summer breaks (Academic Break), '
+                                  'no carry forward; administrative staff of a school use the Office staff policy.',
+                      lines={'Annual Leave': dict(days_per_year=30, accrual='monthly', first_year_uae=True, count_days='calendar', notice_days=30,
+                                                  carry_forward_max=0, excess_action='lapse', law_reference='Art. 29',
+                                                  notes='Taken in the academic breaks; book through Academic Break'),
+                             'Academic Break': dict(days_per_year=0, accrual='none', count_days='calendar', notes='Term / summer breaks per the academic calendar – no balance')},
+                      skip=('Casual Leave', 'Umrah Leave')),
+    'difc': dict(name='DIFC employees', code='DIFC', kind='other', categories=['DIFC Staff'], is_default=False,
+                 description='Companies registered in the Dubai International Financial Centre (DIFC Employment Law No. 2 of 2019): 20 working days annual leave, '
+                             '60 working days sick leave (10 full, 20 half, 30 unpaid), 65 working days maternity (33 full, 32 half), 5 working days paternity.',
+                 lines={'Annual Leave': dict(days_per_year=20, accrual='monthly', count_days='working', notice_days=14, carry_forward_max=5, carry_forward_expiry_months=3,
+                                             excess_action='lapse', encashable=True, encash_max_per_year=5, law_reference='DIFC Employment Law 2019, Art. 27–29'),
+                        'Sick Leave': dict(days_per_year=60, accrual='yearly', count_days='working', requires_document=True, pay_slabs=[[10, 100], [20, 50], [30, 0]],
+                                           excess_action='lapse', law_reference='DIFC Employment Law 2019, Art. 34'),
+                        'Maternity Leave': dict(days_per_year=65, accrual='per_event', count_days='working', gender='F', max_per_request=65, requires_document=True,
+                                                pay_slabs=[[33, 100], [32, 50]], min_service_months=12, law_reference='DIFC Employment Law 2019, Art. 37–38'),
+                        'Parental Leave': dict(days_per_year=5, accrual='per_event', count_days='working', max_per_request=5, requires_document=True,
+                                               law_reference='DIFC Employment Law 2019, Art. 40 (paternity)')},
+                 skip=('Casual Leave', 'Hajj Leave', 'Maternity Extension (unpaid)', 'Study Leave')),
+    'adgm': dict(name='ADGM employees', code='ADGM', kind='other', categories=['ADGM Staff'], is_default=False,
+                 description='Companies registered in Abu Dhabi Global Market (ADGM Employment Regulations 2019 / 2024): 20 working days annual leave, '
+                             '60 working days sick leave (10 full, 20 half, 30 unpaid), 65 working days maternity, 5 working days paternity.',
+                 lines={'Annual Leave': dict(days_per_year=20, accrual='monthly', count_days='working', notice_days=14, carry_forward_max=5, carry_forward_expiry_months=3,
+                                             excess_action='lapse', encashable=True, encash_max_per_year=5, law_reference='ADGM Employment Regulations, s. 23–25'),
+                        'Sick Leave': dict(days_per_year=60, accrual='yearly', count_days='working', requires_document=True, pay_slabs=[[10, 100], [20, 50], [30, 0]],
+                                           excess_action='lapse', law_reference='ADGM Employment Regulations, s. 30'),
+                        'Maternity Leave': dict(days_per_year=65, accrual='per_event', count_days='working', gender='F', max_per_request=65, requires_document=True,
+                                                pay_slabs=[[33, 100], [32, 50]], min_service_months=12, law_reference='ADGM Employment Regulations, s. 33–35'),
+                        'Parental Leave': dict(days_per_year=5, accrual='per_event', count_days='working', max_per_request=5, requires_document=True,
+                                               law_reference='ADGM Employment Regulations, s. 36 (paternity)')},
+                 skip=('Casual Leave', 'Hajj Leave', 'Maternity Extension (unpaid)', 'Study Leave')),
 }
 
 
@@ -74,7 +153,8 @@ def preview():
     _, by_name = _types()
     Policy = M('LeavePolicy', 'LeavePolicy')
     return {'leave_types': [{'name': n, 'description': d, 'exists': n.lower() in by_name} for n, _, _, _, _, d in TYPES],
-            'policies': [{'name': p['name'], 'exists': Policy.objects.filter(code=p['code']).exists(), 'categories': p['categories']} for p in POLICIES.values()],
+            'policies': [{'name': p['name'], 'exists': Policy.objects.filter(code=p['code']).exists(), 'categories': p['categories'], 'description': p['description']}
+                         for p in POLICIES.values()],
             'law': LAW}
 
 
@@ -109,7 +189,7 @@ def load(user=None):
             c, n = code, 2
             while LT.objects.filter(code=c, branch__isnull=True).exists():
                 c, n = f'{code}{n}', n + 1
-            t = LT.objects.create(name=name, code=c, type=typ, unit='days', negative=False, description=desc[:200], allow_half_day=half,
+            t = LT.objects.create(name=name, code=c, type=typ, unit='hours' if 'hours' in name.lower() else 'days', negative=False, description=desc[:200], allow_half_day=half,
                                   include_weekend=True, include_holiday=True, leave_category=cat, use_common_workflow=False,
                                   include_dashboard=name in ('Annual Leave', 'Sick Leave'), is_compensatory=(cat == 'compensatory'), created_by=user)
             by_name[name.lower()] = t
@@ -135,7 +215,9 @@ def load(user=None):
             pol = Policy.objects.create(name=p['name'], code=p['code'], kind=p['kind'], description=p['description'], category_ids=ids,
                                         is_default=p['is_default'] and not Policy.objects.filter(is_default=True).exists())
             created_policies.append(pol.name)
-        lines = dict(COMMON)
+        lines = {k: v for k, v in COMMON.items() if k not in (p.get('skip') or ())}
+        if 'Academic Break' not in p['lines']:
+            lines.pop('Academic Break', None)
         lines.update(p['lines'])
         for tname, settings in lines.items():
             t = by_name.get(tname.lower())

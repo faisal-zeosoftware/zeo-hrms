@@ -12,6 +12,7 @@ POST api/settlements/<id>/<action>/        submit (HR) → validate (Finance) �
                                            | return (back to HR, note) | cancel
 GET  api/settlements/eligible/             ends of service without a settlement yet
 """
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -211,3 +212,123 @@ class SettlementView(Base):
             S.act(st, action, request.user, self.c.codes, self.c.admin, request.data)
         st.refresh_from_db()
         return Response(S.settlement_row(st, full=True))
+
+
+# ---------------------------------------------------------------- v1.31.0 statutory schemes
+from rest_framework import serializers, viewsets   # noqa: E402
+from .models import StatutoryScheme   # noqa: E402
+
+
+class StatutorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StatutoryScheme
+        fields = '__all__'
+        read_only_fields = ['updated_at', 'updated_by_id', 'is_standard']
+
+    def validate_code(self, v):
+        import re
+        v = (v or '').strip().lower()
+        if not re.fullmatch(r'[a-z][a-z0-9_]{0,19}', v):
+            raise serializers.ValidationError(tr('Code: letters, digits and _ only (it becomes the formula name stat_<code>_emp).'))
+        qs = StatutoryScheme.objects.filter(code=v)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(tr('Code {0} is already used.', v))
+        return v
+
+    def validate_slabs(self, v):
+        if v in (None, ''):
+            return []
+        if not isinstance(v, list) or any(not isinstance(x, dict) for x in v):
+            raise serializers.ValidationError(tr('Slabs must be a list of rows.'))
+        return v
+
+
+STAT_CODES = ('change_salarycomponent', 'add_salarycomponent', 'change_payrollplussettings', 'view_salarycomponent', 'view_payrollrun')
+
+
+class StatutoryViewSet(viewsets.ModelViewSet):
+    """Payroll → Statutory schemes. GET list (+ pack, verify note); POST / PUT / DELETE (payroll setup rights);
+    POST seed/ (load the pack's schemes), POST apply/ (salary components), GET preview/?employee=."""
+    permission_classes = [IsAuthenticated]
+    zeo_access = False
+    zeo_scope = False
+    queryset = StatutoryScheme.objects.all()
+    serializer_class = StatutorySerializer
+
+    def _c(self):
+        return ctx(self.request)
+
+    def _can_change(self):
+        c = self._c()
+        return c.admin or bool({'change_salarycomponent', 'add_salarycomponent', 'change_payrollplussettings'} & c.codes)
+
+    def _can_view(self):
+        c = self._c()
+        return c.admin or bool(set(STAT_CODES) & c.codes)
+
+    def list(self, request, *a, **kw):
+        if not self._can_view():
+            return Response({'detail': tr('You may not see the payroll setup.')}, status=403)
+        from CountryPack import services as cp
+        from CountryPack.packs import statutory_for, VERIFY
+        p = cp.current_pack()
+        rows = self.get_serializer(self.get_queryset(), many=True).data
+        return Response({'rows': rows, 'pack': p['pack'], 'pack_name': p.get('name', ''), 'currency': (p.get('currency') or {}).get('code', ''),
+                         'available': [{'code': d['code'], 'name': d['name']} for d in statutory_for(p['pack'])], 'verify': VERIFY,
+                         'can_change': self._can_change(), 'kinds': StatutoryScheme.KINDS, 'bases': StatutoryScheme.BASES, 'applies': StatutoryScheme.APPLIES})
+
+    def create(self, request, *a, **kw):
+        if not self._can_change():
+            return Response({'detail': tr('You may not change the payroll setup.')}, status=403)
+        return super().create(request, *a, **kw)
+
+    def perform_create(self, serializer):
+        serializer.save(updated_by_id=self.request.user.pk)
+
+    def perform_update(self, serializer):
+        serializer.save(updated_by_id=self.request.user.pk)
+
+    def update(self, request, *a, **kw):
+        if not self._can_change():
+            return Response({'detail': tr('You may not change the payroll setup.')}, status=403)
+        return super().update(request, *a, **kw)
+
+    def destroy(self, request, *a, **kw):
+        if not self._can_change():
+            return Response({'detail': tr('You may not change the payroll setup.')}, status=403)
+        return super().destroy(request, *a, **kw)
+
+    @action(detail=False, methods=['post'])
+    def seed(self, request):
+        if not self._can_change():
+            return Response({'detail': tr('You may not change the payroll setup.')}, status=403)
+        from CountryPack import services as cp
+        from . import statutory as st
+        pack = (request.data or {}).get('pack') or cp.current_pack()['pack']
+        added, kept = st.seed(pack, request.user)
+        return Response({'added': added, 'kept': kept, 'pack': pack})
+
+    @action(detail=False, methods=['post'])
+    def apply(self, request):
+        if not self._can_change():
+            return Response({'detail': tr('You may not change the payroll setup.')}, status=403)
+        from . import statutory as st
+        added, kept = st.apply_components(request.user)
+        return Response({'added': added, 'kept': kept})
+
+    @action(detail=False, methods=['get'])
+    def preview(self, request):
+        if not self._can_view():
+            return Response({'detail': tr('You may not see the payroll setup.')}, status=403)
+        from . import statutory as st
+        eid = request.query_params.get('employee')
+        if not str(eid).isdigit():
+            return Response({'detail': tr('Choose an employee.')}, status=400)
+        c = self._c()
+        if c.branches is not None:
+            E = M('EmpManagement', 'emp_master')
+            if not E.objects.filter(pk=int(eid), emp_branch_id__in=c.branches).exists():
+                return Response({'detail': tr('You can only work with employees of your own branches.')}, status=403)
+        return Response(st.preview(int(eid)))

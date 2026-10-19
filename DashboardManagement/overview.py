@@ -88,7 +88,13 @@ def _qs(request, label):
     m = _model(label)
     if m is None:
         return None
-    return scope_queryset(request, _View(), m._default_manager.all())
+    qs = scope_queryset(request, _View(), m._default_manager.all())
+    try:   # v1.31.1 location level: the switcher's / the user's locations, as on the lists
+        from OrgStructure.location import filter_qs
+        qs = filter_qs(request, qs, m)
+    except Exception:
+        pass
+    return qs
 
 
 def _can(c, *codes):
@@ -285,14 +291,30 @@ def overview(request):
         if not opens('employees', 'view_emp_master'):
             return
         active = calc.match(calc.rows('employees'), {'status': 'Active'})
-        by_b, by_d = {}, {}
+        by_b, by_d, by_l = {}, {}, {}
+        # v1.31.1 location level: headcount by location (employees placed in a location) while control is on
+        loc_of = {}
+        try:
+            from OrgStructure import location as _L
+            if _L.enabled():
+                from OrgStructure.models import EmployeeOrg, Location
+                ln = dict(Location.objects.values_list('id', 'name'))
+                loc_of = {e: ln.get(l, '') for e, l in EmployeeOrg.objects.filter(location_id__isnull=False).values_list('employee_id', 'location_id')}
+        except Exception:
+            loc_of = {}
         for r in active:
             by_b[r.get('branch') or ''] = by_b.get(r.get('branch') or '', 0) + 1
             by_d[r.get('department') or ''] = by_d.get(r.get('department') or '', 0) + 1
+            if loc_of:
+                ln_ = loc_of.get(r.get('_id') or r.get('id') or r.get('_emp'), '')
+                by_l[ln_] = by_l.get(ln_, 0) + 1
         items = []
-        for name, f, grp, data in (('branch', 'branch', 'By branch', by_b), ('department', 'department', 'By department', by_d)):
+        groups = [('branch', 'branch', 'By branch', by_b), ('department', 'department', 'By department', by_d)]
+        if loc_of:
+            groups.append(('location', 'org_location', 'By location', by_l))
+        for name, f, grp, data in groups:
             for v, _n in sorted(data.items(), key=lambda x: (-x[1], x[0]))[:6]:
-                k = calc.kpi(v or ('No branch' if f == 'branch' else 'No department'), 'employees', {'status': 'Active', f: v}, timed=False)
+                k = calc.kpi(v or ('No branch' if f == 'branch' else 'No location' if f == 'org_location' else 'No department'), 'employees', {'status': 'Active', f: v}, timed=False)
                 k['group'] = grp
                 items.append(k)
         card('headcount', 'Headcount now', 'groups', rpt('employees', {'status': 'Active'}),

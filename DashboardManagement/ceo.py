@@ -88,6 +88,15 @@ def ceo_summary(request):
         bq = bq.filter(id__in=c.branches)
     out['branches'] = [{'id': b.id, 'name': b.branch_name} for b in bq] if Branch else []
     out['branch'] = run.branches
+    # v1.31.1 location level: the locations the figures are for, and the pick list (the user's locations)
+    out['location'] = run.locations
+    out['locations'] = []
+    try:
+        from OrgStructure import location as L
+        if L.enabled():
+            out['locations'] = [{'id': l['id'], 'name': l['name'], 'branch_id': l['branch_id']} for l in L.payload(request)['locations']]
+    except Exception:
+        pass
 
     def safe(name, fn):
         if only and only != name:

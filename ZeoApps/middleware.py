@@ -10,10 +10,10 @@ import re
 from django.db import connection
 from django.http import HttpResponse
 
-PAYROLL_PREFIXES = ('/payroll/', '/payroll-plus/')   # v1.23.0 Payroll is its own app
+PAYROLL_PREFIXES = ('/payroll/', '/payroll-plus/', '/accounting/')   # v1.23.0 Payroll is its own app
 HRMS_PREFIXES = ('/employee/', '/calendars/', '/payroll/', '/project/', '/performance/', '/recruitment/', '/learning/',
                  '/leave-policy/', '/hr-actions/', '/expense/', '/project-control/', '/org-structure/', '/shift-planner/',
-                 '/attendance-plus/', '/asset-plus/', '/employee-profile/', '/self-service/', '/payroll-plus/', '/iclock/')
+                 '/attendance-plus/', '/asset-plus/', '/employee-profile/', '/self-service/', '/payroll-plus/', '/accounting/', '/iclock/')
 NOTIFY = re.compile(r'notif|notify', re.I)
 
 

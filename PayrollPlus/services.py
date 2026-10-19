@@ -107,6 +107,14 @@ def _sod_hint():
 
 def check_run_status_change(run, new_status, user):
     """Segregation of duties: the user who prepared the run may not approve it or mark it paid. Raises Refused."""
+    if new_status == 'approved':   # v1.37.0 AI payroll auditor gate (audit required / critical findings open)
+        try:
+            from ZeoAI.payroll_audit import gate
+            state, msg = gate(run)
+            if state != 'ok':
+                raise Refused(tr(msg), status=409)
+        except ImportError:
+            pass
     if not settings().segregation or user is None:
         return
     c = control_for(run)

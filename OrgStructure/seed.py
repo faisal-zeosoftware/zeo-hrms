@@ -101,6 +101,25 @@ STANDARD = [
         'public_holiday_source': 'Civil Service Commission / Council of Ministers announcements', 'wps_notes': 'PAM salary transfer through the bank.',
         'notes': 'Probation up to 100 working days.',
     },
+    {   # v1.31.0 India (central Acts; state Shops & Establishments Acts vary – edit the copy for your state)
+        'code': 'IN-FA-SEA', 'name': 'India (Factories Act 1948 / Shops & Establishments – central defaults)', 'country_code': 'IN', 'country_name': 'India',
+        'law_reference': 'Factories Act 1948; Payment of Gratuity Act 1972; Maternity Benefit Act 1961 (amended 2017); Industrial Disputes Act 1947; state Shops & Establishments Acts',
+        'weekend_days': [SUN], 'daily_hours': Decimal('9'), 'weekly_hours': Decimal('48'), 'ramadan_daily_hours': Decimal('9'),
+        'annual_leave': {'first_year_after_months': 12, 'first_year_days_per_month': 0, 'days': 18, 'steps': [], 'basis': 'working',
+                         'note': 'Earned leave: 1 day per 20 days worked (Factories Act s. 79) after 240 days in the year; most states give 15–21 days. Casual and sick leave are per state Act.'},
+        'sick_leave': [[12, 100]],
+        'maternity': {'days': 182, 'full_pay_days': 182, 'half_pay_days': 0, 'note': '26 weeks (first two children; 12 weeks from the third), Maternity Benefit (Amendment) Act 2017.'},
+        'paternity_days': 0,
+        'gratuity': {'basis': 'basic_da', 'min_service_years': 5, 'slabs': [{'from_year': 1, 'to_year': None, 'days': 15}], 'cap_years_of_pay': None,
+                     'cap_amount': 2000000, 'divisor': 26,
+                     'note': 'Payment of Gratuity Act: 15 days of last (basic + DA) per completed year (÷ 26), payable after 5 years; capped at ₹ 20,00,000.'},
+        'overtime': {'normal': 200, 'night': 200, 'rest_day': 200, 'holiday': 200, 'max_hours_per_day': 2,
+                     'note': 'Factories Act s. 59: twice the ordinary rate beyond 9 hours a day / 48 a week.'},
+        'notice_period': {'min_days': 30, 'max_days': 90}, 'probation_max_months': 6,
+        'public_holiday_source': 'Central / state government lists (national: 26 Jan, 15 Aug, 2 Oct; others per state)',
+        'wps_notes': 'No wage-protection file. Statutory: EPF (EPFO ECR), ESI (ESIC), professional tax (state), TDS (Form 24Q), LWF where applicable.',
+        'notes': 'Hours, leave and weekly off differ by state Act – this set holds the central defaults.',
+    },
 ]
 
 

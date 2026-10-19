@@ -280,6 +280,8 @@ class ZeoAccess(permissions.BasePermission):
             if verb in ('add', 'change') and not self._branch_ok(request, model, c, detail=bool(getattr(view, 'detail', False))):
                 self.message = tr('You can only work with records of your own branches.')
                 return False
+            if verb in ('add', 'change') and not self._location_ok(request, model, verb, detail=bool(getattr(view, 'detail', False))):
+                return False
             return True
         if verb == 'view':
             return True  # rows are limited by filter_queryset
@@ -340,6 +342,19 @@ class ZeoAccess(permissions.BasePermission):
             uf = user_fields(model)
             return any(getattr(obj, f'{f}_id', None) == c.user.id for f in uf if hasattr(obj, f'{f}_id'))
         return True
+
+    def _location_ok(self, request, model, verb, detail=False):
+        """v1.30.0 location level: the record's location / employee must be in the user's locations."""
+        try:
+            from OrgStructure.location import save_ok
+            request._zeo_loc_detail = detail
+            ok, msg = save_ok(request, model, _data(request), verb)
+            if not ok:
+                self.message = tr(msg)
+            return ok
+        except Exception:
+            logger.exception('location check')
+            return True
 
     @staticmethod
     def _branch_ok(request, model, c, detail=False):
@@ -478,7 +493,15 @@ def install():
     def filter_queryset(self, queryset):
         qs = orig_fq(self, queryset)
         try:
-            return scope_queryset(self.request, self, qs)
+            qs = scope_queryset(self.request, self, qs)
+            try:   # v1.30.0 location level: the switcher's / the user's locations
+                from OrgStructure.location import filter_qs
+                model = getattr(qs, 'model', None)
+                if model is not None and getattr(self, 'zeo_scope', True) is not False:
+                    qs = filter_qs(self.request, qs, model)
+            except Exception:
+                logger.exception('location scope failed for %s', type(self).__name__)
+            return qs
         except Exception:
             logger.exception('access scope failed for %s', type(self).__name__)
             try:
@@ -521,6 +544,7 @@ def limit_by_branch(request, qs, branch_path=None, emp_field=None, include_null=
     emp_field:   ORM path to an emp_master FK or an integer employee id column;
     neither:     automatic path (branch_path(model)).
     """
+    qs = _limit_by_location(request, qs)   # v1.31.1 location level (no-op while control is off)
     branches = allowed_branches(request)
     if branches is None:
         return qs
@@ -550,6 +574,14 @@ def limit_by_branch(request, qs, branch_path=None, emp_field=None, include_null=
             q |= Q(**{f'{bp}__isnull': True})
     qs = qs.filter(q)
     return qs.distinct() if (emp_field and '__' in emp_field) or (branch_path and '__' in branch_path) else qs
+
+
+def _limit_by_location(request, qs):
+    try:
+        from OrgStructure.location import filter_qs
+        return filter_qs(request, qs, qs.model)
+    except Exception:
+        return qs
 
 
 def check_branch(request, branch_id=None, employee_id=None, employee_code=None):

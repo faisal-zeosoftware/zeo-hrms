@@ -40,12 +40,14 @@ FIXED = {
     'OM': [],
     'BH': [("New Year's Day", 1, 1, 1), ('Labour Day', 5, 1, 1), ('National Day', 12, 16, 2)],
     'KW': [("New Year's Day", 1, 1, 1), ('National Day', 2, 25, 1), ('Liberation Day', 2, 26, 1)],
+    'IN': [('Republic Day', 1, 26, 1), ('Independence Day', 8, 15, 1), ('Gandhi Jayanti', 10, 2, 1)],   # v1.31.0: national holidays; state holidays by hand
     'GEN': [("New Year's Day", 1, 1, 1)],
 }
 ALL_ISLAMIC = ['eid_fitr', 'arafah', 'eid_adha', 'hijri_new_year', 'prophet_birthday']
 ISLAMIC_BY_PACK = {
     'AE': ALL_ISLAMIC, 'KW': ALL_ISLAMIC, 'BH': ALL_ISLAMIC, 'OM': ALL_ISLAMIC,
     'SA': ['eid_fitr', 'arafah', 'eid_adha'], 'QA': ['eid_fitr', 'arafah', 'eid_adha'],
+    'IN': [],
     'GEN': [],
 }
 

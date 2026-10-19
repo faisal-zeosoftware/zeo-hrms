@@ -17,8 +17,8 @@ log = logging.getLogger(__name__)
 OPEN = ('/users/', '/core/', '/cloud/', '/language/', '/admin', '/static', '/media', '/zeo-apps/', '/mobile/', '/group/', '/licence/')
 SAFE = ('GET', 'HEAD', 'OPTIONS')
 READONLY_OK = re.compile(r'notif|/language/api/me|assistant|/export|/report|/views/api', re.I)
-APP_PREFIX = [('/payroll-plus/', 'payroll'), ('/payroll/', 'payroll'), ('/zeo-projects/', 'projects'), ('/zeo-crm/', 'crm'),
-              ('/zeo-property/', 'property'), ('/zeo-maintenance/', 'maintenance'), ('/zeo-hse/', 'hse')]
+APP_PREFIX = [('/payroll-plus/', 'payroll'), ('/accounting/', 'payroll'), ('/payroll/', 'payroll'), ('/zeo-projects/', 'projects'), ('/zeo-crm/', 'crm'),
+              ('/zeo-property/', 'property'), ('/zeo-maintenance/', 'maintenance'), ('/zeo-assets/', 'assets'), ('/zeo-hse/', 'hse')]
 
 
 def _json(data, status):

@@ -1231,6 +1231,13 @@ def get_formula_variables(employee, start_date=None, end_date=None):
 
     variables.update(gratuity_vars)
 
+    # v1.31.0: statutory schemes of the company country (GOSI, PASI, EPF, ESI, TDS …)
+    try:
+        from PayrollPlus.statutory import variables as _stat_vars
+        variables.update(_stat_vars(employee))
+    except Exception:
+        logger.exception("statutory variables failed for %s", employee.pk)
+
     # v1.18.0: UAE nationals – GPSSA pension instead of the Labour Law gratuity
     try:
         variables.update(pension_variables(employee, start_date, end_date))

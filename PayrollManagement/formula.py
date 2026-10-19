@@ -266,6 +266,12 @@ def known_names():
         code = safe_name(t.code or t.name).lower()
         if code:
             out.setdefault(f'leave_balance_{code}', f'Leave balance: {t.name}')
+    try:   # v1.31.0 statutory schemes (Payroll → Statutory schemes)
+        from PayrollPlus.statutory import variable_names
+        for k, v in variable_names().items():
+            out.setdefault(k, v)
+    except Exception:
+        pass
     return out
 
 

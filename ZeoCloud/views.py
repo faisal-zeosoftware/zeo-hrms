@@ -69,6 +69,7 @@ APPS_INFO = [
     ('crm', 'CRM', 'Contacts, pipelines, opportunities, activities'),
     ('property', 'Property', 'Buildings, units, leases, billing, cheques'),
     ('maintenance', 'Maintenance', 'Work orders, inspections, preventive plans'),
+    ('assets', 'Asset Management', 'Asset register, QR labels, check-out, physical counts, depreciation'),
     ('hse', 'HSE', 'Risk, permits, incidents, inspections, audits'),
 ]
 

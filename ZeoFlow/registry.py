@@ -14,11 +14,13 @@ MODULES = {
     'crm': ['ZeoCRM'],
     'property': ['ZeoProperty'],
     'maintenance': ['ZeoMaintenance'],
+    'assets': ['ZeoAssets'],
+    'people': ['ZeoPeople'],
     'hse': ['ZeoHSE'],
     'settings': ['UserManagement', 'Chatter'],
 }
 MODULE_LABELS = {'hrms': 'HR', 'payroll': 'Payroll', 'projects': 'Projects', 'crm': 'CRM', 'property': 'Property',
-                 'maintenance': 'Maintenance', 'hse': 'HSE', 'settings': 'Company & users'}
+                 'maintenance': 'Maintenance', 'assets': 'Asset Management', 'people': 'People', 'hse': 'HSE', 'settings': 'Company & users'}
 SKIP_WORDS = ('log', 'template', 'notification', 'token', 'history', 'snapshot', 'setting', 'layout', 'udf', 'customfield', 'extra', 'comment', 'announcementview', 'clock', 'critirea', 'attachment',
               'fieldvalue', 'fielddef', 'bulkupload', 'emailconfiguration', 'through', 'cache', 'permission', 'inbox', 'audit')
 SKIP_FIELDS = {'password', 'otp', 'otp_created_at'}

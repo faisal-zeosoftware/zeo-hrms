@@ -192,7 +192,7 @@ PRO_STATUS = (('requested', 'Requested'), ('documents', 'Collecting documents'),
 class ProService(models.Model):
     branch = models.ForeignKey('OrganisationManager.brnch_mstr', **BRANCH)
     number = models.CharField(max_length=20, unique=True, blank=True)
-    service = models.CharField('service', max_length=40, choices=service_choices)
+    service = models.CharField('service', max_length=40, choices=service_choices())
     title = models.CharField(max_length=150, blank=True)
     country = models.CharField(max_length=2, blank=True)
     authority = models.CharField('government body', max_length=80, blank=True)

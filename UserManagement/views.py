@@ -208,7 +208,9 @@ class BranchUserListMixin:
     access" or by their employee's branch) and themselves; ?branch=<id> lists the users of one branch."""
 
     def scope_users(self, qs, schema_name):
-        from AccessControl.access import allowed_branches
+        from AccessControl.access import allowed_branches, hr_backoffice
+        if not hr_backoffice(self.request):   # v1.56.1: an app role (CRM, Property …) or a self-service login sees only its own login
+            return qs.filter(pk=self.request.user.pk)
         mine = allowed_branches(self.request)
         ids = None
         if mine is not None:
@@ -389,7 +391,7 @@ class GroupPermTenantUserListView(BranchUserListMixin, generics.ListAPIView):  #
 
 class ValidateCredentialsView(APIView):
     def post(self, request):
-        serializer = ValidateCredentialsSerializer(data=request.data)
+        serializer = ValidateCredentialsSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
         return Response({
@@ -439,8 +441,12 @@ class VerifyOTPView(APIView):
         except CustomUser.DoesNotExist:
             return Response({"error": "User not found"}, status=400)
 
+        _blk = _zeo_code_blocked(user)   # v1.52.0 wrong codes lock the account for a while
+        if _blk:
+            return Response({"error": _blk}, status=400)
         # validate OTP
-        if user.otp != str(otp):
+        if not user.otp or user.otp != str(otp):
+            _zeo_code_failed(user)
             return Response({"error": "Invalid OTP"}, status=400)
 
         # OTP Expired?
@@ -454,6 +460,31 @@ class VerifyOTPView(APIView):
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
         refresh['otp'] = True   # v1.25.0: this login passed the code – the mobile app may then register the phone
+        user.otp = None   # v1.52.0 a code works once
+        user.save(update_fields=['otp'])
+        try:   # v1.52.0 the sign-in session (sign out everywhere)
+            from ZeoCloud.security import bind, login_ok
+            from ZeoCloud.models import LoginSession
+            _sid = ''
+            _h = request.META.get('HTTP_AUTHORIZATION', '')
+            if _h.startswith('Bearer '):   # the password step's token: the same sign-in continues (no second session)
+                try:
+                    from rest_framework_simplejwt.tokens import AccessToken
+                    _a = AccessToken(_h[7:].strip())
+                    if str(_a.get('user_id')) == str(user.pk):
+                        _sid = _a.get('sid') or ''
+                except Exception:
+                    _sid = ''
+            _row = LoginSession.objects.filter(sid=_sid, user=user, revoked_at__isnull=True).first() if _sid else None
+            if _row is not None:
+                refresh['sid'] = _row.sid
+                _row.how = 'e-mail code'
+                _row.save(update_fields=['how'])
+            else:
+                bind(refresh, user, request, 'e-mail code')
+            login_ok(user)
+        except Exception:
+            pass
 
         # TENANTS LIST
         tenants_data = [
@@ -547,11 +578,20 @@ class ResetPassword(APIView):
 
         # v1.28.1: the new password is accepted only with the code that was e-mailed (before, the e-mail address alone
         # was enough to set a new password); the code is valid for 10 minutes
+        _blk = _zeo_code_blocked(user)   # v1.52.0 wrong codes lock the account for a while
+        if _blk:
+            return Response({"error": _blk}, status=status.HTTP_400_BAD_REQUEST)
         if not user.otp or not user.otp_created_at or otp != str(user.otp) or (timezone.now() - user.otp_created_at).total_seconds() > 600:
+            _zeo_code_failed(user)
             return Response({"error": "The code is wrong or has expired. Ask for a new code."}, status=status.HTTP_400_BAD_REQUEST)
         if not new_password or len(str(new_password)) < 8:
             return Response({"error": "The new password must have at least 8 characters."}, status=status.HTTP_400_BAD_REQUEST)
+        _bad = _zeo_password_rules(user, new_password)   # v1.52.0 the company's password rules
+        if _bad:
+            return Response({"error": _bad}, status=status.HTTP_400_BAD_REQUEST)
+        _old = user.password
         user.set_password(new_password)
+        _zeo_password_changed(user, _old)
         if hasattr(user, 'must_change_password'):
             user.must_change_password = False
         
@@ -592,7 +632,15 @@ class ChangePasswordView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            _bad = _zeo_password_rules(user, new_password)   # v1.52.0 the company's password rules
+            if not _bad and new_password == old_password:   # v1.62.0 a password HR knows cannot be "changed" to itself
+                from Translations.i18n import tr
+                _bad = tr('Choose a new password – not the one you have now.')
+            if _bad:
+                return Response({"success": False, "message": _bad}, status=status.HTTP_400_BAD_REQUEST)
+            _old = user.password
             user.set_password(new_password)
+            _zeo_password_changed(user, _old)
 
             user.must_change_password = False
 
@@ -804,8 +852,12 @@ class ESSResetPassword(APIView):
                 {"error": "Please verify OTP first"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
+        _bad = _zeo_password_rules(user, new_password)   # v1.52.0 the company's password rules
+        if _bad:
+            return Response({"error": _bad}, status=status.HTTP_400_BAD_REQUEST)
+        _old = user.password
         user.set_password(new_password)
+        _zeo_password_changed(user, _old)
 
         # Clear OTP after successful reset
         user.otp = None
@@ -965,3 +1017,42 @@ class InvitesView(APIView):
         except ValueError as e:
             return Response({'detail': str(e)}, status=status.HTTP_409_CONFLICT)
         return Response({'detail': 'Unknown action.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+# ------------------------------------------------------------------ v1.52.0 sign-in security helpers (ZeoCloud.security)
+def _zeo_password_rules(user, pw):
+    try:
+        from ZeoCloud.security import password_problems
+        p = password_problems(user, pw)
+        return f'The password needs {", ".join(p)}.' if p else ''
+    except Exception:
+        return ''
+
+
+def _zeo_password_changed(user, old_hash=None):
+    try:
+        from ZeoCloud.security import password_changed
+        password_changed(user, old_hash)
+    except Exception:
+        pass
+
+
+def _zeo_code_blocked(user):
+    try:
+        from ZeoCloud.security import locked, sec
+        s = sec(user)
+        if locked(user, s):
+            mins = int((s.locked_until - timezone.now()).total_seconds() // 60) + 1
+            return f'Too many wrong tries – try again in {mins} minute(s).'
+    except Exception:
+        pass
+    return ''
+
+
+def _zeo_code_failed(user):
+    try:
+        from ZeoCloud.security import fail
+        fail(user)
+    except Exception:
+        pass

@@ -148,14 +148,19 @@ class Zoho:
         self._acc = None
         return {'id': a.get('account_id'), 'code': code, 'name': name}
 
-    def partner(self, name, code, create=False):
+    def partner(self, name, code, create=False, is_company=False, vat='', email='', customer=False):
         d = self.req('GET', '/contacts', params={'search_text': code})
         for c in d.get('contacts', []):
             if code in (c.get('contact_number'), c.get('contact_name'), c.get('company_name')) or code in (c.get('contact_name') or ''):
                 return c['contact_id'], False
         if not create:
             return '', False
-        d = self.req('POST', '/contacts', {'contact_name': f'{name} ({code})', 'contact_type': 'vendor', 'contact_number': code})
+        body = {'contact_name': f'{name} ({code})', 'contact_type': 'customer' if customer else 'vendor', 'contact_number': code}
+        if is_company:
+            body['company_name'] = name
+        if email:
+            body['email'] = email
+        d = self.req('POST', '/contacts', body)
         return (d.get('contact') or {}).get('contact_id', ''), True
 
     def post(self, batch):
@@ -186,3 +191,134 @@ class Zoho:
             j = d.get('journal') or {}
             jid, num = j.get('journal_id'), j.get('entry_number', '')
         return jid, num or batch.number
+
+    # -- v1.62.0: invoices, credit notes, payments and bills as documents (Posting rules › Send documents as)
+    PARTY_ROLES = ('receivable', 'receivable_owner', 'vendor_payable')
+    VAT_ROLES = ('vat_output', 'vat_input')
+    DOC_PATH = {'invoice': ('/invoices', 'invoices', 'invoice', 'invoice_id', 'invoice_number'),
+                'credit_note': ('/creditnotes', 'creditnotes', 'creditnote', 'creditnote_id', 'creditnote_number'),
+                'bill': ('/bills', 'bills', 'bill', 'bill_id', 'bill_number'),
+                'payment': ('/customerpayments', 'customerpayments', 'payment', 'payment_id', 'payment_number')}
+
+    def _split(self, batch):
+        roles = ((batch.rules or {}).get('doc') or {}).get('roles') or {}
+        party, vat, other = [], [], []
+        for l in batch.lines.all():
+            r = roles.get(l.base_account) or roles.get(l.account) or ''
+            (party if r in self.PARTY_ROLES else vat if r in self.VAT_ROLES else other).append((l, r))
+        return party, vat, other
+
+    def _party(self, party_lines, what):
+        for l, _r in party_lines:
+            if l.partner_ref:
+                return str(l.partner_ref)
+        raise ConnectorError(f'The {what} has no contact in Zoho Books – Accounting › Business partners › Match / create, then post again.')
+
+    def _tax(self, rate, ref=''):
+        if ref:
+            return str(ref)
+        rows = self.req('GET', '/settings/taxes').get('taxes', [])
+        for t in rows:
+            if abs(float(t.get('tax_percentage') or 0) - rate) < 0.01 and t.get('tax_type', 'tax') != 'tax_group':
+                return t['tax_id']
+        raise ConnectorError(f'Zoho Books has no {rate:g}% tax – add it under Settings › Taxes, or enter its tax id in ZEO Posting rules.')
+
+    def _find(self, kind, batch):
+        path, key, _one, idk, numk = self.DOC_PATH[kind]
+        marker = f'ZEO {batch.number}'
+        rows = self.req('GET', path, params={'search_text': batch.number}).get(key, [])
+        for r in rows:
+            if (r.get('reference_number') or '').startswith(marker):
+                return r[idk], r.get(numk) or ''
+        return None
+
+    def post_document(self, batch, kind):
+        doc = (batch.rules or {}).get('doc') or {}
+        found = self._find(kind, batch)
+        if found:
+            return found[0], found[1] or batch.number
+        if kind == 'payment':
+            return self._post_payment(batch, doc)
+        path, _key, one, idk, numk = self.DOC_PATH[kind]
+        acc = {a['code']: a['id'] for a in self.accounts()}
+        party, vat, other = self._split(batch)
+        sale = kind != 'bill'
+        contact = self._party(party, 'vendor bill' if kind == 'bill' else 'invoice')
+        missing = sorted({l.account for l, _r in party + vat + other if l.account not in acc})
+        if missing:
+            raise ConnectorError(f'Accounts not in Zoho Books: {", ".join(missing)} – create them or fix the mapping.')
+        if kind == 'credit_note':
+            net = lambda l: float(l.debit - l.credit)
+        elif sale:
+            net = lambda l: float(l.credit - l.debit)
+        else:
+            net = lambda l: float(l.debit - l.credit)
+        base = sum(net(l) for l, _r in other)
+        vat_amt = sum(abs(float(l.credit - l.debit)) for l, _r in vat)
+        tax_id = ''
+        if vat_amt and base:
+            tax_id = self._tax(round(vat_amt * 100 / base, 2), self.st.sale_tax_ref if sale else self.st.purchase_tax_ref)
+        items = []
+        for l, _r in other:
+            it = {'account_id': acc[l.account], 'name': (l.label or doc.get('description') or batch.reference)[:100],
+                  'description': (doc.get('description') or l.label or '')[:500], 'rate': round(net(l), 2), 'quantity': 1}
+            if tax_id:
+                it['tax_id'] = tax_id
+            items.append(it)
+        ref = f'ZEO {batch.number} {doc.get("invoice_no") if kind == "bill" else batch.reference}'[:100]
+        date = doc.get('date') or batch.date.isoformat()
+        body = {'date': date, 'reference_number': ref, 'line_items': items, 'notes': (doc.get('description') or '')[:500]}
+        if kind == 'bill':
+            body.update(vendor_id=contact, bill_number=(doc.get('invoice_no') or batch.reference)[:100], due_date=doc.get('due') or date)
+        else:
+            body['customer_id'] = contact
+            if kind == 'invoice':
+                body['due_date'] = doc.get('due') or date
+        d = self.req('POST', path, body)
+        rec = d.get(one) or {}
+        did = rec.get(idk)
+        if not did:
+            raise ConnectorError(f'Zoho Books did not return the new {kind.replace("_", " ")}.')
+        if doc.get('total') and rec.get('total') is not None and abs(abs(float(rec['total'])) - abs(float(doc['total']))) > 0.05:
+            raise ConnectorError(f'Zoho Books calculated {rec["total"]} but ZEO has {doc["total"]} – check the tax in Zoho Books (it was left as a draft).')
+        if self.st.post_as == 'posted':
+            st = {'invoice': 'sent', 'credit_note': 'open', 'bill': 'open'}[kind]
+            try:
+                self.req('POST', f'{path}/{did}/status/{st}')
+            except ConnectorError:
+                if kind == 'invoice':
+                    raise   # a credit note / bill is usually open already when it is created
+        return did, rec.get(numk) or batch.number
+
+    def _post_payment(self, batch, doc):
+        acc = {a['code']: a['id'] for a in self.accounts()}
+        party, _vat, other = self._split(batch)
+        contact = self._party(party, 'receipt')
+        bank = [l for l, _r in other if l.debit]
+        if not bank or bank[0].account not in acc:
+            raise ConnectorError('The bank / cash account of the receipt is not in Zoho Books – fix the mapping.')
+        amount = round(float(doc.get('amount') or batch.total_debit), 2)
+        applied, left = [], amount
+        for x in doc.get('bills') or []:
+            if x.get('invoice_id') and left > 0:
+                a = round(min(float(x.get('amount') or 0), left), 2)
+                if a > 0:
+                    applied.append({'invoice_id': str(x['invoice_id']), 'amount_applied': a})
+                    left -= a
+        body = {'customer_id': contact, 'payment_mode': 'cash' if doc.get('method') == 'cash' else 'banktransfer',
+                'amount': amount, 'date': doc.get('date') or batch.date.isoformat(), 'account_id': acc[bank[0].account],
+                'reference_number': f'ZEO {batch.number} {batch.reference}'[:100], 'description': (doc.get('description') or '')[:500],
+                'invoices': applied}
+        d = self.req('POST', '/customerpayments', body)
+        p = d.get('payment') or {}
+        return p.get('payment_id'), p.get('payment_number') or batch.number
+
+    def reverse_document(self, orig, rev):
+        """Void the invoice / credit note / bill; delete the payment (Zoho Books has no void for customer payments)."""
+        kind = (orig.rules or {}).get('doc_kind')
+        path, *_ = self.DOC_PATH[kind]
+        if kind == 'payment':
+            self.req('DELETE', f'{path}/{orig.external_id}')
+            return orig.external_id, f'{orig.external_ref} deleted'
+        self.req('POST', f'{path}/{orig.external_id}/status/void')
+        return orig.external_id, f'{orig.external_ref} voided'

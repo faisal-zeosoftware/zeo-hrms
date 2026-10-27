@@ -25,6 +25,14 @@ class CustomUserSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True, 'required': False, 'allow_null': True, 'default': None}
         }
+
+    # v1.62.0 the sign-in code (otp) and its time were returned with every user of the list – never read or written here
+    def get_fields(self):
+        f = super().get_fields()
+        for k in ('otp', 'otp_created_at'):
+            f.pop(k, None)
+        return f
+
     def _visible_ids(self):
         """v1.26.0: an administrator sees only their own companies of a login shared with another account."""
         req = self.context.get('request') if hasattr(self, 'context') else None
@@ -41,24 +49,64 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
     def get_allocated_tenants(self, obj):
         tenants = obj.tenants.all().select_related('country', 'currency')   # v1.28.1
-        ids = self._visible_ids()
+        ids = self._visible_ids_memo()
         if ids is not None and obj.pk != self.context['request'].user.pk:
             tenants = tenants.filter(id__in=ids)
         serializer = UserAllocatedCompanySerializer(
             tenants,
             many=True,
-            context={"user": obj, "request": self.context.get('request') if hasattr(self, 'context') else None}
+            # v1.62.0 speed: one memo for the whole user list – states, tax and the branch list of a company are read
+            # once, not once per user and company (the user list made ~3,800 queries)
+            context={"user": obj, "request": self.context.get('request') if hasattr(self, 'context') else None,
+                     '_zmemo': self.context.setdefault('_zmemo', {}) if isinstance(getattr(self, 'context', None), dict) else {}}
         )
         return serializer.data
+
+    def _visible_ids_memo(self):
+        # v1.62.0 speed: the requester's companies once per list (was one query per listed user)
+        ctx = self.context if isinstance(getattr(self, 'context', None), dict) else None
+        if ctx is None:
+            return self._visible_ids()
+        if '_zvisible' not in ctx:
+            ctx['_zvisible'] = self._visible_ids()
+        return ctx['_zvisible']
+
+    def _group_names_map(self, sch):
+        """v1.62.0 speed: {login id: [group names]} of the open company, read once per list (two queries per user before)."""
+        ctx = self.context if isinstance(getattr(self, 'context', None), dict) else None
+        if ctx is None or getattr(self, 'parent', None) is None:
+            return None   # a single user: the plain lookups below
+        memo = ctx.setdefault('_zmemo', {})
+        key = ('groups', sch)
+        if key not in memo:
+            out = {}
+            try:
+                through = UserTenantPermissions.groups.through
+                with schema_context(sch):
+                    for pid in UserTenantPermissions.objects.values_list('profile_id', flat=True):
+                        out[pid] = []
+                    from ZeoApps import groupscope   # v1.62.0 isolation: the company's own copy instead of the template, its name
+                    for pid, gid in through.objects.order_by('group_id', 'id').values_list('usertenantpermissions__profile_id', 'group_id'):
+                        out[pid].append(gid)
+                    for pid in out:
+                        out[pid] = [groupscope.label(g) for g in groupscope.substitute(out[pid])]
+            except Exception:
+                out = None
+            memo[key] = out
+        return memo[key]
     def get_user_groups(self, obj):
         """Retrieve assigned groups for the user via UserTenantPermissions."""
         req = self.context.get('request') if hasattr(self, 'context') else None
         sch = req.query_params.get('schema') if req is not None and hasattr(req, 'query_params') else None
         if sch and sch != 'public':   # v1.26.0: the groups of the open company (an invited login has its own there)
+            gmap = self._group_names_map(sch)
+            if gmap is not None and obj.pk in gmap:
+                return gmap[obj.pk]
             try:
                 with schema_context(sch):
                     utp = UserTenantPermissions.objects.get(profile=obj)
-                    return [g.name for g in utp.groups.all()]
+                    from ZeoApps import groupscope   # v1.62.0 isolation
+                    return [groupscope.label(g) for g in utp.groups.all()]
             except Exception:
                 pass
         try:
@@ -125,7 +173,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         # Check if username_or_email is a valid email format
         if "@" in username_or_email:
-            user = CustomUser.objects.filter(email=username_or_email).first()
+            user = CustomUser.objects.filter(email=username_or_email).first() or CustomUser.objects.filter(email__iexact=username_or_email, is_active=True).first()
         else:
             user = CustomUser.objects.filter(username=username_or_email).first()
 
@@ -133,13 +181,67 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             # Check if the user is active, if not, prevent login
             if not user.is_active:
                 raise serializers.ValidationError("Your account is deactivated. Please contact support.")
+            from ZeoCloud import sso as _sso   # v1.54.0 the company signs in with its identity provider only
+            _p = _sso.password_blocked(user)
+            if _p is not None:
+                from Translations.i18n import tr as _tr
+                raise serializers.ValidationError(_tr('Your company signs in with "{0}" – use that button.', _tr(_p.name)))
+            from ZeoCloud import security as _sec   # v1.52.0 lock after wrong passwords, authenticator app, sessions
+            _s = _sec.sec(user)
+            if _sec.locked(user, _s):
+                _m = int((_s.locked_until - timezone.now()).total_seconds() // 60) + 1
+                if _m > 1440:   # v1.62.0 locked until HR unlocks it (start password)
+                    from Translations.i18n import tr as _tr
+                    raise serializers.ValidationError(_tr('Your account is locked after wrong tries – ask HR to unlock it.'))
+                raise serializers.ValidationError(f"Too many wrong tries – try again in {_m} minute(s).")
 
             # Validate the user based on the is_ess field
-            if (user.is_ess and user.username == username_or_email) or (
-                    not user.is_ess and user.email == username_or_email):
-                if user.check_password(password):
+            from ZeoCloud import directory as _dir   # v1.54.0 a directory (Active Directory) domain: the domain controller checks the password
+            _dirp = _dir.provider_ldap(user.email) if "@" in username_or_email else None
+            if user.is_ess and user.username == username_or_email and "@" not in username_or_email:   # v1.62.0 the company's Sign-in ID rule
+                from ZeoAdmin.giveaccess import email_required as _ereq
+                if _ereq(user):
+                    from Translations.i18n import tr as _tr
+                    raise serializers.ValidationError(_tr('Sign in with your e-mail address.'))
+            if (user.is_ess and (user.username == username_or_email or ("@" in username_or_email and (user.email or '').lower() == username_or_email.lower()))) or (
+                    not user.is_ess and user.email == username_or_email) or (
+                    _dirp is not None and (user.email or '').lower() == username_or_email.lower()):
+                _ok, _how = _dir.password_ok(user, password)
+                if _ok:
                     self.user = user
-                    data = super().validate(attrs)
+                    _sec.login_ok(user)
+                    from ZeoCloud import netguard as _ng   # v1.61.0 the company's networks
+                    _rq = self.context.get("request")
+                    if _ng.refused_everywhere(user, _ng.client_ip(_rq)):
+                        _ng.refused_signin(user, _rq)
+                        from Translations.i18n import tr as _tr
+                        raise serializers.ValidationError(_tr('Your company allows ZEO only from its own networks. Your address {0} is not one of them.', _ng.client_ip(_rq)))
+                    from ZeoCloud import geo as _geo   # v1.62.0 the company's countries
+                    _cc = _geo.refused_everywhere(user, _ng.client_ip(_rq))
+                    if _cc:
+                        _sec.event('country_refused', user=user, ip=_ng.client_ip(_rq), detail=f'Sign-in with the right password refused: address {_ng.client_ip(_rq)} is in {_cc}.')
+                        from Translations.i18n import tr as _tr
+                        raise serializers.ValidationError(_tr('Your company allows ZEO only from its countries. Your address {0} is in {1}.', _ng.client_ip(_rq), _cc))
+                    from ZeoAdmin.giveaccess import default_state as _dstate   # v1.62.0 the company default password
+                    _ds = _dstate(user)
+                    if _ds is not None:
+                        from Translations.i18n import tr as _tr
+                        if _ds['expired']:
+                            raise serializers.ValidationError(_tr('Your start password has expired – ask HR to give you access again.'))
+                        from django.core import signing
+                        return {"first_check": True, "user_id": user.id, "username": user.username,
+                                "challenge": signing.dumps({"u": user.id, "s": _ds['schema']}, salt="zeo-first-check")}
+                    if _s.totp_on:   # v1.52.0 the authenticator code comes next: no tokens yet
+                        from django.core import signing
+                        return {"two_factor": "totp", "user_id": user.id, "username": user.username,
+                                "challenge": signing.dumps({"u": user.id}, salt="zeo-2fa-login")}
+                    data = {}   # v1.62.0 the tokens come from the session below (simplejwt's own check could not take an employee's e-mail)
+                    _req = self.context.get("request")
+                    _t = _sec.tokens(user, _req, _how)
+                    data["access"], data["refresh"] = _t["access"], _t["refresh"]
+                    _rules = _sec.strictest(user)
+                    data["password_expired"] = _sec.password_expired(user)
+                    data["setup_2fa"] = _sec.needs_2fa(user, _rules)
                     data["user_id"] = user.id
                     data["username"] = user.username
                     data["must_change_password"] = user.must_change_password
@@ -154,6 +256,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     data["tenant_id"] = [tenant.schema_name for tenant in user.tenants.all()]
                     return data
                 else:
+                    _sec.fail(user, _s)
                     raise serializers.ValidationError("Invalid password")
             else:
                 if user.is_ess:
@@ -180,6 +283,17 @@ class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = company
         fields = '__all__'
+
+    def _zmemo(self, key, fn):
+        """v1.62.0 speed: the same value for every company of one response (states / tax of a country, a company's
+        branch list) is read once – shared through the serializer context ('_zmemo')."""
+        ctx = self.context if isinstance(getattr(self, 'context', None), dict) else None
+        if ctx is None:
+            return fn()
+        memo = ctx.setdefault('_zmemo', {})
+        if key not in memo:
+            memo[key] = fn()
+        return memo[key]
 
     def validate_name(self, v):
         """v1.28.1: two companies cannot carry the same name (ignoring case and spacing) – the second one could not be
@@ -221,19 +335,23 @@ class CompanySerializer(serializers.ModelSerializer):
             return []
     def get_states(self, obj):
         if obj.country:
-            states = state_mstr.objects.filter(country=obj.country, is_active=True).select_related('country')   # v1.28.1
-            return StateSerializer(states, many=True).data
+            def _states():
+                states = state_mstr.objects.filter(country=obj.country, is_active=True).select_related('country')   # v1.28.1
+                return StateSerializer(states, many=True).data
+            return self._zmemo(('states', obj.country_id), _states)   # v1.62.0 once per country
         return []
     def get_tax_details(self, obj):
         """Fetch tax details dynamically from the TaxSystem model"""
-        tax = TaxSystem.objects.filter(country=obj.country, is_active=True).first()
-        if tax:
-            return {"tax_name": tax.tax_name, "tax_percentage": tax.tax_percentage}
-        return None  # If no tax is found  
+        def _tax():
+            tax = TaxSystem.objects.filter(country=obj.country, is_active=True).first()
+            if tax:
+                return {"tax_name": tax.tax_name, "tax_percentage": tax.tax_percentage}
+            return None  # If no tax is found
+        return self._zmemo(('tax', obj.country_id), _tax)   # v1.62.0 once per country
     def get_currency_details(self, obj):
         currency = obj.currency
         if not currency and obj.country:
-            currency = obj.country.currency.first()
+            currency = self._zmemo(('currency', obj.country_id), lambda: obj.country.currency.first())   # v1.62.0 once per country
 
         if currency:
             return {
@@ -413,14 +531,42 @@ class ValidateCredentialsSerializer(serializers.Serializer):
         else:
             user = CustomUser.objects.filter(username=username_or_email).first()
 
+        if user is None:   # v1.54.0 a directory user signing in for the first time gets a login (when the company allows it)
+            from ZeoCloud import directory as _dir
+            user = _dir.first_login(username_or_email, password)
+            if user is not None:
+                return {"user_id": user.id}
         if user is None:
             raise serializers.ValidationError("User not found")
 
         if not user.is_active:
             raise serializers.ValidationError("User is deactivated")
 
-        if not user.check_password(password):
+        from ZeoCloud import sso as _sso   # v1.54.0 the company signs in with its identity provider only
+        _p = _sso.password_blocked(user)
+        if _p is not None:
+            from Translations.i18n import tr as _tr
+            raise serializers.ValidationError(_tr('Your company signs in with "{0}" – use that button.', _tr(_p.name)))
+        from ZeoCloud import security as _sec   # v1.52.0 the same lock as the sign-in
+        _s = _sec.sec(user)
+        if _sec.locked(user, _s):
+            _m = int((_s.locked_until - timezone.now()).total_seconds() // 60) + 1
+            raise serializers.ValidationError(f"Too many wrong tries – try again in {_m} minute(s).")
+        from ZeoCloud import directory as _dir
+        if not _dir.password_ok(user, password)[0]:
+            _sec.fail(user, _s)
             raise serializers.ValidationError("Invalid password")
+        from ZeoCloud import netguard as _ng, geo as _geo   # v1.62.0 the company's networks and countries (e-mail code sign-in too)
+        _rq = self.context.get("request")
+        if _rq is not None:
+            from Translations.i18n import tr as _tr
+            if _ng.refused_everywhere(user, _ng.client_ip(_rq)):
+                _ng.refused_signin(user, _rq)
+                raise serializers.ValidationError(_tr('Your company allows ZEO only from its own networks. Your address {0} is not one of them.', _ng.client_ip(_rq)))
+            _cc = _geo.refused_everywhere(user, _ng.client_ip(_rq))
+            if _cc:
+                _sec.event('country_refused', user=user, ip=_ng.client_ip(_rq), detail=f'Sign-in refused: address {_ng.client_ip(_rq)} is in {_cc}.')
+                raise serializers.ValidationError(_tr('Your company allows ZEO only from its countries. Your address {0} is in {1}.', _ng.client_ip(_rq), _cc))
 
         # SUCCESS → credentials are valid
         return {"user_id": user.id}
@@ -477,6 +623,13 @@ class UserAllocatedCompanySerializer(CompanySerializer):
     class Meta(CompanySerializer.Meta):
         fields = "__all__"
 
+    def _has_inbox(self, user, schema_name):
+        """v1.62.0 speed: the companies in which this login has any inbox row, read once per response (the top bar's
+        company menu asked 3 queries per branch and 3 per company – ~500 queries for a 42-company login)."""
+        schemas = self._zmemo(('inbox_schemas', user.pk), lambda: set(
+            UserNotificationInbox.objects.filter(user=user).values_list('schema_name', flat=True).distinct()))
+        return schema_name in schemas
+
     def get_branches(self, obj):
 
         user = self.context.get("user")
@@ -491,7 +644,8 @@ class UserAllocatedCompanySerializer(CompanySerializer):
                 # SUPERUSER -> ALL BRANCHES
                 if user.is_superuser:
 
-                    branches = brnch_mstr.objects.all()
+                    # v1.62.0 speed: a company's branches once per response (the user list repeated them per user)
+                    branches = self._zmemo(('branches', obj.schema_name), lambda: list(brnch_mstr.objects.all()))
 
                 # NORMAL USER -> ONLY ALLOCATED BRANCHES
                 else:
@@ -523,7 +677,7 @@ class UserAllocatedCompanySerializer(CompanySerializer):
                 # this call ~20x cheaper (it was 1.3 s on a 22-company login and runs on almost every page)
                 req = self.context.get('request') if hasattr(self, 'context') else None
                 want_notif = bool(req is not None and hasattr(req, 'query_params') and req.query_params.get('notifications'))
-                if not want_notif:
+                if not want_notif or not self._has_inbox(user, obj.schema_name):   # v1.62.0 nothing in the inbox: the same empty rows without 3 queries per branch
                     return [{"id": b.id, "branch_name": b.branch_name, "notification_count": 0, "notification_summary": [], "notifications": []}
                             for b in branches]
 
@@ -595,6 +749,8 @@ class UserAllocatedCompanySerializer(CompanySerializer):
         user = self.context.get("user")
 
         if not user or not self._want_notifications():   # v1.28.1 only when asked (?notifications=1)
+            return {"total_unread": 0, "request_wise_counts": {}, "latest_notifications": []}
+        if not self._has_inbox(user, obj.schema_name):   # v1.62.0 nothing in the inbox of this company: the same answer without 3 queries
             return {"total_unread": 0, "request_wise_counts": {}, "latest_notifications": []}
 
         notifications = UserNotificationInbox.objects.filter(

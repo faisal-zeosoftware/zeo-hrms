@@ -18,7 +18,7 @@ app = App(
     label='ZeoCRM', slug='zeo-crm', title='CRM', settings_model=CRMSettings, sequence_model=CRMSequence, event_model=CRMEvent,
     file_model=CRMFile, roles=ROLES, role_prefix='crm_', manager_role='crm_manager', packs=PACKS,
     pack_labels={k: v['label'] for k, v in PACKS.items()}, pack_descriptions={k: v['description'] for k, v in PACKS.items()},
-    industry_from_company={'PM': 'property_management'},
+    industry_from_company={'PM': 'property_management', 'CON': 'construction', 'OG': 'oil_gas', 'HC': 'healthcare', 'EDU': 'education', 'MFG': 'manufacturing', 'RET': 'retail', 'IT': 'it', 'FIN': 'finance'},   # v1.38.0
     pack_models={'source': (Source, 'code'), 'pipeline': (Pipeline, 'code'), 'stage': (Stage, 'code'), 'lost_reason': (LostReason, 'code'),
                  'score_rule': (LeadScoreRule, 'name')},
     links=(('ZeoProperty', 'Property', 'Pick Property units on opportunities, viewings and offers; reserve the unit from a won deal; '
@@ -285,7 +285,7 @@ def a_reserve(o, request, f):
     c = o.contact
     res = call(app, 'ZeoProperty', 'reserve', unit_id=o.unit_id, kind='lease' if o.interest == 'rent' else 'sale',
                contact={'name': c.name, 'email': c.email, 'phone': c.phone, 'company': c.company_name, 'crm_contact_id': c.pk,
-                        'party_id': c.property_party_id},
+                        'party_id': c.property_party_id, 'partner_id': c.partner_id},
                amount=f.n('amount', Decimal('0')), opportunity_id=o.pk, user=request.user, note=f.s('note'), agent_id=o.owner_id)
     if not res:
         raise AppError('Property could not reserve the unit. Check that the unit is available.')
@@ -399,11 +399,23 @@ app.reg(Reg('opportunity', Opportunity, 'Opportunity', 'Opportunities', 'Sales',
             ],
             extra=lambda o, r: {'links': {
                 'unit': link_label('property.units', o.unit_id) if o.unit_id else '',
-                'reservation': link_label('property.reservations', o.reservation_id) if o.reservation_id else '',
+                'reservation': link_label('property.reservations', o.reservation_id or _reservation_of(o)) if (o.reservation_id or _reservation_of(o)) else '',
                 'renewal_lease': link_label('property.leases', o.renewal_lease_id) if o.renewal_lease_id else '',
                 'first_contact_due': d(o.first_contact_due), 'first_contacted_at': d(o.first_contacted_at),
                 'late': bool(o.first_contact_due and not o.first_contacted_at and o.first_contact_due < now())}},
             help='Enquiries and deals moving through a pipeline.'))
+
+def _reservation_of(o):
+    """v1.53.1: a reservation made in Property for this opportunity (its crm_opportunity_id) when the opportunity has no link yet."""
+    try:
+        from django.apps import apps as _apps
+        if not _apps.is_installed('ZeoProperty'):
+            return None
+        R = _apps.get_model('ZeoProperty', 'Reservation')
+        return R.objects.filter(crm_opportunity_id=o.pk).order_by('-id').values_list('id', flat=True).first()
+    except Exception:
+        return None
+
 
 app.reg(Reg('activity', Activity, 'Activity', 'Activities', 'Sales',
             cols=('number', 'kind', 'subject', 'contact', 'opportunity', 'owner', 'due_at', 'status'),
@@ -488,11 +500,15 @@ def contact_for(p):
         c = Contact.objects.filter(pk=p['crm_contact_id']).first()
     if c is None and p.get('party_id'):
         c = Contact.objects.filter(property_party_id=p['party_id']).first()
-    if c is None and p.get('email'):
+    # v1.41.0: the same business partner is the same person – no more matching on the e-mail alone (two people may share one)
+    if c is None and p.get('partner_id'):
+        c = Contact.objects.filter(partner_id=p['partner_id']).order_by('pk').first()
+    if c is None and p.get('email') and not p.get('partner_id'):
         c = Contact.objects.filter(email__iexact=p['email']).first()
     if c is None:
         c = Contact.objects.create(number=app.next_number('contact', 'CON'), name=p.get('name') or 'Customer', email=p.get('email') or '',
-                                   phone=p.get('phone') or '', contact_type=p.get('type') or 'tenant', property_party_id=p.get('party_id'))
+                                   phone=p.get('phone') or '', contact_type=p.get('type') or 'tenant', property_party_id=p.get('party_id'),
+                                   partner_id=p.get('partner_id'))
         app.event('contact', c.pk, 'Created from Property', None)
     elif p.get('party_id') and not c.property_party_id:
         c.property_party_id = p['party_id']
@@ -688,3 +704,8 @@ def daily():
 
 
 app.dashboard, app.my_work, app.daily = dashboard, my_work, daily
+
+
+# v1.41.0 business partners: partner picker, shared-partner lock and duplicate warning on contacts and accounts
+from ZeoMasters.extensions import attach as _attach_partners  # noqa: E402
+_attach_partners(app)

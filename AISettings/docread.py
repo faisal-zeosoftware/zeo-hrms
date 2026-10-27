@@ -67,7 +67,7 @@ def ocr_available():
     return bool(shutil.which('tesseract'))
 
 
-def _ocr_image(img_bytes):
+def _ocr_image(img_bytes, psm='3'):
     """Text of an image with the Tesseract program ('' when it is not installed or fails)."""
     exe = shutil.which('tesseract')
     if not exe:
@@ -87,7 +87,7 @@ def _ocr_image(img_bytes):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, 'page.png')
             im.save(p)
-            r = subprocess.run([exe, p, 'stdout', '--psm', '3'], capture_output=True, timeout=OCR_TIMEOUT)
+            r = subprocess.run([exe, p, 'stdout', '--psm', str(psm)], capture_output=True, timeout=OCR_TIMEOUT)
             return r.stdout.decode('utf-8', 'replace')
     except Exception as exc:
         log.warning('OCR failed: %s', exc)
@@ -187,9 +187,20 @@ def _names(s):
     return re.sub(r'\s+', ' ', f'{given} {sur}').strip().title()
 
 
+def _name_split(s):
+    """v1.53.2 (surname, given names) of an MRZ name field."""
+    parts = s.strip('<').split('<<', 1)
+    sur = re.sub(r'\s+', ' ', parts[0].replace('<', ' ')).strip().title()
+    given = re.sub(r'\s+', ' ', parts[1].replace('<', ' ')).strip().title() if len(parts) > 1 else ''
+    return sur, given
+
+
 def mrz_lines(text):
     out = []
     for raw in text.splitlines():
+        if '<<' in raw and re.search(r'[a-z]', raw):   # v1.53.2 OCR reads runs of '<' as "eccc<c<": lower-case next to '<' is filler
+            for _ in range(4):
+                raw = re.sub(r'(?<=<)[a-z]+|[a-z]+(?=<)', lambda m: '<' * len(m.group()), raw)
         s = re.sub(r'\s+', '', raw.upper()).replace('«', '<').replace('‹', '<').replace('(', '<').replace('{', '<')
         s = re.sub(r'[^A-Z0-9<]', '', s)
         if re.search(r'[a-z]', raw) or not 28 <= len(s) <= 48:
@@ -227,7 +238,7 @@ def parse_mrz(text):
                 if _cd(alt) == num_cd:
                     num, checks['number'] = alt, True
             return {'format': 'TD3' if n == 44 else 'MRV-B', 'kind': 'passport' if l1[0] == 'P' else 'visa',
-                    'country': l1[2:5].replace('<', ''), 'name': _names(l1[5:]), 'number': num.replace('<', ''),
+                    'country': l1[2:5].replace('<', ''), 'name': _names(l1[5:]), 'name_parts': _name_split(l1[5:]), 'number': num.replace('<', ''),
                     'nationality': m['nat'].replace('<', ''), 'birth': _yymmdd(dob, True), 'sex': m['sex'].replace('<', ''),
                     'expiry': _yymmdd(exp), 'optional': opt.replace('<', ''), 'checks': checks}
     # TD1 (ID card, e.g. the back of the Emirates ID): three lines of 30
@@ -240,7 +251,7 @@ def parse_mrz(text):
             checks = {'number': _cd(num) == num_cd, 'birth': _cd(dob) == dob_cd, 'expiry': _cd(exp) == exp_cd}
             opt = _num(l1[15:30].replace('<', ''))
             return {'format': 'TD1', 'kind': 'emirates_id' if l1[2:5] == 'ARE' else 'id_card', 'country': l1[2:5].replace('<', ''),
-                    'name': _names(l3), 'number': num.replace('<', ''), 'nationality': l2[15:18].replace('<', ''),
+                    'name': _names(l3), 'name_parts': _name_split(l3), 'number': num.replace('<', ''), 'nationality': l2[15:18].replace('<', ''),
                     'birth': _yymmdd(dob, True), 'sex': l2[7].replace('<', ''), 'expiry': _yymmdd(exp), 'optional': opt, 'checks': checks}
     return None
 
@@ -463,8 +474,15 @@ def analyse(name, text, types, source=''):
         info.append({'label': 'Person code', 'value': on['person_code']})
     if mrz:
         info.append({'label': 'Machine-readable zone', 'value': f"{mrz['format']} – check digits {'all correct' if all(mrz['checks'].values()) else 'not all correct'}"})
+    # v1.53.2 the values in a fixed shape, for "Update the employee record" and the bulk upload of document files
+    sur, given = (mrz or {}).get('name_parts') or ('', '')
+    record = {'kind': kind, 'number': number, 'issue': issue.isoformat() if issue else None, 'expiry': expiry.isoformat() if expiry else None,
+              'birth': birth.isoformat() if birth else None, 'name': nm or None, 'surname': sur or None, 'given': given or None,
+              'nationality': (mrz or {}).get('nationality') or None, 'sex': (mrz or {}).get('sex') or None,
+              'emirates_id': (eid[1] if eid and kind != 'emirates_id' else None), 'uid': on['uid'], 'person_code': on['person_code'],
+              'verified': bool(mrz and all(mrz['checks'].values()))}
     return {'kind': kind, 'kind_label': KINDS[kind][0] if kind in KINDS else '', 'fields': fields, 'info': info, 'notes': notes,
-            'mrz': bool(mrz), 'mrz_ok': bool(mrz and all(mrz['checks'].values()))}
+            'mrz': bool(mrz), 'mrz_ok': bool(mrz and all(mrz['checks'].values())), 'record': record}
 
 
 EXTERNAL_PROMPT = ('You read the text of an identity or employment document of an employee in the UAE. Answer ONLY with a JSON object '
@@ -516,6 +534,17 @@ def merge_external(res, ext, types):
             cur.update(_field(key, label, val, 'medium', 'external AI'))
     if ext.get('holder_name') and not any(i['label'] == 'Name on the document' for i in res['info']):
         res['info'].insert(0, {'label': 'Name on the document', 'value': str(ext['holder_name'])[:80]})
+    rec = res.setdefault('record', {})
+    for f in res['fields']:
+        k = {'emp_doc_number': 'number', 'emp_doc_issued_date': 'issue', 'emp_doc_expiry_date': 'expiry'}.get(f['key'])
+        if k:
+            rec[k] = f['value']
+    if kind and not rec.get('kind'):
+        rec['kind'] = kind
+    if ext.get('holder_name') and not rec.get('name'):
+        rec['name'] = str(ext['holder_name'])[:80]
+    if _iso(ext.get('date_of_birth')) and not rec.get('birth'):
+        rec['birth'] = _iso(ext.get('date_of_birth')).isoformat()
     order = ['document_type', 'emp_doc_number', 'emp_doc_issued_date', 'emp_doc_expiry_date']
     res['fields'].sort(key=lambda f: order.index(f['key']) if f['key'] in order else 9)
     return res

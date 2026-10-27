@@ -165,6 +165,8 @@ class Kiosk(models.Model):
     allow_face = models.BooleanField(default=False)
     show_site_qr = models.BooleanField(default=False)
     site_qr_seconds = models.PositiveIntegerField(default=30)
+    take_photo = models.BooleanField(default=False, help_text='v1.49.0: the kiosk takes a photo of the employee with every punch (front camera)')
+    self_service = models.BooleanField(default=False, help_text='v1.51.0: employees see their payslips and leave balance and ask for leave (ID + PIN)')
     last_seen = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -177,6 +179,9 @@ class EmployeeKey(models.Model):
     employee_id = models.IntegerField(unique=True)
     pin_hash = models.CharField(max_length=128, blank=True)
     qr_version = models.PositiveIntegerField(default=1)
+    failed_pins = models.PositiveSmallIntegerField(default=0)        # v1.51.0 wrong PINs in a row (self-service kiosk)
+    locked_until = models.DateTimeField(null=True, blank=True)        # v1.51.0 locked after 5 wrong PINs
+    pin_must_change = models.BooleanField(default=False)               # v1.62.0 a start PIN from HR: the employee chooses their own at the kiosk
     updated_at = models.DateTimeField(auto_now=True)
 
 
@@ -262,6 +267,8 @@ class CorrectionRequest(models.Model):
     proposed_out = models.DateTimeField(null=True, blank=True)
     reason = models.TextField()
     attachment = models.FileField(upload_to='attendance_plus/corrections/', null=True, blank=True)
+    reason_code = models.CharField(max_length=20, blank=True, default='', help_text='v1.49.0: reason from the regularisation reasons list')
+    photo = models.ImageField(upload_to='attendance_plus/corrections/photo/', null=True, blank=True, help_text='v1.49.0: proof photo taken with the camera')
     waive_penalty = models.BooleanField(default=False)
     status = models.CharField(max_length=10, choices=STATES, default='manager', db_index=True)
     manager_user_id = models.IntegerField(null=True, blank=True)
@@ -277,3 +284,37 @@ class CorrectionRequest(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class RegularisationReason(models.Model):
+    """v1.49.0 – the reasons an employee picks when asking to regularise a day (missed punch, site visit, device down …):
+    whether a proof photo or a document is needed, and how many times a month it may be used."""
+    code = models.CharField(max_length=20, unique=True)
+    name = models.CharField(max_length=120)
+    kind = models.CharField(max_length=14, choices=CorrectionRequest.KINDS, default='missing_punch')
+    needs_photo = models.BooleanField(default=False)
+    needs_attachment = models.BooleanField(default=False)
+    max_per_month = models.PositiveSmallIntegerField(null=True, blank=True, help_text='empty = the attendance rule limit only')
+    waive_penalty = models.BooleanField(default=False, help_text='ask to waive the late / early penalty by default')
+    is_active = models.BooleanField(default=True)
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'name']
+
+
+class OvertimeDecision(models.Model):
+    """v1.62.0 people – a manager / HR decision on an attendance overtime row (calendars.EmployeeOvertime) that is not just
+    "approved" (that stays on the overtime row): a rejection with its reason, so the row leaves the approval queue. The
+    hours are kept: when attendance later gives more hours the row is asked again."""
+    employee_id = models.IntegerField(db_index=True)
+    date = models.DateField()
+    ot_type = models.CharField(max_length=10, blank=True, default='')
+    hours = models.DecimalField(max_digits=6, decimal_places=2)
+    status = models.CharField(max_length=12, default='rejected', choices=[('rejected', 'Rejected')])
+    note = models.CharField(max_length=255, blank=True, default='')
+    by_id = models.IntegerField(null=True, blank=True)
+    at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('employee_id', 'date', 'ot_type')]

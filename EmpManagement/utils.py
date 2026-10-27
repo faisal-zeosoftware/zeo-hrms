@@ -299,6 +299,24 @@ def service_years(start, end):
     return Decimal(years) + Decimal(rest) / Decimal('365')
 
 
+def normalize_gratuity_rules(rules, years_of_service):
+    """v1.62.0: a gratuity table often starts with a band "0 to 1 year: 0 days" – it means "no gratuity under one year of
+    service" (UAE Decree-Law 33 of 2021, Art. 51), not "the first year is never paid". Read progressively, that band left the
+    first year out of every gratuity (4.28 years paid as 3.28 × 21 days). Returns (eligible, rules): below the band's end
+    nothing is due; from it on the next band counts from year 0. Tables without such a band are returned unchanged."""
+    from types import SimpleNamespace
+    rules = list(rules)
+    if len(rules) > 1 and Decimal(str(rules[0].minimum_value)) == 0 and not rules[0].resignation_days and not rules[0].termination_days:
+        threshold = Decimal(str(rules[0].maximum_value or 0))
+        if Decimal(str(years_of_service)) < threshold:
+            return False, rules
+        nxt = rules[1]
+        first = SimpleNamespace(minimum_value=Decimal('0'), maximum_value=nxt.maximum_value, resignation_days=nxt.resignation_days,
+                                termination_days=nxt.termination_days, is_active=True)
+        return True, [first] + rules[2:]
+    return True, rules
+
+
 def calculate_progressive_gratuity(years_of_service, daily_wage, termination_type, branch_id=None):
     from OrganisationManager.models import GratuityTable
 
@@ -315,7 +333,8 @@ def calculate_progressive_gratuity(years_of_service, daily_wage, termination_typ
             from CountryPack import services as _cp
             if not _cp.uses_uae_gratuity(branch_id):
                 kind = 'termination' if termination_type in ['termination', 'retirement', 'death_or_disablement'] else 'resignation'
-                g = _cp.gratuity_breakdown(remaining_years, Decimal(daily_wage or 0) * Decimal('30'), kind, branch_id)
+                g = _cp.gratuity_breakdown(remaining_years, Decimal(daily_wage or 0) * Decimal('30'), kind, branch_id,
+                                           daily=(daily_wage if _cp.uae_version_daily(branch_id) else None))
                 return Decimal(str(g['days'])).quantize(Decimal('0.01')), Decimal(str(g['amount'])).quantize(Decimal('0.01'))
         except ImportError:
             pass
@@ -327,6 +346,10 @@ def calculate_progressive_gratuity(years_of_service, daily_wage, termination_typ
         from types import SimpleNamespace
         rules = [SimpleNamespace(minimum_value=0, maximum_value=5, resignation_days=21, termination_days=21),
                  SimpleNamespace(minimum_value=5, maximum_value=None, resignation_days=30, termination_days=30)]
+    else:
+        eligible, rules = normalize_gratuity_rules(rules, remaining_years)   # v1.62.0 a "0–1 year: 0 days" band = the minimum service
+        if not eligible:
+            return Decimal('0.00'), Decimal('0.00')
 
     for rule in rules:
         min_year = Decimal(rule.minimum_value)
@@ -367,6 +390,17 @@ def get_final_salary(employee, last_working_date):
     print("pa",s)
     return payslip.net_salary if payslip else Decimal('0.00')
 def calculate_settlement(eos):
+    """v1.59.0: the gratuity rules in force on the last working day (dated country-policy versions)."""
+    try:
+        from CountryPack.services import rules_on
+        lwd = getattr(getattr(eos, 'resignation', None), 'last_working_date', None)
+    except ImportError:
+        return _calculate_settlement(eos)
+    with rules_on(lwd):
+        return _calculate_settlement(eos)
+
+
+def _calculate_settlement(eos):
     from PayrollManagement.models import EmployeeSalaryStructure
     from OrganisationManager.models import GratuityTable
     from PayrollManagement.models import AirTicketAllocation
@@ -377,6 +411,13 @@ def calculate_settlement(eos):
 
         start_date = employee.emp_joined_date
         end_date = resignation.last_working_date
+        _golive_unpaid = 0.0
+        try:   # v1.56.0 mid-year go-live: gratuity service start and unpaid days before ZEO (setup guide)
+            from PayrollPlus.golive import gratuity_start, unpaid_before
+            start_date = gratuity_start(employee, start_date) or start_date
+            _golive_unpaid = unpaid_before(employee)
+        except ImportError:
+            pass
 
         # -------------------------------
         # SERVICE CALCULATION
@@ -399,7 +440,7 @@ def calculate_settlement(eos):
                 _unpaid += _AD.objects.filter(employee_id=employee.pk, date__range=(start_date, end_date), status='absent').count()
             except LookupError:
                 pass
-            eos.leave_days_without_pay = round(_unpaid, 2)
+            eos.leave_days_without_pay = round(_unpaid + _golive_unpaid, 2)
         except Exception:
             logger.exception('unpaid leave days for EOS failed')
         eos.total_service_days = total_days

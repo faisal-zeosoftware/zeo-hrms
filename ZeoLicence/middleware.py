@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 SAFE = ('GET', 'HEAD', 'OPTIONS')
 OPEN = ('/licence/', '/users/token', '/users/validate-credentials', '/users/verify-otp', '/users/send-otp',
         '/users/send-reset-otp', '/users/verify-reset-otp', '/users/reset-password', '/users/change-password',
-        '/language/', '/admin', '/static', '/media', '/mobile/api/unlock/')
+        '/language/', '/admin', '/static', '/media', '/mobile/api/unlock/', '/users/sso/', '/users/2fa/', '/scim/', '/users/sign-in-link/')   # v1.54.0, v1.56.0
 READONLY_OK = re.compile(r'notif|/language/api/me|assistant|/export|/report|/views/api', re.I)
 APP_PREFIX = [('/payroll-plus/', 'payroll'), ('/accounting/', 'payroll'), ('/payroll/', 'payroll'), ('/zeo-projects/', 'projects'), ('/zeo-crm/', 'crm'),
               ('/zeo-property/', 'property'), ('/zeo-maintenance/', 'maintenance'), ('/zeo-assets/', 'assets'), ('/zeo-hse/', 'hse')]

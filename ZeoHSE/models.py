@@ -18,9 +18,10 @@ EMP = 'EmpManagement.emp_master'
 BRANCH = 'OrganisationManager.brnch_mstr'
 
 INDUSTRIES = (('general', 'General'), ('construction', 'Construction and engineering'), ('manufacturing', 'Manufacturing'),
-              ('healthcare', 'Hospitals and healthcare'), ('oil_gas', 'Oil and gas'))
+              ('healthcare', 'Hospitals and healthcare'), ('oil_gas', 'Oil and gas'),
+              ('education', 'Education'), ('retail', 'Retail and hospitality'), ('office', 'Offices (IT, finance, services, property)'))   # v1.38.0
 # company.industry_type (UserManagement) → pack
-INDUSTRY_FROM_COMPANY = {'CON': 'construction', 'MFG': 'manufacturing', 'HC': 'healthcare', 'OG': 'oil_gas'}
+INDUSTRY_FROM_COMPANY = {'CON': 'construction', 'MFG': 'manufacturing', 'HC': 'healthcare', 'OG': 'oil_gas', 'EDU': 'education', 'RET': 'retail', 'IT': 'office', 'FIN': 'office', 'PM': 'office'}   # v1.38.0
 
 REVIEW = (('to_review', 'To review'), ('reviewed', 'Reviewed'))
 # HSE roles – permissions on HSESettings, given through the "HSE – …" groups (zeohse_setup --roles)
@@ -130,6 +131,7 @@ class Contractor(models.Model):
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
 
+    partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_contractors', verbose_name='business partner')   # v1.42.0
     class Meta:
         ordering = ['name']
 
@@ -147,6 +149,9 @@ class PackItem(models.Model):
 
     class Meta:
         abstract = True
+
+    def __str__(self):   # v1.62.0 readable names in the report builder, filters and logs (was "… object (n)")
+        return str(getattr(self, 'name', '') or getattr(self, 'label', '') or getattr(self, 'hazard', '') or getattr(self, 'code', '') or self.pk)
 
 
 class Term(PackItem):
@@ -259,6 +264,9 @@ class RiskAssessment(models.Model):
     class Meta:
         ordering = ['-created_at']
 
+    def __str__(self):   # v1.62.0 readable in reports and links
+        return f'{self.number} {getattr(self, "title", "") or ""}'.strip()
+
 
 class RiskLine(models.Model):
     assessment = models.ForeignKey(RiskAssessment, on_delete=models.CASCADE, related_name='lines')
@@ -313,6 +321,9 @@ class Permit(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+    def __str__(self):   # v1.62.0 readable in reports and links
+        return f'{self.number} {getattr(self, "title", "") or ""}'.strip()
 
 
 class GasTest(models.Model):
@@ -396,6 +407,9 @@ class Incident(models.Model):
 
     class Meta:
         ordering = ['-occurred_at']
+
+    def __str__(self):   # v1.62.0 readable in reports and links
+        return f'{self.number} {getattr(self, "title", "") or ""}'.strip()
 
 
 class Inspection(models.Model):
@@ -495,6 +509,9 @@ class Action(models.Model):
 
     class Meta:
         ordering = ['due_date', 'id']
+
+    def __str__(self):   # v1.62.0 readable in reports and links
+        return f'{self.number} {getattr(self, "title", "") or ""}'.strip()
 
 
 class ApprovalStep(models.Model):
@@ -711,6 +728,9 @@ class KPI(models.Model):
     class Meta:
         ordering = ['code']
 
+    def __str__(self):   # v1.62.0 readable in reports
+        return f'{self.code} {self.name}'
+
 
 class KPIValue(models.Model):
     kpi = models.ForeignKey(KPI, on_delete=models.CASCADE, related_name='values')
@@ -863,6 +883,7 @@ class Chemical(models.Model):
     trade_name = models.CharField(max_length=200, blank=True)
     supplier = models.CharField(max_length=200, blank=True)
     product_code = models.CharField(max_length=60, blank=True)
+    item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_chemicals', verbose_name='item (master)')   # v1.43.0 item master
     cas_no = models.CharField('CAS number', max_length=40, blank=True)
     hazard_classes = models.CharField('Hazard classification (GHS)', max_length=255, blank=True)
     signal_word = models.CharField(max_length=10, blank=True, help_text='Danger / Warning')
@@ -1073,6 +1094,9 @@ class CompetencyType(models.Model):
 
     class Meta:
         ordering = ['name']
+
+    def __str__(self):   # v1.62.0 readable in reports
+        return self.name
 
 
 class Competency(models.Model):

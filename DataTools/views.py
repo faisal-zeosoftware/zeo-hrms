@@ -56,6 +56,27 @@ def _serializer(cls, request, data=None):
     return view.get_serializer(data=data) if data is not None else view.get_serializer()
 
 
+def _rights_refusal(request, cls, path, schema, data, factory):
+    """v1.56.1: the rights check of a row (branch, self-service …) without saving – the check before import said "OK" for rows
+    the import then refused (e.g. a branch user's row of another branch)."""
+    try:
+        from rest_framework.parsers import JSONParser
+        from rest_framework.request import Request
+        from AccessControl.access import ZeoAccess
+        raw = factory.post(f'{path}?schema={schema}', data, format='json')
+        raw.tenant = getattr(request, 'tenant', None)
+        req = Request(raw, parsers=[JSONParser()])
+        req.user = request.user
+        view = cls()
+        view.request, view.format_kwarg, view.action, view.kwargs, view.args = req, None, 'create', {}, ()
+        perm = ZeoAccess()
+        if not perm.has_permission(req, view):
+            return str(getattr(perm, 'message', '') or 'You may not add this record.')
+    except Exception:
+        return ''
+    return ''
+
+
 def _natural_fields(model):
     names = {f.name for f in model._meta.concrete_fields}
     keys = [k for k in NATURAL_KEYS if k in names]
@@ -122,8 +143,9 @@ def writable_fields(cls, request):
     return out
 
 
-def _resolve_link(model, raw):
-    """id / code / name -> pk (None when not found)."""
+def _resolve_link(model, raw, branch=None, many_out=None):
+    """id / code / name -> pk (None when not found). v1.62.0: several rows with the same code / name (a salary component copied to
+    every branch) → the row of the record's branch; still several → None and many_out gets True (the message says so)."""
     s = str(raw).strip()
     if not s:
         return None
@@ -144,14 +166,68 @@ def _resolve_link(model, raw):
                 q |= Q(country_code__iexact=iso)
         except Exception:
             pass
-    hits = list(model._default_manager.filter(q).values_list('pk', flat=True)[:2])
+    hits = list(model._default_manager.filter(q).values_list('pk', flat=True)[:50])
     if len(hits) == 1:
         return hits[0]
+    if len(hits) > 1 and branch and not s.isdigit():   # v1.62.0 the same code in several branches: the record's branch
+        names = {f.name for f in model._meta.get_fields()}
+        for fld in ('branch', 'branch_id'):
+            if fld in names:
+                try:
+                    mine = list(model._default_manager.filter(pk__in=hits, **{fld: branch}).values_list('pk', flat=True)[:2])
+                except Exception:
+                    mine = []
+                if len(mine) == 1:
+                    return mine[0]
+                try:   # or the rows without a branch (company-wide)
+                    common = list(model._default_manager.filter(pk__in=hits, **{f'{fld}__isnull': True}).values_list('pk', flat=True)[:2])
+                except Exception:
+                    common = []
+                if len(common) == 1:
+                    return common[0]
+    if len(hits) > 1 and many_out is not None and not s.isdigit():
+        many_out.append(True)
     if len(hits) > 1 and model._meta.model_name == 'cntry_mstr':
         return hits[0]
     if s.isdigit() and int(s) in hits:
         return int(s)
     return None
+
+
+def _valid_hint(model, raw, limit=12):
+    """v1.62.0 workbook: after "not found" – the closest value and the values that exist (codes / names), so the fix is obvious."""
+    try:
+        import difflib
+        keys = _natural_fields(model)[:2]
+        if not keys:
+            return ''
+        vals = []
+        for row in model._default_manager.values_list(*keys)[:400]:
+            vals += [str(x) for x in row if x not in (None, '')]
+        if not vals:
+            return ' – ' + tr('there are none yet: add them first (their own sheet loads earlier)')
+        uniq = list(dict.fromkeys(vals))
+        near = difflib.get_close_matches(str(raw).strip().lower(), [u.lower() for u in uniq], n=1, cutoff=0.6)
+        out = ''
+        if near:
+            out = ' – ' + tr('did you mean “{0}”?', next(u for u in uniq if u.lower() == near[0]))
+        shown = ', '.join(uniq[:limit]) + (' …' if len(uniq) > limit else '')
+        return out + ' ' + tr('Valid values: {0}', shown)
+    except Exception:   # noqa: BLE001
+        return ''
+
+
+def _many_hint(model, raw):
+    """v1.62.0 workbook: which records share the name (their codes / ids)."""
+    try:
+        keys = _natural_fields(model)
+        q = Q()
+        for k in keys:
+            q |= Q(**{f'{k}__iexact': str(raw).strip()})
+        rows = list(model._default_manager.filter(q).values_list('pk', *keys[:2])[:8])
+        return ' (' + '; '.join(f'id {r[0]}' + ''.join(f', {x}' for x in r[1:] if x not in (None, '')) for r in rows) + ')'
+    except Exception:   # noqa: BLE001
+        return ''
 
 
 def _date(v):
@@ -164,8 +240,32 @@ def _date(v):
     return s[:10] if re.match(r'^\d{4}-\d{2}-\d{2}', s) else s
 
 
+def _row_branch(ser, row):
+    """v1.62.0: the branch of an imported row – its Branch column, else the branch of its employee (to pick per-branch rows)."""
+    for key in ('branch', 'emp_branch_id', 'branch_id'):
+        f = ser.fields.get(key)
+        raw = row.get(key)
+        if f is not None and raw not in (None, ''):
+            rel = f.child_relation if isinstance(f, serializers.ManyRelatedField) else f
+            if getattr(rel, 'queryset', None) is not None:
+                v = str(raw).split(',')[0]
+                return _resolve_link(rel.queryset.model, v)
+    for key in ('employee', 'emp_id', 'employee_id'):
+        f = ser.fields.get(key)
+        raw = row.get(key)
+        if f is not None and raw not in (None, '') and getattr(f, 'queryset', None) is not None:
+            pk = _resolve_link(f.queryset.model, raw)
+            if pk:
+                try:
+                    return f.queryset.model.objects.filter(pk=pk).values_list('emp_branch_id', flat=True).first()
+                except Exception:
+                    return None
+    return None
+
+
 def convert_row(ser, row):
     data, problems = {}, []
+    branch = _row_branch(ser, row)
     for key, raw in row.items():
         f = ser.fields.get(key)
         if f is None or f.read_only:
@@ -179,9 +279,12 @@ def convert_row(ser, row):
             vals = [x for x in re.split(r'[,;|]', str(raw)) if x.strip()] if many else [raw]
             ids = []
             for v in vals:
-                pk = _resolve_link(model, v)
-                if pk is None:
-                    problems.append(tr('{0}: “{1}” not found', f.label or key, str(v).strip()))
+                several = []
+                pk = _resolve_link(model, v, branch=branch, many_out=several)
+                if pk is None and several:
+                    problems.append(tr('{0}: “{1}” matches several records – use the id or a unique code', f.label or key, str(v).strip()) + _many_hint(model, v))   # v1.62.0 workbook
+                elif pk is None:
+                    problems.append(tr('{0}: “{1}” not found', f.label or key, str(v).strip()) + _valid_hint(model, v))   # v1.62.0 workbook
                 else:
                     ids.append(pk)
             data[key] = ids if many else (ids[0] if ids else None)
@@ -197,6 +300,9 @@ def convert_row(ser, row):
             data[key] = match
         else:
             data[key] = raw if isinstance(raw, (int, float)) else str(raw).strip()
+    if branch is None and any('not found' in p for p in problems):
+        # v1.62.0 workbook: "matches several records" only because the branch is unknown (its employee was not found) – said once the employee exists
+        problems = [p for p in problems if 'matches several records' not in p] or problems
     return data, problems
 
 
@@ -435,6 +541,13 @@ class ImportView(APIView):
             res = self._rows(request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen)
         finally:
             _pause.__exit__(None, None, None)
+        if not dry:   # v1.52.0 the import is kept (created records → undo) and its column mapping remembered
+            try:
+                from ZeoAdmin.imports import remember
+                res['batch'] = remember(request, path, model, res, request.data)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception('import batch')
         if not dry and res['ok']:
             try:
                 from Chatter.models import Message
@@ -464,11 +577,22 @@ class ImportView(APIView):
                     else:
                         seen[(f, v)] = i
             if problems:
+                # v1.62.0 workbook: the row's other mistakes too (an empty mandatory field …) – one round of corrections, not one per check
+                try:
+                    unresolved = {k for k, v in data.items() if v is None or v == []}
+                    vs = _serializer(cls, request, data={k: v for k, v in data.items() if k not in unresolved})
+                    if not vs.is_valid():
+                        problems += [m for m in _flatten({k: e for k, e in vs.errors.items() if k not in unresolved}) if m not in problems]
+                except Exception:   # noqa: BLE001
+                    pass
                 results.append({'row': i, 'ok': False, 'errors': problems})
                 continue
             if dry:
                 vs = _serializer(cls, request, data=data)
-                if vs.is_valid():
+                refused = _rights_refusal(request, cls, path, schema, data, factory)   # v1.56.1 the check refuses what the import refuses
+                if refused:
+                    results.append({'row': i, 'ok': False, 'errors': [refused]})
+                elif vs.is_valid():
                     results.append({'row': i, 'ok': True})
                     ok += 1
                 else:

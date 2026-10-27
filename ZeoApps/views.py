@@ -38,7 +38,19 @@ class AppsView(Base):
         code, label = S.company_industry()
         lite = request.query_params.get('lite')
         if lite:
-            return Response({'active': S.active_keys(), 'can_manage': can_manage(request)})
+            out = {'active': S.active_keys(), 'can_manage': can_manage(request)}
+            try:   # v1.55.0: pay frequencies switched on in Payroll controls (menu "Pay calendars" shows only then)
+                from PayrollPlus.models import PayrollPlusSettings
+                out['pay_cycles'] = PayrollPlusSettings.get().pay_frequencies()
+            except Exception:
+                out['pay_cycles'] = []
+            try:   # v1.56.1: a login with no rights and no employee record sees only Home and its own profile in the menu
+                from AccessControl.access import ctx
+                c = ctx(request)
+                out['bare_login'] = bool(c is not None and not c.admin and not c.codes and c.emp is None)
+            except Exception:
+                out['bare_login'] = False
+            return Response(out)
         return Response({'apps': S.all_states(), 'company_industry': code, 'company_industry_label': label,
                          'industries': S.company_industries(), 'can_manage': can_manage(request), 'company': connection.schema_name})
 

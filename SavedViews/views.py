@@ -39,10 +39,33 @@ def _user_name(u):
     return full or getattr(u, 'username', '') or ''
 
 
+def my_groups(request):
+    """v1.46.0: the role (group) ids of the user in this company – views shared with a team."""
+    try:
+        from tenant_users.tenants.models import UserTenantPermissions
+        utp = UserTenantPermissions.objects.filter(profile=request.user).first()
+        return list(utp.groups.values_list('id', flat=True)) if utp else []
+    except Exception:
+        return []
+
+
 def _visible(request, qs=None):
     from django.db.models import Q
     qs = SavedView.objects.all() if qs is None else qs
-    return qs.filter(Q(owner_id=request.user.id) | Q(shared=True))
+    cond = Q(owner_id=request.user.id) | Q(shared=True)
+    for g in my_groups(request):   # v1.46.0 shared with my team
+        cond |= Q(share_groups__contains=[g])
+    return qs.filter(cond)
+
+
+def _groups_ok(request, ids):
+    """Share with a team: admins / sharers with any role, other users with their own roles."""
+    ids = [int(i) for i in (ids or []) if str(i).isdigit()]
+    if can_share(request):
+        return ids, None
+    mine = set(my_groups(request))
+    bad = [i for i in ids if i not in mine]
+    return ids, (tr('You can share a view only with the teams (roles) you belong to.') if bad else None)
 
 
 def _can_edit(request, v):
@@ -52,6 +75,7 @@ def _can_edit(request, v):
 def _out(request, v, default_id=None):
     return {
         'id': v.id, 'screen': v.screen, 'name': v.name, 'shared': v.shared, 'mine': v.owner_id == request.user.id,
+        'share_groups': v.share_groups or [],
         'owner': v.owner_name, 'data': v.data or {}, 'can_edit': _can_edit(request, v),
         'is_default': default_id == v.id, 'updated_at': v.updated_at.isoformat() if v.updated_at else None,
     }
@@ -166,9 +190,12 @@ class SavedViewListView(APIView):
         if _clash(request, screen, name):
             msg = tr('You already have a view named "{0}" on this screen. Pick another name or update that view.', name)
             return Response({'name': [msg], 'detail': msg}, status=400)
+        groups, gerr = _groups_ok(request, d.get('share_groups'))
+        if gerr:
+            return Response({'detail': gerr}, status=403)
         with transaction.atomic():
             v = SavedView.objects.create(screen=screen, name=name, owner_id=request.user.id, owner_name=_user_name(request.user),
-                                         shared=shared, data=data)
+                                         shared=shared, data=data, share_groups=groups)
             default_id = None
             if str(d.get('default')).lower() in ('true', '1'):
                 SavedViewDefault.objects.update_or_create(user_id=request.user.id, screen=screen, defaults={'view_id': v.id})
@@ -220,9 +247,14 @@ class SavedViewDetailView(APIView):
             if shared != v.shared and not can_share(request):
                 return Response({'detail': tr('Only company admins and users with the right to share views can share a view with everyone. Save it as a personal view.')}, status=403)
             v.shared = shared
+        if 'share_groups' in d:   # v1.46.0
+            groups, gerr = _groups_ok(request, d.get('share_groups'))
+            if gerr:
+                return Response({'detail': gerr}, status=403)
+            v.share_groups = groups
         with transaction.atomic():
             v.save()
-            if not v.shared:   # unshared: other users can no longer use it as their default
+            if not v.shared and not v.share_groups:   # unshared: other users can no longer use it as their default
                 SavedViewDefault.objects.filter(view_id=v.id).exclude(user_id=v.owner_id).delete()
         dd = SavedViewDefault.objects.filter(user_id=request.user.id, screen=v.screen).first()
         return Response(_out(request, v, dd.view_id if dd else None))
@@ -271,3 +303,19 @@ class SavedViewDefaultView(APIView):
             return Response({'view_id': [tr('This view belongs to another screen.')], 'detail': tr('This view belongs to another screen.')}, status=400)
         SavedViewDefault.objects.update_or_create(user_id=request.user.id, screen=screen, defaults={'view_id': v.id})
         return Response({'screen': screen, 'default_id': v.id})
+
+
+
+class SavedViewGroupsView(APIView):
+    """v1.46.0 GET views/groups/ – the teams (roles) a view can be shared with."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        bad = _need_schema(request)
+        if bad:
+            return bad
+        from django.contrib.auth.models import Group
+        mine = set(my_groups(request))
+        from ZeoApps import groupscope   # v1.62.0 isolation: the groups of this company (all groups of the server were offered)
+        qs = Group.objects.filter(pk__in=groupscope.visible_ids()) if can_share(request) else Group.objects.filter(pk__in=mine)
+        return Response([{'id': g.id, 'name': groupscope.label(g), 'mine': g.id in mine} for g in qs.order_by('name')])

@@ -29,7 +29,7 @@ WS = re.compile(r'\s+')
 PH = re.compile(r'\{(\w+)\}')
 CACHE_VER_KEY = 'langpack:ver'
 LOCAL_CHECK_SECONDS = 2.0
-PUBLIC_MODULE_PREFIXES = ('src/app/login/', 'src/app/company-selection/')
+PUBLIC_MODULE_PREFIXES = ('src/app/login/', 'src/app/company-selection/', 'src/app/careers/careers-public')   # v1.57.0 careers page
 PUBLIC_TERMS = {'Language', 'English', 'Arabic'}       # the language picker on the login page
 
 _current = contextvars.ContextVar('zeo_lang', default=None)
@@ -80,8 +80,23 @@ def module_of(where):
     return ''
 
 
+_PUBLIC_FILE = None
+
+
+def _public_file_terms():
+    """v1.57.0: i18n/public_terms.json – the words of pages opened without sign-in (careers page, set-password link)."""
+    global _PUBLIC_FILE
+    if _PUBLIC_FILE is None:
+        try:
+            with open(os.path.join(repo_dir(), 'public_terms.json'), encoding='utf-8') as fh:
+                _PUBLIC_FILE = set(json.load(fh))
+        except (OSError, ValueError):
+            _PUBLIC_FILE = set()
+    return _PUBLIC_FILE
+
+
 def is_public(where, text=''):
-    return text in PUBLIC_TERMS or any(str(w).startswith(PUBLIC_MODULE_PREFIXES) for w in where or [])
+    return text in PUBLIC_TERMS or text in _public_file_terms() or any(str(w).startswith(PUBLIC_MODULE_PREFIXES) for w in where or [])
 
 
 # ------------------------------------------------------------------------------------------------------------------ cache
@@ -115,6 +130,7 @@ def clear_cache(lang=None):
         _local['ver'] = None
         _local['checked'] = 0.0
         _local['terms'] = {}
+        _local['cterms'] = {}   # v1.62.0 isolation
         _local['langs'] = None
 
 
@@ -128,6 +144,7 @@ def _fresh():
         if v != _local['ver']:
             _local['ver'] = v
             _local['terms'] = {}
+            _local['cterms'] = {}   # v1.62.0 isolation
             _local['langs'] = None
 
 
@@ -173,6 +190,47 @@ def terms(lang):
     return d
 
 
+# v1.62.0 isolation: a company's own wording (CompanyTerm) over the shared pack, for that company only
+def current_schema():
+    try:
+        from django.db import connection
+        s = getattr(connection, 'schema_name', 'public')
+        return s if s and s != 'public' else None
+    except Exception:
+        return None
+
+
+def company_terms(lang, schema=None):
+    """{english: the company's own translation} (translated ones only), cached per process like the packs."""
+    schema = schema or current_schema()
+    lang = base_lang(lang)
+    if not schema or not lang:
+        return {}
+    _fresh()
+    key = (schema, lang)
+    d = _local.setdefault('cterms', {}).get(key)
+    if d is None:
+        from .models import CompanyTerm
+        try:
+            d = dict(CompanyTerm.objects.filter(schema_name=schema, lang=lang).exclude(value='').values_list('source', 'value'))
+        except Exception:
+            d = {}
+        with _lock:
+            _local.setdefault('cterms', {})[key] = d
+    return d
+
+
+def pack_version(code, schema=None):
+    """The pack version the browser caches by: a company with its own wording gets a version of its own."""
+    L = language(code) or {}
+    v = int(L.get('version') or 1)
+    schema = schema or current_schema()
+    if schema and company_terms(code, schema):
+        import zlib
+        v = v * 1000 + zlib.crc32(schema.encode()) % 997 + 1
+    return v
+
+
 # -------------------------------------------------------------------------------------------------------------- translate
 def current_lang():
     v = _current.get()
@@ -192,6 +250,11 @@ def t(text, lang=None, args=None, **params):
     s = str(text)
     code = base_lang(lang) if lang else current_lang()
     if code and code != SOURCE_LANG:
+        cd = company_terms(code)   # v1.62.0 isolation: the company's own wording first
+        if cd:
+            v = cd.get(s) or cd.get(norm(s))
+            if v:
+                return fill(v, args, params)
         d = terms(code)
         if d:
             v = d.get(s)
@@ -328,9 +391,13 @@ def pack_payload(code, public_only=False):
         from .models import Term
         keep = set(Term.objects.filter(lang=code, public=True).exclude(value='').values_list('source', flat=True))
         d = {k: v for k, v in d.items() if k in keep}
+    else:
+        cd = company_terms(code)   # v1.62.0 isolation: the open company's own wording
+        if cd:
+            d = {**d, **cd}
     return {'lang': code, 'name': L['name'], 'english_name': L['english_name'], 'dir': L['dir'],
             'date_format': L['date_format'], 'number': L['number'] or {'decimal': '.', 'group': ','},
-            'version': L['version'], 'terms': d, 'partial': bool(public_only)}
+            'version': L['version'] if public_only else pack_version(code), 'terms': d, 'partial': bool(public_only)}
 
 
 def bump(lang):

@@ -49,9 +49,31 @@ def access_of(profile_id, schema=None):
     return _rows().get((profile_id, schema))
 
 
+def _copies(schema):
+    """v1.62.0 isolation: {template group id: id of the open company's own copy} (ZeoApps/groupscope.py)."""
+    if not schema or schema != current_schema():
+        return {}
+    try:
+        from ZeoApps.groupscope import copy_map
+        return copy_map()
+    except Exception:
+        return {}
+
+
 def apply(utp, schema=None):
     ov = access_of(getattr(utp, 'profile_id', None), schema)
+    cm = _copies(schema or current_schema())
     if ov is None:
+        # v1.62.0 isolation: a login of several companies keeps the shared standard group in its (shared) rights row; in a
+        # company that has its own copy of that group, the copy's rights apply instead – never in the other companies
+        if cm and getattr(utp, 'pk', None):
+            from django.contrib.auth.models import Group
+            ids = list(utp.groups.through.objects.filter(usertenantpermissions_id=utp.pk).values_list('group_id', flat=True))
+            if any(i in cm for i in ids):
+                cache = getattr(utp, '_prefetched_objects_cache', None)
+                if cache is None:
+                    cache = utp._prefetched_objects_cache = {}
+                cache['groups'] = Group.objects.filter(pk__in=[cm.get(i, i) for i in ids])
         return utp
     from django.contrib.auth.models import Group, Permission
     admin, names = ov
@@ -61,6 +83,9 @@ def apply(utp, schema=None):
     if cache is None:
         cache = utp._prefetched_objects_cache = {}
     cache['groups'] = Group.objects.filter(name__in=names)            # evaluated in the open company
+    if cm:   # v1.62.0 isolation: e.g. "HR Manager" of a Group HR head → this company's own copy of it
+        ids = list(Group.objects.filter(name__in=names).values_list('pk', flat=True))
+        cache['groups'] = Group.objects.filter(pk__in=[cm.get(i, i) for i in ids])
     cache['user_permissions'] = Permission.objects.none()
     utp._zeo_company_access = schema or current_schema()
     return utp

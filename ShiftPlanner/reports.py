@@ -45,7 +45,7 @@ def r_shift_requests(run):
     from .services import shift_label, shifts_by_id
     emps = {e.pk: e for e in run.all_employees}
     shifts = shifts_by_id()
-    users = dict(R.M('UserManagement', 'CustomUser').objects.values_list('id', 'username'))
+    users = __import__('HRActions.names', fromlist=['user_names']).user_names(R.M('UserManagement', 'CustomUser').objects.values_list('id', flat=True))   # v1.62.0 people: names
     rows = []
     for q in ShiftRequest.objects.filter(employee_id__in=list(emps)).filter(run.in_period('date')).order_by('date'):
         o = emps.get(q.swap_employee_id) if q.swap_employee_id else None

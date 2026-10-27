@@ -61,7 +61,8 @@ def contractor(c):
     exp = [n for n, v in (('trade licence', c.licence_expiry), ('insurance', c.insurance_expiry)) if v and v < t]
     return {'id': c.pk, 'code': c.code, 'name': c.name, 'trade': c.trade, 'contact_name': c.contact_name, 'phone': c.phone, 'email': c.email,
             'trade_licence_no': c.trade_licence_no, 'licence_expiry': d(c.licence_expiry), 'insurance_expiry': d(c.insurance_expiry),
-            'status': c.status, 'status_label': c.get_status_display(), 'notes': c.notes, 'is_active': c.is_active, 'expired': exp}
+            'status': c.status, 'status_label': c.get_status_display(), 'notes': c.notes, 'is_active': c.is_active, 'expired': exp,
+            'partner': c.partner_id, 'partner_number': c.partner.number if c.partner_id else ''}   # v1.42.0 business partner
 
 
 def template(t, full=True):

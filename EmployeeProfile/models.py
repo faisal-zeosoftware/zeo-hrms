@@ -60,6 +60,7 @@ class EmployeeIdentity(models.Model):
     # medical insurance
     insurance_provider = models.CharField(max_length=80, blank=True, default='')
     insurance_card_no = models.CharField(max_length=40, blank=True, default='')
+    insurance_issue_date = models.DateField(null=True, blank=True)   # v1.40.1: the card showed "Issued" but the form had no field
     insurance_expiry_date = models.DateField(null=True, blank=True)
     # link to the matching EmpManagement.Emp_Documents rows (so the existing expiry alerts / reports keep working)
     doc_links = models.JSONField(default=dict, blank=True, help_text='{passport|visa|emirates_id|labour_card|driving_licence: Emp_Documents id}')
@@ -181,3 +182,22 @@ class EmployeeCodeSetting(models.Model):
 
     def format(self, n=None):
         return f'{self.prefix}{str(self.next_number if n is None else n).zfill(self.padding or 1)}'
+
+
+class DocumentImport(models.Model):
+    """v1.53.2 – one upload of document files (zip): what it changed, so the import can be undone (Import history)."""
+    batch_id = models.IntegerField(null=True, blank=True, db_index=True, help_text='ZeoAdmin.ImportBatch')
+    file_name = models.CharField(max_length=200, blank=True)
+    files = models.PositiveIntegerField(default=0)
+    created = models.PositiveIntegerField(default=0)
+    updated = models.PositiveIntegerField(default=0)
+    skipped = models.PositiveIntegerField(default=0)
+    replaced = models.JSONField(default=dict, blank=True, help_text='{new document id: the document it replaced (made inactive)}')
+    changed = models.JSONField(default=dict, blank=True, help_text='{document id: its file, dates and active flag before the import}')
+    identity = models.JSONField(default=dict, blank=True, help_text='{employee id: identity fields before the import}')
+    rows = models.JSONField(default=list, blank=True, help_text='[{file, employee, type, number, result}]')
+    user_id = models.IntegerField(null=True, blank=True)
+    at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-id']

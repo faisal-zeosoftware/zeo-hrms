@@ -122,13 +122,15 @@ class MetaView(APIView):
         from UserManagement.models import CustomUser
         users = [{'id': u.pk, 'label': u.username, 'email': u.email or ''}
                  for u in CustomUser.objects.filter(tenants__schema_name=connection.schema_name, is_active=True).order_by('username').distinct()[:500]]
-        roles = [{'id': g.pk, 'label': g.name} for g in Group.objects.order_by('name')]
+        from ZeoApps import groupscope   # v1.62.0 isolation: the groups of this company only (every company's were listed)
+        roles = sorted(({'id': g.pk, 'label': groupscope.label(g)} for g in Group.objects.filter(pk__in=groupscope.visible_ids())), key=lambda r: r['label'].lower())
         return Response({
             'modules': R.modules(), 'models': R.models_of(), 'operators': [{'key': k, 'label': v} for k, v in R.OPERATORS],
             'operators_by_type': R.TYPES_FOR_OPERATOR,
             'actions': [{'key': k, 'label': l, 'hint': h} for k, l, h in R.ACTIONS], 'triggers': [{'key': k, 'label': v} for k, v in __import__('ZeoFlow.models', fromlist=['TRIGGERS']).TRIGGERS],
             'users': users, 'roles': roles,
             'templates': list(FlowTemplate.objects.filter(active=True).values('id', 'name', 'kind', 'model')),
+            'webhooks': _webhooks(),   # v1.52.0 action "Call a webhook"
             'approval_flows': list(ApprovalFlow.objects.filter(active=True).values('id', 'name', 'model')),
             'recipient_types': [{'key': 'owner', 'label': 'Record owner / employee'}, {'key': 'manager', 'label': "Employee's reporting manager"},
                                 {'key': 'employee', 'label': 'The employee of the record'}, {'key': 'triggering_user', 'label': 'The user who made the change'},
@@ -536,6 +538,31 @@ class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(ApprovalRequestSerializer(qs[:20], many=True, context={'user': request.user}).data)
 
 
+class RecordFlowView(APIView):
+    """v1.38.0: the workflow strip of a record page – its approval requests, the approval flows it can be sent to,
+    the automation rules that watch this record type and the runs that touched this record. GET ?model=app.model&id=pk"""
+    zeo_access = False
+    zeo_scope = False
+    permission_classes = [Member]
+
+    def get(self, request):
+        model = request.GET.get('model') or ''
+        pk = str(request.GET.get('id') or '')
+        if not model:
+            return Response({'model': '', 'approvals': [], 'flows': [], 'rules': [], 'runs': []})
+        ctx = {'user': request.user}
+        approvals = ApprovalRequestSerializer(ApprovalRequest.objects.filter(model__iexact=model, object_id=pk).order_by('-pk')[:10], many=True, context=ctx).data if pk else []
+        open_ = [a for a in approvals if a.get('status') in ('pending', 'changes')]
+        flows = list(ApprovalFlow.objects.filter(model__iexact=model, active=True).order_by('name').values('id', 'name', 'description')) if not open_ else []
+        rules = list(Workflow.objects.filter(model__iexact=model, state='active').order_by('name').values('id', 'name', 'trigger'))
+        runs = []
+        if pk and can_view(request):
+            runs = [{'id': r.pk, 'workflow': r.workflow.name, 'status': r.status, 'started_at': r.started_at, 'error': r.error[:200], 'trigger': r.trigger}
+                    for r in WorkflowRun.objects.filter(model__iexact=model, object_id=pk).select_related('workflow').order_by('-pk')[:10]]
+        return Response({'model': model, 'approvals': approvals, 'flows': flows, 'rules': rules, 'runs': runs,
+                         'can_manage': can_view(request, 'view_approvalflow') or can_view(request)})
+
+
 class NotificationView(APIView):
     zeo_access = False
     zeo_scope = False
@@ -569,3 +596,13 @@ class AuditView(APIView):
         rows = [{'id': a.pk, 'kind': a.kind, 'object_id': a.object_id, 'action': a.action, 'user': getattr(a.user, 'username', ''), 'at': a.at, 'detail': a.detail}
                 for a in FlowAudit.objects.select_related('user')[:300]]
         return Response(rows)
+
+
+
+def _webhooks():
+    """v1.52.0 the company's webhooks (Settings → API keys and webhooks) for the action "Call a webhook"."""
+    try:
+        from ZeoAdmin.models import Webhook
+        return list(Webhook.objects.filter(active=True).values('id', 'name', 'url'))
+    except Exception:
+        return []

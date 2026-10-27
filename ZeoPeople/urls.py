@@ -18,4 +18,6 @@ urlpatterns = app.urls() + [
     path('api/chat/unread/', V.ChatUnreadView.as_view(app=app)),
     path('api/chat/<int:pk>/', V.ChatMessagesView.as_view(app=app)),
     path('api/chat/<int:pk>/file/<int:mid>/', V.ChatFileView.as_view(app=app)),
+    path('api/insurer-file/', V.InsurerFileView.as_view(app=app)),           # v1.61.0
+    path('api/insurer-file/plans/', V.InsurerPlansView.as_view(app=app)),
 ]

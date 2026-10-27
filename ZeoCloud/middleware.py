@@ -14,7 +14,8 @@ from django.db import connection
 from django.http import HttpResponse
 
 log = logging.getLogger(__name__)
-OPEN = ('/users/', '/core/', '/cloud/', '/language/', '/admin', '/static', '/media', '/zeo-apps/', '/mobile/', '/group/', '/licence/')
+OPEN = ('/users/', '/core/', '/cloud/', '/language/', '/admin', '/static', '/media', '/zeo-apps/', '/mobile/', '/group/', '/licence/',
+        '/recruitment/api/careers/')   # v1.57.0 public careers page: a visitor signed in to another company is not refused
 SAFE = ('GET', 'HEAD', 'OPTIONS')
 READONLY_OK = re.compile(r'notif|/language/api/me|assistant|/export|/report|/views/api', re.I)
 APP_PREFIX = [('/payroll-plus/', 'payroll'), ('/accounting/', 'payroll'), ('/payroll/', 'payroll'), ('/zeo-projects/', 'projects'), ('/zeo-crm/', 'crm'),

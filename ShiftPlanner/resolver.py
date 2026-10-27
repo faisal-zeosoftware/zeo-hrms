@@ -53,6 +53,36 @@ def crosses_midnight(shift):
     return bool(shift and shift.start_time and shift.end_time and shift.end_time <= shift.start_time)
 
 
+def parse_segments(raw):
+    """v1.61.0 [(start time, end time)] of a split shift from the rule's JSON, in order; [] for a normal shift."""
+    out = []
+    for s in raw or []:
+        try:
+            a = datetime.strptime(str(s.get('start'))[:5], '%H:%M').time()
+            b = datetime.strptime(str(s.get('end'))[:5], '%H:%M').time()
+        except (AttributeError, TypeError, ValueError):
+            continue
+        out.append((a, b))
+    return out if len(out) >= 2 else []
+
+
+def segment_spans(rule, day):
+    """v1.61.0 the parts of a split shift on a day as [(start, end)] naive datetimes (a part may run past midnight)."""
+    segs = parse_segments(getattr(rule, 'segments', None) if rule is not None else None)
+    out, base = [], None
+    for a, b in segs:
+        s = datetime.combine(day, a)
+        if base is not None:
+            while s < base:
+                s += timedelta(days=1)
+        e = datetime.combine(s.date(), b)
+        if e <= s:
+            e += timedelta(days=1)
+        out.append((s, e))
+        base = e
+    return out
+
+
 def describe(shift, rule, day, source, off=False):
     """The resolver dict for `shift` on `day` (shift None or without times = day off)."""
     has_times = bool(shift and shift.start_time and shift.end_time)
@@ -67,7 +97,13 @@ def describe(shift, rule, day, source, off=False):
         end = datetime.combine(day, shift.end_time)
         if end <= start:
             end += timedelta(days=1)
-        hours = (Decimal((end - start).total_seconds()) / Decimal(3600) - Decimal(brk) / Decimal(60)).quantize(Decimal('0.01'))
+    spans = segment_spans(rule, day) if not off else []
+    gap = 0
+    if spans:   # v1.61.0 split shift: from the first part's start to the last part's end; the time between the parts is unpaid
+        start, end = spans[0][0], spans[-1][1]
+        gap = sum(int((b[0] - a[1]).total_seconds() // 60) for a, b in zip(spans, spans[1:]))
+    if not off:
+        hours = (Decimal((end - start).total_seconds()) / Decimal(3600) - Decimal(brk + gap) / Decimal(60)).quantize(Decimal('0.01'))
         if hours < 0:
             hours = ZERO
     night = (rule.night_shift if (rule is not None and not rule.night_auto) else crosses_midnight(shift))
@@ -75,7 +111,8 @@ def describe(shift, rule, day, source, off=False):
         'date': day, 'shift': shift, 'shift_id': shift.pk if shift is not None else None,
         'name': shift.name if shift is not None else '', 'code': (rule.code if rule is not None else '') or '',
         'colour': (rule.colour if rule is not None else '') or '',
-        'start': start, 'end': end, 'break_minutes': brk, 'hours': hours, 'off': off, 'source': source,
+        'start': start, 'end': end, 'break_minutes': brk + gap, 'hours': hours, 'off': off, 'source': source,
+        'segments': spans, 'split_gap_minutes': gap,
         'grace_in_minutes': rule.grace_in_minutes if rule is not None else 0,
         'grace_out_minutes': rule.grace_out_minutes if rule is not None else 0,
         'min_hours': rule.min_hours if rule is not None else None,

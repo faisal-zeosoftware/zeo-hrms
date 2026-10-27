@@ -195,6 +195,14 @@ def _label(obj):
     if obj._meta.model_name == 'emp_master':
         name = " ".join(p for p in [obj.emp_first_name, obj.emp_last_name] if p)
         return f"{name} ({obj.emp_code})" if name else obj.emp_code
+    if obj._meta.model_name == 'customuser':   # v1.62.0 people: a user by the employee's name, not the login name
+        try:
+            from HRActions.names import user_obj_name
+            n = user_obj_name(obj)
+            if n:
+                return n
+        except Exception:
+            pass
     for attr in ('branch_name', 'dept_name', 'desgntn_job_title', 'ctgry_title', 'username'):
         if hasattr(obj, attr) and getattr(obj, attr):
             try:  # v1.15.0: the translated name in the request language (GET only; English otherwise)

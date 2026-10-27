@@ -31,6 +31,9 @@ class ShiftRule(models.Model):
     night_allowance = models.DecimalField(max_digits=10, decimal_places=2, default=ZERO, help_text='paid per night worked on this shift')
     branch_ids = models.JSONField(default=list, blank=True, help_text='branches that may use the shift; empty = all branches')
     notes = models.CharField(max_length=255, blank=True, default='')
+    segments = models.JSONField(default=list, blank=True, help_text='v1.61.0 split shift: [{"start": "07:00", "end": "11:00"}, '
+                                                                   '{"start": "16:00", "end": "20:00"}] – the time between the parts is not working time')
+    skills = models.JSONField(default=list, blank=True, help_text='v1.61.0 skills needed on this shift: [{"skill": <LearningPlus.Skill id>, "level": 1-5, "count": n}]')
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -139,8 +142,9 @@ class OpenShiftClaim(models.Model):
 
 
 class ShiftRequest(models.Model):
-    KINDS = [('swap', 'Shift swap'), ('change', 'Shift change'), ('cancel', 'Shift cancellation')]
-    STATUS = [('peer', 'Waiting for colleague'), ('pending', 'Waiting for approval'), ('approved', 'Approved'),
+    KINDS = [('swap', 'Shift swap'), ('change', 'Shift change'), ('cancel', 'Shift cancellation'),
+             ('offer', 'Shift offered to colleagues')]   # v1.49.0: a colleague takes the shift, the manager approves
+    STATUS = [('open', 'Open to colleagues'), ('peer', 'Waiting for colleague'), ('pending', 'Waiting for approval'), ('approved', 'Approved'),
               ('rejected', 'Rejected'), ('declined', 'Declined by colleague'), ('withdrawn', 'Withdrawn')]
     number = models.CharField(max_length=30, blank=True, default='', db_index=True, help_text='v1.22.1: document number (Settings › Document numbering)')
     kind = models.CharField(max_length=8, choices=KINDS)

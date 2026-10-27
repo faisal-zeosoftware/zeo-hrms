@@ -128,10 +128,37 @@ def active_schemes():
         return []
 
 
-def variables(employee, rows=None):
-    """stat_<code>_base / _emp / _er per active scheme + statutory_employee_total / statutory_employer_total."""
+def schemes_on(on=None, schemes=None):
+    """v1.59.0 – the active schemes with the rates in force on the day (the newest version with effective_from ≤ day, else
+    the scheme's own rates). One query for all versions. Each item carries `_version` (the version or None)."""
+    import copy
+    from .legal import _on
+    from .models import RATE_FIELDS
+    on = _on(on)
+    schemes = active_schemes() if schemes is None else schemes
+    best = {}
+    try:
+        for v in M('PayrollPlus', 'StatutorySchemeVersion').objects.filter(scheme_id__in=[x.pk for x in schemes], effective_from__lte=on).order_by('scheme_id', '-effective_from'):
+            best.setdefault(v.scheme_id, v)
+    except Exception:
+        best = {}
+    out = []
+    for sc in schemes:
+        v = best.get(sc.pk)
+        if v is not None:
+            sc = copy.copy(sc)
+            for f in RATE_FIELDS:
+                setattr(sc, f, getattr(v, f))
+        sc._version = v
+        out.append(sc)
+    return out
+
+
+def variables(employee, rows=None, on=None):
+    """stat_<code>_base / _emp / _er per active scheme + statutory_employee_total / statutory_employer_total.
+    v1.59.0: with the rates in force on `on` (default: the rule date – the payroll sets the first day of the pay period)."""
     out = {'statutory_employee_total': Decimal('0.00'), 'statutory_employer_total': Decimal('0.00')}
-    schemes = active_schemes()
+    schemes = schemes_on(on)
     if not schemes:
         return out
     rows = _rows(employee) if rows is None else rows
@@ -231,8 +258,10 @@ def apply_components(user=None):
     return added, kept
 
 
-def preview(employee_id):
-    """For the screen: every active scheme with base / employee / employer for one employee."""
+def preview(employee_id, on=None):
+    """For the screen: every active scheme with base / employee / employer for one employee (rates in force on `on`)."""
+    from .legal import _on
+    on = _on(on)
     Emp = M('EmpManagement', 'emp_master')
     e = Emp.objects.filter(pk=employee_id).first()
     if e is None:
@@ -240,7 +269,11 @@ def preview(employee_id):
     rows = _rows(e)
     nat = is_national(e)
     out = []
-    for s in active_schemes():
+    for s in schemes_on(on):
         base, emp, er = compute(s, e, rows, nat)
-        out.append({'code': s.code, 'name': s.name, 'base': str(base), 'employee': str(emp), 'employer': str(er), 'applies': bool(base or emp or er)})
-    return {'employee': f'{e.emp_code} – {e.emp_first_name}', 'national': nat, 'gross': str(base_amount(rows, 'gross')), 'schemes': out}
+        v = s._version
+        out.append({'code': s.code, 'name': s.name, 'base': str(base), 'employee': str(emp), 'employer': str(er), 'applies': bool(base or emp or er),
+                    'rates_from': v.effective_from.isoformat() if v else (s.effective_from.isoformat() if s.effective_from else None),
+                    'version_id': v.pk if v else None})
+    return {'employee': f'{e.emp_code} – {e.emp_first_name}', 'national': nat, 'gross': str(base_amount(rows, 'gross')), 'schemes': out,
+            'date': on.isoformat()}

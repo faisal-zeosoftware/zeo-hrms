@@ -40,9 +40,13 @@ DOCS = [
     ('emirates_id', 'Emirates ID', ['emirates_id'], 'emirates_id_issue_date', 'emirates_id_expiry_date', []),
     ('labour_card', 'Labour card / work permit', ['labour_card_no', 'work_permit_no'], 'labour_card_issue_date', 'labour_card_expiry_date', ['work_permit_expiry_date']),
     ('mohre_contract', 'MOHRE contract', ['mohre_contract_no'], 'mohre_contract_start', 'mohre_contract_end', ['mohre_contract_type']),
-    ('insurance', 'Medical insurance', ['insurance_card_no'], None, 'insurance_expiry_date', ['insurance_provider']),
+    ('insurance', 'Medical insurance', ['insurance_card_no'], 'insurance_issue_date', 'insurance_expiry_date', ['insurance_provider']),   # v1.40.1 issue date
     ('driving_licence', 'Driving licence', ['driving_licence_no'], 'driving_licence_issue_date', 'driving_licence_expiry_date', ['driving_licence_emirate', 'driving_licence_categories']),
 ]
+
+
+# v1.40.1: the order of the fields on a card's form when it is not number(s), issue, expiry, extra
+FIELD_ORDER = {'labour_card': ['labour_card_no', 'labour_card_issue_date', 'labour_card_expiry_date', 'work_permit_no', 'work_permit_expiry_date']}
 
 
 def expiry(d, today=None):
@@ -91,9 +95,15 @@ def doc_cards(ident, emp, allowed=None):
                 continue
         g = (lambda f: getattr(ident, f, None) if ident is not None else None)
         number = ' / '.join(str(g(n)) for n in nums if g(n))
+        fields = nums + ([issue] if issue else []) + ([exp] if exp else []) + extra
+        if key in FIELD_ORDER:   # v1.40.1: number, issue, expiry of each document together (labour card, then work permit)
+            fields = [f for f in FIELD_ORDER[key] if f in fields] + [f for f in fields if f not in FIELD_ORDER[key]]
         card = {'key': key, 'label': label, 'number': number, 'numbers': {n: g(n) or '' for n in nums},
                 'issue_date': g(issue) if issue else None, 'expiry_date': g(exp), 'badge': expiry(g(exp)),
-                'extra': {f: (str(g(f)) if g(f) is not None else '') for f in extra}, 'fields': nums + ([issue] if issue else []) + ([exp] if exp else []) + extra}
+                # v1.40.1: the page skips exactly these two keys in the "other fields" list (was: every *_expiry_date, so the
+                # work permit expiry date of the labour card was never shown)
+                'issue_field': issue, 'expiry_field': exp,
+                'extra': {f: (str(g(f)) if g(f) is not None else '') for f in extra}, 'fields': fields}
         out.append(card)
     if emp.person_id:
         out.append({'key': 'person_id', 'label': 'MOHRE person code', 'number': emp.person_id, 'numbers': {'person_id': emp.person_id},
@@ -213,7 +223,7 @@ def group_defs():
 
 def record(request, emp, can_edit):
     today = date.today()
-    ident = S.identity_for(emp.pk)
+    ident = S.merged_identity(emp.pk)   # v1.62.0 people: identity details, else the employee's documents
     info = S.ensure_info(emp)
     contacts = list(EmergencyContact.objects.filter(employee_id=emp.pk).order_by('-is_primary', 'id'))
     comp = S.completeness(emp, ident, bool(contacts))
@@ -296,7 +306,8 @@ def record(request, emp, can_edit):
               [{'id': s['id'], 'kind': 'marketing', 'type': tr('Marketing'), 'skill': s['skill'], 'level': s['percentage'], 'marketing_skill': s.get('fk'), 'percentage': s['percentage']} for s in sk['marketing']] +
               [{'id': s['id'], 'kind': 'learning', 'type': s['category'] or tr('Skill'), 'skill': s['skill'], 'level': s['level'], 'source': s['source']} for s in sk['learning']])
 
-    hdr = header(request, emp, ident, info, comp, docs)
+    hdr = header(request, emp, ident, info, comp, docs + [  # v1.62.0 people: other documents (health card …) count for next expiry
+        {'label': f['type'], 'badge': f['badge']} for f in files if f['badge'] and not S._doc_kind_of(f['type'])])
     job = {
         'emp_branch_id': emp.emp_branch_id_id, 'branch': hdr['branch'], 'emp_dept_id': emp.emp_dept_id_id, 'department': hdr['department'],
         'emp_desgntn_id': emp.emp_desgntn_id_id, 'designation': hdr['designation'], 'emp_ctgry_id': emp.emp_ctgry_id_id, 'category': hdr['category'],
@@ -329,6 +340,8 @@ def record(request, emp, can_edit):
         'header': hdr, 'can_edit': can_edit, 'next_steps': nxt_steps,
         'personal': single(emp, ident, fk('personal')), 'contact': single(emp, ident, fk('contact')), 'address': single(emp, ident, fk('address')),
         'identity': single(emp, ident, fk('identity')), 'identity_id': getattr(ident, 'pk', None),
+        # v1.62.0 people: the cards show values of the document list when the identity details are empty
+        'identity_from_documents': bool(ident and ident.raw is None),
         'employment': S.employment_json(emp, info), 'job': job, 'org': org,
         'family': family, 'bank': bank, 'qualifications': qualifications, 'experience': experience, 'experience_total': exp_total,
         'documents': docs, 'files': files, 'emergency': emergency, 'skills': skills,
@@ -508,7 +521,11 @@ class RecordJobView(Base):
 def directory_rows(request, emps, today=None):
     today = today or date.today()
     ids = [e.pk for e in emps]
-    idn = {i.employee_id: i for i in EmployeeIdentity.objects.filter(employee_id__in=ids)}
+    idn0 = {i.employee_id: i for i in EmployeeIdentity.objects.filter(employee_id__in=ids)}
+    # v1.62.0 people: identity details, else the employee's documents (as Expiring documents / self service)
+    fbs = S.document_fallbacks(ids)
+    idn = {e: S.merged_identity(e, idn0.get(e), fbs) for e in ids}
+    others = S.other_document_badges(ids, today)
     S.ensure_info_bulk(emps, today)   # v1.26.0: one bulk insert instead of ensure_info per employee
     infos = {i.employee_id: i for i in EmploymentInfo.objects.filter(employee_id__in=ids)}
     # v1.26.0: on notice and past the last working day -> final status (was only refreshed when the file was opened)
@@ -533,6 +550,10 @@ def directory_rows(request, emps, today=None):
             b = expiry(getattr(i, exp, None) if i else None, today)
             if b:
                 badges.append((label, b))
+        for tn, _did, exp_d in others.get(e.pk, []):   # v1.62.0 people
+            b = expiry(exp_d, today)
+            if b:
+                badges.append((tn, b))
         w = sorted(badges, key=lambda x: (LEVEL_ORDER[x[1]['level']], x[1]['days']))[0] if badges else None
         comp = S.completeness(e, i, e.pk in contacts, e.pk in banks)
         st = f.status if f else 'active'

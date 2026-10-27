@@ -15,15 +15,19 @@ from rest_framework.parsers import MultiPartParser, FormParser
 import csv
 from .permissions import CountryPermission,StatePermission,LanguageSkillPermission,MarketingSkillPermission,ProgrammingLanguageSkillPermission
 import pandas as pd,openpyxl
+from ZeoCloud.sharedrows import SharedMasterMixin, visible as _shared_visible   # v1.62.0 isolation: shared lists per company
 # Create your views here.
 
 #STATE CRUD
-class StateViewSet(viewsets.ModelViewSet):
+class StateViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = state_mstr.objects.all()
     serializer_class = StateSerializer
     # authentication_classes = [SessionAuthentication,]
     # permission_classes = [StatePermission,] 
     def destroy(self, request, *args, **kwargs):
+        refused = self._guarded(request)   # v1.62.0 isolation: the shared states of every company
+        if refused:
+            return refused
         instance = self.get_object()
         instance.is_active = False  # Soft delete instead of actual deletion
         instance.save()
@@ -40,7 +44,7 @@ class StateViewSet(viewsets.ModelViewSet):
     #         return Response({"error": "Country ID is required"})
 
 
-class StateBulkuploadViewSet(viewsets.ModelViewSet):
+class StateBulkuploadViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = state_mstr.objects.all()
     serializer_class = StateBulkUploadSerializer
     # permission_classes = [IsAuthenticated]
@@ -110,7 +114,7 @@ class StateBulkuploadViewSet(viewsets.ModelViewSet):
     
     
 #COUNTRY CRUD
-class CountryViewSet(viewsets.ModelViewSet):
+class CountryViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = cntry_mstr.objects.all()
     serializer_class = CountrySerializer
     # authentication_classes = [SessionAuthentication,]
@@ -126,7 +130,7 @@ class CountryViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def states(self, request, pk=None):
         country = self.get_object()
-        states = country.state_mstr_set.all()
+        states = _shared_visible(country.state_mstr_set.all(), request)   # v1.62.0 isolation: not other companies' own states
         serializer = StateSerializer(states, many=True)
 
         # Get the dynamic label from the serializer
@@ -137,7 +141,7 @@ class CountryViewSet(viewsets.ModelViewSet):
             response_data["state_label"] = state_label
         return Response(response_data)
 
-class CountryBulkuploadViewSet(viewsets.ModelViewSet):
+class CountryBulkuploadViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = cntry_mstr.objects.all()
     serializer_class = CntryBulkUploadSerializer
     # permission_classes = [IsAuthenticated]
@@ -181,13 +185,13 @@ class CountryBulkuploadViewSet(viewsets.ModelViewSet):
                 return Response({'message': f'Bulk upload successful. {success_count} rows added.'}, status=status.HTTP_201_CREATED)
         else:
             return Response({'error': 'No file found'}, status=status.HTTP_400_BAD_REQUEST)
-class NationalityViewSet(viewsets.ModelViewSet):
+class NationalityViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = Nationality.objects.all()
     serializer_class = NationalitySerializer
     # permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser)
 #nationality bulkupload
-class NationalityBlkupldViewSet(viewsets.ModelViewSet):
+class NationalityBlkupldViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = Nationality.objects.all()
     serializer_class = NationalityBlkUpldSerializer
     # permission_classes = [IsAuthenticated]
@@ -215,7 +219,7 @@ class NationalityBlkupldViewSet(viewsets.ModelViewSet):
 
 
 #CURRENCY CRUD+
-class CurrencyViewSet(viewsets.ModelViewSet):
+class CurrencyViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = crncy_mstr.objects.all()
     serializer_class = CurrencySerializer
     # authentication_classes = [SessionAuthentication,]
@@ -234,28 +238,28 @@ class CurrencyViewSet(viewsets.ModelViewSet):
 #         instance.save()
 #         return Response({"message": "Document type deactivated successfully"}, status=status.HTTP_204_NO_CONTENT)
 
-class LanguageViewSet(viewsets.ModelViewSet):
+class LanguageViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = LanguageMaster.objects.all()
     serializer_class = LanguageMasterSerializer
     # permission_classes = [LanguageMasterPermission]
     def get_serializer_context(self):
         return {'request': self.request}
 
-class LanguageSkillViewSet(viewsets.ModelViewSet):
+class LanguageSkillViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = LanguageSkill.objects.all()
     serializer_class = LanguageSkillSerializer
     # permission_classes = [LanguageSkillPermission]
 
-class MarketingSkillViewSet(viewsets.ModelViewSet):
+class MarketingSkillViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = MarketingSkill.objects.all()
     serializer_class = MarketingSkillSerializer
     # permission_classes = [MarketingSkillPermission]
 
-class ProgrammingLanguageSkillViewSet(viewsets.ModelViewSet):
+class ProgrammingLanguageSkillViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = ProgrammingLanguageSkill.objects.all()
     serializer_class = ProgrammingLanguageSkillSerializer
     # permission_classes = [ProgrammingLanguageSkillPermission]
-class LanguageBlkupldViewSet(viewsets.ModelViewSet):
+class LanguageBlkupldViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = LanguageSkill.objects.all()
     serializer_class = LanguageBlkupldSerializer
     # permissio_classes = [LanguageSkillPermission]
@@ -287,7 +291,7 @@ class LanguageBlkupldViewSet(viewsets.ModelViewSet):
         else:
             return Response({'error': 'No file found'}, status=status.HTTP_400_BAD_REQUEST)
 
-class MarketingBlkupldViewSet(viewsets.ModelViewSet):
+class MarketingBlkupldViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = MarketingSkill.objects.all()
     serializer_class = MarketingBlkupldSerializer
     # permission_classes = [MarketingSkillPermission]
@@ -318,7 +322,7 @@ class MarketingBlkupldViewSet(viewsets.ModelViewSet):
             return Response({'error': 'No file found'}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class ProLangBlkupldViewSet(viewsets.ModelViewSet):
+class ProLangBlkupldViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = ProgrammingLanguageSkill.objects.all()
     serializer_class = ProLangBlkupldSerializer
     # permission_classes = [ProgrammingLanguageSkillPermission]
@@ -348,14 +352,14 @@ class ProLangBlkupldViewSet(viewsets.ModelViewSet):
         else:
             return Response({'error': 'No file found'}, status=status.HTTP_400_BAD_REQUEST)
         
-class TaxSystemViewSet(viewsets.ModelViewSet):
+class TaxSystemViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = TaxSystem.objects.all()
     serializer_class = TaxSystemSerializer
 
-class ReligionMasterViewSet(viewsets.ModelViewSet):
+class ReligionMasterViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = ReligionMaster.objects.all()
     serializer_class = ReligionMasterSerializer
-class ReligionMasterBlkupldViewSet(viewsets.ModelViewSet):
+class ReligionMasterBlkupldViewSet(SharedMasterMixin, viewsets.ModelViewSet):   # v1.62.0 isolation
     queryset = ReligionMaster.objects.all()
     serializer_class = ReligionMasterBlkupldSerializer
     # permission_classes = [IsAuthenticated]

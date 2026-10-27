@@ -7,13 +7,15 @@ HSESettings.require_review is on) – permit types and forms are offered only af
 from django.db import transaction
 from django.utils import timezone
 
-from . import construction, general, healthcare, manufacturing, oil_gas
+from . import construction, education, general, healthcare, manufacturing, office, oil_gas, retail   # v1.38.0 + education, retail, office
 from .extras import EXTRAS, SAMPLE
 
 PACKS = {'general': general.PACK, 'construction': construction.PACK, 'manufacturing': manufacturing.PACK,
-         'healthcare': healthcare.PACK, 'oil_gas': oil_gas.PACK}
+         'healthcare': healthcare.PACK, 'oil_gas': oil_gas.PACK,
+         'education': education.PACK, 'retail': retail.PACK, 'office': office.PACK}   # v1.38.0
 LABELS = {'general': 'General', 'construction': 'Construction and engineering', 'manufacturing': 'Manufacturing',
-          'healthcare': 'Hospitals and healthcare', 'oil_gas': 'Oil and gas'}
+          'healthcare': 'Hospitals and healthcare', 'oil_gas': 'Oil and gas',
+          'education': 'Schools and education', 'retail': 'Retail and hospitality', 'office': 'Offices, IT and finance'}   # v1.38.0
 DESCRIPTIONS = {
     'construction': 'Work permits, method statements, task risk assessments, subcontractors, lifting operations, excavation, '
                     'working at height, site inspections and toolbox talks.',
@@ -24,6 +26,12 @@ DESCRIPTIONS = {
     'oil_gas': 'High-risk permits, isolations, simultaneous operations, confined space entry, gas testing, process safety '
                'interfaces, contractor controls and emergency response.',
     'general': 'Risk matrix, approval matrix, general permits, workplace inspection, evacuation drill and common hazards.',
+    'education': 'Child safeguarding, laboratory and workshop safety, school trips, playground and sports inspections, '
+                 'fire drills, bus and traffic management, visitor control.',
+    'retail': 'Shop-floor and warehouse safety, manual handling, slips and trips, food safety and kitchens, cash and robbery '
+              'procedures, lone working, customer incidents, delivery vehicles.',
+    'office': 'Display screen equipment, ergonomics, fire and evacuation, electrical and server-room work, contractor control, '
+              'first aid, wellbeing and lone working.',
 }
 
 

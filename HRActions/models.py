@@ -3,7 +3,8 @@ from django.db import models
 
 
 class EmployeeTransfer(models.Model):
-    STATUS = [('scheduled', 'Scheduled'), ('done', 'Done'), ('cancelled', 'Cancelled')]
+    STATUS = [('requested', 'Requested – waiting for HR'), ('scheduled', 'Scheduled'), ('done', 'Done'), ('cancelled', 'Cancelled'),
+              ('rejected', 'Rejected')]   # v1.45.0: requested (e.g. a move on the org chart) until HR approves it
     number = models.CharField(max_length=30, blank=True, default='', db_index=True, help_text='v1.22.1: document number (Settings › Document numbering)')
     employee_id = models.IntegerField(db_index=True)
     effective_date = models.DateField()
@@ -51,3 +52,21 @@ class RejoinSettlement(models.Model):
     note = models.CharField(max_length=255, blank=True, default='')
     settled_by_id = models.IntegerField(null=True, blank=True)
     settled_at = models.DateTimeField(auto_now_add=True)
+
+
+class EmployeeWarning(models.Model):
+    """v1.45.0 – a warning given to an employee (verbal, written, final); shown on the employee timeline."""
+    LEVELS = [('verbal', 'Verbal warning'), ('written', 'Written warning'), ('final', 'Final warning')]
+    employee_id = models.IntegerField(db_index=True)
+    date = models.DateField()
+    level = models.CharField(max_length=8, choices=LEVELS, default='written')
+    subject = models.CharField(max_length=150)
+    details = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=10, choices=[('issued', 'Issued'), ('withdrawn', 'Withdrawn')], default='issued')
+    acknowledged_on = models.DateField(null=True, blank=True)
+    issued_by_id = models.IntegerField(null=True, blank=True)
+    issued_by_name = models.CharField(max_length=150, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-id']

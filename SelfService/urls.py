@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/letters/<int:pk>/<str:act>/', v.LetterActionView.as_view()),
     path('api/letter-templates/', v.LetterTemplatesView.as_view()),
     path('api/letter-templates/<int:pk>/', v.LetterTemplateView.as_view()),
+    path('api/letter-templates/<int:pk>/versions/', v.LetterTemplateVersionsView.as_view()),   # v1.61.0
     # complaints / grievances
     path('api/complaints/', v.ComplaintsHandlerView.as_view()),
     path('api/complaints/mine/', v.MyComplaintsView.as_view()),

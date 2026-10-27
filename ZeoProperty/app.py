@@ -113,7 +113,7 @@ def active_lease(u):
 # ------------------------------------------------------------------ party ↔ CRM contact
 def party_dict(p):
     return {'name': p.name, 'email': p.email, 'phone': p.phone, 'party_id': p.pk, 'crm_contact_id': p.crm_contact_id,
-            'type': 'buyer' if p.kind == 'buyer' else 'tenant'}
+            'type': 'buyer' if p.kind == 'buyer' else 'tenant', 'partner_id': p.partner_id}   # v1.41.0 partner
 
 
 def party_saver(o, request, creating, old):
@@ -132,12 +132,14 @@ def party_from(contact):
         p = Party.objects.filter(pk=contact['party_id']).first()
     if p is None and contact.get('crm_contact_id'):
         p = Party.objects.filter(crm_contact_id=contact['crm_contact_id']).first()
-    if p is None and contact.get('email'):
+    if p is None and contact.get('partner_id'):   # v1.41.0: the same business partner is the same person
+        p = Party.objects.filter(partner_id=contact['partner_id']).order_by('pk').first()
+    if p is None and contact.get('email') and not contact.get('partner_id'):
         p = Party.objects.filter(email__iexact=contact['email']).first()
     if p is None:
         p = Party.objects.create(number=app.next_number('party', 'TB'), name=contact.get('name') or 'Customer', email=contact.get('email') or '',
                                  phone=contact.get('phone') or '', company_name=contact.get('company') or '', crm_contact_id=contact.get('crm_contact_id'),
-                                 kind=contact.get('kind') or 'tenant')
+                                 kind=contact.get('kind') or 'tenant', partner_id=contact.get('partner_id'))
         app.event('party', p.pk, 'Created from CRM', None)
     elif contact.get('crm_contact_id') and not p.crm_contact_id:
         p.crm_contact_id = contact['crm_contact_id']
@@ -606,7 +608,8 @@ def a_cheque_status(new, text):
         o.save()
         app.event('cheque', o.pk, text + (f' – {f.s("note")}' if f.s('note') else ''), request.user)
         if new == 'cleared':
-            r = Receipt.objects.create(number=app.next_number('receipt', 'RCT'), party=o.party, received_on=today(), amount=o.amount, method='cheque',
+            # v1.62.0 the receipt is dated on the clearing date entered (was always today – owner statements of past months missed it)
+            r = Receipt.objects.create(number=app.next_number('receipt', 'RCT'), party=o.party, received_on=f.dt('cleared_on') or today(), amount=o.amount, method='cheque',
                                        reference=f'Cheque {o.cheque_no} {o.bank}', cheque=o)
             post_receipt(r, request.user, [o.bill_id] if o.bill_id else None)
             return {'message': f'Receipt {r.number} posted.'}
@@ -631,7 +634,7 @@ def a_comm(new, text):
         o.save()
         app.event('commission', o.pk, text + (f' – {f.s("note")}' if f.s('note') else ''), request.user)
         app.close_todos('commission', o.pk)
-        if o.agent.users_id:
+        if o.agent_id and o.agent.users_id:   # v1.62.0 a broker commission has no agent (approve crashed)
             app.tell([o.agent.users], f'Commission {o.number} {o.get_status_display().lower()}', f'{cur()} {o.amount}', 'commission', o.pk, o.number,
                      PAGE + f'r/commission/{o.pk}')
         return o
@@ -699,7 +702,8 @@ def a_moveout_inspected(o, request, f):
 
 def a_moveout_settle(o, request, f):
     lease = o.lease
-    unpaid = sum((b.balance for b in lease.bills.filter(status__in=('issued', 'part_paid'), charge__kind__in=('rent', 'service', 'utility', 'maintenance', 'fee'),
+    # v1.62.0 only the tenant's bills: the owner's leasing-fee bill of the lease was deducted from the tenant's deposit (no refund)
+    unpaid = sum((b.balance for b in lease.bills.filter(party=lease.party, owner__isnull=True, status__in=('issued', 'part_paid'), charge__kind__in=('rent', 'service', 'utility', 'maintenance', 'fee'),
                                                          due_date__lte=o.move_out_on)), ZERO)
     dep_paid = sum((b.paid for b in lease.bills.filter(charge__kind='deposit').exclude(status='void')), ZERO)
     o.unpaid = money(unpaid)
@@ -1095,3 +1099,15 @@ def daily():
 
 
 app.dashboard, app.my_work, app.daily = dashboard, my_work, daily
+
+from . import complete  # noqa: E402,F401  v1.40.0 complete property management (registers, rules, hooks on top of this module)
+
+
+# v1.41.0 business partners: partner picker, shared-partner lock and duplicate warning on tenants, owners, brokers, vendors
+from ZeoMasters.extensions import attach as _attach_partners  # noqa: E402
+_attach_partners(app)
+
+
+# v1.43.0 item master: item picker on charge types
+from ZeoMasters.item_exts import attach as _attach_items  # noqa: E402
+_attach_items(app)

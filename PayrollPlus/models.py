@@ -23,11 +23,25 @@ class PayrollPlusSettings(models.Model):
     # v1.20.2: pay start / end dates in the WPS file (EDR) for a run with a cut-off (e.g. 26th – 25th)
     WPS_PERIOD = [('month', 'The salary month (1st – last day)'), ('attendance', "The run's attendance cycle (e.g. 26th – 25th)")]
     wps_period = models.CharField(max_length=12, choices=WPS_PERIOD, default='month')
+    # v1.50.0: language of the payslip PDF
+    PAYSLIP_LANG = [('reader', "The reader's language (English or the language chosen in ZEO)"), ('en', 'English'),
+                    ('en_ar', 'English and Arabic on the same payslip')]
+    payslip_language = models.CharField(max_length=8, choices=PAYSLIP_LANG, default='reader')
+    # v1.55.0: pay frequencies other than monthly must be switched on here before they are offered anywhere
+    pay_weekly = models.BooleanField(default=False, help_text='Offer weekly pay calendars')
+    pay_biweekly = models.BooleanField(default=False, help_text='Offer bi-weekly pay calendars')
+    pay_semimonthly = models.BooleanField(default=False, help_text='Offer semi-monthly pay calendars')
+    # v1.56.0: mid-year go-live – months up to this date were paid outside ZEO; payroll runs for them leave everybody out
+    paid_up_to = models.DateField(null=True, blank=True, help_text='Salary paid outside ZEO up to this date (go-live)')
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
     def get(cls):
         return cls.objects.order_by('id').first() or cls.objects.create()
+
+    def pay_frequencies(self):
+        """v1.55.0 – the frequencies switched on in Payroll controls (weekly / biweekly / semimonthly)."""
+        return [k for k, f in (('weekly', 'pay_weekly'), ('biweekly', 'pay_biweekly'), ('semimonthly', 'pay_semimonthly')) if getattr(self, f)]
 
 
 class BranchWPS(models.Model):
@@ -101,6 +115,12 @@ class ExitSettlement(models.Model):
     created_by_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # v1.62.0 EOS – the Leavers workspace: exit reason beyond the resignation types, HR's own lines, asset decisions, history
+    exit_reason = models.CharField(max_length=30, blank=True, default='', help_text='v1.62.0: end_of_contract … (the resignation type stays)')
+    other_lines = models.JSONField(default=list, blank=True, help_text='v1.62.0: [{id, kind, label, amount, note, by_id, by, at}] – kept on recalculation')
+    asset_decisions = models.JSONField(default=dict, blank=True, help_text='v1.62.0: {asset key: {decision: returned|recover|waive, amount, note, by, at}}')
+    history = models.JSONField(default=list, blank=True, help_text='v1.62.0: [{action, by, at, note}]')
+    last_action_at = models.DateTimeField(null=True, blank=True, help_text='v1.62.0: time of the latest step (the history shows it)')
 
     class Meta:
         ordering = ['-last_working_date', '-id']
@@ -156,3 +176,228 @@ class StatutoryScheme(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.code})'
+
+
+# ------------------------------------------------------------------ v1.59.0 date-versioned legal rules
+RATE_FIELDS = ('min_base', 'max_base', 'eligible_gross_max', 'employee_rate', 'employer_rate', 'employee_fixed', 'employer_fixed', 'slabs',
+               'standard_deduction', 'rebate_income_limit', 'cess_rate')
+
+
+class StatutorySchemeVersion(models.Model):
+    """New rates of a statutory scheme from a date. The payroll of a month uses the newest version with effective_from ≤ the
+    first day of the pay period, else the rates on the scheme itself – so a re-run of a past month keeps that month's rates."""
+    scheme = models.ForeignKey(StatutoryScheme, on_delete=models.CASCADE, related_name='versions')
+    effective_from = models.DateField()
+    min_base = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    max_base = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    eligible_gross_max = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    employee_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0)
+    employer_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0)
+    employee_fixed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    employer_fixed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    slabs = models.JSONField(default=list, blank=True)
+    standard_deduction = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    rebate_income_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cess_rate = models.DecimalField(max_digits=6, decimal_places=3, default=0)
+    law_reference = models.CharField(max_length=400, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['scheme', '-effective_from']
+        unique_together = [('scheme', 'effective_from')]
+
+
+class LegalRate(models.Model):
+    """A legal figure the code uses (e.g. the GPSSA employee rate) from a date. Without a row the built-in value applies."""
+    key = models.CharField(max_length=60)
+    country = models.CharField(max_length=2, blank=True, default='')
+    value = models.DecimalField(max_digits=14, decimal_places=4)
+    effective_from = models.DateField()
+    law_reference = models.CharField(max_length=400, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['key', '-effective_from']
+        unique_together = [('key', 'effective_from')]
+
+
+# ------------------------------------------------------------------ v1.49.0 monthly provisions and loan changes
+class ProvisionRun(models.Model):
+    """Month-end liability of every employee – gratuity (end of service), leave salary and air tickets – and the change on
+    the previous month (the provision to book). Made on the 1st for the month before; posted to accounting when connected."""
+    STATUS = [('draft', 'Draft'), ('final', 'Final'), ('posted', 'Posted to accounting')]
+    month = models.DateField(unique=True, help_text='last day of the month')
+    status = models.CharField(max_length=8, choices=STATUS, default='draft')
+    employees = models.PositiveIntegerField(default=0)
+    totals = models.JSONField(default=dict, blank=True)
+    made_by_id = models.IntegerField(null=True, blank=True)
+    made_at = models.DateTimeField(auto_now=True)
+    posted_ref = models.CharField(max_length=60, blank=True, default='')
+
+    class Meta:
+        ordering = ['-month']
+
+
+class ProvisionLine(models.Model):
+    KINDS = [('gratuity', 'Gratuity (end of service)'), ('leave', 'Leave salary'), ('air_ticket', 'Air tickets')]
+    run = models.ForeignKey(ProvisionRun, on_delete=models.CASCADE, related_name='lines')
+    employee_id = models.IntegerField(db_index=True)
+    kind = models.CharField(max_length=10, choices=KINDS)
+    opening = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    closing = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    movement = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    basis = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        unique_together = [('run', 'employee_id', 'kind')]
+
+
+class LoanEvent(models.Model):
+    """A change to an approved loan outside payroll: top-up, early settlement, new instalment, pause / resume."""
+    KINDS = [('topup', 'Top-up'), ('settle', 'Early settlement'), ('reschedule', 'New instalment'), ('pause', 'Paused'), ('resume', 'Resumed'),
+             ('exit', 'Settled at exit')]
+    loan_id = models.IntegerField(db_index=True)
+    kind = models.CharField(max_length=10, choices=KINDS)
+    date = models.DateField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    old_emi = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    new_emi = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    old_period = models.PositiveIntegerField(null=True, blank=True)
+    new_period = models.PositiveIntegerField(null=True, blank=True)
+    balance_after = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    note = models.CharField(max_length=255, blank=True, default='')
+    user_id = models.IntegerField(null=True, blank=True)
+    user_name = models.CharField(max_length=150, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-id']
+
+
+# ------------------------------------------------------------------ v1.50.0 payroll what-if and cost allocation
+class WhatIfScenario(models.Model):
+    """A trial payroll with proposed salary changes, compared with the payroll as it is. Nothing is saved to payroll until
+    the scenario is applied (the amounts are then written to the employees' salary, with the revision history)."""
+    STATUS = [('draft', 'Draft'), ('applied', 'Applied')]
+    name = models.CharField(max_length=120)
+    month = models.DateField(help_text='first day of the month the trial payroll is calculated for')
+    rules = models.JSONField(default=list, blank=True)
+    employee_ids = models.JSONField(default=list, blank=True, help_text='empty = every active employee the user may see')
+    result = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=8, choices=STATUS, default='draft')
+    effective_from = models.DateField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    applied_by_id = models.IntegerField(null=True, blank=True)
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    calculated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-id']
+
+
+class CostAllocation(models.Model):
+    """How an employee's cost is split: fixed percentages over projects / cost centres / departments, or the timesheet hours
+    of the month (the rest goes to the employee's own cost centre or department)."""
+    BASIS = [('percent', 'Fixed percentages'), ('timesheet', 'Timesheet hours of the month')]
+    employee_id = models.IntegerField(db_index=True)
+    basis = models.CharField(max_length=10, choices=BASIS, default='percent')
+    lines = models.JSONField(default=list, blank=True, help_text='[{kind: project|cost_center|department, id, percent}]')
+    valid_from = models.DateField(null=True, blank=True)
+    valid_until = models.DateField(null=True, blank=True)
+    note = models.CharField(max_length=255, blank=True, default='')
+    updated_by_id = models.IntegerField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['employee_id', '-valid_from']
+
+
+# ------------------------------------------------------------------ v1.55.0 pay calendars, off-cycle runs, arrears
+class PayCalendar(models.Model):
+    """A pay frequency other than monthly for some employees (weekly, every two weeks, twice a month)."""
+    FREQ = (('weekly', 'Weekly'), ('biweekly', 'Bi-weekly'), ('semimonthly', 'Semi-monthly (1–15, 16–end)'))
+    name = models.CharField(max_length=80)
+    frequency = models.CharField(max_length=12, choices=FREQ)
+    first_start = models.DateField(help_text='weekly / every two weeks: the first day of the first period (e.g. a Saturday)')
+    pay_days_after = models.PositiveSmallIntegerField(default=3, help_text='pay date = period end + these days')
+    employee_ids = models.JSONField(default=list, blank=True, help_text='employees paid on this calendar')
+    category_ids = models.JSONField(default=list, blank=True, help_text='or every employee of these categories')
+    active = models.BooleanField(default=True)
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+
+class CalendarRun(models.Model):
+    """The payroll run of one period of a pay calendar (a normal PayrollRun with the period's dates)."""
+    calendar = models.ForeignKey(PayCalendar, on_delete=models.CASCADE, related_name='runs')
+    period_start = models.DateField()
+    period_end = models.DateField()
+    pay_date = models.DateField(null=True, blank=True)
+    payroll_run_id = models.IntegerField(unique=True)
+    closes_month = models.BooleanField(default=False, help_text='the last period ending in its month: loans and advances are deducted here')
+    factor = models.DecimalField(max_digits=8, decimal_places=6, default=1)
+    scaled = models.JSONField(default=list, blank=True, help_text='payslip ids already prorated to the period')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-period_start']
+        unique_together = [('calendar', 'period_start')]
+
+
+class OffCycleRun(models.Model):
+    """A payroll run outside the schedule: bonus, commission, correction, final settlement, advance …"""
+    KINDS = (('bonus', 'Bonus'), ('commission', 'Commission'), ('correction', 'Correction'), ('final', 'Final settlement'),
+             ('advance', 'Salary advance'), ('arrears', 'Arrears'), ('other', 'Other'))
+    kind = models.CharField(max_length=12, choices=KINDS)
+    title = models.CharField(max_length=120)
+    pay_date = models.DateField()
+    payroll_run_id = models.IntegerField(unique=True)
+    lines = models.JSONField(default=list, blank=True, help_text='[{employee_id, component_id, amount, note}]')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class ArrearLine(models.Model):
+    """The difference of one component in one paid payslip after a salary change with an earlier effective date."""
+    STATES = (('pending', 'Waiting for the next payroll'), ('included', 'Paid'), ('cancelled', 'Cancelled'))
+    employee_id = models.IntegerField(db_index=True)
+    component_id = models.IntegerField()
+    month = models.DateField(help_text='first day of the month (or the period start) of the payslip it corrects')
+    source_payslip_id = models.IntegerField(null=True, blank=True)
+    old_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    new_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    paid_ratio = models.DecimalField(max_digits=8, decimal_places=6, default=1)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.CharField(max_length=10, choices=STATES, default='pending', db_index=True)
+    included_payslip_id = models.IntegerField(null=True, blank=True)
+    effective_from = models.DateField()
+    note = models.CharField(max_length=200, blank=True)
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['employee_id', 'month', 'component_id']
+
+
+class GoLiveEmployee(models.Model):
+    """v1.56.0 – mid-year go-live data of one employee: salary paid up to (when it differs from the company's) and the date
+    gratuity service is counted from (when not the joining date). The unpaid days before go-live are kept where they were
+    since 1.20.2: EmployeeProfile.EmploymentInfo.unpaid_days_before_golive."""
+    employee_id = models.IntegerField(unique=True)
+    paid_up_to = models.DateField(null=True, blank=True)
+    gratuity_from = models.DateField(null=True, blank=True)
+    note = models.CharField(max_length=200, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)

@@ -16,6 +16,8 @@ DIM_MODE_EMP = (('none', 'Not posted'), ('analytic', 'Analytic account / reporti
                 ('partner', 'Partner / contact on the line'))
 DIMS_ON = (('cost', 'Cost (expense) lines only'), ('all', 'Every line, also payables and deductions'))
 POST_AS = (('draft', 'Draft – finance posts it in the accounting app'), ('posted', 'Posted'))
+POST_STYLE = (('journal', 'Journal vouchers (JV) – one balanced journal entry per document'),
+              ('documents', 'Invoices, bills and payments – synced as documents'))   # v1.62.0
 
 
 class AccountingSettings(models.Model):
@@ -31,8 +33,18 @@ class AccountingSettings(models.Model):
                                       help_text='Used when an employee has no GL code of its own. {account} {emp} {dept}')
     branch_gl_pattern = models.CharField('branch GL code pattern', max_length=40, default='{account}-{branch}')
     post_as = models.CharField(max_length=8, choices=POST_AS, default='draft')
+    # v1.62.0 how Property invoices / receipts / vendor bills reach Odoo or Zoho Books: as JVs, or as customer invoices and credit
+    # notes, customer payments matched to the invoices, and vendor bills (payroll, payouts, commissions, refunds stay JVs)
+    post_style = models.CharField('send documents as', max_length=10, choices=POST_STYLE, default='journal')
+    sales_journal_code = models.CharField('customer invoices journal (Odoo code)', max_length=20, default='INV', blank=True)
+    purchase_journal_code = models.CharField('vendor bills journal (Odoo code)', max_length=20, default='BILL', blank=True)
+    bank_journal_code = models.CharField('payments journal (Odoo code)', max_length=20, default='BNK1', blank=True)
+    sale_tax_ref = models.CharField('VAT on sales – tax id (empty = the tax with the same rate)', max_length=40, blank=True)
+    purchase_tax_ref = models.CharField('VAT on purchases – tax id (empty = the tax with the same rate)', max_length=40, blank=True)
     auto_build = models.BooleanField('build the journal when a payroll run is approved', default=True)
     auto_post = models.BooleanField('send it to the accounting app at once', default=False)
+    partner_lines = models.BooleanField('business partner on receivable / payable lines', default=True,
+                                        help_text='v1.44.0: tenant, buyer, owner, vendor and broker lines carry the partner (Odoo partner / Zoho contact; the BP number in exports)')
     journal_code = models.CharField('journal (Odoo code / Zoho notes)', max_length=20, default='SAL', blank=True)
     currency = models.CharField(max_length=3, default='AED')
     # default accounts
@@ -78,7 +90,8 @@ class AccountingSettings(models.Model):
 
 
 MAP_KIND = (('component', 'Salary component'), ('payable', 'Payable (net salary, settlement)'), ('provision', 'Provision (gratuity, leave salary)'),
-            ('settlement', 'Final settlement line'), ('expense', 'Expense category'))
+            ('settlement', 'Final settlement line'), ('expense', 'Expense category'), ('property', 'Property (v1.40.0)'),
+            ('allocation', 'Cost allocation (v1.50.0)'))
 
 
 class AccountMap(models.Model):
@@ -119,7 +132,11 @@ class DimensionMap(models.Model):
 
 
 SOURCES = (('payroll', 'Payroll run'), ('provision', 'Month-end provisions'), ('settlement', 'Final settlement'), ('expense', 'Expense claims'),
-           ('reversal', 'Reversal'), ('assets', 'Asset depreciation'))
+           ('reversal', 'Reversal'), ('assets', 'Asset depreciation'),
+           # v1.40.0 Property app (one journal per Property document; source_id = its id, refunds "R<id>" under prop_receipt)
+           ('prop_bill', 'Property invoices / credit notes'), ('prop_receipt', 'Property receipts'), ('prop_payout', 'Owner payouts'),
+           ('prop_commission', 'Property commissions'), ('prop_vendor', 'Property vendor bills'),
+           ('cost_allocation', 'Payroll cost allocation'))   # v1.50.0
 STATUS = (('draft', 'Draft – check it'), ('ready', 'Ready to post'), ('posting', 'Posting'), ('posted', 'Posted'), ('failed', 'Failed'),
           ('exported', 'Exported'), ('reversed', 'Reversed'), ('cancelled', 'Cancelled'))
 
@@ -127,7 +144,7 @@ STATUS = (('draft', 'Draft – check it'), ('ready', 'Ready to post'), ('posting
 class JournalBatch(models.Model):
     """One journal entry for the accounting app (the outbox). Never changed once posted: a correction is a reversal."""
     number = models.CharField(max_length=30, blank=True, db_index=True)
-    source = models.CharField(max_length=10, choices=SOURCES)
+    source = models.CharField(max_length=16, choices=SOURCES)   # v1.40.0: 16 for prop_commission
     source_id = models.CharField(max_length=40, blank=True, db_index=True)
     source_label = models.CharField(max_length=200, blank=True)
     date = models.DateField()

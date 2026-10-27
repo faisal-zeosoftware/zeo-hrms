@@ -30,7 +30,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import seed, services as S
-from .models import (FIELDS, BranchCountryPolicy, CostCenter, CountryPolicy, Division, DivisionDepartment, EmployeeOrg, EmploymentType,
+from .models import (FIELDS, BranchCountryPolicy, CostCenter, CountryPolicy, CountryPolicyVersion, Division, DivisionDepartment, EmployeeOrg, EmploymentType,
                      Grade, JobPosition, Location, OrgSettings, PolicyAcknowledgement, PolicyVersion, Section)
 from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
 
@@ -1265,6 +1265,14 @@ class MyPolicyFileView(Base, APIView):
 class CountryPolicySerializer(serializers.ModelSerializer):
     branches = serializers.SerializerMethodField()
     weekend_names = serializers.SerializerMethodField()
+    versions = serializers.SerializerMethodField()   # v1.59.0 dated law changes
+
+    def get_versions(self, o):
+        try:
+            return [{'id': v.pk, 'effective_from': v.effective_from.isoformat(), 'parts': [k for k in ('gratuity', 'annual_leave', 'overtime') if getattr(v, k)],
+                     'law_reference': v.law_reference} for v in o.versions.order_by('effective_from')]
+        except Exception:
+            return []
 
     class Meta:
         model = CountryPolicy
@@ -1433,6 +1441,63 @@ class CountryPolicyViewSet(Base, viewsets.ModelViewSet):
             BranchCountryPolicy.objects.update_or_create(branch_id=b, defaults={'country_policy': obj, 'applied_by_id': request.user.pk})
         return Response({'applied': ids, 'policy': obj.name})
 
+    # ---------------------------------------------------------------- v1.59.0 law changes from a date
+    @action(detail=True, methods=['get', 'post', 'delete'], url_path='versions')
+    def versions(self, request, pk=None):
+        """GET the dated versions; POST {effective_from, gratuity, law_reference, notes} – the gratuity rules replace the policy's
+        from the date; DELETE ?version=<id>."""
+        obj = self.get_object()
+        if request.method == 'GET':
+            return Response(_policy_history(obj))
+        if not self._w():
+            return deny(tr('You may not change country policies.'))
+        if request.method == 'DELETE':
+            vid = request.query_params.get('version')
+            n = CountryPolicyVersion.objects.filter(pk=int(vid), policy=obj).delete()[0] if str(vid).isdigit() else 0
+            if not n:
+                return Response({'detail': tr('Version not found.')}, status=404)
+            _clear_rules()
+            return Response(_policy_history(obj))
+        d = request.data or {}
+        from datetime import date as _dd
+        try:
+            eff = _dd.fromisoformat(str(d.get('effective_from') or '')[:10])
+        except ValueError:
+            return Response({'effective_from': tr('Give the date the new rules start.')}, status=400)
+        if CountryPolicyVersion.objects.filter(policy=obj, effective_from=eff).exists():
+            return Response({'effective_from': tr('{0} has a version from {1} already – delete it first.', obj.name, eff.isoformat())}, status=400)
+        # Only the gratuity is versioned: it is what the end of service, the payroll accrual, the provisions and the reports read
+        # from the rule set. Annual leave and overtime are run from Leave policies and the overtime setup, not from here.
+        if any(d.get(k) not in (None, '', {}) for k in ('annual_leave', 'overtime')):
+            return Response({'detail': tr('Annual leave and overtime are set in Leave policies and the overtime setup – only the gratuity has dated versions here.')}, status=400)
+        try:
+            g = CountryPolicySerializer().validate_gratuity(d.get('gratuity'))
+        except serializers.ValidationError as e:
+            return Response({'gratuity': e.detail}, status=400)
+        if not g.get('slabs'):
+            return Response({'gratuity': tr('A gratuity version needs its slabs (it replaces the gratuity rules as a whole).')}, status=400)
+        parts = {'gratuity': g}
+        CountryPolicyVersion.objects.create(policy=obj, effective_from=eff, law_reference=str(d.get('law_reference') or '')[:300],
+                                            notes=str(d.get('notes') or ''), created_by_id=request.user.pk, **parts)
+        _clear_rules()
+        return Response(_policy_history(obj), status=201)
+
+    @action(detail=False, methods=['get'], url_path='in-force')
+    def in_force(self, request):
+        """GET ?branch=&date= – the rule set of a branch (or the company) as in force on that day."""
+        from datetime import date as _dd
+        from CountryPack import services as CPS
+        dv = request.query_params.get('date')
+        try:
+            on = _dd.fromisoformat(dv[:10]) if dv else None
+        except ValueError:
+            return Response({'detail': tr('Give the date as YYYY-MM-DD.')}, status=400)
+        b = request.query_params.get('branch')
+        with CPS.rules_on(on):
+            r = CPS.rule_set_for_branch(int(b) if b and b.isdigit() else None)
+            day = CPS.rule_date()
+        return Response({'date': day.isoformat(), 'branch': b, 'rule_set': r})
+
     @action(detail=False, methods=['get'], url_path='for-branch')
     def for_branch(self, request):
         b = request.query_params.get('branch')
@@ -1440,6 +1505,30 @@ class CountryPolicyViewSet(Base, viewsets.ModelViewSet):
         link = BranchCountryPolicy.objects.filter(branch_id=b).exists() if b and b.isdigit() else False
         return Response({'branch': b, 'source': 'applied' if link else ('country' if p else 'none'),
                          'policy': CountryPolicySerializer(p, context=self.get_serializer_context()).data if p else None})
+
+
+def _clear_rules():
+    try:
+        from CountryPack.services import clear_cache
+        clear_cache()
+    except Exception:
+        pass
+
+
+def _policy_history(obj):
+    from django.utils import timezone
+    today = timezone.localdate()
+    vs = list(obj.versions.order_by('effective_from'))
+    cur = None
+    for v in vs:
+        if v.effective_from <= today:
+            cur = v
+    return {'policy': {'id': obj.pk, 'code': obj.code, 'name': obj.name, 'country_code': obj.country_code},
+            'base': {'gratuity': obj.gratuity, 'annual_leave': obj.annual_leave, 'overtime': obj.overtime, 'law_reference': obj.law_reference},
+            'rows': [{'id': v.pk, 'effective_from': v.effective_from.isoformat(), 'gratuity': v.gratuity, 'annual_leave': v.annual_leave,
+                      'overtime': v.overtime, 'parts': [k for k in ('gratuity', 'annual_leave', 'overtime') if getattr(v, k)],
+                      'law_reference': v.law_reference, 'notes': v.notes, 'in_force': bool(cur and cur.pk == v.pk),
+                      'future': v.effective_from > today} for v in vs]}
 
 
 class BranchCountryPolicyView(Base, APIView):

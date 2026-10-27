@@ -138,6 +138,8 @@ DOC_KINDS = [
     ('emirates_id', 'Emirates ID', 'emirates_id', 'emirates_id_issue_date', 'emirates_id_expiry_date', ('emiratesid', 'eid', 'emiratesidcard', 'emiratesidentitycard')),
     ('labour_card', 'Labour Card', 'labour_card_no', 'labour_card_issue_date', 'labour_card_expiry_date', ('labourcard', 'laborcard', 'workpermit', 'labourpermit')),
     ('driving_licence', 'Driving Licence', 'driving_licence_no', 'driving_licence_issue_date', 'driving_licence_expiry_date', ('drivinglicence', 'drivinglicense', 'licence', 'license', 'dl')),
+    # v1.40.1: the medical insurance card is listed in the employee's document files too (was: never)
+    ('insurance', 'Medical Insurance', 'insurance_card_no', 'insurance_issue_date', 'insurance_expiry_date', ('medicalinsurance', 'insurance', 'healthinsurance', 'medicalinsurancecard', 'insurancecard', 'healthcard')),
 ]
 KIND_LABEL = {k[0]: k[1] for k in DOC_KINDS}
 
@@ -238,6 +240,95 @@ def identity_for(emp_id, create=False):
     if o is None and create:
         o, _ = EmployeeIdentity.objects.get_or_create(employee_id=emp_id)
     return o
+
+
+# v1.62.0 people: the identity documents of most files are kept in the employee's document list (EmpManagement
+# Emp_Documents – used by Expiring documents, self service My documents and Home) while the identity details table is
+# empty, so the record page said "Not added" and every file was "64 % complete". The record page, its next expiry, the
+# employee list column / "expiring in 30 days" tile and the completeness read the identity details first and fall back to
+# the employee's active document of the same kind (latest expiry). Nothing is written – saving the card on the record
+# writes the identity details and sync_documents keeps the document list in step as before.
+class MergedIdentity:
+    """Read-only view of EmployeeIdentity (may be None) with empty passport / visa / EID / labour card / licence /
+    insurance values filled from the employee's documents. `pk` is the identity row's id (None when there is none)."""
+
+    def __init__(self, ident, fallback):
+        self.__dict__['_ident'] = ident
+        self.__dict__['_fb'] = fallback or {}
+
+    @property
+    def pk(self):
+        return getattr(self._ident, 'pk', None)
+
+    id = pk
+
+    @property
+    def raw(self):
+        return self._ident
+
+    def __getattr__(self, name):
+        if name.startswith('__'):
+            raise AttributeError(name)
+        v = getattr(self._ident, name, None) if self._ident is not None else None
+        if v in (None, '') and name in self._fb:
+            return self._fb[name]
+        return v
+
+    def __bool__(self):
+        return self._ident is not None or bool(self._fb)
+
+
+def _doc_kind_of(type_name):
+    n = _norm(type_name)
+    for kind, tname, *_rest, names in DOC_KINDS:
+        if n == _norm(tname) or n in names:
+            return kind
+    return None
+
+
+def document_fallbacks(emp_ids):
+    """{employee_id: {identity field: value}} from the active documents (one per kind, the latest expiry)."""
+    Doc = M('EmpManagement', 'Emp_Documents')
+    fields = {k[0]: (k[2], k[3], k[4]) for k in DOC_KINDS}
+    kinds = {}
+    for t in M('EmpManagement', 'document_type').objects.all():
+        k = _doc_kind_of(t.type_name)
+        if k:
+            kinds[t.pk] = k
+    out = {}
+    if not kinds:
+        return out
+    qs = (Doc.objects.filter(emp_id_id__in=list(emp_ids), document_type_id__in=list(kinds)).exclude(is_active=False)
+          .order_by('emp_id_id', 'emp_doc_expiry_date', 'id').values('emp_id_id', 'document_type_id', 'emp_doc_number',
+                                                                      'emp_doc_issued_date', 'emp_doc_expiry_date'))
+    for d in qs:   # ordered by expiry, so the latest document of a kind wins
+        nf, isf, exf = fields[kinds[d['document_type_id']]]
+        fb = out.setdefault(d['emp_id_id'], {})
+        fb[nf], fb[isf], fb[exf] = d['emp_doc_number'], d['emp_doc_issued_date'], d['emp_doc_expiry_date']
+    return out
+
+
+def merged_identity(emp_id, ident=None, fallbacks=None):
+    if isinstance(ident, MergedIdentity):
+        return ident
+    if ident is None:
+        ident = identity_for(emp_id)
+    fb = fallbacks.get(emp_id) if fallbacks is not None else document_fallbacks([emp_id]).get(emp_id)
+    return MergedIdentity(ident, fb)
+
+
+def other_document_badges(emp_ids, today=None):
+    """v1.62.0 people: {employee_id: [(type name, document id, expiry date)]} of the active documents that are not one of
+    the identity kinds (health card, permits …) – they count for the next expiry / expiring tile like on Expiring documents."""
+    Doc = M('EmpManagement', 'Emp_Documents')
+    out = {}
+    for d in (Doc.objects.filter(emp_id_id__in=list(emp_ids)).exclude(is_active=False).select_related('document_type')
+              .only('emp_id_id', 'emp_doc_expiry_date', 'document_type__type_name')):
+        tn = getattr(d.document_type, 'type_name', '') or 'Document'
+        if _doc_kind_of(tn):
+            continue
+        out.setdefault(d.emp_id_id, []).append((tn, d.pk, d.emp_doc_expiry_date))
+    return out
 
 
 def save_identity(emp, data, user=None, partial=True):
@@ -643,7 +734,9 @@ def skills_json(emp):
 
 # ------------------------------------------------------------------ history timeline
 HISTORY_TYPES = [('joined', 'Joined'), ('probation', 'Probation & confirmation'), ('transfer', 'Transfers & promotions'),
-                 ('salary', 'Salary revisions'), ('org', 'Organisation changes'), ('field', 'Field changes'), ('exit', 'Resignation & exit')]
+                 ('salary', 'Salary revisions'), ('leave', 'Leaves'), ('award', 'Awards & recognition'), ('warning', 'Warnings'),
+                 ('document', 'Documents & letters'), ('org', 'Organisation changes'), ('field', 'Field changes'),
+                 ('exit', 'Resignation & exit')]   # v1.45.0: leaves, awards, warnings, documents and the final settlement (employee journey)
 
 
 def _names(model, ids, attr):
@@ -715,6 +808,56 @@ def timeline(emp, types=None, date_from=None, date_to=None):
                         r.get('revised_by') or '')
         except Exception:
             log.exception('salary history')
+    # v1.45.0 employee journey: leaves, awards, warnings, documents and letters
+    if 'leave' in types:
+        try:
+            for lr in M('calendars', 'employee_leave_request').objects.filter(employee_id=emp.pk, status='approved').select_related('leave_type'):
+                n = lr.number_of_days
+                add('leave', lr.start_date, f'{getattr(lr.leave_type, "name", None) or "Leave"} – {n:g} day{"s" if n != 1 else ""}',
+                    f'{lr.start_date:%d/%m/%Y} – {lr.end_date:%d/%m/%Y}', ref={'model': 'employee_leave_request', 'id': lr.pk})
+        except Exception:
+            log.exception('leave history')
+        try:
+            for rj in M('calendars', 'EmployeeRejoining').objects.filter(employee_id=emp.pk):
+                d = getattr(rj, 'rejoining_date', None)
+                if d:
+                    add('leave', d, 'Back from leave', '')
+        except Exception:
+            pass
+    if 'award' in types and apps.is_installed('ZeoPeople'):
+        try:
+            for r in M('ZeoPeople', 'Recognition').objects.filter(employee_id=emp.pk, status='published').select_related('award'):
+                add('award', r.created_at, f'Recognised – {r.award.name}', (r.message or '')[:300] + (f' ({r.points} points)' if r.points else ''),
+                    ref={'model': 'Recognition', 'id': r.pk})
+        except Exception:
+            log.exception('awards history')
+    if 'warning' in types and apps.is_installed('HRActions'):
+        try:
+            for w in M('HRActions', 'EmployeeWarning').objects.filter(employee_id=emp.pk).exclude(status='withdrawn'):
+                add('warning', w.date, f'{w.get_level_display()} – {w.subject}', (w.details or '')[:400] + (' · acknowledged' if w.acknowledged_on else ''),
+                    w.issued_by_name, ref={'model': 'EmployeeWarning', 'id': w.pk})
+        except Exception:
+            log.exception('warnings history')
+    if 'document' in types:
+        try:
+            for dcm in M('EmpManagement', 'Emp_Documents').objects.filter(emp_id_id=emp.pk).select_related('document_type'):
+                tname = getattr(dcm.document_type, 'type_name', None) or getattr(dcm.document_type, 'name', None) or 'Document'
+                add('document', dcm.created_at, f'{tname} added', f'No. {dcm.emp_doc_number}; expires {dcm.emp_doc_expiry_date:%d/%m/%Y}' if dcm.emp_doc_expiry_date else '')
+        except Exception:
+            log.exception('documents history')
+        if apps.is_installed('SelfService'):
+            try:
+                for lt in M('SelfService', 'LetterRequest').objects.filter(employee_id=emp.pk, status='issued'):
+                    add('document', lt.decided_at or lt.created_at, f'{lt.get_letter_type_display()} issued', lt.reference_no or lt.number)
+            except Exception:
+                pass
+    if 'exit' in types and apps.is_installed('PayrollPlus'):
+        try:
+            for x in M('PayrollPlus', 'ExitSettlement').objects.filter(employee_id=emp.pk):
+                add('exit', x.paid_on or x.calc_date, 'Final settlement ' + ('paid' if x.status == 'paid' else x.get_status_display().lower()), '',
+                    ref={'model': 'ExitSettlement', 'id': x.pk})
+        except Exception:
+            log.exception('settlement history')
     RL = M('Chatter', 'RecordLog') if apps.is_installed('Chatter') else None
     if RL is not None and 'org' in types and apps.is_installed('OrgStructure'):
         eo = M('OrgStructure', 'EmployeeOrg').objects.filter(employee_id=emp.pk).first()
@@ -762,7 +905,7 @@ def _is_national(emp, ident):
 
 def completeness(emp, ident=None, has_contact=None, has_bank=None, cache=None):
     """[(label, ok)] of the fields a UAE employee file needs, plus the % filled."""
-    ident = ident if ident is not None else identity_for(emp.pk)
+    ident = merged_identity(emp.pk, ident)   # v1.62.0 people: identity details, else the employee's documents
     national = _is_national(emp, ident)
     g = (lambda f: getattr(ident, f, None) if ident is not None else None)
     if has_contact is None:
@@ -821,7 +964,7 @@ def employee_columns(emps):
             'status': f.status if f else '', 'status_label': dict(EmploymentInfo.STATUS).get(f.status, '') if f else '',
             'probation_end': f.probation_end_date if f and f.probation_status in ('on_probation', 'extended') else None,
             'probation_status': f.probation_status if f else '', 'date_of_leaving': f.date_of_leaving if f else None,
-            'manager': ((m.get_full_name() if hasattr(m, 'get_full_name') else '') or m.username) if m else '',
+            'manager': (__import__('HRActions.names', fromlist=['user_obj_name']).user_obj_name(m) or m.username) if m else '',   # v1.62.0 people
         })
     return out
 
@@ -874,7 +1017,9 @@ def profile_groups():
             _f('driving_licence_expiry_date', 'Driving licence expiry date', 'date'),
             _f('driving_licence_emirate', 'Driving licence emirate', 'select', options=_choices(EmployeeIdentity, 'driving_licence_emirate')),
             _f('driving_licence_categories', 'Driving licence categories', 'text', placeholder='Light vehicle, Motorcycle'),
-            _f('insurance_provider', 'Insurance provider'), _f('insurance_card_no', 'Insurance card number'), _f('insurance_expiry_date', 'Insurance expiry date', 'date')]},
+            _f('insurance_provider', 'Insurance provider'), _f('insurance_card_no', 'Insurance card number'),
+            _f('insurance_issue_date', 'Insurance issue date', 'date'),   # v1.40.1
+            _f('insurance_expiry_date', 'Insurance expiry date', 'date')]},
         {'key': 'emergency', 'label': 'Emergency contacts', 'model': 'EmployeeProfile.EmergencyContact', 'many': True, 'fields': [
             _f('name', 'Name'), _f('relation', 'Relation'), _f('mobile', 'Mobile', 'phone'), _f('alt_phone', 'Other phone', 'phone'),
             _f('email', 'E-mail', 'email'), _f('address', 'Address'), _f('is_primary', 'Primary contact', 'bool')]},

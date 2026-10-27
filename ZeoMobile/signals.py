@@ -44,9 +44,14 @@ def _has_phone(uid):
 
 def _push(uid, kind, title, body, route, schema, *targs):
     from . import push
-    if not _has_phone(uid):
-        return
-    push.send(uid, _lang_t(uid, schema, title, *targs), body, {'route': route, 'kind': kind}, kind=kind, schema=schema)
+    text = _lang_t(uid, schema, title, *targs)
+    if _has_phone(uid):
+        push.send(uid, text, body, {'route': route, 'kind': kind}, kind=kind, schema=schema)
+    try:   # v1.51.0 WhatsApp / SMS through the company's gateway, when switched on for this kind
+        from Chatter.messaging import send_event
+        send_event(uid, kind, text, body, schema)
+    except Exception:
+        log.debug('messaging', exc_info=True)
 
 
 # ---------------------------------------------------------------- in-app notifications
@@ -56,6 +61,12 @@ def inbox_saved(sender, instance, created, raw=False, **kw):
     try:
         from . import push
         uid = instance.user_id
+        if (instance.notification_type or 'general') == 'general':   # v1.51.0 other notifications by WhatsApp / SMS when chosen
+            try:
+                from Chatter.messaging import send_event
+                send_event(uid, 'notification', instance.title or 'ZEO', (instance.message or '')[:400], instance.schema_name or '')
+            except Exception:
+                pass
         if not _has_phone(uid):
             return
         if (instance.notification_type or 'general') != 'general':
@@ -87,7 +98,7 @@ def approval_saved(sender, instance, created, raw=False, **kw):
         uid = getattr(instance, 'approver_id', None)
         if getattr(instance, 'is_deligate', False) and getattr(instance, 'deligate_to_id', None):
             uid = instance.deligate_to_id
-        if not _has_phone(uid):
+        if not uid:
             return
         for key, label, rm, am, fk, dfield, summ in _registry():
             if am.split('.')[1].lower() == sender.__name__.lower():
@@ -126,7 +137,7 @@ def request_saved(sender, instance, created, raw=False, **kw):
     try:
         e = getattr(instance, 'employee', None)
         uid = getattr(e, 'users_id', None) if e is not None else None
-        if not _has_phone(uid):
+        if not uid:
             return
         for key, label, rm, am, fk, dfield, summ in _registry():
             if rm.split('.')[1].lower() == sender.__name__.lower():
@@ -160,7 +171,7 @@ def payslip_saved(sender, instance, created, raw=False, **kw):
     try:
         e = getattr(instance, 'employee', None)
         uid = getattr(e, 'users_id', None) if e is not None else None
-        if not _has_phone(uid):
+        if not uid:
             return
         r = getattr(instance, 'payroll_run', None)
         period = f'{r.get_month_display()} {r.year}' if r is not None else ''

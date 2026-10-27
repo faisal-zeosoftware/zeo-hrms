@@ -730,6 +730,10 @@ class RegistersView(Base):
 
 
 class RegisterListView(Base):
+    def zeo_model_for(self, kwargs):   # v1.38.0: the form designer asks the list screen for its model (extra fields on the HSE registers)
+        r = REGS.get((kwargs or {}).get('kind'))
+        return r.model if r is not None else None
+
     @guard
     def get(self, request, kind):
         r = get_reg(kind, request)

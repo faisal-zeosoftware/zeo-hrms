@@ -95,7 +95,11 @@ def plan(t):
     moved = False
     for label, model, old, new, attrs in fields:
         if new and new != old:
-            out['changes'].append({'area': 'Employee', 'what': label, 'from': _name(_obj(model, old), *attrs), 'to': _name(_obj(model, new), *attrs)})
+            if model == 'UserManagement.CustomUser':   # v1.62.0 people: the manager by name, not the login name
+                from .names import user_name
+                out['changes'].append({'area': 'Employee', 'what': label, 'from': user_name(old), 'to': user_name(new)})
+            else:
+                out['changes'].append({'area': 'Employee', 'what': label, 'from': _name(_obj(model, old), *attrs), 'to': _name(_obj(model, new), *attrs)})
             moved = True
     try:  # v1.12.0: location / division / section / cost centre / grade / position / employment type (OrgStructure)
         if apps.is_installed('OrgStructure') and (t.options or {}).get('org'):

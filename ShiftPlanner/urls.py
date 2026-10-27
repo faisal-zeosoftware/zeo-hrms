@@ -11,6 +11,7 @@ urlpatterns = [
     path('api/periods/<int:pk>/', V.PeriodDetail.as_view()),
     path('api/periods/<int:pk>/grid/', V.GridView.as_view()),
     path('api/periods/<int:pk>/cells/', V.CellsView.as_view()),
+    path('api/periods/<int:pk>/skills/', V.SkillsCoverView.as_view()),   # v1.61.0
     path('api/periods/<int:pk>/<str:action>/', V.PeriodAction.as_view()),
     path('api/availability/', V.AvailabilityView.as_view()),
     path('api/availability/<int:pk>/', V.AvailabilityDetail.as_view()),

@@ -54,7 +54,7 @@ def app_info(app, request):
         'industry_source': s.industry_source, 'company_industry': code, 'company_industry_label': label, 'suggested': sug,
         'packs_installed': s.packs_installed, 'terms': s.terms or {}, 'require_review': s.require_review,
         'rights': r, 'can_setup': can_setup(app, request), 'links': links_state(app),
-        'settings': {f: getattr(s, f) for f in app.settings_fields},
+        'settings': {f: getattr(s, f) for f in app.settings_fields} | ({'secret_set': bool(getattr(s, 'messaging_secret', ''))} if hasattr(app, 'set_secret') else {}),
         'settings_meta': [_smeta(app, f) for f in app.settings_fields],
         'to_review': len(P.to_review(app)) if s.activated_at else 0,
         'roles': [{'code': k, 'label': v} for k, v in app.roles],
@@ -115,6 +115,9 @@ class AppInfoView(Base):
                 v = f.s(n)
             setattr(s, n, v)
             changed.append(str(fld.verbose_name))
+        if f.has('secret') and f.s('secret') and hasattr(a, 'set_secret'):   # v1.40.0: a provider key, kept encrypted and never returned (empty = keep)
+            a.set_secret(s, f.s('secret'))
+            changed.append('provider key')
         s.save()
         if changed:
             a.event('settings', 0, 'Settings changed: ' + ', '.join(changed), request.user)
@@ -257,7 +260,12 @@ def reg_meta(r, request):
     return {'kind': r.kind, 'label': r.label, 'plural': r.plural, 'group': r.group, 'help': r.help, 'child_of': r.child_of,
             'cols': [fmeta(r, c) for c in r.cols if not r.link_off(c)], 'form': [fmeta(r, c) for c in r.form if not r.link_off(c)],
             'filters': [fmeta(r, c) for c in r.filters if not r.link_off(c)], 'can_create': r.can_create(request) and r.create != 'none',
-            'manages': r.manages(request), 'files': r.files, 'review': r.review}
+            'manages': r.manages(request), 'files': r.files, 'review': r.review,
+            # v1.45.0 mass actions and Duplicate: the workflow actions (run on many rows), deletable, can duplicate
+            'actions': [{'name': a.name, 'label': a.label, 'style': a.style, 'confirm': a.confirm,
+                         'fields': [{'name': n, 'label': l, 'type': t, 'required': bool(q)} for n, l, t, q in a.fields]} for a in r.actions],
+            'deletable': bool(getattr(r, 'deletable', False)) and r.manages(request),
+            'can_duplicate': r.can_create(request) and r.create != 'none' and not r.child_of}
 
 
 class RegistersView(Base):
@@ -385,6 +393,8 @@ class RegisterActionView(Base):
         if a is None:
             raise Http404
         if not action_ok(r, a, obj, request):
+            if not (r.manages(request) or r.can_create(request) or r.can_edit(obj, request)):   # v1.56.1 a viewer: refused as a right, not a state
+                raise AppError(f'You can only view {r.plural.lower()}.', status=403)
             raise AppError(f'"{a.label}" is not possible now.', status=400)
         f = In(request)
         for n, l, t, req in a.fields:
@@ -526,3 +536,134 @@ class RegisterExportView(Base):
 def _company_perms():   # v1.22.0: only the users of the open company (see AccessControl.access.company_perms)
     from AccessControl.access import company_perms
     return company_perms()
+
+
+# ------------------------------------------------------------------ v1.45.0 Duplicate and mass actions
+class _Data:
+    """A request-like holder for In(): the values of a record as the form would send them."""
+    def __init__(self, d):
+        from django.utils.datastructures import MultiValueDict
+        self.data, self.FILES = d, MultiValueDict()
+
+
+def form_values(r, obj):
+    import datetime as _dt
+    from decimal import Decimal as _D
+    out = {}
+    for n in r.form:
+        fld = field_of(r.model, n)
+        if isinstance(fld, M.ManyToManyField):
+            out[n] = list(getattr(obj, n).values_list('pk', flat=True))
+            continue
+        v = getattr(obj, fld.attname)
+        if isinstance(v, (_dt.date, _dt.datetime)):
+            v = v.isoformat()
+        elif isinstance(v, _D):
+            v = str(v)
+        elif hasattr(v, 'name') and isinstance(fld, M.FileField):
+            continue
+        out[n] = v
+    return out
+
+
+def copy_values(r, obj):
+    """The values of a copy: unique codes get -COPY (-COPY2…), the title gets "(copy)"; numbers and statuses start again."""
+    d = form_values(r, obj)
+    for n in ('partner', 'item', 'model_item'):   # links to the shared masters: the copy gets its own (or the user picks one)
+        if n in d and n != getattr(r, 'child_of', None):
+            d.pop(n)
+    for n in list(d):
+        fld = field_of(r.model, n)
+        if n == 'number' and r.number:
+            d.pop(n)
+            continue
+        if getattr(fld, 'unique', False) and isinstance(fld, (M.CharField, M.SlugField)) and d[n]:
+            base, i = str(d[n]), 1
+            while True:
+                cand = f'{base}-COPY' + ('' if i == 1 else str(i))
+                cand = cand[-(fld.max_length or 50):] if len(cand) > (fld.max_length or 50) else cand
+                if not r.model._default_manager.filter(**{n: cand}).exists():
+                    d[n] = cand
+                    break
+                i += 1
+        elif getattr(fld, 'unique', False):
+            d.pop(n)
+    t = r.title if isinstance(r.title, str) else None
+    if t and t in d and isinstance(d[t], str) and not getattr(field_of(r.model, t), 'unique', False):
+        d[t] = (d[t] + ' (copy)')[:getattr(field_of(r.model, t), 'max_length', None) or 255]
+    return d
+
+
+class RegisterDuplicateView(Base):
+    """POST: a copy of the record with a new number (Odoo: Duplicate). Files, history and workflow state are not copied."""
+    @guard
+    def post(self, request, kind, pk):
+        r = get_reg(self.app, kind, request)
+        obj = r.scope(request).filter(pk=pk).first()
+        if obj is None:
+            raise Http404
+        need(r.can_create(request) and r.create != 'none' and not r.child_of, f'You cannot add {r.plural.lower()}.')
+        d = copy_values(r, obj)
+        try:   # the user asked for a copy: the "same e-mail / phone / code" warnings do not stop it (the possible duplicate is still listed)
+            request.data['force_duplicate'] = True
+        except Exception:
+            pass
+        new = save(r, r.model(), In(_Data(d)), request, True)
+        self.app.event(r.kind, new.pk, f'Duplicated from {getattr(obj, "number", "") or obj.pk} by {user_name(request.user)}', request.user)
+        return Response(detail(r, r.model.objects.get(pk=new.pk), request), status=status.HTTP_201_CREATED)
+
+
+class RegisterBulkView(Base):
+    """POST {ids, action: 'do:<workflow action>' | 'set' | 'delete', field, value, + the action's fields} – the selected rows of a list.
+    Every row goes through the same checks as one by one; the answer says which rows were done and why the others were not."""
+    @guard
+    def post(self, request, kind):
+        r = get_reg(self.app, kind, request)
+        d = dict(request.data)
+        ids = [int(i) for i in (d.get('ids') or []) if str(i).isdigit()][:500]
+        need(ids, 'Select rows first.')
+        act = str(d.get('action') or '')
+        done, failed = [], []
+        objs = {o.pk: o for o in r.scope(request).filter(pk__in=ids)}
+        a = None
+        if act.startswith('do:'):
+            a = next((x for x in r.actions if x.name == act[3:]), None)
+            need(a is not None, 'Unknown action.')
+            for n, l, t, req in a.fields:
+                if req and t not in ('bool', 'file', 'files') and d.get(n) in (None, ''):
+                    raise AppError(f'{l} is required.', n)
+        elif act == 'set':
+            fld_name = str(d.get('field') or '')
+            need(fld_name in r.form, 'Choose a field of the form.')
+        elif act != 'delete':
+            raise AppError('Unknown action.')
+        for i in ids:
+            obj = objs.get(i)
+            if obj is None:
+                failed.append({'id': i, 'error': 'Not found or not yours.'})
+                continue
+            try:
+                with transaction.atomic():
+                    if a is not None:
+                        if not action_ok(r, a, obj, request):
+                            raise AppError(f'"{a.label}" is not possible for this record now.')
+                        a.run(obj, request, In(_Data(d)))
+                    elif act == 'set':
+                        if not r.can_edit(obj, request):
+                            raise AppError('This record cannot be changed.')
+                        save(r, obj, In(_Data({fld_name: d.get('value')})), request, False)
+                    else:
+                        if not (r.manages(request) and getattr(r, 'deletable', False)):
+                            raise AppError('These records cannot be deleted – cancel or archive them instead.')
+                        from django.db.models.deletion import ProtectedError
+                        try:
+                            obj.delete()
+                        except ProtectedError:
+                            raise AppError('In use – cannot be deleted.')
+                        self.app.event(r.kind, i, f'Deleted by {user_name(request.user)} (mass action)', request.user)
+                done.append(i)
+            except AppError as e:
+                failed.append({'id': i, 'error': e.message})
+            except Exception as e:   # noqa: BLE001 – one row never stops the others
+                failed.append({'id': i, 'error': str(e)[:200]})
+        return Response({'done': done, 'failed': failed})

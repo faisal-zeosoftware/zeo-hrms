@@ -33,9 +33,13 @@ from Translations.i18n import tr  # v1.15.0 language packs: messages in the user
 logger = logging.getLogger(__name__)
 
 PUBLIC_PATHS = (
-    '/users/token/', '/users/validate-credentials/', '/users/verify-otp/', '/users/send-otp/',
+    '/users/token/', '/users/2fa/login/', '/users/sso/discover/', '/users/sso/start/', '/users/sso/oidc/', '/users/sso/saml/',
+    '/users/sso/exchange/', '/users/sso/device/', '/scim/',   # v1.54.0 single sign-on (before a login exists), SCIM (its own token)
+    '/users/validate-credentials/', '/users/verify-otp/', '/users/send-otp/',
     '/users/send-reset-otp/', '/users/verify-reset-otp/', '/users/reset-password/',
     '/users/ess-send-reset-otp/', '/users/ess-verify-reset-otp/', '/users/ess-reset-password/',
+    '/users/sign-in-link/',   # v1.56.0 choose the password from the e-mail link (setup guide)
+    '/users/activate/', '/users/first-check/',   # v1.62.0 activation without e-mail, the default password's extra check
     '/cloud/api/signup/', '/cloud/api/jobs/',   # v1.23.0 ZEO Cloud sign-up (before a login exists)
     '/mobile/api/info/', '/mobile/api/unlock/',
     '/licence/api/enterprise-request/',   # v1.28.0 Enterprise request (sign-up page, before a login exists)   # v1.25.0 mobile app: server check, fingerprint unlock
@@ -49,6 +53,11 @@ BACKOFFICE_VIEWS = {
 }
 # company-wide confidential tables with no employee / user link
 CONFIDENTIAL = {'payrollrun', 'group', 'permission', 'usertenantpermissions', 'userbranchaccess'}
+# v1.56.1 set-up and HR-only tables a login without the add right never creates itself (model-name words)
+SELF_ADD_DENY = ('workflow', 'level', 'notif', 'escalation', 'rule', 'template', 'policy', 'setting', 'access', 'approval', 'allocation',
+                 'permission', 'overtime', 'monthlyattendance', 'balance', 'payslip', 'salary', 'transaction', 'opening', 'accrual', 'recheck')
+# v1.62.0 own requests whose model name contains one of the words above
+SELF_ADD_ALLOW = {'advancesalaryrequest'}
 # employee-linked tables a reporting manager may read for their team
 TEAM_KEYWORDS = ('leave', 'attendance', 'shift', 'overtime', 'latein', 'lateinearly', 'timesheet', 'rejoin', 'task')
 EMP_FIELD_PRIORITY = ('employee', 'emp_id', 'emp', 'employee_id', 'emp_master', 'requested_employee')
@@ -285,11 +294,45 @@ class ZeoAccess(permissions.BasePermission):
             return True
         if verb == 'view':
             return True  # rows are limited by filter_queryset
+        if model is Emp and getattr(view, 'action', None) in ('create', 'update', 'partial_update', 'destroy'):
+            # v1.56.1 the employee master itself needs the HR right (a login without rights could add an employee, or change / delete
+            # its own record); own details are changed through My profile, family / bank / documents through their own screens
+            self.message = tr('Only HR users can add, change or delete employee records. Use My profile to ask for a change.')
+            return False
         ep = emp_path(model)
         if ep is not None or user_fields(model):
+            if verb == 'add':
+                # v1.56.1 release checklist (Part C): a login without the add right could create set-up rows that only name a user
+                # (approval levels, workflows, notification lists, escalation rules, user branch access) and HR records of an
+                # employee (overtime, attendance summaries, allocations). Self-service adds stay for the user's own requests.
+                # v1.62.0 the word 'salary' also matched the advance salary request, so employees could not ask for an advance in self-service
+                if name in CONFIDENTIAL or (any(w in name for w in SELF_ADD_DENY) and name not in SELF_ADD_ALLOW):
+                    self.message = tr('You do not have permission to {0} {1}.', verb, model._meta.verbose_name)
+                    return False
+                if ep and not c.emp:
+                    self.message = tr('Your login is not linked to an employee record, so you cannot raise requests.')
+                    return False
+                data = _data(request)
+                others = [f for f in user_fields(model) if any(str(v) != str(user.pk) for v in _values(data.get(f)))]
+                if not ep and others:
+                    self.message = tr('You do not have permission to {0} {1}.', verb, model._meta.verbose_name)
+                    return False
             if verb == 'add' and ep and c.emp:
                 first = ep.split('__')[0]
                 vals = _values(_data(request).get(first))
+                if vals and '__' in ep:
+                    # v1.62.0 one hop (goal / check-in → goal sheet → employee): the value is the id of the linked record, so compare
+                    # its employee – the user's own, or a direct report's (manager check-ins) – not the id itself
+                    try:
+                        rel = model._meta.get_field(first).related_model
+                        owners = set(rel._default_manager.filter(pk__in=[v for v in vals if str(v).isdigit()]).values_list(ep.split('__', 1)[1], flat=True))
+                    except Exception:
+                        owners = set()
+                    team = {c.emp.id} | set(Emp.objects.filter(emp_reporting_manager=user).values_list('id', flat=True))
+                    if not owners or not owners <= team:
+                        self.message = tr('You can only raise requests for yourself.')
+                        return False
+                    return True
                 if vals and any(str(v) not in (str(c.emp.id), str(c.emp.emp_code)) for v in vals):
                     self.message = tr('You can only raise requests for yourself.')
                     return False
@@ -366,8 +409,17 @@ class ZeoAccess(permissions.BasePermission):
         ep = emp_path(model)
         emp_ids = []
         if ep:
-            vals = _values(data.get(ep.split('__')[0]))
+            first = ep.split('__')[0]
+            vals = _values(data.get(first))
             emp_ids = [v for v in vals if str(v).isdigit()]
+            if emp_ids and '__' in ep:
+                # v1.62.0 one hop (goal → goal sheet → employee): the value is the linked record's id, not an employee id – a Dubai-only
+                # user adding a goal to their own sheet was refused when the sheet id matched a Sharjah employee's id
+                try:
+                    rel = model._meta.get_field(first).related_model
+                    emp_ids = [v for v in rel._default_manager.filter(pk__in=emp_ids).values_list(ep.split('__', 1)[1], flat=True) if v]
+                except Exception:
+                    pass
             if emp_ids and Emp.objects.filter(id__in=emp_ids).exclude(emp_branch_id__in=c.branches).exists():
                 return False
         bp, _ = branch_path(model)
@@ -511,6 +563,11 @@ def install():
 
     APIView.get_permissions = get_permissions
     GenericAPIView.filter_queryset = filter_queryset
+    try:   # v1.62.0 hidden self-service fields left out of API answers; sensitive numbers masked
+        from .respfilter import install as _rf
+        _rf()
+    except Exception:
+        logger.exception('response filter install')
     _installed = True
 
 
@@ -537,6 +594,29 @@ def emp_ids_in_branches(branches):
     return Emp.objects.filter(emp_branch_id__in=list(branches or [])).values('id')
 
 
+HR_APP_LABELS = ('EmpManagement', 'OrganisationManager', 'calendars', 'PayrollManagement', 'UserManagement', 'EmployeeProfile', 'LeavePolicy',
+                 'AttendancePlus', 'PayrollPlus', 'ShiftPlanner', 'ExpenseManagement', 'RecruitmentManagement', 'PerformanceManagement',
+                 'LearningManagement', 'SelfService', 'ProjectManagement')
+# v1.62.0: ZeoHR (HR operations) left out – its rights are app roles (HR operations manager / HR officer / PRO / viewer); with them in
+# this list a PRO or an HR operations viewer counted as HR back office and saw every login of the company in Settings › Users
+
+
+def hr_backoffice(request):
+    """v1.56.1: company admin, or a user whose groups hold a right of the HR / payroll / projects core (not only app-kit roles)."""
+    try:
+        c = ctx(request)
+    except Exception:
+        return False
+    if c is None or c.admin:
+        return c is not None
+    if not hasattr(request, '_zeo_hrbo'):
+        from tenant_users.permissions.models import UserTenantPermissions
+        from django.contrib.auth.models import Permission
+        utp = UserTenantPermissions.objects.filter(profile=request.user).first()
+        request._zeo_hrbo = bool(utp) and Permission.objects.filter(group__in=utp.groups.all(), content_type__app_label__in=HR_APP_LABELS).exists()
+    return request._zeo_hrbo
+
+
 def limit_by_branch(request, qs, branch_path=None, emp_field=None, include_null=False):
     """v1.22.0 branch rights: limit qs to the user's branches (no-op for admins).
 
@@ -545,6 +625,19 @@ def limit_by_branch(request, qs, branch_path=None, emp_field=None, include_null=
     neither:     automatic path (branch_path(model)).
     """
     qs = _limit_by_location(request, qs)   # v1.31.1 location level (no-op while control is off)
+    # v1.56.1 release checklist: a self-service login (no rights at all) fell back to its own branch here, so reports and exports
+    # built on this helper (employee export, leave / attendance / document reports …) gave every employee of that branch.
+    # Employee-linked rows: only the user's own.
+    try:
+        c = ctx(request) if request_schema(request) else None
+    except Exception:
+        c = None
+    if c is not None and not c.backoffice:
+        ep = emp_path(qs.model) if not emp_field else emp_field
+        if ep is not None:
+            if c.emp is None:
+                return qs.none()
+            return qs.filter(pk=c.emp.pk) if ep == '' else qs.filter(**{ep: c.emp.pk})
     branches = allowed_branches(request)
     if branches is None:
         return qs

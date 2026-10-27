@@ -99,7 +99,9 @@ def in_branches(qs, request, path='branch'):
         return qs
     pick = getattr(request, '_zeo_dash_branch', None) if request is not None else None
     if pick:
-        qs = qs.filter(**{path: pick})
+        # v1.38.0: a branch picked on the dashboard shows that branch plus the shared rows (no branch) – the same
+        # figures a user limited to that branch sees on their own dashboard
+        qs = qs.filter(branch_q(model, [pick], path))
     b = branch_ids(request)
     if b is None:
         return qs
@@ -727,6 +729,8 @@ class App:
             path('api/r/<str:kind>/<int:pk>/', V.RegisterDetailView.as_view(app=a)),
             path('api/r/<str:kind>/<int:pk>/do/<str:action>/', V.RegisterActionView.as_view(app=a)),
             path('api/r/<str:kind>/<int:pk>/files/', V.RegisterFileView.as_view(app=a)),
+            path('api/r/<str:kind>/bulk/', V.RegisterBulkView.as_view(app=a)),                     # v1.45.0 mass actions
+            path('api/r/<str:kind>/<int:pk>/duplicate/', V.RegisterDuplicateView.as_view(app=a)),  # v1.45.0 Duplicate
         ]
 
 
@@ -759,7 +763,10 @@ class Reg:
     def __init__(self, kind, model, label, plural, group, *, cols, form, number=None, manage=(), view=(), create='manage', own=(),
                  public=None, restricted=(), search=('number',), filters=('status',), edit_when=None, actions=(), children=(), extra=None,
                  saver=None, check=None, child_of=None, title='number', subtitle='', help='', defaults=None, files=True, links=None,
-                 can_restricted=None, review=False, ordering=None, scope_fn=None, readonly=(), deletable=False, export_extra=(), own_edit=False, info=()):
+                 can_restricted=None, review=False, ordering=None, scope_fn=None, readonly=(), deletable=False, export_extra=(), own_edit=False, info=(),
+                 tables=None, pdf=None):
+        self.tables = tables or {}               # v1.40.0: JSON fields edited as tables – {field: [(key, label, type[, options]), ...]}
+        self.pdf = pdf                           # v1.40.0: name of the printed document (the app serves r/<kind>/<id>/pdf/)
         self.kind, self.model, self.label, self.plural, self.group = kind, model, label, plural, group
         self.cols, self.form, self.number, self.manage, self.view, self.create, self.own = cols, form, number, manage, view, create, own
         self.public, self.restricted, self.search, self.filters = public, restricted, search, filters
@@ -892,6 +899,11 @@ def fmeta(r, name):
         m['choices'] = [{'value': k, 'label': str(v)} for k, v in f.choices if k != '']
     m['required'] = bool(not f.blank and t not in ('bool', 'bool3', 'json', 'm2m') and f.default is M.NOT_PROVIDED)
     m['readonly'] = name in r.readonly
+    # v1.58.0: the model default fills a new form (a checkbox that defaults to on was shown off and saved off)
+    if t in ('bool', 'choice', 'decimal', 'int') and f.default is not M.NOT_PROVIDED and not callable(f.default) and f.default not in (None, ''):
+        m['default'] = str(f.default) if t == 'decimal' else f.default
+    if t == 'json' and name in getattr(r, 'tables', {}):   # v1.40.0 table editor: columns = [(key, label, type[, options])]
+        m['columns'] = [{'key': c[0], 'label': c[1], 'type': c[2], 'options': c[3] if len(c) > 3 else None} for c in r.tables[name]]
     return m
 
 
@@ -950,6 +962,29 @@ def detail(r, obj, request):
     out = ser(r, obj, request, tuple(dict.fromkeys(r.cols + r.form + r.info)))
     out['info'] = [fmeta(r, n) for n in r.info if not r.link_off(n)]
     out['can_edit'] = r.can_edit(obj, request)
+    if r.pdf:   # v1.40.0 printed document
+        out['pdf'] = r.pdf
+    if r.tables:   # v1.40.0 table fields shown as tables on the record page (option labels resolved)
+        out['tables'] = []
+        for n, cols in r.tables.items():
+            rows = getattr(obj, n, None) or []
+            if not isinstance(rows, list) or not rows:
+                continue
+            shown = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                rr = dict(row)
+                for c in cols:
+                    if c[2] == 'opt' and len(c) > 3 and row.get(c[0]):
+                        o = r.app.options.get(c[3])
+                        try:
+                            x = o[0]().filter(pk=row[c[0]]).first() if o else None
+                            rr[c[0] + '_label'] = o[1](x) if x is not None else str(row[c[0]])
+                        except Exception:
+                            rr[c[0] + '_label'] = str(row[c[0]])
+                shown.append(rr)
+            out['tables'].append({'name': n, 'label': label_of(field_of(r.model, n)), 'columns': fmeta(r, n)['columns'], 'rows': shown})
     out['actions'] = [{'name': a.name, 'label': a.label, 'style': a.style, 'confirm': a.confirm,
                        'fields': [{'name': n, 'label': l, 'type': t, 'required': req} for n, l, t, req in a.fields]}
                       for a in r.actions if action_ok(r, a, obj, request)]

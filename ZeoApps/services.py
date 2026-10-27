@@ -33,7 +33,7 @@ APPS = [
     ('property', 'ZeoProperty', 'Property', 'apartment', 'Buildings, units, owners, leases, sales, billing, cheques and portals', 'kit', '/main-sidebar/zeo-property/home'),
     ('maintenance', 'ZeoMaintenance', 'Maintenance', 'build', 'Work orders, quotes, preventive plans, assets and inspections', 'kit', '/main-sidebar/zeo-maintenance/home'),
     ('assets', 'ZeoAssets', 'Asset Management', 'inventory_2', 'Asset register shared with HR, QR labels and scanning, check-out, reservations, physical counts and depreciation', 'kit', '/main-sidebar/zeo-assets/home'),
-    ('people', 'ZeoPeople', 'People', 'diversity_3', 'Benefits, e-signature, forms, surveys, recognition and rewards, chat, 360° reviews and development plans', 'kit', '/main-sidebar/zeo-people/home'),
+    ('people', 'ZeoPeople', 'People', 'diversity_3', 'Part of HRMS (v1.38.1): benefits, e-signature, forms, surveys, recognition and rewards, chat, 360° reviews and development plans – switch off to hide these HR pages', 'kit', '/main-sidebar/zeo-people/home'),
     ('hse', 'ZeoHSE', 'HSE', 'health_and_safety', 'Risk, permits to work, incidents, inspections, audits and corrective actions', 'hse', '/main-sidebar/zeo-hse/home'),
 ]
 KEYS = [a[0] for a in APPS]
@@ -237,7 +237,12 @@ def role_groups(key):
     p = ROLE_PREFIX.get(key)
     if not p:
         return []
-    return list(Group.objects.filter(name__startswith=p).order_by('name').values_list('name', flat=True))
+    # v1.62.0 isolation: the role groups of this company (its own copies shown with the standard name; not other companies' copies)
+    from . import groupscope
+    gs = Group.objects.filter(name__startswith=p)
+    if groupscope.schema():
+        gs = gs.filter(pk__in=groupscope.visible_ids() | set(groupscope.rows()))
+    return sorted({groupscope.label(g) for g in gs if groupscope.label(g).startswith(p)})
 
 
 def make_roles(key):
@@ -251,6 +256,23 @@ def make_roles(key):
     if key == 'projects':
         from ZeoProjects.management.commands.zeoprojects_setup import Command
         return Command().roles()
+    if key == 'hrms':
+        # v1.62.0: HR operations (part of HR) and Business partners (shared by every app) are on the app kit too, but they are
+        # not apps of their own here – their role groups were never made, so the checklist roles could not be given to users
+        from zeo.appkit.command import make_roles as mk
+        from zeo.appkit.engine import REGISTRY
+        out = []
+        import types
+        for label, title in (('ZeoHR', None), ('ZeoMasters', 'Business partners')):
+            try:
+                importlib.import_module(f'{label}.app')
+                a = REGISTRY[label]
+                if title:   # the Masters app's roles are shown as "Business partners – …" (as in Settings › Apps and the checklist)
+                    a = types.SimpleNamespace(title=title, roles=a.roles, label=a.label, code=a.code)
+                out += mk(a)
+            except Exception:
+                log.exception('role groups of %s', label)
+        return out
     return []
 
 
@@ -398,6 +420,11 @@ def setup_new_company(tenant, keys, user=None):
     done, failed = [], {}
     with schema_context(tenant.schema_name):
         set_core_default(keys, getattr(tenant, 'industry_type', '') or '')
+        try:   # v1.62.0 print – the sample print templates of the new company (payslip, letters, settlement …)
+            from PrintTemplates.services import seed as _print_seed
+            _print_seed()
+        except Exception:
+            log.exception('print templates of %s', tenant.schema_name)
         for k in keys:
             if k in ('hrms', 'projects'):
                 try:

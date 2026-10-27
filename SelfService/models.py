@@ -80,12 +80,35 @@ class LetterTemplate(models.Model):
     signatory_title = models.CharField(max_length=120, blank=True, default='')
     show_salary = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    version = models.PositiveIntegerField(default=0, help_text='v1.61.0 the current version number (0 = no history yet)')
     updated_by_id = models.IntegerField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = [('letter_type', 'language', 'branch_id')]
         ordering = ['letter_type', 'language']
+
+
+TEMPLATE_VERSIONED = ('title', 'body', 'footer', 'signatory_name', 'signatory_title', 'show_salary')
+
+
+class LetterTemplateVersion(models.Model):
+    """v1.61.0 – every saved wording of a letter template; an issued letter records the version it used."""
+    template = models.ForeignKey(LetterTemplate, on_delete=models.CASCADE, related_name='versions')
+    version = models.PositiveIntegerField()
+    title = models.CharField(max_length=200)
+    body = models.TextField()
+    footer = models.CharField(max_length=300, blank=True, default='')
+    signatory_name = models.CharField(max_length=120, blank=True, default='')
+    signatory_title = models.CharField(max_length=120, blank=True, default='')
+    show_salary = models.BooleanField(default=False)
+    note = models.CharField(max_length=300, blank=True, default='')
+    saved_by_id = models.IntegerField(null=True, blank=True)
+    saved_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['template', '-version']
+        unique_together = [('template', 'version')]
 
 
 class LetterRequest(models.Model):
@@ -107,6 +130,8 @@ class LetterRequest(models.Model):
     verification_code = models.CharField(max_length=20, blank=True, default='', db_index=True)
     pdf = models.FileField(upload_to='ess/letters/', null=True, blank=True)
     body_snapshot = models.TextField(blank=True, default='')
+    template_id = models.IntegerField(null=True, blank=True, help_text='v1.61.0 the template the letter was issued with')
+    template_version = models.PositiveIntegerField(null=True, blank=True, help_text='v1.61.0 the template version the letter was issued with')
     decided_by_id = models.IntegerField(null=True, blank=True)
     decided_at = models.DateTimeField(null=True, blank=True)
     decision_note = models.CharField(max_length=500, blank=True, default='')

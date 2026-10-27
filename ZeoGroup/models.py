@@ -63,3 +63,26 @@ class SettingsCopy(models.Model):
 
     class Meta:
         ordering = ['-id']
+
+
+class GroupCurrency(models.Model):
+    """v1.53.0 – the reporting currency of a group (consolidated payroll cost)."""
+    key = models.CharField(max_length=20, unique=True, help_text='group key: acc<id> or server')
+    currency = models.CharField(max_length=3, default='AED')
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ExchangeRate(models.Model):
+    """v1.53.0 – 1 `currency` = `rate` `to_currency`, from `month` on (until a later rate). Entered by the group."""
+    key = models.CharField(max_length=20, db_index=True)
+    currency = models.CharField(max_length=3)
+    to_currency = models.CharField(max_length=3)
+    month = models.DateField(help_text='first day of the month the rate applies from')
+    rate = models.DecimalField(max_digits=18, decimal_places=8)
+    note = models.CharField(max_length=120, blank=True, default='')
+    by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['currency', '-month']
+        unique_together = [('key', 'currency', 'to_currency', 'month')]

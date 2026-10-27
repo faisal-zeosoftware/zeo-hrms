@@ -51,14 +51,18 @@ class brnch_mstr(models.Model):
             ('PayrollManagement', 'AdvanceSalaryRequest', 'branch'),
             ('PayrollManagement', 'AirTicketRequest', 'branch'),
             ('calendars', 'Attendance', 'employee__emp_branch_id'),
-            ('OrganisationManager', 'FiscalYear', 'branch_id'),
+            # v1.56.1: the fiscal year and the document numbering rows a new branch gets are its setup, not transactions – an unused
+            # branch could never be deleted. Numbering rows count only once a number was issued; the setup rows go with the branch.
             ('OrganisationManager', 'DocumentNumbering', 'branch_id'),
         ]
 
         for app_label, model_name, field_name in transaction_checks:
             try:
                 Model = apps.get_model(app_label, model_name)
-                if Model.objects.filter(**{field_name: self}).exists():
+                flt = {field_name: self}
+                if model_name == 'DocumentNumbering':
+                    flt['current_number__gt'] = 0
+                if Model.objects.filter(**flt).exists():
                     readable_name = model_name.replace('_', ' ').capitalize()
                     raise ValidationError(
                         f"This branch cannot be deleted because it is associated with existing transactions in '{readable_name}'. "
@@ -224,6 +228,13 @@ class DocumentNumbering(models.Model):
             if num:
                 return num
         except Exception:
+            pass
+        try:   # v1.56.0 one pattern for every type (setup guide › numbering), when switched on
+            from ZeoAdmin.numbering import next_number as _pattern_number
+            num = _pattern_number(self.type, self.branch_id)
+            if num:
+                return num
+        except ImportError:
             pass
         current_date = timezone.now().date()
         if self.start_date and self.end_date:

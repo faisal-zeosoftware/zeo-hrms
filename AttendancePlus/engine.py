@@ -177,6 +177,9 @@ def shift_info(employee, day, rule=None, book=None):
                 'grace_in': d.get('grace_in_minutes') or None, 'grace_out': d.get('grace_out_minutes') or None,
                 'min_hours': d.get('min_hours') or None, 'max_hours': d.get('max_hours') or None,
                 'half_day_hours': d.get('half_day_hours') or None, 'ot_after_minutes': d.get('ot_after_minutes') or None,
+                # v1.61.0 split shift: the parts; the time between them is unpaid
+                'segments': [(as_aware(a), as_aware(b)) for a, b in (d.get('segments') or [])],
+                'split_gap_minutes': int(d.get('split_gap_minutes') or 0),
             }
     sh = _calendars_shift(employee, day)
     if sh == 'OFF':
@@ -437,7 +440,10 @@ def compute(employee, day, rule=None, at=None):
         if a2 > b1:
             gaps += minutes(a2 - b1)
     gross = sum(minutes(b - a) for a, b in intervals)
-    shift_break = (working_shift or {}).get('break_minutes') or rule.break_minutes or 0
+    split_gap = int((working_shift or {}).get('split_gap_minutes') or 0)
+    shift_break = ((working_shift or {}).get('break_minutes') or 0) - split_gap or rule.break_minutes or 0
+    if split_gap:   # v1.62.0 split shift: the gap between the parts is the break – the rule's break was deducted on top (8 h → 7 h)
+        shift_break = max(0, ((working_shift or {}).get('break_minutes') or 0) - split_gap)
     deduct = 0
     if taken_break:
         deduct = max(0, breaks - shift_break) if rule.break_paid else breaks
@@ -447,6 +453,14 @@ def compute(employee, day, rule=None, at=None):
         flags['auto_break'] = shift_break
     r['break_minutes'] = (breaks if taken_break else (deduct if 'auto_break' in flags else 0)) + gaps
     worked = max(0, gross - deduct)
+    segs = (working_shift or {}).get('segments') or []
+    if len(segs) >= 2 and intervals:   # v1.61.0 split shift: time present between the parts is not working time
+        windows = [(a[1], b[0]) for a, b in zip(segs, segs[1:])]
+        inside = sum(max(0, minutes(min(b, wb) - max(a, wa))) for a, b in intervals for wa, wb in windows if min(b, wb) > max(a, wa))
+        if inside:
+            worked = max(0, worked - inside)
+            r['break_minutes'] += inside
+            flags['split_gap_minutes'] = inside
 
     # ---- max hours
     max_h = _dec((working_shift or {}).get('max_hours') or rule.max_hours)
@@ -516,6 +530,26 @@ def compute(employee, day, rule=None, at=None):
             if last_out_r < end - timedelta(minutes=g_out):
                 r['early_minutes'] = minutes(end - last_out_r)
                 r['is_early'] = True
+        if len(segs) >= 2:   # v1.61.0 split shift: late back after the gap, early out before it
+            g_in2 = working_shift.get('grace_in')
+            g_in2 = rule.grace_in_minutes if g_in2 is None else int(g_in2)
+            g_out2 = working_shift.get('grace_out')
+            g_out2 = rule.grace_out_minutes if g_out2 is None else int(g_out2)
+            missed = 0
+            for (s1, e1), (s2, e2) in zip(segs, segs[1:]):
+                outs_gap = [p.ts for p in punches if p.resolved_kind == 'out' and s1 < p.ts <= s2]
+                ins_back = [p.ts for p in punches if p.resolved_kind == 'in' and e1 <= p.ts < e2]
+                if outs_gap and min(outs_gap) < e1 - timedelta(minutes=g_out2):
+                    r['early_minutes'] += minutes(e1 - min(outs_gap))
+                    r['is_early'] = True
+                if ins_back and min(ins_back) > s2 + timedelta(minutes=g_in2):
+                    base = s2 if rule.late_from == 'shift_start' else s2 + timedelta(minutes=g_in2)
+                    r['late_minutes'] += minutes(min(ins_back) - base)
+                    r['is_late'] = True
+                if not any(min(b, e2) > max(a, s2) for a, b in intervals) and (not last_out or last_out < s2):
+                    missed += 1
+            if missed:
+                flags['missed_parts'] = missed
         if r['status'] == 'present':
             worst = None
             if rule.late_tolerance_minutes and r['late_minutes'] > rule.late_tolerance_minutes and rule.late_beyond_action != 'none':
@@ -559,7 +593,11 @@ def _ot_rate(employee, rule, ot_type, night=False):
             return Decimal(str(v))
     except Exception:
         pass
-    return {'NORMAL': Decimal('1.25'), 'WEEKEND': Decimal('1.50'), 'HOLIDAY': Decimal('1.50')}[ot_type]
+    try:   # v1.49.0: the overtime law of the company country (was always the UAE rates)
+        from .v149 import default_rate
+        return default_rate(ot_type, night)
+    except Exception:
+        return {'NORMAL': Decimal('1.25'), 'WEEKEND': Decimal('1.50'), 'HOLIDAY': Decimal('1.50')}[ot_type]
 
 
 def _overtime(employee, rule, r, working_shift, worked, is_workday, half_leave):
@@ -577,6 +615,8 @@ def _overtime(employee, rule, r, working_shift, worked, is_workday, half_leave):
             sched = minutes(working_shift['end'] - working_shift['start'])
             if not rule.break_paid:
                 sched -= (working_shift.get('break_minutes') or rule.break_minutes or 0)
+            else:   # v1.61.0 the time between the parts of a split shift is never paid
+                sched -= int(working_shift.get('split_gap_minutes') or 0)
             extra = worked - sched
         else:
             extra = worked - int(_dec(rule.ot_daily_threshold_hours, 8) * 60)

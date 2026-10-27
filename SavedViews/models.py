@@ -18,6 +18,7 @@ class SavedView(models.Model):
     owner_id = models.IntegerField(db_index=True)
     owner_name = models.CharField(max_length=150, blank=True, default='')
     shared = models.BooleanField(default=False)
+    share_groups = models.JSONField(default=list, blank=True, help_text='v1.46.0: role (group) ids the view is shared with – a team')
     data = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

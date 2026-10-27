@@ -737,16 +737,39 @@ def r_salary(run):
 
 
 def r_salary_revisions(run):
+    # v1.62.0 reports (P1-7): one row per salary change. The history keeps every change in its `revisions` list (the
+    # old_amount / new_amount fields of the history row are never filled) – the report showed one "0 → 0" row per component.
+    from django.utils import timezone
+    from django.utils.dateparse import parse_datetime
     rows = []
-    for h in M('PayrollManagement', 'SalaryRevisionHistory').objects.filter(run.emp_q()).filter(run.in_period('revised_on__date') if run.date_from else Q()).select_related(
+    for h in M('PayrollManagement', 'SalaryRevisionHistory').objects.filter(run.emp_q()).select_related(
             'employee__emp_branch_id', 'employee__emp_dept_id', 'employee__emp_desgntn_id', 'employee__emp_ctgry_id', 'component', 'created_by').order_by('revised_on'):
-        old, new = money(h.old_amount), money(h.new_amount)
-        rows.append({**emp_cols(h.employee), 'component': str(h.component or ''), 'old': old, 'new': new, 'change': round(new - old, 2),
-                     'pct': round(100 * (new - old) / old, 1) if old else '', 'effective': h.effective_period or '',
-                     'revised_on': h.revised_on.date() if h.revised_on else '', 'by': h.created_by.username if h.created_by_id else '', 'remarks': h.remarks or '', **src(h)})
+        revs = [x for x in (h.revisions or []) if isinstance(x, dict)]
+        if not revs and (h.old_amount is not None or h.new_amount is not None):
+            revs = [{'old_amount': h.old_amount, 'new_amount': h.new_amount, 'revised_on': h.revised_on.isoformat() if h.revised_on else '',
+                     'effective_period': h.effective_period, 'remarks': h.remarks, 'revised_by': h.created_by.username if h.created_by_id else ''}]
+        for x in revs:
+            old, new = money(x.get('old_amount') or 0), money(x.get('new_amount') or 0)
+            if not old and not new:   # no amount before or after: not a salary change
+                continue
+            when = parse_datetime(str(x.get('revised_on') or '')) if x.get('revised_on') else None
+            day = timezone.localtime(when).date() if when and timezone.is_aware(when) else (when.date() if when else None)
+            if run.date_from and day and not (run.date_from <= day <= run.date_to):
+                continue
+            rows.append({**emp_cols(h.employee), 'component': str(getattr(h.component, 'name', '') or h.component or ''), 'old': old, 'new': new,
+                         'change': round(new - old, 2), 'pct': round(100 * (new - old) / old, 1) if old else '',
+                         'effective': _period_label(x.get('effective_period') or ''), 'revised_on': day or '',
+                         'by': x.get('revised_by') or '', 'remarks': x.get('remarks') or '', **src(h)})
+    rows.sort(key=lambda r: (str(r['revised_on']), r['employee']))
     return EMP_COLS + [('component', 'Component', 'text'), ('old', 'Old (AED)', 'number'), ('new', 'New (AED)', 'number'), ('change', 'Change (AED)', 'number'),
                        ('pct', 'Change %', 'number'), ('effective', 'Effective', 'text'), ('revised_on', 'Revised on', 'date'), ('by', 'Revised by', 'text'),
                        ('remarks', 'Remarks', 'text')], rows
+
+
+def _period_label(p):
+    """v1.62.0 reports: 'November2026' → 'Nov 2026'."""
+    m = re.match(r'^([A-Za-z]+)\s*(\d{4})$', str(p or '').strip())
+    return f'{m.group(1)[:3].capitalize()} {m.group(2)}' if m else str(p or '')
 
 
 def r_loans(run):
@@ -811,6 +834,16 @@ def gratuity_for(e, years, basic, wage=None):
 
 
 def r_gratuity(run):
+    """v1.59.0: the gratuity rules in force on the report date."""
+    try:
+        from CountryPack.services import rules_on
+    except ImportError:
+        return _r_gratuity(run)
+    with rules_on(run.today):
+        return _r_gratuity(run)
+
+
+def _r_gratuity(run):
     emps = list(run.employees)
     basic = basic_by_employee([e.id for e in emps])
     rows = []
@@ -837,8 +870,14 @@ def r_gratuity(run):
             lwd = last_working_day(e)
             if lwd and lwd < end:
                 end = lwd
-        if e.emp_joined_date and gratuity_service_years and e.emp_joined_date <= end:
-            yrs = round(float(gratuity_service_years(e.emp_joined_date, end, unpaid.get(e.id, 0), e.emp_branch_id_id)), 4)
+        _gs = e.emp_joined_date
+        try:   # v1.56.0 mid-year go-live: gratuity service start (the unpaid days before go-live are already in `unpaid`)
+            from PayrollPlus.golive import gratuity_start
+            _gs = gratuity_start(e, e.emp_joined_date) or e.emp_joined_date
+        except ImportError:
+            pass
+        if _gs and gratuity_service_years and _gs <= end:
+            yrs = round(float(gratuity_service_years(_gs, end, unpaid.get(e.id, 0), e.emp_branch_id_id)), 4)
         else:
             yrs = years_between(e.emp_joined_date, run.today) or 0
         nat = is_uae_national(e)
@@ -1105,17 +1144,25 @@ def day_statuses(emps, d_from, d_to, today):
             (leave if l.status == 'approved' else pending)[(l.employee_id, d)] = l
             d += timedelta(days=1)
     wk_cache = {}
+    try:   # v1.62.0 speed: the calendars of all employees from one read (five queries per employee before – Calendar page)
+        from .attendance_data import _CalendarLookup
+        cal = _CalendarLookup(d_from, last_day) if len(emps) > 1 else None
+    except Exception:
+        cal = None
     for e in emps:
         key = (e.emp_branch_id_id, e.emp_dept_id_id)
-        try:
-            wk = get_employee_weekend_days(e)
-        except Exception:
-            wk = set()
-        wk = wk or {'Saturday', 'Sunday'}
-        try:
-            hol = get_employee_holidays(e, d_from, last_day)
-        except Exception:
-            hol = set()
+        if cal is not None:
+            wk, hol = cal.weekend_days(e), cal.holidays(e)
+        else:
+            try:
+                wk = get_employee_weekend_days(e)
+            except Exception:
+                wk = set()
+            wk = wk or {'Saturday', 'Sunday'}
+            try:
+                hol = get_employee_holidays(e, d_from, last_day)
+            except Exception:
+                hol = set()
         first = max(d_from, e.emp_joined_date) if e.emp_joined_date else d_from
         days = []
         d = first
@@ -1248,7 +1295,7 @@ def r_turnover_trend(run):
         rows.append(r)
     tot_left = sum(r['left'] for r in rows)
     avg = sum(r['average'] for r in rows) / len(rows) if rows else 0
-    note = f'Turnover in the period: {tot_left} leavers / average headcount {avg:.1f} = {100 * tot_left / avg:.1f}%.' if avg else ''
+    note = f'Turnover in the period: {tot_left} {"leaver" if tot_left == 1 else "leavers"} / average headcount {avg:.1f} = {100 * tot_left / avg:.1f}%.' if avg else ''   # v1.62.0 reports
     return ([('month', 'Month', 'text'), ('opening', 'Opening headcount', 'number'), ('joined', 'Joined', 'number'), ('left', 'Left', 'number'),
              ('closing', 'Closing headcount', 'number'), ('average', 'Average headcount', 'number'), ('turnover', 'Turnover %', 'number'),
              ('annualised', 'Annualised turnover %', 'number')], rows, {'no_totals': ['opening', 'closing', 'average'], 'notes': [note] if note else []})
@@ -1432,11 +1479,14 @@ def r_overtime_pay(run):
         e = emps[eid]
         rows.append({**emp_cols(e), 'month': m0.strftime('%b %Y'), 'normal': round(a['normal'], 2), 'rest': round(a['rest'], 2), 'hours': round(a['normal'] + a['rest'], 2),
                      'approved': round(a['approved'], 2), 'rate': round(rate, 2), 'due': round(due, 2), 'paid': round(paid.get((eid, m0), 0), 2),
-                     'difference': round(paid.get((eid, m0), 0) - due, 2), **src(e),
+                     # v1.62.0 payroll (audit P1-9): nothing paid yet is "Not yet paid", not a negative difference
+                     'difference': round(paid.get((eid, m0), 0) - due, 2) if paid.get((eid, m0)) else None,
+                     'pay_status': 'Paid' if paid.get((eid, m0)) else ('Not yet paid' if a['approved'] else 'Not approved'), **src(e),
                      '_cell': {k: drill('overtime', {'employee': full_name(e)}, **_per(m0)) for k in ('normal', 'rest', 'hours', 'approved')}})
     return EMP_COLS + [('month', 'Month', 'text'), ('normal', 'Normal OT hours', 'number'), ('rest', 'Rest day / holiday OT hours', 'number'),
                        ('hours', 'Total OT hours', 'number'), ('approved', 'Approved hours', 'number'), ('rate', 'Hourly basic (AED)', 'number'),
-                       ('due', 'OT pay by law (AED)', 'number'), ('paid', 'OT paid in payroll (AED)', 'number'), ('difference', 'Paid − due (AED)', 'number')], rows, \
+                       ('due', 'OT pay by law (AED)', 'number'), ('paid', 'OT paid in payroll (AED)', 'number'), ('difference', 'Paid − due (AED)', 'number'),
+                       ('pay_status', 'Payroll', 'text')], rows, \
         {'no_totals': ['rate'], 'notes': ['OT pay by law = hourly basic × 125% (normal days) or 150% (rest days and public holidays). Hourly basic = basic × 12 / 365 / 8.']}
 
 
@@ -1816,7 +1866,38 @@ def r_department_performance(run):
 
 # ------------------------------------------------------------------ registry
 # key: (title, section, description, function, period default or None, permission codes – any of them)
-REPORTS = {
+class _Reports(dict):
+    """v1.53.0: the keys c-<id> are the reports of the report builder of the open company (ZeoInsights.builder.spec)."""
+
+    def _custom(self, key):
+        if isinstance(key, str) and key.startswith('c-'):
+            try:
+                from ZeoInsights.builder import spec
+                return spec(key)
+            except Exception:
+                import logging as _lg
+                _lg.getLogger(__name__).exception('custom report %s', key)
+        return None
+
+    def get(self, key, default=None):
+        if dict.__contains__(self, key):
+            return dict.__getitem__(self, key)
+        c = self._custom(key)
+        return c if c is not None else default
+
+    def __getitem__(self, key):
+        if dict.__contains__(self, key):
+            return dict.__getitem__(self, key)
+        c = self._custom(key)
+        if c is None:
+            raise KeyError(key)
+        return c
+
+    def __contains__(self, key):
+        return dict.__contains__(self, key) or self._custom(key) is not None
+
+
+REPORTS = _Reports({
     'employees': ('Employees', 'People', 'Every employee with personal, job and contact details, including the form designer fields.', r_employees, None, ['view_report', 'view_emp_master']),
     'departments': ('Departments', 'People', 'Departments with their branches and number of employees.', r_departments, None, ['view_dept_report', 'view_dept_master']),
     'designations': ('Designations', 'People', 'Designations with their branches and number of employees.', r_designations, None, ['view_designtn_report', 'view_desgntn_master']),
@@ -1876,7 +1957,7 @@ REPORTS = {
     'kpi': ('KPI report', 'Talent & projects', 'Every goal / KPI per employee and cycle: weight, target, progress and ratings.', r_kpi, None, ['view_goalsheet', 'view_kpi']),
     'goal-achievement': ('Goal achievement', 'Talent & projects', 'Weighted goal achievement % per employee and cycle with goals done, on track and at risk.', r_goal_achievement, None, ['view_goalsheet']),
     'department-performance': ('Department performance', 'Talent & projects', 'Average rating, scores and goal achievement by department and cycle, with the rating distribution.', r_department_performance, None, ['view_goalsheet', 'view_appraisaloutcome']),
-}
+})
 
 # v1.12.0: headcount by location / division / section / cost centre / grade / position / employment type (OrgStructure)
 try:
@@ -1941,9 +2022,17 @@ class ReportListView(APIView):
         c = ctx(request)
         hidden = _org_hidden()
         hidden = hidden | _country_hidden() | _apps_hidden()   # v1.22.0
-        out = [{'key': k, 'title': v[0], 'section': v[1], 'description': v[2], 'period': v[4], 'perms': v[5]}
+        from .report_present import title_of, home_meta   # v1.62.0 reports: titles = menu labels; packs and merged reports for the report home
+        out = [{'key': k, 'title': title_of(k, v[0]), 'section': v[1], 'description': v[2], 'period': v[4], 'perms': v[5]}
                for k, v in REPORTS.items() if _allowed(c, v[5]) and k not in hidden]
-        return Response({'reports': _lang_list(_country_list(out), request)})
+        out = _lang_list(_country_list(out), request)
+        try:   # v1.53.0 the reports of the report builder shared with the user
+            from ZeoInsights.builder import listing
+            out += listing(request, c)
+        except Exception:
+            import logging as _lg
+            _lg.getLogger(__name__).exception('custom reports list')
+        return Response({'reports': out, 'ui': home_meta()})
 
 
 # v1.14.0: country packs – the WPS SIF report only where the feature is on, captions of the company's country
@@ -2036,12 +2125,20 @@ class ReportView(APIView):
                 vals = [r.get(k) for r in rows if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool)]
                 if vals:
                     totals[k] = round(sum(vals), 2)
-        return Response(_lang_report(_country_report({'key': key, 'title': title, 'section': section, 'description': description, 'period': shown,
+        # v1.62.0 reports: presentation hints (dates, Yes / No, people's names, status words, main totals, chart …) – figures unchanged
+        from .report_present import present, title_of
+        columns, totals, ui = present(key, columns, rows, totals, request)
+        filters = [f for f in (extra.get('filters') or []) if any(c['key'] == f for c in columns)]
+        filters = [f for f in filters if 1 < len({str(r.get(f) or '') for r in rows} - {''}) < max(2, len(rows))]   # v1.62.0 reports: no "Number" / empty filters
+        for f, _v in (ui.get('default_filters') or {}).items():
+            if f not in filters and any(c['key'] == f for c in columns):
+                filters.append(f)
+        return Response(_lang_report(_country_report({'key': key, 'title': title_of(key, title), 'section': section, 'description': description, 'period': shown,
                                           'has_period': period is not None, 'as_of': run_as_of(request) if key in AS_OF_REPORTS else None,   # v1.20.2
                                           'columns': columns, 'rows': rows, 'totals': totals, 'count': len(rows),
                                           'location': run.locations,   # v1.31.1 location level: the locations the report was run for
                                           'notes': [n for n in (extra.get('notes') or []) if n],
-                                          'filters': [f for f in (extra.get('filters') or []) if any(c['key'] == f for c in columns)]}), request))   # v1.16.0 filter row
+                                          'filters': filters, 'ui': ui}), request))   # v1.16.0 filter row
 
 
 AS_OF_REPORTS = ('gratuity',)   # v1.20.2: snapshot reports that can be run as of a date (e.g. the last month end)

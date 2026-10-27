@@ -13,9 +13,12 @@ label(key) / feature(key) / pack_code()    one caption / one switch / the pack c
 is_national(nationality_name) -> bool      a national of the pack's country (Emirati for AE)
 gratuity_amount(years, basic, termination, branch_id) -> Decimal   by the branch's country rule set
 """
+import contextvars
 import logging
 import re
 import time
+from contextlib import contextmanager
+from datetime import date as _date
 from decimal import Decimal
 from fractions import Fraction
 
@@ -62,6 +65,9 @@ def _memo(key, fn, ttl=LOCAL_TTL):
     if hit and hit[0] > now:
         return hit[1]
     v = fn()
+    if len(_local) > 5000:      # v1.59.0: keys carry the rule date – drop expired entries now and then
+        for k in [k for k, h in _local.items() if h[0] <= now]:
+            _local.pop(k, None)
     _local[key] = (now + ttl, v)
     return v
 
@@ -105,10 +111,65 @@ def _has_gratuity_table(schema):
     return _in_schema(schema, get)
 
 
+# ------------------------------------------------------------------ v1.59.0 the date the rules are read for
+_RULE_DATE = contextvars.ContextVar('zeo_rule_date', default=None)
+
+
+def rule_date():
+    """The day whose legal rules apply: the day set by rules_on() (payroll: first day of the pay period, end of service:
+    the last working day, provisions: the month end), else today."""
+    d = _RULE_DATE.get()
+    if d is None:
+        from django.utils import timezone
+        return timezone.localdate()
+    return d
+
+
+def rule_date_set():
+    """True inside rules_on() (an outer caller – e.g. the payroll run – has fixed the day)."""
+    return _RULE_DATE.get() is not None
+
+
+@contextmanager
+def rules_on(d):
+    """with rules_on(date(2026, 9, 1)): … – the rule sets, statutory rates and legal rates of that day."""
+    if d is not None and not isinstance(d, _date):
+        try:
+            d = _date.fromisoformat(str(d)[:10])
+        except ValueError:
+            d = None
+    tok = _RULE_DATE.set(d)
+    try:
+        yield d
+    finally:
+        _RULE_DATE.reset(tok)
+
+
+VERSION_PARTS = ('gratuity', 'annual_leave', 'overtime')
+
+
+def policy_version(p, on=None):
+    """The newest CountryPolicyVersion of a policy in force on the day (effective_from ≤ day), else None."""
+    on = on or rule_date()
+    try:
+        return p.versions.filter(effective_from__lte=on).order_by('-effective_from').first()
+    except Exception:   # table not migrated yet
+        return None
+
+
 # ------------------------------------------------------------------ rule sets (OrgStructure country policies)
 def _norm_policy(p):
-    return {'id': p.pk, 'code': p.code, 'name': p.name, 'country_code': (p.country_code or '').upper(), 'weekend_days': list(p.weekend_days or []),
-            'gratuity': dict(p.gratuity or {}), 'annual_leave': dict(p.annual_leave or {})}
+    out = {'id': p.pk, 'code': p.code, 'name': p.name, 'country_code': (p.country_code or '').upper(), 'weekend_days': list(p.weekend_days or []),
+           'gratuity': dict(p.gratuity or {}), 'annual_leave': dict(p.annual_leave or {}), 'overtime': dict(getattr(p, 'overtime', None) or {}),
+           'version': None}
+    v = policy_version(p)
+    if v is not None:
+        for k in VERSION_PARTS:
+            if getattr(v, k, None):
+                out[k] = dict(getattr(v, k))        # a version replaces that part of the rule set as a whole
+        out['version'] = {'id': v.pk, 'effective_from': v.effective_from.isoformat(), 'law_reference': v.law_reference,
+                          'parts': [k for k in VERSION_PARTS if getattr(v, k, None)]}
+    return out
 
 
 def _seed(country_code):
@@ -124,7 +185,7 @@ def _seed(country_code):
 
 def _norm_seed(d):
     return {'id': None, 'code': d['code'], 'name': d['name'], 'country_code': d['country_code'], 'weekend_days': list(d['weekend_days']),
-            'gratuity': dict(d['gratuity']), 'annual_leave': dict(d['annual_leave'])}
+            'gratuity': dict(d['gratuity']), 'annual_leave': dict(d['annual_leave']), 'overtime': dict(d.get('overtime') or {}), 'version': None}
 
 
 def _country_rule(country_code):
@@ -164,7 +225,7 @@ def rule_set_for_branch(branch_id=None, schema_name=None):
                 if r:
                     return r
         return company_rule_set(schema)
-    return _memo((schema, 'rule', branch_id or 0), lambda: _in_schema(schema, resolve))
+    return _memo((schema, 'rule', branch_id or 0, rule_date()), lambda: _in_schema(schema, resolve))
 
 
 def company_rule_set(schema_name=None):
@@ -343,7 +404,7 @@ def gratuity_service_years(start, end, unpaid_days=0, branch_id=None, schema_nam
     return max(yrs - Decimal(str(unpaid_days or 0)) / Decimal('365'), Decimal('0'))
 
 
-def gratuity_breakdown(years, basic_monthly, termination='termination', branch_id=None, schema_name=None, wage_monthly=None):
+def gratuity_breakdown(years, basic_monthly, termination='termination', branch_id=None, schema_name=None, wage_monthly=None, daily=None):
     """{days, amount, per_year_days, daily, cap, rule_set, uae} – floats, amount and days rounded to 2 decimals.
 
     Slab {"from_year": 1, "to_year": 5, "days": 21} = 21 days for each year from the 1st to the 5th (fractions pro rata).
@@ -372,7 +433,7 @@ def gratuity_breakdown(years, basic_monthly, termination='termination', branch_i
         uae = basis == '365' or (not basis and rule['country_code'] == 'AE')
     out['uae'] = uae
     slabs = g.get('slabs') or []
-    daily = basic * 12 / 365 if uae else basic / 30
+    daily = float(daily) if daily else (basic * 12 / 365 if uae else basic / 30)   # v1.59.0: a caller may keep its own daily wage
     # v1.31.0: India – 15 days per year on (basic + DA) / 26 (Payment of Gratuity Act): rule set "divisor": 26
     try:
         if g.get('divisor'):
@@ -427,12 +488,26 @@ def gratuity_amount(years, basic_monthly, termination='termination', branch_id=N
     return Decimal(str(gratuity_breakdown(years, basic_monthly, termination, branch_id, schema_name)['amount']))
 
 
+def uae_version_daily(branch_id=None, schema_name=None):
+    """v1.59.0: True when a dated version of the UAE gratuity is in force without its own "daily_basis" – the callers that
+    always used basic ÷ 30 (end of service, payroll accrual) keep that daily wage, only the slabs / cap change."""
+    try:
+        r = rule_set_for_branch(branch_id, schema_name)
+    except Exception:
+        return False
+    return bool(r and r.get('country_code') == 'AE' and r.get('version') and 'gratuity' in (r['version'].get('parts') or [])
+                and not (r.get('gratuity') or {}).get('daily_basis'))
+
+
 def uses_uae_gratuity(branch_id=None, schema_name=None):
     """True when the branch follows the UAE rule set – callers then keep their own (unchanged) UAE calculation."""
     try:
         if not feature('gratuity', schema_name):
             return False
         r = rule_set_for_branch(branch_id, schema_name)
+        # v1.59.0: a dated version of the UAE gratuity in force → the rule set's slabs (the version) replace the fixed UAE ones
+        if r and r.get('version') and 'gratuity' in (r['version'].get('parts') or []):
+            return False
         return bool(r and r['country_code'] == 'AE')
     except Exception:
         log.exception('country pack: rule set lookup failed – UAE gratuity kept')

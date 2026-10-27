@@ -62,6 +62,11 @@ def _tokens(user, device=None):
     r['otp'] = True                     # same as after the e-mail / SMS code: the phone was set up after it
     if device is not None:
         r['dev'] = device.pk
+    try:   # v1.52.0 the sign-in session (sign out everywhere)
+        from ZeoCloud.security import bind
+        bind(r, user, None, 'phone')
+    except Exception:
+        pass
     return {'access': str(r.access_token), 'refresh': str(r), 'user_id': user.pk, 'username': user.username,
             'email': user.email, 'is_ess': bool(user.is_ess), 'is_superuser': bool(user.is_superuser)}
 
@@ -229,6 +234,13 @@ class HomeView(APIView):
             out['apps'] = {k: bool(is_active(k)) for k in ('hrms', 'payroll', 'projects')}
         except Exception:
             out['apps'] = {}
+        try:   # v1.56.1 uploaded files need a login: the phone app's photo address carries the media token (also for older apps)
+            from zeo.media_auth import make_token
+            ph = (emp or {}).get('photo') if isinstance(emp, dict) else None
+            if ph and '/media/' in ph and 'zm=' not in ph:
+                emp['photo'] = ph + ('&' if '?' in ph else '?') + 'zm=' + make_token(user)
+        except Exception:
+            pass
         return Response(out)
 
 

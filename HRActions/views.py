@@ -43,7 +43,18 @@ def _names():
     g = lambda m, f: dict(M(*m.split('.')).objects.values_list('id', f))
     return {'b': g('OrganisationManager.brnch_mstr', 'branch_name'), 'd': g('OrganisationManager.dept_master', 'dept_name'),
             'g': g('OrganisationManager.desgntn_master', 'desgntn_job_title'), 'c': g('OrganisationManager.ctgry_master', 'ctgry_title'),
-            'u': g('UserManagement.CustomUser', 'username')}
+            'u': _UserNames()}   # v1.62.0 people: managers by name (was the login name)
+
+
+class _UserNames(dict):
+    """v1.62.0 people: user id -> "Name (code)", looked up on first use."""
+    def get(self, k, default=None):
+        if k in (None, ''):
+            return default
+        if k not in self:
+            from .names import user_name
+            self[k] = user_name(k) or default
+        return dict.get(self, k, default)
 
 
 def _build(data, user):
@@ -85,7 +96,10 @@ class TransfersView(APIView):
         return Response(rows)
 
     def post(self, request):
-        """Create a transfer: carried out now when the date has come, else scheduled."""
+        """Create a transfer: carried out now when the date has come, else scheduled.
+        v1.45.0: {request: true} (a move on the org chart) only asks HR – status 'requested', HR approves or rejects it."""
+        if request.data.get('request'):
+            return _request_transfer(request)
         if not _can(request, TRANSFER):
             return Response({'detail': _tr('You may not transfer employees.')}, status=403)
         t = _build(request.data, request.user)
@@ -130,6 +144,8 @@ class TransferActionView(APIView):
         emp = M('EmpManagement', 'emp_master').objects.filter(pk=t.employee_id).first()
         if not _branches_ok(request, emp.emp_branch_id_id if emp else None, t.from_branch_id, t.to_branch_id):
             return Response({'detail': _tr('You may only transfer between branches you have access to.')}, status=403)
+        if t.status == 'requested':   # v1.45.0
+            return _decide_request(request, t, emp, action)
         if t.status != 'scheduled':
             return Response({'detail': _tr('This transfer is {0}.', t.get_status_display().lower())}, status=400)
         if action == 'cancel':
@@ -140,6 +156,150 @@ class TransferActionView(APIView):
             return Response({'status': 'done', 'done': tr_svc.apply(t, request.user)})
         except ValueError as e:
             return Response({'detail': str(e)}, status=400)
+
+
+# ------------------------------------------------------------------ v1.45.0 transfer requests (org chart: drag an employee under another manager)
+def _emp_user_ids(emp):
+    return {x for x in (getattr(emp, 'emp_reporting_manager_id', None), getattr(emp, 'users_id', None)) if x}
+
+
+def _request_transfer(request):
+    E = M('EmpManagement', 'emp_master')
+    d = request.data
+    emp = E.objects.filter(pk=d.get('employee')).first()
+    if emp is None:
+        return Response({'detail': _tr('Choose the employee.')}, status=400)
+    new_mgr_emp = E.objects.filter(pk=d.get('to_manager_employee')).first() if d.get('to_manager_employee') else None
+    to_user = d.get('to_manager') or (new_mgr_emp.users_id if new_mgr_emp else None)
+    if not to_user:
+        return Response({'detail': _tr('{0} has no user login, so cannot be a reporting manager.', str(new_mgr_emp) if new_mgr_emp else '')}, status=400)
+    if new_mgr_emp is not None and new_mgr_emp.pk == emp.pk:
+        return Response({'detail': _tr('An employee cannot report to himself.')}, status=400)
+    me = request.user.pk
+    allowed = _can(request, TRANSFER) or me in {emp.emp_reporting_manager_id, int(to_user)} or \
+        M('EmpManagement', 'emp_master').objects.filter(users_id=me, pk=getattr(emp, 'emp_reports_to_id', None)).exists()
+    if not allowed:
+        return Response({'detail': _tr('Only the managers concerned or HR can ask for this move.')}, status=403)
+    if EmployeeTransfer.objects.filter(employee_id=emp.pk, status='requested').exists():
+        return Response({'detail': _tr('A transfer request for {0} is already waiting for HR.', str(emp))}, status=400)
+    t = _build({**{k: d.get(k) for k in d}, 'to_manager': to_user}, request.user)
+    t.employee_id = emp.pk
+    t.from_branch_id, t.from_department_id, t.from_manager_id = emp.emp_branch_id_id, emp.emp_dept_id_id, emp.emp_reporting_manager_id
+    t.status = 'requested'
+    t.reason = (d.get('reason') or 'Moved on the org chart')[:255]
+    t.save()
+    # HR is told in the inbox and the bell
+    try:
+        from Chatter.models import InboxItem
+        from Chatter.collab import _bell
+        from Chatter.views import uname
+        from UserManagement.models import CustomUser
+        from django.db import connection
+        from django.db.models import Q as _Q
+        from tenant_users.tenants.models import UserTenantPermissions
+        ids = set(UserTenantPermissions.objects.filter(_Q(is_superuser=True) | _Q(groups__permissions__codename__in=TRANSFER)).values_list('profile_id', flat=True))
+        hr = CustomUser.objects.filter(pk__in=ids, is_active=True)
+        who = uname(request.user)
+        title = f'Transfer request: {emp} to report to {uname(CustomUser.objects.filter(pk=to_user).first())}'
+        page = '/main-sidebar/sub-sidebar/employee-transfer'
+        for u in hr:
+            InboxItem.objects.create(user=u, kind='transfer', model='HRActions.employeetransfer', object_id=str(t.pk), record_label=str(emp),
+                                     page=page, title=title[:255], body=f'Asked by {who}. {t.reason}', from_name=who)
+            _bell(u, title, f'Asked by {who}. {t.reason}', page, 'HRActions.employeetransfer', t.pk)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('transfer request notification')
+    return Response({'id': t.pk, 'status': 'requested'}, status=201)
+
+
+def _decide_request(request, t, emp, action):
+    if action in ('reject', 'cancel'):
+        t.status = 'rejected' if action == 'reject' else 'cancelled'
+        t.result = {**(t.result or {}), 'decided_by': request.user.pk, 'note': str(request.data.get('note') or '')[:255]}
+        t.save(update_fields=['status', 'result'])
+        return Response({'status': t.status})
+    if action not in ('approve', 'apply'):
+        return Response({'detail': _tr('Approve or reject the request.')}, status=400)
+    p = tr_svc.plan(t)
+    if p['blockers']:
+        return Response({'detail': ' '.join(p['blockers']), 'plan': p}, status=400)
+    if t.effective_date <= date.today():
+        t.status = 'scheduled'
+        t.save(update_fields=['status'])
+        try:
+            return Response({'status': 'done', 'done': tr_svc.apply(t, request.user)})
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+    t.status = 'scheduled'
+    t.save(update_fields=['status'])
+    return Response({'status': 'scheduled', 'plan': p})
+
+
+# ------------------------------------------------------------------ v1.45.0 warnings (employee timeline)
+WARN = ('change_emp_master', 'add_employeewarning', 'run_employee_transfer')
+
+
+def _warn_json(w):
+    return {'id': w.id, 'employee_id': w.employee_id, 'date': w.date, 'level': w.level, 'level_label': w.get_level_display(), 'subject': w.subject,
+            'details': w.details, 'status': w.status, 'acknowledged_on': w.acknowledged_on, 'issued_by': w.issued_by_name, 'created_at': w.created_at}
+
+
+class WarningsView(APIView):
+    """GET ?employee=<id>; POST {employee, date, level, subject, details}."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _can(request, WARN + ('view_employeewarning',)):
+            return Response({'detail': _tr('You may not see warnings.')}, status=403)
+        from .models import EmployeeWarning
+        qs = EmployeeWarning.objects.all()
+        if str(request.query_params.get('employee') or '').isdigit():
+            qs = qs.filter(employee_id=int(request.query_params['employee']))
+        mine = allowed_branches(request)
+        if mine is not None:
+            qs = qs.filter(employee_id__in=emp_ids_in_branches(mine))
+        return Response([_warn_json(w) for w in qs[:500]])
+
+    def post(self, request):
+        if not _can(request, WARN):
+            return Response({'detail': _tr('You may not give warnings.')}, status=403)
+        from .models import EmployeeWarning
+        from Chatter.views import uname
+        d = request.data
+        emp = M('EmpManagement', 'emp_master').objects.filter(pk=d.get('employee')).first()
+        if emp is None:
+            return Response({'detail': _tr('Choose the employee.')}, status=400)
+        if not _branches_ok(request, emp.emp_branch_id_id):
+            return Response({'detail': _tr('This employee is not in your branches.')}, status=403)
+        subject = str(d.get('subject') or '').strip()
+        if not subject:
+            return Response({'detail': _tr('Write the subject.'), 'subject': ['required']}, status=400)
+        w = EmployeeWarning.objects.create(employee_id=emp.pk, date=parse_date(str(d.get('date') or '')) or date.today(),
+                                           level=d.get('level') if d.get('level') in dict(EmployeeWarning.LEVELS) else 'written',
+                                           subject=subject[:150], details=str(d.get('details') or ''), issued_by_id=request.user.pk,
+                                           issued_by_name=uname(request.user)[:150])
+        return Response(_warn_json(w), status=201)
+
+
+class WarningActionView(APIView):
+    """POST warnings/<pk>/<withdraw|acknowledge>/"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, action):
+        if not _can(request, WARN):
+            return Response({'detail': _tr('You may not change warnings.')}, status=403)
+        from .models import EmployeeWarning
+        w = EmployeeWarning.objects.filter(pk=pk).first()
+        if w is None:
+            return Response({'detail': _tr('Warning not found.')}, status=404)
+        if action == 'withdraw':
+            w.status = 'withdrawn'
+        elif action == 'acknowledge':
+            w.acknowledged_on = date.today()
+        else:
+            return Response({'detail': _tr('Unknown action.')}, status=400)
+        w.save()
+        return Response(_warn_json(w))
 
 
 # ------------------------------------------------------------------ rejoining

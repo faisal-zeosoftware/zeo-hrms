@@ -59,10 +59,14 @@ def rules_for(model_key, trigger=None):
     ts, by_model = _rules_cache.get(sch, (0, None))
     if by_model is None or now - ts > CACHE_SECONDS:
         by_model = {}
+        from django.db import DatabaseError, transaction
         try:
-            for w in Workflow.objects.filter(state='active'):
-                by_model.setdefault(w.model, []).append(w)
-        except Exception:   # table not migrated yet
+            # v1.62.0: a savepoint – a company schema still being created (fresh install, no workflow table yet) must not
+            # leave the migration's transaction aborted
+            with transaction.atomic():
+                for w in Workflow.objects.filter(state='active'):
+                    by_model.setdefault(w.model, []).append(w)
+        except (DatabaseError, Exception):   # table not migrated yet
             by_model = {}
         _rules_cache[sch] = (now, by_model)
     rules = by_model.get(model_key, [])
@@ -341,11 +345,15 @@ def eval_group(g, obj, old):
 def _group_users(group_id_or_name):
     from django.contrib.auth.models import Group
     from UserManagement.models import CustomUser
-    g = Group.objects.filter(pk=group_id_or_name).first() if str(group_id_or_name).isdigit() else Group.objects.filter(name__iexact=str(group_id_or_name)).first()
+    # v1.62.0 isolation: the group of THIS company for the name ("HR Manager" → its own copy when it has one; another
+    # company's group of the same name is never used)
+    from ZeoApps import groupscope
+    g = groupscope.resolve(group_id_or_name)
     if g is None:
         return []
     from tenant_users.tenants.models import UserTenantPermissions
-    ids = list(UserTenantPermissions.objects.filter(groups=g).values_list('profile_id', flat=True))
+    same = [g.pk] + [t for t, c in groupscope.copy_map().items() if c == g.pk]   # logins of several companies keep the template
+    ids = list(UserTenantPermissions.objects.filter(groups__in=same).values_list('profile_id', flat=True))
     return list(CustomUser.objects.filter(pk__in=ids, tenants__schema_name=connection.schema_name, is_active=True).distinct())
 
 
@@ -659,7 +667,24 @@ def do_stop(a, ctx, run):
     raise Stop(render(a.get('note') or 'Stopped by the rule', ctx))
 
 
-HANDLERS = {'update_fields': do_update_fields, 'create_record': do_create_record, 'send_email': do_send_email, 'notify': do_notify,
+def do_call_webhook(a, ctx, run):
+    """v1.52.0 – POST the record to one of the company's webhooks (signed like the record-event webhooks; retried)."""
+    from ZeoAdmin.models import Webhook, WebhookDelivery
+    from ZeoAdmin.webhooks import deliver, record_data
+    h = Webhook.objects.filter(pk=a.get('webhook'), active=True).first()
+    if h is None:
+        raise ValueError('The webhook is missing or switched off (Settings → API keys and webhooks).')
+    rec = ctx['record']
+    key = f'{rec._meta.app_label}.{rec._meta.model_name}'
+    payload = {'event': f'{key.lower()}.automation', 'model': key, 'id': rec.pk, 'at': timezone.now().isoformat(), 'rule': getattr(getattr(run, 'workflow', None), 'name', ''),
+               'note': render(a.get('note') or '', ctx), 'data': record_data(rec)}
+    d = deliver(WebhookDelivery.objects.create(webhook=h, event=payload['event'], payload=payload).pk)
+    if d.status != 'sent':
+        return f'{h.name}: not delivered yet ({d.code or d.response[:60]}) – tried again later'
+    return f'{h.name}: delivered ({d.code})'
+
+
+HANDLERS = {'call_webhook': do_call_webhook, 'update_fields': do_update_fields, 'create_record': do_create_record, 'send_email': do_send_email, 'notify': do_notify,
             'create_task': do_create_task, 'assign_owner': do_assign_owner, 'submit_approval': do_submit_approval, 'wait': do_wait, 'stop': do_stop}
 
 
@@ -856,6 +881,8 @@ def retry(run, user=None):
 def _tracked(sender):
     meta = sender._meta
     if meta.app_label in SKIP_APPS or meta.auto_created or connection.schema_name == 'public':
+        return False
+    if sender.__module__ == '__fake__':   # v1.62.0: historical models inside migrations never run workflows
         return False
     return True
 

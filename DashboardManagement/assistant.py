@@ -9,7 +9,7 @@ Safety
 * The model never sees the database and never writes SQL. It can only call the tools below, which run the
   report centre (DashboardManagement/reports.py) and the record view (records.py) *as the asking user*:
   the same rights, the same branches, ESS users only their own data.
-* Only what the tools return is sent to the AI provider (Anthropic Claude API), never whole tables:
+* Only what the tools return is sent to the AI provider (the company's AI provider), never whole tables:
   at most 100 rows per call, long texts cut.
 * v1.15.1: by default NO external AI service is ever called. The built-in, free "basic" mode answers from the company's
   own reports on this server. The external provider is used only when BOTH of these are set (owner's explicit choice):
@@ -461,7 +461,7 @@ def all_tools():
     return TOOLS
 
 
-KIT_SUITES = {'crm': 'CRM', 'property': 'Property', 'maintenance': 'Maintenance'}
+KIT_SUITES = {'crm': 'CRM', 'property': 'Property', 'maintenance': 'Maintenance', 'assets': 'Asset Management', 'people': 'People'}   # v1.38.0: + assets, people
 
 
 def system_prompt(request, suite=''):
@@ -494,7 +494,7 @@ How to answer
 - Do not give legal, medical or financial advice; for labour-law calculations say the figures come from the report and should be checked by HR.""" + hse_prompt()
 
 
-def call_claude(system, messages, tools, request=None):
+def call_ai(system, messages, tools, request=None):
     # v1.15.1: hard stop – never contact an outside service unless the owner switched it on (ZEO_AI_EXTERNAL=true).
     if not external_allowed():
         raise RuntimeError('External AI is switched off on this server.')
@@ -508,7 +508,7 @@ def ask_ai(request, history, branch, suite=''):
     system = system_prompt(request, suite)
     msgs = [{'role': m['role'], 'content': m['content']} for m in history]
     for _ in range(MAX_ROUNDS):
-        r = call_claude(system, msgs, all_tools(), request)
+        r = call_ai(system, msgs, all_tools(), request)
         blocks = r.get('content') or []
         uses = [b for b in blocks if b.get('type') == 'tool_use']
         if r.get('stop_reason') != 'tool_use' or not uses:
@@ -570,6 +570,16 @@ KIT_WORDS = {
     'maintenance': [(r'\bsla\b|breach|category', 'mnt-sla'), (r'technician|workload', 'mnt-technicians'), (r'preventive|\bplans?\b|\bppm\b', 'mnt-plan'),
                     (r'inspection', 'mnt-inspection'), (r'vendor|contractor|supplier', 'mnt-vendor'), (r'asset|equipment', 'mnt-asset'),
                     (r'location', 'mnt-location'), (r'work ?orders?|job|repair|request|open|overdue', 'mnt-work-order')],
+    # v1.38.0 Asset Management and People
+    'assets': [(r'reservation|booking|booked', 'ast-reservation'), (r'count|audit|verification|missing|misplaced', 'ast-audit'), (r'depreciation|book value|nbv', 'ast-depreciation'),
+               (r'work ?orders?|repair|breakdown|maintenance', 'ast-work-order'), (r'preventive|\bplans?\b|\bppm\b', 'ast-plan'), (r'ticket|helpdesk|complaint', 'ast-ticket'),
+               (r'stock (move|movement)|issued|received', 'ast-stock-move'), (r'part request', 'ast-part-request'), (r'stock count', 'ast-stock-count'),
+               (r'spare|parts?\b|consumable', 'ast-part'), (r'asset|equipment|register|checked out|check-out|warranty|disposed', 'ast-asset')],
+    'people': [(r'benefit cost|cost by plan|employer cost', 'ppl-benefits-cost'), (r'enrol|enrollment|enrolment', 'ppl-enrolment'), (r'claim', 'ppl-claim'),
+               (r'benefit|plan|medical|insurance', 'ppl-benefit-plan'), (r'sign|signature|e-sign', 'ppl-sign-request'), (r'form template', 'ppl-form-template'),
+               (r'submission|form', 'ppl-form-submission'), (r'engagement|response rate|favourable', 'ppl-engagement'), (r'survey|pulse', 'ppl-survey'),
+               (r'leader|top recognis|most recognis|points', 'ppl-recognition-leaders'), (r'award', 'ppl-award'), (r'recogni|thank', 'ppl-recognition'), (r'reward|redeem', 'ppl-reward'),
+               (r'competenc', 'ppl-competency'), (r'360|summary', 'ppl-360-summary'), (r'review', 'ppl-review-360'), (r'development plan|pdp|plan', 'ppl-development-plan')],
 }
 KIT_STRONG = [(r'rent roll', 'prop-rent-roll'), (r'occupancy', 'prop-occupancy'), (r'work ?orders?', 'mnt-work-order'), (r'sales pipeline|opportunit', 'crm-pipeline')]
 
@@ -589,6 +599,14 @@ def pick_report(q, suite):
     if suite == 'projects' and weak:
         return weak
     hr = next((k for w, k in WORDS.items() if w in q), None)
+    if hr is None and suite in ('', 'hrms', 'hr', 'settings') and 'people' in KIT_WORDS:
+        # v1.38.1: People (benefits, surveys, recognition, signatures, 360°) is part of HRMS – its words count on HR pages too,
+        # after the HR reports, so "leave" or "payroll" questions are never taken for a People report
+        ppl = sorted([(pat, k) for pat, k in KIT_WORDS['people'] if k not in ('ppl-review-360', 'ppl-form-submission', 'ppl-development-plan')],
+                     key=lambda x: 0 if x[1] == 'ppl-recognition' else 1)   # "recognitions by award" is about recognitions
+        hr = next((k for pat, k in ppl if re.search(pat, q)), None)
+        if hr is None:
+            hr = next((k for pat, k in KIT_WORDS['people'] if re.search(pat, q) and re.search(r'360|form|development plan|pdp', q)), None)
     return hr or weak
 
 
@@ -600,11 +618,60 @@ def _wf_log(request, question, kind):
         pass
 
 
+def _settings_answer(request, q):
+    """v1.38.0: figures of the Settings suite – workflow rules, runs, approvals waiting, users and apps of the company."""
+    user = getattr(request, 'user', None)
+    out, links = [], []
+    try:
+        from ZeoFlow.models import ApprovalStep, Workflow, WorkflowRun
+        from django.db.models import Q as _Q
+        from django.utils import timezone as _tz
+        if re.search(r'approval', q):
+            mine = ApprovalStep.objects.filter(status='pending').filter(_Q(approver=user) | _Q(delegate=user) | _Q(escalated_to=user)).count()
+            allp = ApprovalStep.objects.filter(status='pending').values('request_id').distinct().count()
+            late = ApprovalStep.objects.filter(status='pending', due_at__lt=_tz.now()).count()
+            out.append(f'**{mine}** approval step(s) are waiting for you; **{allp}** request(s) are waiting in the company, **{late}** step(s) past their deadline.')
+            links.append({'label': 'Automation › My approvals', 'url': '/main-sidebar/automation/approvals'})
+        if re.search(r'workflow|automation|rule|run|scheduled|execution', q):
+            act = Workflow.objects.filter(state='active').count()
+            dr = Workflow.objects.filter(state='draft').count()
+            since = _tz.now() - timedelta(days=30)
+            runs = WorkflowRun.objects.filter(started_at__gte=since)
+            out.append(f'**{act}** active workflow rule(s) (**{dr}** draft). Last 30 days: **{runs.count()}** run(s), **{runs.filter(status="failed").count()}** failed, '
+                       f'**{runs.filter(status="running").count()}** running.')
+            top = list(runs.values_list('workflow__name', flat=True))
+            if top:
+                from collections import Counter as _C
+                out.append('Most active: ' + ', '.join(f'{n} ({c})' for n, c in _C(top).most_common(3)) + '.')
+            links.append({'label': 'Automation › Execution log', 'url': '/main-sidebar/automation/runs'})
+    except Exception:
+        pass
+    try:
+        if re.search(r'user|compan|apps?\b|licen', q):
+            from django.db import connection as _conn
+            from UserManagement.models import CustomUser as _U
+            n_users = _U.objects.filter(tenants__schema_name=_conn.schema_name, is_active=True).distinct().count()
+            from ZeoApps import services as _S
+            apps_ = [x['title'] for x in _S.all_states() if x['active']]
+            out.append(f'**{n_users}** active user(s) in this company. Active apps: ' + ', '.join(apps_) + '.')
+            links.append({'label': 'Settings › Apps', 'url': '/main-sidebar/settings/apps'})
+    except Exception:
+        pass
+    if not out:
+        return None
+    return '\n\n'.join(out), links
+
+
 def ask_basic(request, question, branch, suite=''):
     """Without an AI key: find the report by its words, the period and values named in the question; give the count and totals."""
     from .reports import REPORTS
     t = date.today()
     q = question.lower()
+    if re.search(r'workflow|automation|approval flow|execution log|scheduled action|runs? failed|failed runs?', q) or \
+            (suite == 'settings' and re.search(r'approval|rule|run|user|compan|apps?\b|licen', q)):   # v1.38.0 Settings suite: automation, approvals, users, apps
+        got = _settings_answer(request, q)
+        if got is not None:
+            return got
     key = pick_report(q, suite)
     pj = bool(key and key.startswith(PJ))
     hrms_off = False
@@ -652,7 +719,11 @@ def ask_basic(request, question, branch, suite=''):
                      'property': 'I can answer questions about occupancy, the rent roll, leases and renewals, bills and cheques, receipts, aged receivables, '
                                  'reservations, sales and commissions. Try for example: *Occupancy by building*.',
                      'maintenance': 'I can answer questions about work orders, SLA by category, technician workload, preventive plans, inspections, '
-                                    'assets and vendors. Try for example: *Open work orders by priority*.'}[suite]), []
+                                    'assets and vendors. Try for example: *Open work orders by priority*.',
+                     'assets': 'I can answer questions about the asset register, reservations, physical counts, depreciation runs, work orders, '
+                               'tickets, spare parts and stock movements. Try for example: *Assets checked out by location* or *Tickets open this month*.',
+                     'people': 'I can answer questions about benefit plans and enrolments, claims, signature requests, forms, surveys and engagement, '
+                               'recognition and rewards, competencies, 360° reviews and development plans. Try for example: *Benefits cost by plan*.'}[suite]), []
         if suite == 'hse':
             return ('I can answer questions about incidents, near misses, permits to work, risk assessments, inspections, observations, '
                     'corrective actions, audits and the other HSE registers. Try for example: *How many open corrective actions are overdue?*'), []
@@ -752,6 +823,10 @@ KIT_SUGGEST = {
                  ('prop-lease', 'Leases expiring in the next 90 days'), ('prop-bill', 'Bills due this month')],
     'maintenance': [('mnt-work-order', 'Open work orders by priority'), ('mnt-sla', 'Work orders by category and SLA this month'),
                     ('mnt-technicians', 'Technician workload'), ('mnt-plan', 'Preventive plans due this month')],
+    'assets': [('ast-asset', 'Assets by status and location'), ('ast-ticket', 'Tickets open this month'), ('ast-work-order', 'Work orders due this week'),
+               ('ast-depreciation', 'Depreciation runs this year'), ('ast-part', 'Spare parts below minimum stock')],
+    'people': [('ppl-benefits-cost', 'Benefits cost by plan'), ('ppl-engagement', 'Survey engagement this year'), ('ppl-recognition-leaders', 'Who was recognised most this quarter?'),
+               ('ppl-sign-request', 'Signature requests pending'), ('ppl-development-plan', 'Development plans in progress')],
 }
 
 
@@ -772,6 +847,9 @@ def suggestions(request, suite=''):
         hidden = _apps_hidden()
         can = {k for k, v in REPORTS.items() if _allowed(c, v[5]) and k not in hidden}
         return [t for k, t in KIT_SUGGEST.get(suite, []) if k in can][:6]
+    if suite == 'settings':   # v1.38.0
+        return ['How many approvals are waiting for me?', 'Which workflow rules are active and how many runs failed?', 'How many users and active apps?',
+                'Headcount by branch and department']
     from .reports import _apps_hidden
     hidden = _apps_hidden()   # v1.22.0: nothing from a switched-off HRMS
     can = {k for k, v in REPORTS.items() if _allowed(c, v[5]) and k not in hidden}
@@ -779,7 +857,8 @@ def suggestions(request, suite=''):
     for key, text in [('documents', 'Whose documents expire in the next 30 days?'), ('leave', 'How many leave requests are pending?'),
                       ('payroll-register', 'Total net pay by department for last month'), ('headcount', 'Headcount by branch and department'),
                       ('attendance-summary', 'Who was absent most this month?'), ('loans', 'Which loans are still outstanding?'),
-                      ('gratuity', 'Total gratuity accrued by department'), ('probation', 'Whose probation ends this month?')]:
+                      ('gratuity', 'Total gratuity accrued by department'), ('probation', 'Whose probation ends this month?'),
+                      ('ppl-benefits-cost', 'Benefits cost by plan'), ('ppl-engagement', 'Survey response rate')]:   # v1.38.1: People inside HRMS
         if key in can:
             s.append(text)
     if c.emp is not None and 'leave-balance' not in hidden:

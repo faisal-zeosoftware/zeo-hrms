@@ -35,14 +35,22 @@ def _lines(p):
     out = []
     for c in p.components.all():
         comp = c.component
-        out.append((comp.name, comp.component_type, comp.payroll_category or '', money(c.amount)))
+        # v1.62.0 payroll (audit P1-3): a component hidden from the payslip is not in its totals (calculate_payslip_totals) –
+        # it is reported as an employer-side line ("others"), never as pay
+        t = comp.component_type if comp.show_in_payslip else 'others'
+        out.append((comp.name, t, comp.payroll_category or '', money(c.amount)))
     return out
 
 
 def _order(names, kinds):
-    adds = sorted([n for n in names if kinds[n] != 'deduction'], key=lambda n: (n.lower() not in ('basic', 'basic salary'), n.lower()))
+    adds = sorted([n for n in names if kinds[n] not in ('deduction', 'others')], key=lambda n: (n.lower() not in ('basic', 'basic salary'), n.lower()))
     deds = sorted([n for n in names if kinds[n] == 'deduction'], key=str.lower)
     return adds, deds
+
+
+def _employer(names, kinds):
+    """v1.62.0 payroll (audit P1-3): employer contributions (type "others", e.g. GPSSA employer share) are not pay – shown after net."""
+    return sorted([n for n in names if kinds[n] == 'others'], key=str.lower)
 
 
 def r_payroll_register(run):
@@ -62,7 +70,7 @@ def r_payroll_register(run):
         pr = p.payroll_run
         r = {**emp_cols(p.employee), 'run': pr.name or _period(pr), 'period': _period(pr), 'run_status': nice(pr.status), 'status': nice(p.status),
              'working_days': p.total_working_days, 'days_worked': p.days_worked}
-        for n in adds + deds:
+        for n in names:   # v1.62.0 payroll: also the employer contribution columns
             r['c_' + n] = 0
         for n, t, _c, a in lines:
             r['c_' + n] = round(r['c_' + n] + a, 2)
@@ -74,7 +82,11 @@ def r_payroll_register(run):
                        ('working_days', 'Working days', 'number'), ('days_worked', 'Days worked', 'number')] + \
         [('c_' + n, f'{n} (AED)', 'number') for n in adds] + [('gross', 'Gross (AED)', 'number')] + \
         [('c_' + n, f'{n} – deduction (AED)', 'number') for n in deds] + \
-        [('deductions', 'Total deductions (AED)', 'number'), ('arrears', 'Arrears (AED)', 'number'), ('net', 'Net pay (AED)', 'number')]
+        [('deductions', 'Total deductions (AED)', 'number'), ('arrears', 'Arrears (AED)', 'number'), ('net', 'Net pay (AED)', 'number')] + \
+        [('c_' + n, f'{n} – employer, not in net pay (AED)', 'number') for n in _employer(names, kinds)]   # v1.62.0 payroll (P1-3)
+    for r in rows:
+        for n in _employer(names, kinds):
+            r.setdefault('c_' + n, 0)
     return cols, rows, {'filters': FILTERS, 'notes': ['Group by Branch or Department in the list bar for subtotals, or open "Payroll by department". '
                                                       'Net pay = net salary of the payslip (additions − deductions where no net was stored).']}
 
@@ -111,7 +123,11 @@ def r_payroll_department(run):
         rows.append(r)
     cols = [('period', 'Period', 'text'), ('branch', 'Branch', 'text'), ('department', 'Department', 'text'), ('employees', 'Employees paid', 'number')] + \
         [('c_' + n, f'{n} (AED)', 'number') for n in adds] + [('gross', 'Gross (AED)', 'number')] + \
-        [('c_' + n, f'{n} – deduction (AED)', 'number') for n in deds] + [('deductions', 'Total deductions (AED)', 'number'), ('net', 'Net pay (AED)', 'number')]
+        [('c_' + n, f'{n} – deduction (AED)', 'number') for n in deds] + [('deductions', 'Total deductions (AED)', 'number'), ('net', 'Net pay (AED)', 'number')] + \
+        [('c_' + n, f'{n} – employer, not in net pay (AED)', 'number') for n in _employer(names, kinds)]   # v1.62.0 payroll (P1-3)
+    for r in rows:
+        for n in _employer(names, kinds):
+            r.setdefault('c_' + n, 0)
     return cols, rows, {'filters': ['branch', 'department', 'period'], 'notes': ['One line per month, branch and department; the totals row is the payroll total. Select a line for its payslips.']}
 
 
@@ -129,13 +145,13 @@ def r_payroll_components(run):
             x['lines'] += 1
     rows = []
     for (m0, n), x in sorted(g.items(), key=lambda i: (i[0][0], i[1]['type'] == 'deduction', i[0][1].lower())):
-        rows.append({'period': m0.strftime('%b %Y'), 'component': n, 'type': nice(x['type']), 'category': nice(x['category']),
-                     'employees': len(x['emps']), 'amount': round(x['amount'], 2), 'signed': round(-x['amount'] if x['type'] == 'deduction' else x['amount'], 2),
+        rows.append({'period': m0.strftime('%b %Y'), 'component': n, 'type': 'Employer contribution' if x['type'] == 'others' else nice(x['type']), 'category': nice(x['category']),
+                     'employees': len(x['emps']), 'amount': round(x['amount'], 2), 'signed': round(0 if x['type'] == 'others' else -x['amount'] if x['type'] == 'deduction' else x['amount'], 2),   # v1.62.0 payroll (P1-3)
                      '_drill': dict(drill('payroll-register', None, **{'from': m0, 'to': month_end(m0)}), nz='c_' + n)})
     return [('period', 'Period', 'text'), ('component', 'Component', 'text'), ('type', 'Type', 'text'), ('category', 'Payroll category', 'text'),
             ('employees', 'Employees', 'number'), ('amount', 'Amount (AED)', 'number'), ('signed', 'Effect on net pay (AED)', 'number')], rows, \
         {'filters': ['period', 'type', 'component'], 'no_totals': ['amount', 'employees'],
-         'notes': ['Effect on net pay: additions positive, deductions negative – its total is the net pay of the period. Select a line for the payslips with that component.']}
+         'notes': ['Effect on net pay: additions positive, deductions negative, employer contributions 0 – its total is the net pay of the period. Select a line for the payslips with that component.']}
 
 
 def r_bank_transfer(run):

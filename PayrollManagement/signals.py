@@ -1,3 +1,4 @@
+from django.db.models.signals import pre_delete   # v1.62.0 payroll
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from .models import PayslipComponent, LoanRepayment,SalaryStructure, EmployeeSalaryStructure,SalaryComponent,AdvanceSalaryRequest
@@ -72,6 +73,13 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 def get_payroll_dates_and_days(instance, branch=None, structure=None):
+    try:   # v1.55.0 a period of a pay calendar (weekly, every two weeks, twice a month) has its own dates
+        from PayrollPlus.cycles import period_of as _pp_period
+        _p = _pp_period(instance)
+        if _p:
+            return _p
+    except ImportError:
+        pass
     PayStructure = apps.get_model(
         "PayrollManagement",
         "PayStructure"
@@ -269,6 +277,19 @@ def last_working_day(employee):
 
 
 
+def _settlement_pays_salary(employee, period_start):
+    """v1.62.0 EOS – a leaver whose final settlement (not cancelled) already pays the salary of this period up to the last working day
+    gets no payslip in the run (the salary would be paid twice)."""
+    try:
+        X = apps.get_model('PayrollPlus', 'ExitSettlement')
+    except LookupError:
+        return False
+    for st in X.objects.filter(employee_id=employee.pk).exclude(status='cancelled').only('salary_from', 'lines'):
+        if st.salary_from and st.salary_from <= period_start and any(l.get('key') == 'salary' and l.get('amount') for l in (st.lines or [])):
+            return True
+    return False
+
+
 def _store_window(instance, windows):
     """v1.18.0: the run shows the attendance window it used (when all its employees share one)."""
     try:
@@ -313,12 +334,18 @@ def pension_variables(employee, start_date=None, end_date=None):
     sal = sum((Decimal(str(r.amount or 0)) for r in ESS.objects.filter(employee=employee, is_active=True,
                                                                          component__payroll_category__in=PENSION_CATEGORIES,
                                                                          component__component_type='addition')), Decimal('0'))
+    # v1.59.0: the rates and limits in force on the first day of the pay period (Payroll › Legal rates; built-in values otherwise)
+    try:
+        from PayrollPlus.legal import rate as _rate
+    except ImportError:
+        _rate = lambda k, on=None, default=None: Decimal(str(default))
+    on = None       # the rule date: the 1st of the pay month in a payroll run
     if sal:
-        sal = min(max(sal, Decimal('3000')), Decimal('70000'))
+        sal = min(max(sal, _rate('ae_gpssa_salary_min', on, '3000')), _rate('ae_gpssa_salary_max', on, '70000'))
     joined = getattr(employee, 'emp_joined_date', None)
     out['pension_salary'] = sal.quantize(Decimal('0.01'))
-    out['pension_employee_rate'] = Decimal('0.11') if (joined and joined >= GPSSA_NEW_LAW) else Decimal('0.05')
-    out['pension_employer_rate'] = Decimal('0.125')
+    out['pension_employee_rate'] = _rate('ae_gpssa_employee_new', on, '0.11') if (joined and joined >= GPSSA_NEW_LAW) else _rate('ae_gpssa_employee_old', on, '0.05')
+    out['pension_employer_rate'] = _rate('ae_gpssa_employer', on, '0.125')
     return out
 
 
@@ -677,6 +704,19 @@ def _roster_days(employee, start_date, end_date):
 
 
 def get_formula_variables(employee, start_date=None, end_date=None):
+    """v1.59.0: every legal rule (rule sets, statutory rates, legal rates) as in force on the first day of the pay month
+    (process_payroll sets it from the run's month; a direct call uses start_date)."""
+    try:
+        from CountryPack.services import rules_on, rule_date_set
+    except ImportError:
+        return _get_formula_variables(employee, start_date, end_date)
+    if rule_date_set():
+        return _get_formula_variables(employee, start_date, end_date)
+    with rules_on(start_date):
+        return _get_formula_variables(employee, start_date, end_date)
+
+
+def _get_formula_variables(employee, start_date=None, end_date=None):
     EmpLeaveBalance = apps.get_model("calendars", "emp_leave_balance")
     Attendance = apps.get_model("calendars", "Attendance")
     EmployeeOvertime = apps.get_model("calendars", "EmployeeOvertime")
@@ -1765,7 +1805,24 @@ def _ensure_deduction_component(SalaryComponent, category, name, code, branch):
                                           description=f'Default {name} component', show_in_payslip=True)
 
 
-def process_payroll(
+def process_payroll(instance, employees_qs, start_date, end_date, total_days):
+    """v1.59.0: the legal rules in force on the 1st of the run's month (a payroll period from the 26th of the month before
+    still takes the rules of the pay month), so a re-run of a past month keeps that month's rates."""
+    on = None
+    try:
+        from datetime import date as _dd
+        on = _dd(int(instance.year), int(instance.month), 1)
+    except Exception:
+        on = start_date
+    try:
+        from CountryPack.services import rules_on
+    except ImportError:
+        return _process_payroll(instance, employees_qs, start_date, end_date, total_days)
+    with rules_on(on):
+        return _process_payroll(instance, employees_qs, start_date, end_date, total_days)
+
+
+def _process_payroll(
     instance,
     employees_qs,
     start_date,
@@ -1871,8 +1928,17 @@ def process_payroll(
     # PROCESS EACH EMPLOYEE
     # ========================================================
 
+    # v1.55.0 pay calendars: who belongs to this run, and whether loans / advances are deducted in it
+    try:
+        from PayrollPlus import cycles as _pp_cycles
+        _pp_skip_events = _pp_cycles.skip_events(instance)
+    except ImportError:
+        _pp_cycles, _pp_skip_events = None, False
+
     # v1.16.0 (D15): branch / department / designation / category read with the employees (used by every lookup)
     for employee in employees_qs.select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id'):
+        if _pp_cycles is not None and _pp_cycles.excluded(instance, employee):
+            continue
 
         logger.info(
             f"Processing payroll for employee "
@@ -1950,6 +2016,9 @@ def process_payroll(
         _lwd = last_working_day(employee)
         if (_joined and _joined > _b) or (_lwd and _lwd < _a):
             logger.info(f"{employee.emp_code} not employed in {_a}..{_b} – no payslip")
+            continue
+        if _lwd and _lwd <= _b and _settlement_pays_salary(employee, _a):   # v1.62.0 EOS
+            logger.info(f"{employee.emp_code}: the final settlement pays the salary to {_lwd} – no payslip")
             continue
         _not_employed = 0
         if _joined and _joined > _a:
@@ -2072,6 +2141,17 @@ def process_payroll(
             )
             .select_related("component")
         )
+        # v1.62.0: a company with one component set per branch (BAS, GTY, GPSSA … in each branch) gave every employee the formula
+        # components of every branch – each was paid / deducted once per branch. When the employee has the same component code
+        # more than once, only one counts: the one of the employee's branch, else the company-wide one, else the first. A component
+        # of another branch assigned on its own (no twin) still counts, as before.
+        _by_code = {}
+        for _s in salary_structs:
+            _k = (getattr(_s.component, 'code', None) or f'#{_s.component_id}').strip().upper()
+            _rank = 0 if _s.component.branch_id == employee.emp_branch_id_id else (1 if _s.component.branch_id is None else 2)
+            if _k not in _by_code or _rank < _by_code[_k][0]:
+                _by_code[_k] = (_rank, _s)
+        salary_structs = [v[1] for v in _by_code.values()]
 
         for salary_structure in salary_structs:
 
@@ -2259,6 +2339,8 @@ def process_payroll(
                 status="Approved"
             )
         )
+        if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
+            active_loans = LoanRequest.objects.none()
 
         for loan in active_loans:
 
@@ -2414,6 +2496,8 @@ def process_payroll(
                 status="Approved"
             )
         )
+        if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
+            approved_advances = AdvanceSalaryRequest.objects.none()
 
         for advance in approved_advances:
 
@@ -2573,6 +2657,12 @@ def process_payroll(
         # can still be stored and reported without affecting
         # net salary.
         # ====================================================
+
+        if _pp_cycles is not None:   # v1.55.0 prorated to a pay calendar's period; arrears of earlier months added
+            try:
+                _pp_cycles.adjust_payslip(instance, payslip, employee)
+            except Exception:
+                logger.exception('pay calendar / arrears adjustment failed for payslip %s', payslip.pk)
 
         totals = calculate_payslip_totals(
             payslip
@@ -2747,6 +2837,17 @@ def _payslip_status_loans(sender, instance, created, update_fields=None, **kwarg
             reapply_loan_repayments(instance)
     except Exception:
         logger.exception("loan repayment update failed for payslip %s", instance.pk)
+
+
+# v1.62.0 payroll: a payslip that is deleted (its payroll run deleted or recalculated) paid nothing – its loan instalments are
+# taken back. Before, the instalments stayed (payslip link emptied) and a recalculated run took the instalment a second time,
+# closing loans too early.
+@receiver(pre_delete, sender="PayrollManagement.Payslip")
+def _payslip_deleted_loans(sender, instance, **kwargs):
+    try:
+        reverse_loan_repayments(instance)
+    except Exception:
+        logger.exception("loan repayment reversal failed for deleted payslip %s", instance.pk)
 
 
 def _loan_balance(loan):

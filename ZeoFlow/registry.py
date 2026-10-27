@@ -8,10 +8,10 @@ from django.db import models
 MODULES = {
     'hrms': ['EmpManagement', 'OrganisationManager', 'calendars', 'LeavePolicy', 'HRActions', 'AttendancePlus', 'ShiftPlanner',
              'AssetPlus', 'EmployeeProfile', 'ExpenseManagement', 'PerformanceManagement', 'RecruitmentManagement',
-             'LearningManagement', 'LearningPlus', 'SelfService'],
-    'payroll': ['PayrollManagement', 'PayrollPlus'],
+             'LearningManagement', 'LearningPlus', 'SelfService', 'OrgStructure'],                      # v1.38.0 + org structure (positions, requisitions, policies)
+    'payroll': ['PayrollManagement', 'PayrollPlus', 'ZeoAccounting'],                                  # v1.38.0 + journal batches
     'projects': ['ZeoProjects', 'ProjectManagement', 'ProjectControl'],
-    'crm': ['ZeoCRM'],
+    'crm': ['ZeoCRM', 'ZeoMasters'],                                                                 # v1.38.0 + products, price books
     'property': ['ZeoProperty'],
     'maintenance': ['ZeoMaintenance'],
     'assets': ['ZeoAssets'],
@@ -22,7 +22,11 @@ MODULES = {
 MODULE_LABELS = {'hrms': 'HR', 'payroll': 'Payroll', 'projects': 'Projects', 'crm': 'CRM', 'property': 'Property',
                  'maintenance': 'Maintenance', 'assets': 'Asset Management', 'people': 'People', 'hse': 'HSE', 'settings': 'Company & users'}
 SKIP_WORDS = ('log', 'template', 'notification', 'token', 'history', 'snapshot', 'setting', 'layout', 'udf', 'customfield', 'extra', 'comment', 'announcementview', 'clock', 'critirea', 'attachment',
-              'fieldvalue', 'fielddef', 'bulkupload', 'emailconfiguration', 'through', 'cache', 'permission', 'inbox', 'audit')
+              'fieldvalue', 'fielddef', 'bulkupload', 'emailconfiguration', 'through', 'cache', 'permission', 'inbox', 'auditlog', 'audittrail',
+              'sequence', 'filestore', 'crmevent', 'maintevent', 'hseevent', 'peopleevent', 'propertyevent', 'assetevent', 'ticketevent',   # v1.38.0 housekeeping rows
+              'crmfile', 'maintfile', 'hsefile', 'peoplefile', 'propertyfile', 'assetfile', 'ticketfile', 'taskfile')
+# v1.38.0: 'audit' alone hid the asset counts (ZeoAssets.Audit) and HSE audits; only audit logs / trails are skipped
+KEEP_MODELS = {'ZeoAssets.Audit', 'ZeoHSE.Audit', 'ZeoHSE.AuditFinding'}
 SKIP_FIELDS = {'password', 'otp', 'otp_created_at'}
 
 OPERATORS = [
@@ -45,6 +49,7 @@ ACTIONS = [
     ('wait', 'Wait', 'Pause for a duration or until a date field, then continue'),
     ('branch', 'Conditional branch', 'If conditions hold run these actions, otherwise those'),
     ('stop', 'Stop', 'End the run (with an optional note)'),
+    ('call_webhook', 'Call a webhook', 'POST the record (JSON, signed) to a webhook of Settings → API keys and webhooks'),   # v1.52.0
 ]
 TYPES_FOR_OPERATOR = {
     'text': ['eq', 'ne', 'contains', 'not_contains', 'starts', 'ends', 'empty', 'not_empty', 'in', 'not_in', 'changed', 'changed_from', 'changed_to'],
@@ -99,7 +104,7 @@ def models_of(module=None):
                 continue
             for m in apps.get_app_config(label).get_models():
                 name = m._meta.model_name
-                if m._meta.auto_created or m._meta.proxy or any(w in name for w in SKIP_WORDS):
+                if m._meta.auto_created or m._meta.proxy or (any(w in name for w in SKIP_WORDS) and f'{label}.{m.__name__}' not in KEEP_MODELS):
                     continue
                 out.append({'key': model_key(m), 'module': key, 'label': _nice(m._meta.verbose_name), 'app': label})
     out.sort(key=lambda d: (d['module'], d['label']))

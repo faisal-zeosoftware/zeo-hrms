@@ -288,6 +288,219 @@ def _annual_type():
     return LT.objects.filter(leave_category='annual').order_by('id').first()
 
 
+
+# ------------------------------------------------------------------ v1.62.0 EOS – items of the leaver's statement
+def person(uid):
+    """Name of a login without the user name (the statement says "added by Layla Farouk")."""
+    U = M('UserManagement', 'CustomUser')
+    u = U.objects.filter(pk=uid).first() if uid else None
+    if u is None:
+        return ''
+    e = M('EmpManagement', 'emp_master').objects.filter(users=u).first()
+    return f'{e.emp_first_name} {e.emp_last_name or ""}'.strip() if e else (u.get_full_name() if hasattr(u, 'get_full_name') and u.get_full_name() else u.username)
+
+
+def _add_years(d, n):
+    try:
+        return d.replace(year=d.year + n)
+    except ValueError:   # 29 February
+        return d.replace(year=d.year + n, day=28)
+
+
+def _gratuity_steps(eos, res, basic):
+    """(basis, [steps]) – years × days × basic ÷ 30 per slab of the gratuity table (or the UAE law), and the cap."""
+    try:
+        years = Decimal(str(eos.years_of_service or 0))
+        days_total = Decimal(str(eos.gratuity_days or 0))
+        daily = basic / 30
+        GT = M('OrganisationManager', 'GratuityTable')
+        rules = [(Decimal(str(r.minimum_value)), Decimal(str(r.maximum_value)) if r.maximum_value else None,
+                  Decimal(str(r.termination_days if res.termination_type in ('termination', 'retirement', 'death_or_disablement') else r.resignation_days)))
+                 for r in GT.objects.filter(is_active=True).order_by('minimum_value')]
+        if not rules:
+            rules = [(Decimal(0), Decimal(5), Decimal(21)), (Decimal(5), None, Decimal(30))]
+        steps, got = [], Decimal(0)
+        steps.append(tr('Eligible service {0} years (unpaid days taken off)', q2(years)))
+        for lo, hi, per in rules:
+            if years <= lo or not per:
+                continue
+            yrs = (min(years, hi) if hi else years) - lo
+            if yrs <= 0:
+                continue
+            got += yrs * per
+            steps.append(tr('{0} years × {1} days = {2} days', q2(yrs), f'{per:g}', q2(yrs * per)))
+        if abs(got - days_total) > Decimal('0.05'):   # another rule set (country pack) – show its total only
+            steps = steps[:1]
+        capped = days_total * daily > Decimal(str(eos.gratuity_amount or 0)) + Decimal('1')
+        steps.append(tr('{0} days × basic {1:,.2f} ÷ 30 = {2:,.2f}', q2(days_total), basic, q2(days_total * daily) if capped else q2(eos.gratuity_amount)))
+        cap = basic * 24
+        if capped:
+            steps.append(tr('Capped at 2 years’ pay: {0:,.2f}', q2(eos.gratuity_amount)))
+        else:
+            steps.append(tr('Cap 2 years’ basic {0:,.2f} – not reached', q2(cap)))
+        basis = tr('{0} years × days × basic {1:,.2f} ÷ 30 (UAE Labour Law Art. 51)', q2(years), basic)
+        return basis, steps
+    except Exception:
+        log.debug('gratuity steps', exc_info=True)
+        return '', None
+
+
+NAT_COUNTRY = {'FILIPINO': 'Philippines', 'EMIRATI': 'United Arab Emirates', 'BRITISH': 'United Kingdom', 'DUTCH': 'Netherlands', 'SWISS': 'Switzerland',
+               'FRENCH': 'France', 'GREEK': 'Greece', 'THAI': 'Thailand', 'CHINESE': 'China', 'SUDANESE': 'Sudan', 'SENEGALESE': 'Senegal'}
+
+
+def _home_countries(emp):
+    """Country of the employee for the air ticket policy: the country on the employee, else the one of the nationality."""
+    ids = set()
+    if emp.emp_country_id_id:
+        ids.add(emp.emp_country_id_id)
+    nat = str(getattr(getattr(emp, 'emp_nationality', None), 'N_name', '') or '').strip().upper()
+    if nat:
+        C = M('Core', 'cntry_mstr')
+        name = NAT_COUNTRY.get(nat)
+        qs = C.objects.filter(country_name__iexact=name) if name else C.objects.filter(country_name__istartswith=nat[:4])
+        ids.update(qs.values_list('id', flat=True)[:3])
+    return ids
+
+
+def ticket_policy(emp):
+    """The active air ticket policy of the employee (country, then department / designation / category / branch if the policy limits them)."""
+    P = M('PayrollManagement', 'AirTicketPolicy')
+    best = None
+    for p in P.objects.filter(is_active=True, country_id__in=_home_countries(emp)).prefetch_related('rules').order_by('id'):
+        ok = True
+        for rel, val in (('eligible_departments', emp.emp_dept_id_id), ('eligible_designations', emp.emp_desgntn_id_id),
+                         ('eligible_categories', emp.emp_ctgry_id_id), ('branch', emp.emp_branch_id_id)):
+            ids = set(getattr(p, rel).values_list('id', flat=True))
+            if ids and val not in ids:
+                ok = False
+                break
+        if ok:
+            best = p
+            break
+    return best
+
+
+def _air_tickets(emp, lwd, res, add, info):
+    """1. approved allocations not used yet (remaining amount, no approved / processed ticket request, not expired);
+    2. the ticket earned on exit by the policy: one ticket every N years of service – when the last completed cycle has no allocation it is
+       due now (the open allocation of that cycle is paid in 1., never both)."""
+    A = M('PayrollManagement', 'AirTicketAllocation')
+    R = M('PayrollManagement', 'AirTicketRequest')
+    allocs = list(A.objects.filter(employee=emp, is_active=True).exclude(status='REJECTED').select_related('policy').order_by('allocated_date', 'id'))
+    first = True
+    for a in allocs:
+        if a.status != 'APPROVED':
+            continue
+        used = R.objects.filter(allocation=a, status__in=('APPROVED', 'PROCESSED')).exists()
+        left = Decimal(str(a.remaining_amount if a.remaining_amount is not None else a.amount or 0))
+        if used or left <= 0:
+            continue
+        if a.expiry_date and a.expiry_date < lwd:
+            continue
+        add('air_ticket' if first else f'air_ticket_{a.pk}', tr('Air ticket allowance – approved allocation not used'), 'earning', left,
+            tr('{0}, allocated {1:%d/%m/%Y}', a.policy.name if a.policy_id else tr('allocation'), a.allocated_date), 'ticket')
+        first = False
+    p = ticket_policy(emp)
+    if p is None or not emp.emp_joined_date:
+        return
+    freq = int(p.frequency_years or 1) or 1
+    need = min([r.required_service_years for r in p.rules.all()] or [freq])
+    from EmpManagement.utils import service_years
+    yrs = service_years(emp.emp_joined_date, lwd)
+    cycles = int(yrs // freq)
+    nxt = _add_years(emp.emp_joined_date, (cycles + 1) * freq)
+    if cycles < 1 or yrs < need:
+        info('ticket_next', tr('Air ticket not earned yet'), tr('{0}: one ticket every {1} years – the first is due on {2:%d/%m/%Y}', p.name, freq,
+                                                                  _add_years(emp.emp_joined_date, max(freq, need))), 'ticket')
+        return
+    start, end = _add_years(emp.emp_joined_date, (cycles - 1) * freq), _add_years(emp.emp_joined_date, cycles * freq)
+    covered = [a for a in allocs if a.policy_id == p.pk and a.allocated_date and a.allocated_date >= start]
+    if covered:
+        info('ticket_cycle', tr('Air ticket of the cycle to {0:%d/%m/%Y} already allocated', end),
+             tr('{0}: allocation of {1:%d/%m/%Y} – not paid again', p.name, covered[-1].allocated_date), 'ticket')
+        return
+    cash = p.allowance_type in ('CASH', 'BOTH') or any(r.rule_type == 'ENCASHMENT' for r in p.rules.all())
+    add('air_ticket_due', tr('Air ticket earned on exit ({0} – {1})', start.year, end.year), 'earning', p.amount,
+        tr('{0}: one ticket every {1} years; the ticket earned on {2:%d/%m/%Y} was not given{3}', p.name, freq, end,
+           '' if cash else tr(' (ticket policy – paid in cash at exit)')), 'ticket',
+        [tr('Service {0} years ÷ {1} = {2} completed cycles', q2(yrs), freq, cycles), tr('Cycle {0:%d/%m/%Y} – {1:%d/%m/%Y}: no allocation', start, end),
+         tr('Policy amount {0:,.2f}', q2(p.amount))])
+
+
+def asset_items(emp_id, st=None, since=None):
+    """Every company asset the employee holds or returned at exit: HR assets (allocations), shared-asset custody, Asset Management
+    cards held by the employee – with returned / not returned and HR's decision in the settlement."""
+    out, seen = [], set()
+    dec = (st.asset_decisions if st is not None else {}) or {}
+    AL = M('OrganisationManager', 'AssetAllocation')
+    try:
+        Prof = M('AssetPlus', 'AssetProfile')
+    except LookupError:
+        Prof = None
+    qs = AL.objects.filter(employee_id=emp_id).select_related('asset', 'asset__asset_type').order_by('assigned_date', 'id')
+    for a in qs:
+        if a.returned_date and since and a.returned_date < since:
+            continue
+        key = f'om_{a.asset_id}'
+        if not a.returned_date:
+            seen.add(a.asset_id)
+        code = ''
+        if Prof is not None:
+            p = Prof.objects.filter(asset_id=a.asset_id).first()
+            code = getattr(p, 'asset_code', '') or ''
+        lost = False
+        if Prof is not None and a.returned_date:
+            lost = Prof.objects.filter(asset_id=a.asset_id, extra_status='lost').exists()
+        d = dec.get(key) or {}
+        out.append({'key': key, 'asset_id': a.asset_id, 'allocation_id': a.pk, 'name': a.asset.name, 'code': code or (a.asset.serial_number or ''),
+                    'serial': a.asset.serial_number or '', 'type': str(a.asset.asset_type) if getattr(a.asset, 'asset_type_id', None) else '',
+                    'since': a.assigned_date, 'returned_on': a.returned_date, 'condition': a.get_return_condition_display() if a.return_condition else '',
+                    'state': 'lost' if lost else ('returned' if a.returned_date else 'not_returned'), 'source': 'hr',
+                    'decision': d.get('decision', ''), 'amount': d.get('amount') or 0, 'note': d.get('note', ''), 'by': d.get('by', ''), 'at': d.get('at')})
+    try:
+        SA = M('AssetPlus', 'SharedAllocation')
+        for s_ in SA.objects.filter(custodian_employee_id=emp_id, returned_date__isnull=True):
+            a = M('OrganisationManager', 'Asset').objects.filter(pk=s_.asset_id).first()
+            key = f'om_{s_.asset_id}'
+            d = dec.get(key) or {}
+            out.append({'key': key, 'asset_id': s_.asset_id, 'name': (a.name if a else '') + ' – ' + tr('custody of a shared asset'), 'code': getattr(a, 'serial_number', '') or '',
+                        'since': s_.assigned_date, 'returned_on': None, 'state': 'not_returned', 'source': 'custody', 'decision': d.get('decision', ''),
+                        'amount': d.get('amount') or 0, 'note': d.get('note', ''), 'by': d.get('by', ''), 'at': d.get('at')})
+    except LookupError:
+        pass
+    try:   # Asset Management (app kit): cards held by the employee that are not an HR asset already listed
+        Card = M('ZeoAssets', 'AssetCard')
+        for c in Card.objects.filter(holder_employee_id=emp_id, hr_asset__isnull=True):   # cards of an HR asset follow the HR allocation above
+            key = f'zc_{c.pk}'
+            d = dec.get(key) or {}
+            out.append({'key': key, 'asset_id': None, 'card_id': c.pk, 'name': getattr(c, 'name', '') or str(c), 'code': getattr(c, 'code', '') or getattr(c, 'number', '') or '',
+                        'since': None, 'returned_on': None, 'state': 'not_returned', 'source': 'asset_management', 'decision': d.get('decision', ''),
+                        'amount': d.get('amount') or 0, 'note': d.get('note', ''), 'by': d.get('by', ''), 'at': d.get('at')})
+    except LookupError:
+        pass
+    return out
+
+
+def _decided_assets(st, emp, lines, add):
+    """Recovery lines HR recorded for assets not returned, and a block line for Asset Management cards still held (no decision)."""
+    dec = st.asset_decisions or {}
+    names = {}
+    try:
+        for i in asset_items(emp.pk, st):
+            names[i['key']] = i
+    except Exception:
+        log.debug('asset items', exc_info=True)
+    for key, d in dec.items():
+        if (d or {}).get('decision') == 'recover' and d.get('amount'):
+            it = names.get(key) or {}
+            add(f'asset_{key}', tr('Asset not returned – {0}', it.get('name') or d.get('asset') or key), 'deduction', d['amount'],
+                (d.get('note') or tr('recovery decided by HR')), 'assets', by=d.get('by', ''))
+    open_cards = [i for i in names.values() if i['source'] == 'asset_management' and i['state'] == 'not_returned' and not i['decision']]
+    if open_cards and not any(l['kind'] == 'block' for l in lines):
+        lines.append({'key': 'clearance', 'label': tr('Asset clearance not complete – {0}', '; '.join(i['name'] for i in open_cards[:3])), 'kind': 'block',
+                      'amount': 0, 'basis': '', 'section': 'assets'})
+
 def compute(st, user=None):
     """(Re)calculate every component of the settlement from the current records. Draft only."""
     E = M('EmpManagement', 'emp_master')
@@ -306,10 +519,18 @@ def compute(st, user=None):
     daily_wage, daily_basic = wage / 30, basic / 30
     lines = []
 
-    def add(key, label, kind, amount, basis=''):
+    def add(key, label, kind, amount, basis='', section='', calc=None, **extra):   # v1.62.0 EOS: section + the calculation steps
         amount = q2(amount)
         if amount:
-            lines.append({'key': key, 'label': label, 'kind': kind, 'amount': float(amount), 'basis': basis})
+            ln = {'key': key, 'label': label, 'kind': kind, 'amount': float(amount), 'basis': basis, 'section': section or key.split('_')[0]}
+            if calc:
+                ln['calc'] = calc
+            ln.update(extra)
+            lines.append(ln)
+
+    def info(key, label, basis='', section=''):   # v1.62.0 EOS
+        lines.append({'key': key, 'label': label, 'kind': 'info', 'amount': 0, 'basis': basis, 'section': section or key.split('_')[0]})
+    eoc = (st.exit_reason or '') == 'end_of_contract'   # v1.62.0 EOS
 
     # 1. salary due – from the day after the month paid by the last payroll to the last working day; unpaid days from the day
     #    after the last payroll's attendance cut-off (those after the cut-off were not yet deducted)
@@ -322,6 +543,7 @@ def compute(st, user=None):
             tr('{0} days on the 30-day basis × wage {1:,.2f} ÷ 30 ({2})', days, wage, ', '.join(wage_parts)))
     elif paid_to:
         add('salary', tr('Salary already paid by payroll to {0:%d/%m/%Y}', paid_to), 'earning', 0, '')
+        info('salary_paid', tr('Salary to the last working day paid by payroll'), tr('payroll paid the salary to {0:%d/%m/%Y}', paid_to), 'salary')   # v1.62.0 EOS
     ua = (inputs_to + timedelta(days=1)) if inputs_to else start
     unpaid = _unpaid_between(emp, ua, lwd)
     if unpaid:
@@ -331,6 +553,9 @@ def compute(st, user=None):
     notice = int(res.notice_period or 0)
     served = (lwd - res.resigned_on).days if res.resigned_on else 0
     unserved = max(notice - max(served, 0), 0)
+    if eoc:   # v1.62.0 EOS: the fixed-term contract ends on its date – no notice is owed by either side
+        unserved = 0
+        info('notice_eoc', tr('End of contract – no notice pay or notice deduction'), tr('the contract ended on {0:%d/%m/%Y}', lwd), 'notice')
     if unserved:
         if res.termination_type in ('termination', 'retirement', 'death_or_disablement'):
             add('notice', tr('Pay in lieu of notice ({0} days not served)', unserved), 'earning', daily_wage * unserved,
@@ -352,14 +577,16 @@ def compute(st, user=None):
         future = sum(Decimal(str(r.approved_days or r.number_of_days or 0)) for r in LR.objects.filter(employee=emp, leave_type=AL, status='approved', start_date__gt=lwd))
         leave_days = max(leave_days + future, Decimal('0'))   # leave booked after the last day is not taken
     if leave_days:
-        add('leave', tr('Unused annual leave {0} days', q2(leave_days)), 'earning', daily_basic * leave_days, tr('basic {0:,.2f} ÷ 30 × days', basic))
+        add('leave', tr('Unused annual leave {0} days', q2(leave_days)), 'earning', daily_basic * leave_days, tr('basic {0:,.2f} ÷ 30 × days', basic), 'leave',
+            [tr('{0:,.2f} ÷ 30 = {1:,.2f} a day', basic, q2(daily_basic)), tr('{0:,.2f} × {1} days = {2:,.2f}', q2(daily_basic), q2(leave_days), q2(daily_basic * leave_days))])   # v1.62.0 EOS
     LE = M('PayrollManagement', 'LeaveEncashment')
     for e in LE.objects.filter(employee=emp, status='approved', payroll_run__isnull=True):
         add(f'encash_{e.pk}', tr('Leave encashment approved, not paid yet ({0} days)', e.encashment_days), 'earning', e.encashment_amount, tr('approved encashment'))
     # 4. end-of-service gratuity
     if eos.gratuity_amount:
+        gb, gcalc = _gratuity_steps(eos, res, basic)   # v1.62.0 EOS: the calculation shown step by step
         add('gratuity', tr('End-of-service gratuity ({0} days)', q2(eos.gratuity_days)), 'earning', eos.gratuity_amount,
-            tr('basic {0:,.2f} ÷ 30; 21 days a year for the first 5 years, 30 after; capped at 2 years’ basic', basic))
+            gb or tr('basic {0:,.2f} ÷ 30; 21 days a year for the first 5 years, 30 after; capped at 2 years’ basic', basic), 'gratuity', gcalc)
     else:
         try:
             from PayrollManagement.signals import is_uae_national
@@ -384,18 +611,20 @@ def compute(st, user=None):
             add(f'expense_{r.pk}', tr('Expense report {0} to reimburse', r.number), 'earning', getattr(r, 'amount_to_reimburse', 0) or 0, '')
     except LookupError:
         pass
-    if eos.air_ticket:
-        add('air_ticket', tr('Air ticket allowance'), 'earning', eos.air_ticket, tr('approved air ticket allocation'))
+    _air_tickets(emp, lwd, res, add, info)   # v1.62.0 EOS: open allocation + the ticket earned on exit by the policy (never both)
     # 6. deductions: loans, salary advances, approved asset recoveries (never the asset value without an approved decision)
     LA = M('PayrollManagement', 'LoanApplication')
     for l in LA.objects.filter(employee=emp, status__in=('Approved', 'Disbursed', 'In Progress', 'Paused')):
-        if l.remaining_balance:
-            add(f'loan_{l.pk}', tr('Loan {0} – outstanding balance', l.document_number or l.pk), 'deduction', l.remaining_balance, tr('verified loan balance'))
+        if l.remaining_balance:   # v1.62.0 EOS: each loan with its own basis
+            paid = q2(Decimal(str(l.amount_requested or 0)) - Decimal(str(l.remaining_balance or 0)))
+            add(f'loan_{l.pk}', tr('Loan {0} – outstanding balance', l.document_number or l.pk), 'deduction', l.remaining_balance,
+                tr('loan {0:,.2f}, repaid {1:,.2f}', q2(l.amount_requested), paid), 'loan')
     AS = M('PayrollManagement', 'AdvanceSalaryRequest')
     for a in AS.objects.filter(employee=emp, status__iexact='approved'):
         left = a.requested_amount
         if left:
-            add(f'advance_{a.pk}', tr('Salary advance {0} – not yet deducted', a.document_number or a.pk), 'deduction', left, '')
+            add(f'advance_{a.pk}', tr('Salary advance {0} – not yet deducted', a.document_number or a.pk), 'deduction', left,
+                tr('approved advance, not deducted by payroll'), 'advance')   # v1.62.0 EOS
     try:
         from AssetPlus import services as AP
         c = AP.clearance(emp.pk)
@@ -403,11 +632,18 @@ def compute(st, user=None):
         if due:
             add('assets', tr('Asset recovery approved by management'), 'deduction', due, tr('approved damage / loss decisions'))
         open_items = [i for i in (c.get('items') or []) if i.get('kind') != 'recovery']   # the recovery is deducted here
+        dec = st.asset_decisions or {}   # v1.62.0 EOS: an asset HR decided on in the settlement (recover / waive / returned) no longer blocks
+        open_items = [i for i in open_items if not (i.get('asset_id') and (dec.get(f"om_{i['asset_id']}") or {}).get('decision'))]
         if open_items and not c.get('waived'):
             lines.append({'key': 'clearance', 'label': tr('Asset clearance not complete – {0}', '; '.join(i.get('text', '') for i in open_items[:3])),
                           'kind': 'block', 'amount': 0, 'basis': ''})
     except Exception:
         log.debug('asset clearance not available', exc_info=True)
+    _decided_assets(st, emp, lines, add)   # v1.62.0 EOS: recovery amounts HR recorded for assets not returned
+    for o in (st.other_lines or []):        # v1.62.0 EOS: HR's own lines are kept on every recalculation
+        kind = 'deduction' if o.get('kind') == 'deduction' else 'earning'
+        add(f"other_{o.get('id')}", o.get('label') or tr('Other'), kind, o.get('amount') or 0, o.get('note') or '', 'other',
+            by=o.get('by') or '', at=o.get('at'), manual=True)
     earn = sum((Decimal(str(l['amount'])) for l in lines if l['kind'] == 'earning'), Decimal('0'))
     ded = sum((Decimal(str(l['amount'])) for l in lines if l['kind'] == 'deduction'), Decimal('0'))
     st.lines = lines
@@ -424,15 +660,32 @@ def compute(st, user=None):
     return st
 
 
-def start(eos, user):
+def start(eos, user, exit_reason=None):
     S = M('PayrollPlus', 'ExitSettlement')
     st = S.objects.filter(eos_id=eos.pk).first()
+    new = st is None
     if st is None:
         st = S(eos_id=eos.pk, employee_id=eos.resignation.employee_id, calc_date=timezone.localdate(), last_working_date=eos.resignation.last_working_date,
                created_by_id=getattr(user, 'pk', None))
+        if exit_reason:   # v1.62.0 EOS
+            st.exit_reason = exit_reason
+        st.history = [{'action': 'calculated', 'by_id': getattr(user, 'pk', None), 'by': person(getattr(user, 'pk', None)),
+                       'at': timezone.now().isoformat(), 'note': ''}]
     if st.status == 'draft':
         compute(st, user)
     return st
+
+
+def log_step(st, action, user, note=''):
+    """v1.62.0 EOS – one line of the settlement history. The time of the latest step is kept in last_action_at (so a business date set
+    on it later – data loads – is what the history shows); the previous line takes its time when the next step comes."""
+    h = list(st.history or [])
+    if h:
+        h[-1]['at'] = (st.last_action_at or st.created_at or timezone.now()).isoformat()
+    now = timezone.now()
+    h.append({'action': action, 'by_id': getattr(user, 'pk', None), 'by': person(getattr(user, 'pk', None)), 'at': now.isoformat(), 'note': (note or '')[:500]})
+    st.history = h[-60:]
+    st.last_action_at = now
 
 
 FLOW = {'submit': ('draft', 'submitted'), 'validate': ('submitted', 'validated'), 'approve': ('validated', 'approved'), 'pay': ('approved', 'paid'),
@@ -441,6 +694,10 @@ FLOW = {'submit': ('draft', 'submitted'), 'validate': ('submitted', 'validated')
 
 def act(st, action, user, codes, admin, data=None):
     data = data or {}
+    if action == 'reject':   # v1.62.0 EOS: "Reject back to HR" with a reason = return
+        action = 'return'
+        if not data.get('note') and data.get('reason'):
+            data = {**data, 'note': data.get('reason')}
     if action not in FLOW:
         raise Refused(tr('Unknown action.'))
     frm, to = FLOW[action]
@@ -487,6 +744,10 @@ def act(st, action, user, codes, admin, data=None):
             st.notes = (st.notes + '\n' if st.notes else '') + f'{timezone.localdate():%d/%m/%Y} sent back by {user_name(user.pk)}: {data.get("note")}'
         if action in ('submit', 'validate', 'approve', 'pay') and data.get('note'):
             st.notes = (st.notes + '\n' if st.notes else '') + f'{timezone.localdate():%d/%m/%Y} {action} – {user_name(user.pk)}: {data.get("note")}'
+        hn = data.get('note') or ''
+        if action == 'pay':
+            hn = (tr('Paid on {0:%d/%m/%Y}, reference {1}', st.paid_on, st.payment_ref) + (' – ' + hn if hn else ''))
+        log_step(st, action, user, hn)   # v1.62.0 EOS
         st.status = to
         st.save()
     return st
@@ -497,6 +758,7 @@ def _close_eos(st, user):
     eos = EOS.objects.filter(pk=st.eos_id).first()
     if eos is None:
         return
+    _waive_decided(st, user)   # v1.62.0 EOS
     if any(l['key'] == 'assets' for l in st.lines):
         try:   # the approved asset recovery is deducted in this settlement
             from AssetPlus.services import settle_in_final_settlement
@@ -511,6 +773,26 @@ def _close_eos(st, user):
     for l in st.lines:
         if l['key'].startswith('encash_'):
             LE.objects.filter(pk=int(l['key'].split('_')[1])).update(status='processed', processed_at=timezone.now())
+
+
+def _waive_decided(st, user):
+    """v1.62.0 EOS – assets HR decided on in the settlement (recovered / written off): the exit clearance of AssetPlus is released with
+    that reason, so closing the end of service is not refused for them."""
+    dec = {k: d for k, d in (st.asset_decisions or {}).items() if (d or {}).get('decision') in ('recover', 'waive')}
+    if not dec:
+        return
+    try:
+        from AssetPlus import services as AP
+        from AssetPlus.models import ClearanceWaiver
+        c = AP.clearance(st.employee_id)
+        if not c.get('blocked'):
+            return
+        txt = '; '.join(f"{d.get('asset') or k}: {tr('recovered {0:,.2f}', q2(d.get('amount'))) if d.get('decision') == 'recover' else tr('written off')}"
+                        for k, d in dec.items())
+        ClearanceWaiver.objects.create(employee_id=st.employee_id, reason=(tr('Final settlement {0}', st.number or st.pk) + ' – ' + txt)[:500],
+                                       waived_by_id=getattr(user, 'pk', None))
+    except Exception:
+        log.exception('clearance waiver for the settlement failed')
 
 
 def _eligible_years(st):
@@ -538,9 +820,192 @@ def settlement_row(st, full=False):
            'days_to_due': (st.due_date - today).days if st.due_date else None, 'paid_on': st.paid_on, 'payment_ref': st.payment_ref,
            'calc_date': st.calc_date, 'notice_waived': st.notice_waived}
     if full:
-        row.update({'lines': st.lines, 'salary_from': st.salary_from, 'salary_to': st.salary_to, 'notes': st.notes,
+        row.update({'lines': localize_lines(st.lines),   # v1.62.0 EOS: in the reader's language 'salary_from': st.salary_from, 'salary_to': st.salary_to, 'notes': st.notes,
                     'trail': [{'step': tr('Calculated by HR'), 'by': user_name(st.submitted_by_id), 'at': st.submitted_at},
                               {'step': tr('Validated by Finance'), 'by': user_name(st.validated_by_id), 'at': st.validated_at},
                               {'step': tr('Approved by management'), 'by': user_name(st.approved_by_id), 'at': st.approved_at},
                               {'step': tr('Paid'), 'by': user_name(st.paid_by_id), 'at': st.paid_at}]})
+        # v1.62.0 EOS – the statement of the Leavers workspace
+        row.update({'exit_reason': st.exit_reason, 'other_lines': st.other_lines or [], 'asset_decisions': st.asset_decisions or {},
+                    'history': history_rows(st), 'blocked': any(l.get('kind') == 'block' for l in (st.lines or [])),
+                    'net_words': amount_words(st.net), 'currency': 'AED'})
     return row
+
+
+_PATTERNS = None
+
+
+def _patterns():
+    """(regex, plain template) of every statement text made by tr() in this module and leavers.py (stored in English)."""
+    global _PATTERNS
+    if _PATTERNS is None:
+        import os
+        import re
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = ''.join(open(os.path.join(here, f), encoding='utf-8').read() for f in ('services.py', 'leavers.py'))
+        out = []
+        for m in re.finditer(r"tr\(\s*'((?:[^'\\]|\\.)*)'", src):
+            t = m.group(1)
+            if '{' not in t or len(re.sub(r'\{[^}]*\}', '', t)) < 6:
+                continue
+            plain = re.sub(r'\{(\d+):[^}]*\}', r'{\1}', t)
+            rx = '^' + re.sub(r'\\\{(\d+)\\\}', r'(?P<g\1>.+?)', re.escape(plain)) + '$'
+            try:
+                out.append((re.compile(rx, re.S), plain))
+            except re.error:
+                pass
+        out.sort(key=lambda x: -len(x[1]))
+        _PATTERNS = out
+    return _PATTERNS
+
+
+def localize(text, lang=None):
+    """v1.62.0 EOS – a statement text stored in English (lines are kept as text) in the reader's language: the template it was made
+    from is found again and translated with the same values. Unknown texts stay as they are."""
+    try:
+        from Translations.i18n import current_lang
+        lang = lang or current_lang()
+    except Exception:
+        return text
+    if not text or not isinstance(text, str) or not lang or str(lang).startswith('en'):
+        return text
+    t = tr(text, lang=lang)
+    if t != text:
+        return t
+    for rx, plain in _patterns():
+        m = rx.match(text)
+        if m:
+            vals = m.groupdict()
+            args = [localize(vals.get(f'g{i}', ''), lang) for i in range(len(vals))]
+            try:
+                return tr(plain, *args, lang=lang)
+            except Exception:
+                return text
+    return text
+
+
+def localize_lines(lines):
+    out = []
+    for l in lines or []:
+        x = dict(l)
+        for k in ('label', 'basis'):
+            if x.get(k):
+                x[k] = localize(x[k])
+        if x.get('calc'):
+            x['calc'] = [localize(c) for c in x['calc']]
+        out.append(x)
+    return out
+
+
+HISTORY_LABEL = {'calculated': 'End of service calculated', 'recalculated': 'Calculated again', 'submit': 'Submitted to Finance',
+                 'validate': 'Checked by Finance', 'approve': 'Approved', 'pay': 'Paid', 'return': 'Sent back to HR', 'cancel': 'Cancelled',
+                 'line_added': 'Line added', 'line_removed': 'Line removed', 'asset': 'Asset decision', 'notice_waived': 'Notice waived'}
+
+
+def history_rows(st):
+    """v1.62.0 EOS – the steps of the settlement, oldest first (made from the step fields for settlements of earlier versions)."""
+    h = list(st.history or [])
+    if not h:
+        h = [{'action': 'calculated', 'by': person(st.created_by_id), 'at': st.created_at}]
+        for a, uid, at in (('submit', st.submitted_by_id, st.submitted_at), ('validate', st.validated_by_id, st.validated_at),
+                           ('approve', st.approved_by_id, st.approved_at), ('pay', st.paid_by_id, st.paid_at)):
+            if at:
+                h.append({'action': a, 'by': person(uid), 'at': at, 'note': (tr('Paid on {0:%d/%m/%Y}, reference {1}', st.paid_on, st.payment_ref)
+                                                                             if a == 'pay' and st.paid_on else '')})
+        return [{**x, 'label': tr(HISTORY_LABEL.get(x['action'], x['action']))} for x in h]
+    out = []
+    for i, x in enumerate(h):
+        at = x.get('at')
+        if i == len(h) - 1:
+            at = st.last_action_at or (st.created_at if i == 0 else at)
+        out.append({'action': x.get('action'), 'label': tr(HISTORY_LABEL.get(x.get('action'), x.get('action') or '')), 'by': x.get('by', ''),
+                    'at': at, 'note': x.get('note', '')})
+    from datetime import datetime as _dt
+    def _t(v):
+        try:
+            return v if isinstance(v, _dt) else _dt.fromisoformat(str(v))
+        except (TypeError, ValueError):
+            return None
+    for i in range(len(out) - 2, -1, -1):   # a step dated later than the next one (records made before their business date was set)
+        a, b = _t(out[i]['at']), _t(out[i + 1]['at'])
+        if a and b and a > b:
+            out[i]['at'] = out[i + 1]['at']
+    return out
+
+
+# ------------------------------------------------------------------ v1.62.0 EOS – amount in words (AED / dirham, fils)
+_ONES = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+         'sixteen', 'seventeen', 'eighteen', 'nineteen']
+_TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+
+
+def _en(n):
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ('-' + _ONES[n % 10] if n % 10 else '')
+    if n < 1000:
+        return _ONES[n // 100] + ' hundred' + (' and ' + _en(n % 100) if n % 100 else '')
+    for div, word in ((10 ** 9, 'billion'), (10 ** 6, 'million'), (1000, 'thousand')):
+        if n >= div:
+            rest = n % div
+            return _en(n // div) + ' ' + word + ((' and ' if rest < 100 else ' ') + _en(rest) if rest else '')
+    return str(n)
+
+
+_AR_ONES = ['', 'واحد', 'اثنان', 'ثلاثة', 'أربعة', 'خمسة', 'ستة', 'سبعة', 'ثمانية', 'تسعة', 'عشرة', 'أحد عشر', 'اثنا عشر', 'ثلاثة عشر', 'أربعة عشر',
+            'خمسة عشر', 'ستة عشر', 'سبعة عشر', 'ثمانية عشر', 'تسعة عشر']
+_AR_TENS = ['', '', 'عشرون', 'ثلاثون', 'أربعون', 'خمسون', 'ستون', 'سبعون', 'ثمانون', 'تسعون']
+_AR_HUNDREDS = ['', 'مائة', 'مائتان', 'ثلاثمائة', 'أربعمائة', 'خمسمائة', 'ستمائة', 'سبعمائة', 'ثمانمائة', 'تسعمائة']
+
+
+def _ar999(n):
+    parts = []
+    if n >= 100:
+        parts.append(_AR_HUNDREDS[n // 100])
+        n %= 100
+    if n:
+        if n < 20:
+            parts.append(_AR_ONES[n])
+        else:
+            parts.append((_AR_ONES[n % 10] + ' و' if n % 10 else '') + _AR_TENS[n // 10])
+    return ' و'.join(parts)
+
+
+def _ar(n):
+    if n == 0:
+        return 'صفر'
+    out = []
+    for div, one, two, few, many in ((10 ** 6, 'مليون', 'مليونان', 'ملايين', 'مليون'), (1000, 'ألف', 'ألفان', 'آلاف', 'ألف')):
+        if n >= div:
+            k, n = n // div, n % div
+            if k == 1:
+                out.append(one)
+            elif k == 2:
+                out.append(two)
+            elif 3 <= k <= 10:
+                out.append(_ar999(k) + ' ' + few)
+            else:
+                out.append(_ar999(k) + ' ' + many)
+    if n:
+        out.append(_ar999(n))
+    return ' و'.join(out)
+
+
+def amount_words(v, lang=None):
+    """'Twenty-four thousand eight hundred and twelve dirhams and 23 fils' (Arabic when the reader's language is Arabic)."""
+    try:
+        from Translations.i18n import current_lang
+        lang = lang or current_lang()
+    except Exception:
+        lang = lang or 'en'
+    v = q2(v)
+    neg = v < 0
+    v = abs(v)
+    whole, fils = int(v), int((v - int(v)) * 100)
+    if str(lang).startswith('ar'):
+        t = _ar(whole) + ' درهم' + (f' و{_ar(fils)} فلس' if fils else '') + ' فقط لا غير'
+        return ('سالب ' if neg else '') + t
+    t = (_en(whole) or 'zero') + (' dirham' if whole == 1 else ' dirhams') + (f' and {fils} fils' if fils else '') + ' only'
+    t = ('minus ' if neg else '') + t
+    return t[:1].upper() + t[1:]

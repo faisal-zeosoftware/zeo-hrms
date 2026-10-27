@@ -384,6 +384,8 @@ class Payslip(models.Model):
     )
 
     def save(self, *args, **kwargs):
+        if not self.employee_id:   # v1.56.1: a payslip without an employee answered 500 (RelatedObjectDoesNotExist)
+            raise ValidationError({'employee': 'Choose the employee.'})
         if not self.currency and self.employee and self.employee.emp_country_id:
             if hasattr(self.employee.emp_country_id, 'currency'):
                 self.currency = self.employee.emp_country_id.currency.first()
@@ -819,8 +821,15 @@ class  LoanApplication(models.Model):
             )
 
     def save(self, *args, **kwargs):
-        self.clean()
         """Override save to initialize remaining balance and EMI."""
+        # v1.62.0 the duplicate check runs when a loan is made or becomes active again (or changes type / employee) – not on every
+        # save: a payroll run that updates the balance of an existing loan failed for the whole run when the employee already had
+        # two active loans of the same type (imported data, a loan restarted by HR).
+        ACTIVE = ('Pending', 'Approved', 'Disbursed', 'Paused', 'In Progress')
+        old = LoanApplication.objects.filter(pk=self.pk).values('status', 'loan_type_id', 'employee_id').first() if self.pk else None
+        if old is None or (self.status in ACTIVE and (old['status'] not in ACTIVE or old['loan_type_id'] != self.loan_type_id
+                                                      or old['employee_id'] != self.employee_id)):
+            self.clean()
         if self.amount_requested and self.repayment_period and not self.emi_amount:
             self.emi_amount = round(self.amount_requested / self.repayment_period, 2)
         if self.remaining_balance is None:
@@ -1229,7 +1238,7 @@ class LoanApproval(models.Model):
         send_notification_email(
         user=self.loan_request.created_by,
         employee=self.loan_request.employee,
-        branch=self.branch,
+        branch=self.loan_request.branch,   # v1.62.0 LoanApproval has no branch: rejecting a loan failed with an error 500
         title="Request Rejected",
         notification_type="loan",
         message=(f"A LoanRequest {self.loan_request.loan_type}"

@@ -111,6 +111,15 @@ def _assign(sender, instance, **kwargs):
     except Exception:
         log.exception('document number: branch of %s', sender.__name__)
     max_len = sender._meta.get_field(field).max_length or 50
+    if not current or current.startswith(f'{prefix}-'):   # v1.56.0 the numbering pattern of the setup guide, when switched on
+        try:
+            from ZeoAdmin.numbering import next_number as _pattern_number
+            num = _pattern_number(doc_type, branch, taken=lambda n: sender.objects.filter(**{field: n}).exists())
+        except ImportError:
+            num = None
+        if num and len(num) <= max_len:
+            setattr(instance, field, num)
+            return
     if branch is not None and DN.objects.filter(branch_id=branch, type=doc_type).exists():
         # the screen's own number (if it made one) is replaced by the setup's
         if not current or current.startswith(f'{prefix}-'):

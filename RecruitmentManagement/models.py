@@ -108,10 +108,20 @@ class JobOpening(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     published_on = models.DateTimeField(null=True, blank=True)
     hiring_manager = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='job_openings_managed')
+    # v1.57.0 careers page: questions asked on the apply form [{id, text, type: yes_no|text|number|choice, options, required, must}]
+    # ("must" = the answer a candidate needs – yes_no: 'yes'/'no', number: minimum, choice: list of accepted options)
+    questions = models.JSONField(default=list, blank=True)
+    workplace = models.CharField(max_length=10, choices=[('onsite', 'On site'), ('hybrid', 'Hybrid'), ('remote', 'Remote')], default='onsite')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
+
+    @property
+    def on_careers_page(self):
+        """v1.57.0: listed on the public careers page and in the job-board feed."""
+        return self.status in ('published', 'interviewing') and 'Careers page' in (self.channels or []) and \
+            (self.closing_date is None or self.closing_date >= timezone.localdate())
 
     def clean(self):
         if self.requisition_id and self.requisition.status != 'approved':
@@ -135,7 +145,7 @@ class Candidate(models.Model):
                     ('outside_uae', 'Outside UAE - needs sponsorship'), ('golden_visa', 'Golden visa')]
     SOURCE_CHOICES = [('careers', 'Careers page'), ('linkedin', 'LinkedIn'), ('bayt', 'Bayt'), ('naukrigulf', 'Naukrigulf'),
                       ('indeed', 'Indeed'), ('nafis', 'Nafis portal'), ('referral', 'Employee referral'),
-                      ('agency', 'Recruitment agency'), ('walk_in', 'Walk-in'), ('other', 'Other')]
+                      ('agency', 'Recruitment agency'), ('walk_in', 'Walk-in'), ('talent_pool', 'Talent pool'), ('other', 'Other')]
 
     first_name = models.CharField(max_length=60)
     last_name = models.CharField(max_length=60, blank=True, null=True)
@@ -159,10 +169,20 @@ class Candidate(models.Model):
     cv = models.FileField(upload_to='recruitment/cv/', null=True, blank=True)
     notes = models.TextField(blank=True, null=True)
     consent_to_retain = models.BooleanField(default=False, help_text="Candidate agreed that we keep the CV for future roles")
+    # v1.57.0 talent pools: free tags, consent period, last time we wrote to the candidate
+    tags = models.JSONField(default=list, blank=True)
+    consent_until = models.DateField(null=True, blank=True, help_text="We may keep the CV and write about other jobs until this date")
+    last_contacted = models.DateTimeField(null=True, blank=True)
+    linkedin = models.URLField(max_length=300, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
+
+    @property
+    def may_contact(self):
+        """v1.57.0: the candidate agreed that we keep the CV and the agreement has not run out."""
+        return bool(self.consent_to_retain) and (self.consent_until is None or self.consent_until >= timezone.localdate())
 
     @property
     def full_name(self):
@@ -191,6 +211,11 @@ class Application(models.Model):
     rating = models.PositiveSmallIntegerField(null=True, blank=True, help_text="1-5 stars")
     rejection_reason = models.CharField(max_length=255, blank=True, null=True)
     screened_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='screened_applications')
+    # v1.57.0 careers page: where the application came from, the answers to the job's questions, failed must-have answers
+    source = models.CharField(max_length=20, choices=Candidate.SOURCE_CHOICES, blank=True, default='')
+    answers = models.JSONField(default=list, blank=True)
+    knockout_failed = models.BooleanField(default=False)
+    cover_letter = models.TextField(blank=True, default='')
     applied_on = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -369,3 +394,85 @@ class OnboardingTask(models.Model):
         if not self.is_done:
             self.done_on = None
         super().save(*args, **kwargs)
+
+
+# ====================================================================== v1.57.0 careers page and talent pools
+class CareersSettings(models.Model):
+    """One row per company: the public careers page, the apply form and the job-board feed."""
+    enabled = models.BooleanField(default=False)
+    page_title = models.CharField(max_length=150, default='Careers')
+    headline = models.CharField(max_length=200, blank=True, default='Join our team')
+    intro = models.TextField(blank=True, default='')
+    about = models.TextField(blank=True, default='', help_text='About the company, shown beside the jobs')
+    brand_color = models.CharField(max_length=9, default='#4f46e5')
+    show_salary = models.BooleanField(default=False)
+    require_cv = models.BooleanField(default=True)
+    general_applications = models.BooleanField(default=True, help_text='"Send us your CV" without a job: the candidate goes to the general talent pool')
+    general_pool = models.ForeignKey('TalentPool', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    privacy_text = models.TextField(blank=True, default='We use your details only to consider you for jobs at our company. You can ask us to delete them at any time.')
+    retention_months = models.PositiveSmallIntegerField(default=24, help_text='How long a CV is kept for other jobs when the candidate agrees')
+    notify_emails = models.CharField(max_length=500, blank=True, default='', help_text='E-mail addresses told about each application (comma separated)')
+    acknowledge = models.BooleanField(default=True, help_text='E-mail the candidate that the application arrived')
+    acknowledge_text = models.TextField(blank=True, default='Thank you for applying. We have received your application and will contact you if your profile matches the role.')
+    feed_enabled = models.BooleanField(default=False, help_text='Job-board feed (XML / JSON) for LinkedIn, Indeed, Bayt and others')
+    feed_key = models.CharField(max_length=40, blank=True, default='', help_text='Optional: the feed needs ?key=… when set')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Careers page settings'
+        verbose_name_plural = 'Careers page settings'
+
+    @classmethod
+    def get(cls):
+        obj = cls.objects.order_by('pk').first()
+        return obj or cls.objects.create()
+
+
+class TalentPool(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    description = models.TextField(blank=True, default='')
+    owner = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='talent_pools')
+    tags = models.JSONField(default=list, blank=True, help_text='Tags of the candidates this pool is for (skills, roles)')
+    is_general = models.BooleanField(default=False, help_text='CVs sent from the careers page without a job')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class TalentPoolMember(models.Model):
+    STATUS = [('active', 'Active'), ('contacted', 'Contacted'), ('interested', 'Interested'), ('not_interested', 'Not interested'),
+              ('applied', 'Applied again'), ('hired', 'Hired')]
+    pool = models.ForeignKey(TalentPool, on_delete=models.CASCADE, related_name='members')
+    candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE, related_name='pool_memberships')
+    status = models.CharField(max_length=20, choices=STATUS, default='active')
+    note = models.CharField(max_length=255, blank=True, default='')
+    added_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    added_on = models.DateTimeField(auto_now_add=True)
+    last_contacted = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('pool', 'candidate')
+        ordering = ['-added_on']
+
+    def __str__(self):
+        return f'{self.candidate} in {self.pool}'
+
+
+class TalentCampaign(models.Model):
+    """A re-engage e-mail sent to the members of a pool (usually about a job)."""
+    pool = models.ForeignKey(TalentPool, on_delete=models.CASCADE, related_name='campaigns')
+    job = models.ForeignKey(JobOpening, on_delete=models.SET_NULL, null=True, blank=True, related_name='talent_campaigns')
+    subject = models.CharField(max_length=200)
+    message = models.TextField()
+    sent_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    sent_at = models.DateTimeField(auto_now_add=True)
+    sent_count = models.PositiveIntegerField(default=0)
+    skipped = models.JSONField(default=list, blank=True)
+    recipients = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        ordering = ['-sent_at']

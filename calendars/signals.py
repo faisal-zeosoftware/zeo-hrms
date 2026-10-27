@@ -15,7 +15,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 @receiver(post_save, sender=emp_master)
-def update_emp_leave_balance_on_employee_create(
+def update_emp_leave_balance_on_employee_create_first(   # v1.62.0 own name: a second def with the same name left this receiver only weakly referenced, so it could stop running in a long process
     sender,
     instance,
     created,

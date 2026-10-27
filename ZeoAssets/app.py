@@ -24,7 +24,7 @@ app = App(
     event_model=AssetEventLog, file_model=AssetFileStore, roles=ROLES, role_prefix='ast_', manager_role='ast_manager', packs=PACKS,
     pack_labels={k: v['label'] for k, v in PACKS.items()}, pack_descriptions={k: v['description'] for k, v in PACKS.items()},
     industry_from_company={'CON': 'construction', 'OG': 'construction', 'HC': 'healthcare', 'MFG': 'manufacturing', 'EDU': 'education',
-                           'PM': 'property_management', 'RET': 'retail'},
+                           'PM': 'property_management', 'RET': 'retail', 'IT': 'it', 'FIN': 'general'},   # v1.38.0: + IT (finance uses the general office pack)
     pack_models={'category': (Category, 'code'), 'activity': (ActivityType, 'code'), 'sla': (SlaRule, 'code')},
     links=(('ZeoMaintenance', 'Maintenance', 'Assets are sent to Maintenance (critical ones or all – see Settings); "Report a fault" opens a '
             'Maintenance work order on the asset, and its work orders show on the asset.'),

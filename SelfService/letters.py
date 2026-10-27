@@ -392,9 +392,31 @@ def issue(lr, user, note=''):
     if not lr.verification_code:
         lr.verification_code = new_code()
     vals = values(emp, lr)
-    pdf = render_pdf(emp, lr, tpl, vals)
+    pdf = None
+    try:   # v1.62.0 print – the layout of the company's default print template; the wording of the letter template fills the body
+        from PrintTemplates.hooks import letter_pdf
+        pdf = letter_pdf(emp, lr, tpl, vals)
+    except ImportError:
+        pass
+    pdf = pdf or render_pdf(emp, lr, tpl, vals)
     lr.body_snapshot = fill(tpl.body, vals)
+    lr.template_id, lr.template_version = tpl.pk, snapshot(tpl).version   # v1.61.0 which wording was used
     lr.pdf.save(f'{lr.reference_no}-{lr.verification_code}.pdf', ContentFile(pdf), save=False)
     lr.status, lr.decided_by_id, lr.decided_at, lr.decision_note = 'issued', getattr(user, 'pk', None), timezone.now(), (note or '')[:500]
     lr.save()
     return lr
+
+
+# ------------------------------------------------------------------ v1.61.0 template versions
+def snapshot(tpl, user_id=None, note=''):
+    """The version row of the template's current wording – a new version when the wording changed since the last one."""
+    from .models import LetterTemplateVersion, TEMPLATE_VERSIONED
+    last = tpl.versions.order_by('-version').first()
+    if last is not None and all(getattr(last, f) == getattr(tpl, f) for f in TEMPLATE_VERSIONED):
+        return last
+    n = (last.version if last else 0) + 1
+    v = LetterTemplateVersion.objects.create(template=tpl, version=n, saved_by_id=user_id or tpl.updated_by_id, note=(note or '')[:300],
+                                             **{f: getattr(tpl, f) for f in TEMPLATE_VERSIONED})
+    type(tpl).objects.filter(pk=tpl.pk).update(version=n)
+    tpl.version = n
+    return v

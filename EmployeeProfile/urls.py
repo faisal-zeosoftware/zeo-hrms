@@ -10,6 +10,13 @@ urlpatterns = [
     path('api/identity/import/', v.IdentityImportView.as_view()),
     path('api/identity/<int:emp_id>/', v.IdentityView.as_view()),
     path('api/doc-sync/<int:emp_id>/', v.DocSyncView.as_view()),
+    path('api/doc-record/<int:emp_id>/', v.DocRecordView.as_view()),        # v1.53.2 update the record from a document
+    path('api/doc-bulk/', v.DocBulkView.as_view()),                         # v1.53.2 upload of document files (zip)
+    path('api/doc-bulk/choices/', v.DocBulkTypesView.as_view()),
+    path('api/doc-bulk/<str:job>/', v.DocBulkJobView.as_view()),
+    path('api/doc-bulk/<str:job>/import/', v.DocBulkImportView.as_view()),
+    path('api/doc-bulk/<str:job>/report/', v.DocBulkReportView.as_view()),
+    path('api/doc-bulk/<str:job>/file/<int:idx>/', v.DocBulkFileView.as_view()),
     path('api/employee-columns/', v.EmployeeColumnsView.as_view()),
     path('api/emergency-contacts/', v.EmergencyListView.as_view()),
     path('api/emergency-contacts/<int:pk>/', v.EmergencyDetailView.as_view()),

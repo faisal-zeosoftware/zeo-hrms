@@ -53,7 +53,8 @@ def get_gratuity_variables(
             from CountryPack import services as _cp
             _branch = getattr(employee, 'emp_branch_id_id', None)
             if not _cp.uses_uae_gratuity(_branch):
-                g = _cp.gratuity_breakdown(years_of_service, basic_salary, gratuity_type, _branch)
+                g = _cp.gratuity_breakdown(years_of_service, basic_salary, gratuity_type, _branch,
+                                           daily=(daily_wage if _cp.uae_version_daily(_branch) else None))
                 _q = lambda v: Decimal(str(v or 0))
                 liability = _q(g['amount'])
                 return {
@@ -71,6 +72,12 @@ def get_gratuity_variables(
         from types import SimpleNamespace as _NS
         rules = [_NS(minimum_value=0, maximum_value=5, resignation_days=21, termination_days=21),
                  _NS(minimum_value=5, maximum_value=99, resignation_days=30, termination_days=30)]
+    else:
+        # v1.62.0 a leading "0–1 year: 0 days" band = the minimum service, not an unpaid first year (EmpManagement.utils)
+        from EmpManagement.utils import normalize_gratuity_rules as _norm
+        _eligible, _rules = _norm(rules, years_of_service)
+        if _eligible:
+            rules = _rules
 
     current_rule = None
 
@@ -211,9 +218,24 @@ from calendars.models import EmployeeOvertime
 import io
 def generate_payslip_pdf(request, payslip):
     """Generate a PDF payslip for the given Payslip instance."""
+    try:  # v1.50.0: English and Arabic on the same payslip – asked for (?lang=en_ar) or set in Payroll controls
+        _want = (getattr(request, 'GET', None) or {}).get('lang', '') if request is not None else ''
+        if not _want:
+            from PayrollPlus.models import PayrollPlusSettings
+            _want = PayrollPlusSettings.get().payslip_language
+        if _want == 'en_ar':
+            from Translations.payslip_bi import payslip_bilingual_response
+            return payslip_bilingual_response(request, payslip)
+    except ImportError:
+        _want = ''
+    except Exception:
+        _want = ''
+        logging.getLogger(__name__).exception('bilingual payslip failed')
     try:  # v1.15.0: payslip in the reader's language (Arabic font, right to left); the English payslip below is unchanged
         from Translations.i18n import current_lang
         _lang = current_lang(request)
+        if _want == 'en' or (getattr(request, 'GET', None) or {}).get('lang') == 'en':   # v1.50.0 English chosen
+            _lang = 'en'
         if _lang and _lang != 'en':
             from Translations.payslip import payslip_pdf_response
             return payslip_pdf_response(request, payslip, _lang)
@@ -418,7 +440,16 @@ def send_payslip_email(payslip):
             from_email=config.email_host_user,
             to=[employee_email],
         )
-        email.attach_file(payslip.payslip_pdf.path)
+        _tpl = None
+        try:   # v1.62.0 print – the company's default payslip design is attached; the uploaded PDF when there is none
+            from PrintTemplates.hooks import payslip_pdf as _tpl_pdf
+            _tpl = _tpl_pdf(payslip)
+        except ImportError:
+            pass
+        if _tpl:
+            email.attach(f'payslip_{payslip.employee.emp_code}_{payslip.payroll_run.year}{payslip.payroll_run.month:02d}.pdf', _tpl, 'application/pdf')
+        else:
+            email.attach_file(payslip.payslip_pdf.path)
         email.send()
         logger.info(f"Payslip email sent to {employee_email} for employee {payslip.employee.emp_code}")
         return True

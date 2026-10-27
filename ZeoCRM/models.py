@@ -129,6 +129,7 @@ class Contact(models.Model):
     tags = models.JSONField(default=list, blank=True, help_text='e.g. VIP, Newsletter, Reseller')
     territory = models.ForeignKey('Territory', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     merged_into = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='crm_contacts', verbose_name='business partner')   # v1.41.0
 
     class Meta:
         ordering = ['name']

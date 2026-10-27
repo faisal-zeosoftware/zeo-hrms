@@ -1,5 +1,12 @@
 from rest_framework import permissions
 from tenant_users.tenants.models import UserTenantPermissions
+
+
+def _has_employee(user):   # v1.62.0
+    from EmpManagement.models import emp_master
+    return emp_master.objects.filter(users=user).exists()
+
+
 class IsSuperUserOrHasGeneralRequestPermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -7,6 +14,10 @@ class IsSuperUserOrHasGeneralRequestPermission(permissions.BasePermission):
         if request.user.is_superuser:
             return True
         if request.user.is_ess:
+            return True
+        # v1.62.0 staff logins (not self-service, no HR right) could not raise their own general request; the company access
+        # rules (AccessControl) still limit them to requests for their own employee record
+        if view.action in ('list', 'retrieve', 'create') and _has_employee(request.user):
             return True
 
         try:

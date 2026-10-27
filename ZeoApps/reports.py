@@ -12,13 +12,13 @@ from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Avg, Count, Q, Sum
+from django.db.models import Avg, Count, Max, Q, Sum
 
 log = logging.getLogger(__name__)
 
 # report key prefix → the app (Settings → Apps) it belongs to
 PREFIX_APP = {'crm-': 'crm', 'prop-': 'property', 'mnt-': 'maintenance', 'ast-': 'assets', 'ppl-': 'people', 'hse-': 'hse', 'pj-': 'projects'}
-SLUG_PAGE = {'crm': '/main-sidebar/zeo-crm/', 'property': '/main-sidebar/zeo-property/', 'maintenance': '/main-sidebar/zeo-maintenance/', 'assets': '/main-sidebar/zeo-assets/', 'people': '/main-sidebar/zeo-people/',
+SLUG_PAGE = {'crm': '/main-sidebar/zeo-crm/', 'property': '/main-sidebar/zeo-property/', 'maintenance': '/main-sidebar/zeo-maintenance/', 'assets': '/main-sidebar/zeo-assets/', 'people': '/main-sidebar/zeo-people/', 'hr': '/main-sidebar/zeo-hr/',
              'hse': '/main-sidebar/zeo-hse/', 'projects': '/main-sidebar/zeo-projects/'}
 DATE_FIELDS = ('date', 'occurred_at', 'reported_at', 'scheduled_at', 'due_date', 'start', 'start_date', 'cheque_date', 'created_at', 'requested_at')
 
@@ -112,6 +112,9 @@ def register_report(app_key, page_slug, reg, value_fn, ftype_fn, field_of, branc
                     for part in branch_path.split('__'):
                         x = getattr(x, part, None) if x is not None else None
                     r['branch'] = getattr(x, 'branch_name', '') if x is not None else ''
+                    if not r['branch']:   # v1.62.0 reports: the employee's branch when the record has none of its own
+                        e = getattr(obj, 'employee', None)
+                        r['branch'] = getattr(getattr(e, 'emp_branch_id', None), 'branch_name', '') or ''
                     continue
                 try:
                     v, lbl = value_fn(reg, obj, c, not reg.show_restricted(request, obj) if hasattr(reg, 'show_restricted') else False)
@@ -133,7 +136,8 @@ def kit_reports():
     import importlib
     for label, key, prefix, section in (('ZeoCRM', 'crm', 'crm-', 'CRM'), ('ZeoProperty', 'property', 'prop-', 'Property'),
                                         ('ZeoMaintenance', 'maintenance', 'mnt-', 'Maintenance'),
-                                        ('ZeoAssets', 'assets', 'ast-', 'Asset Management'), ('ZeoPeople', 'people', 'ppl-', 'People')):
+                                        ('ZeoAssets', 'assets', 'ast-', 'Asset Management'), ('ZeoPeople', 'people', 'ppl-', 'People'),
+                                        ('ZeoHR', 'hr', 'hro-', 'HR operations')):   # v1.48.0
         try:
             importlib.import_module(f'{label}.app')
         except Exception:
@@ -144,9 +148,13 @@ def kit_reports():
         page = SLUG_PAGE[key]
         all_roles = [a.code(r) for r, _ in a.roles]
         for reg in a.regs.values():
-            if reg.group == 'Setup' or reg.child_of:
+            # v1.38.0: child registers with records of their own (units, cheques, activities, viewings, offers, movements…)
+            # get a report too; only line items (quotation lines, count lines, depreciation lines) stay out
+            if reg.group == 'Setup' or (reg.child_of and (reg.kind.endswith('_line') or reg.kind.endswith('line') or reg.kind in ('reviewer', 'dep_line'))):
                 continue
             codes = list(dict.fromkeys(a.code(r) for r in tuple(reg.manage) + tuple(reg.view))) or all_roles
+            if label == 'ZeoHR':   # v1.48.0: the HR team works here with its employee rights
+                codes += ['change_emp_master', 'view_emp_master']
             bp = 'branch' if 'branch' in {f.name for f in reg.model._meta.fields} else None
             out[f'{prefix}{reg.kind.replace("_", "-")}'] = (
                 f'{reg.plural}', section, f'Every {reg.label.lower()} you may see, with its status and branch. Opens the record.',
@@ -348,9 +356,328 @@ def _property(a):
         return [('party', 'Tenant / buyer', 'text'), ('current', 'Not due', 'number'), ('d30', '1–30 days', 'number'), ('d60', '31–60 days', 'number'),
                 ('d90', '61–90 days', 'number'), ('over90', 'Over 90 days', 'number'), ('total', 'Total due', 'number')], rows
 
+    # ---------------------------------------------------------------- v1.40.0 property analytics (SRS 24)
+    from ZeoProperty.models import Allocation, Commission, Listing, Meter, MeterReading, MoveOut, PurchaseOrder, Refund
+    fin = [a.code(r) for r in ('prop_manager', 'prop_finance', 'prop_viewer')]
+    LIVE = ('active', 'notice')                    # leases occupying the unit now
+    OCC = ('active', 'notice', 'ended', 'renewed', 'terminated', 'amended')   # leases that occupied the unit at some time
+    VACANT = ('available', 'maintenance', 'unavailable')
+    SOLD = ('sold', 'sold_pending')
+
+    def nm(e):
+        return ' '.join(x for x in (getattr(e, 'emp_first_name', ''), getattr(e, 'emp_last_name', '')) if x)
+
+    def scope(run, kind, model):
+        """The register's rows the user may see (or every row when the register is not there), limited to the branches picked."""
+        return _branch_pick(run, a.regs[kind].scope(run.request) if kind in a.regs else model.objects.all(), 'branch')
+
+    def overlap(a1, b1, a2, b2):
+        lo, hi = max(a1, a2), min(b1, b2)
+        return max((hi - lo).days + 1, 0)
+
+    def vacancy(run, units):
+        """Per unit: (vacant unit-days, vacancy loss, period days) for the run period – leases give the occupied days; a unit without
+        a lease record counts by its status (let / notice occupied until `next_available`, sold not counted, the rest vacant)."""
+        f, t = run.date_from, run.date_to
+        days = (t - f).days + 1
+        occ = defaultdict(int)
+        for l in Lease.objects.filter(unit__in=units, status__in=OCC, start__lte=t, end__gte=f).values('unit_id', 'start', 'end'):
+            occ[l['unit_id']] += overlap(l['start'], l['end'], f, t)
+        out = {}
+        for u in units:
+            if u.status in SOLD:
+                out[u.pk] = (0, 0.0, days)
+                continue
+            o = occ.get(u.pk, 0)
+            if not o and u.status in ('let', 'notice', 'reserved'):
+                o = days - (overlap(u.next_available, t, f, t) if u.next_available and u.next_available <= t else 0)
+            v = max(days - min(o, days), 0)
+            out[u.pk] = (v, round(v * float(u.rent or 0) / 365, 2), days)
+        return out
+
+    def collected(run, bills, f=None, t=None):
+        """Allocation amounts of posted receipts (no credit notes) received in the period, per bill id."""
+        qs = Allocation.objects.filter(bill__in=bills, receipt__status='posted', receipt__received_on__gte=f or run.date_from,
+                                       receipt__received_on__lte=t or run.date_to).exclude(receipt__method='credit')
+        return {x['bill_id']: float(x['v'] or 0) for x in qs.values('bill_id').annotate(v=Sum('amount'))}
+
+    def live_bills(run):
+        return scope(run, 'bill', Bill).exclude(status__in=('draft', 'void')).filter(is_credit=False)
+
+    def sqft(l):
+        area = float(l.unit.rentable_area or l.unit.area or 0) if l.unit_id else 0
+        return round(float(l.annual_rent or 0) / area, 2) if area > 0 else None
+
+    def vacancy_loss(run):
+        units = list(scope(run, 'unit', Unit).select_related('building'))
+        vac = vacancy(run, units)
+        data = defaultdict(lambda: {'units': 0, 'vacant_now': 0, 'unit_days': 0, 'vacant_days': 0, 'loss': 0.0, '_id': None})
+        for u in units:
+            d_ = data[u.building.name if u.building_id else 'No building']
+            v, loss, days = vac[u.pk]
+            d_['_id'] = u.building_id
+            d_['units'] += 1
+            d_['vacant_now'] += u.status in VACANT
+            d_['unit_days'] += days
+            d_['vacant_days'] += v
+            d_['loss'] += loss
+        rows = [{'building': b, 'units': v['units'], 'vacant_now': v['vacant_now'], 'unit_days': v['unit_days'], 'vacant_days': v['vacant_days'],
+                 'occupancy': round(100 * (1 - v['vacant_days'] / v['unit_days']), 1) if v['unit_days'] else 0, 'loss': round(v['loss'], 2),
+                 '_url': f"{page}r/unit?building={v['_id']}&status=available"} for b, v in sorted(data.items())]
+        return [('building', 'Building', 'text'), ('units', 'Units', 'number'), ('vacant_now', 'Vacant now', 'number'), ('unit_days', 'Unit-days in period', 'number'),
+                ('vacant_days', 'Vacant unit-days', 'number'), ('occupancy', 'Occupancy %', 'number'), ('loss', 'Vacancy loss (asking rent)', 'number')], rows
+
+    def rent_sqft(run):
+        leases = scope(run, 'lease', Lease).filter(status__in=LIVE).select_related('unit__building', 'unit__unit_type')
+        units = scope(run, 'unit', Unit).filter(status__in=VACANT).select_related('building', 'unit_type')
+        data = defaultdict(lambda: {'let': [], 'ask': []})
+        for l in leases:
+            r = sqft(l)
+            if r is not None and l.unit_id:
+                for t in (l.unit.unit_type.name if l.unit.unit_type_id else 'No type', 'All types'):
+                    data[(l.unit.building.name, t)]['let'].append(r)
+        for u in units:
+            area = float(u.rentable_area or u.area or 0)
+            if area > 0 and u.rent:
+                for t in (u.unit_type.name if u.unit_type_id else 'No type', 'All types'):
+                    data[(u.building.name, t)]['ask'].append(float(u.rent) / area)
+        rows = [{'building': b, 'unit_type': t, 'leases': len(v['let']), 'avg': round(sum(v['let']) / len(v['let']), 2) if v['let'] else None,
+                 'min': round(min(v['let']), 2) if v['let'] else None, 'max': round(max(v['let']), 2) if v['let'] else None,
+                 'vacant': len(v['ask']), 'asking': round(sum(v['ask']) / len(v['ask']), 2) if v['ask'] else None}
+                for (b, t), v in sorted(data.items(), key=lambda x: (x[0][0], x[0][1] != 'All types', x[0][1]))]
+        return ([('building', 'Building', 'text'), ('unit_type', 'Unit type', 'text'), ('leases', 'Active leases', 'number'), ('avg', 'Rent / sq ft (average)', 'number'),
+                 ('min', 'Rent / sq ft (min)', 'number'), ('max', 'Rent / sq ft (max)', 'number'), ('vacant', 'Vacant units', 'number'), ('asking', 'Asking rent / sq ft (vacant)', 'number')],
+                rows, {'no_totals': ('leases', 'avg', 'min', 'max', 'vacant', 'asking')})
+
+    def renewal(run):
+        f, t = run.date_from, run.date_to
+        qs = scope(run, 'lease', Lease).select_related('unit__building')
+        ended = {l.pk: l for l in qs.filter(status__in=('renewed', 'ended', 'terminated', 'amended'), end__gte=f, end__lte=t)}
+        renewals = {l.previous_id: l for l in qs.filter(change='renewal', previous__isnull=False, start__gte=f, start__lte=t).exclude(status='cancelled')}
+        for l in qs.filter(pk__in=[k for k in renewals if k not in ended]):
+            ended[l.pk] = l
+        renewals.update({l.previous_id: l for l in Lease.objects.filter(previous_id__in=list(ended), change='renewal').exclude(status='cancelled') if l.previous_id not in renewals})
+        data = defaultdict(lambda: {'expired': 0, 'renewed': 0, 'left': 0, 'changes': [], 'renewed_rent': 0.0, 'lost_rent': 0.0, '_id': None})
+        for l in ended.values():
+            d_ = data[l.unit.building.name if l.unit_id else 'No building']
+            d_['_id'] = l.unit.building_id if l.unit_id else None
+            d_['expired'] += 1
+            n = renewals.get(l.pk)
+            if n is not None or l.status == 'renewed':
+                d_['renewed'] += 1
+                if n is not None:
+                    d_['renewed_rent'] += float(n.annual_rent or 0)
+                    if l.annual_rent:
+                        d_['changes'].append(100 * (float(n.annual_rent or 0) - float(l.annual_rent)) / float(l.annual_rent))
+            else:
+                d_['left'] += 1
+                d_['lost_rent'] += float(l.annual_rent or 0)
+        rows = [{'building': b, 'expired': v['expired'], 'renewed': v['renewed'], 'left': v['left'], 'rate': round(100 * v['renewed'] / v['expired'], 1) if v['expired'] else 0,
+                 'change': round(sum(v['changes']) / len(v['changes']), 1) if v['changes'] else None, 'renewed_rent': round(v['renewed_rent'], 2), 'lost_rent': round(v['lost_rent'], 2),
+                 '_url': f"{page}r/lease?status=renewed"} for b, v in sorted(data.items())]
+        return [('building', 'Building', 'text'), ('expired', 'Leases ended', 'number'), ('renewed', 'Renewed', 'number'), ('left', 'Left', 'number'), ('rate', 'Renewal %', 'number'),
+                ('change', 'Rent change on renewal %', 'number'), ('renewed_rent', 'Renewed annual rent', 'number'), ('lost_rent', 'Annual rent lost', 'number')], rows
+
+    def months(f, t):
+        d = f.replace(day=1)
+        while d <= t:
+            nxt = (d.replace(day=28) + timedelta(days=4)).replace(day=1)
+            yield d, min(nxt - timedelta(days=1), t)
+            d = nxt
+
+    def collection(run):
+        f, t = run.date_from, run.date_to
+        bills = list(live_bills(run).filter(due_date__lte=t).values('id', 'due_date', 'total'))
+        allocs = defaultdict(list)
+        for x in Allocation.objects.filter(bill_id__in=[b['id'] for b in bills], receipt__status='posted').values('bill_id', 'amount', 'receipt__received_on', 'receipt__method'):
+            allocs[x['bill_id']].append((x['receipt__received_on'], float(x['amount'] or 0), x['receipt__method']))
+        rows = []
+        for ms, me in months(f, t):
+            billed = sum(float(b['total'] or 0) for b in bills if ms <= b['due_date'] <= me)
+            got = sum(v for al in allocs.values() for d, v, m in al if ms <= d <= me and m != 'credit')
+            overdue = sum(max(float(b['total'] or 0) - sum(v for d, v, m in allocs.get(b['id'], ()) if d <= me), 0) for b in bills if b['due_date'] <= me)
+            rows.append({'month': ms.strftime('%Y-%m'), 'billed': round(billed, 2), 'collected': round(got, 2), 'efficiency': round(100 * got / billed, 1) if billed else None,
+                         'overdue': round(overdue, 2), '_url': f'{page}r/bill?status=issued'})
+        return ([('month', 'Month', 'text'), ('billed', 'Billed (due in month)', 'number'), ('collected', 'Collected', 'number'), ('efficiency', 'Collection efficiency %', 'number'),
+                 ('overdue', 'Overdue at month end', 'number')], rows, {'no_totals': ('overdue',)})
+
+    def deposits(run):
+        qs = scope(run, 'lease', Lease).filter(status__in=('active', 'notice', 'ended', 'terminated')).select_related('unit__building', 'party')
+        ids = [l.pk for l in qs]
+        dep = defaultdict(lambda: [0.0, 0.0])
+        for x in Bill.objects.filter(lease_id__in=ids, charge__kind='deposit', is_credit=False).exclude(status__in=('draft', 'void')).values('lease_id').annotate(b=Sum('total'), p=Sum('paid')):
+            dep[x['lease_id']] = [float(x['b'] or 0), float(x['p'] or 0)]
+        mo = {}
+        for m in MoveOut.objects.filter(lease_id__in=ids).exclude(status='cancelled').order_by('move_out_on'):
+            mo[m.lease_id] = m
+        rf = defaultdict(lambda: {'paid': 0.0, 'status': ''})
+        for r in Refund.objects.filter(lease_id__in=ids, kind='deposit').exclude(status='rejected').order_by('id'):
+            rf[r.lease_id]['status'] = r.get_status_display()
+            if r.status == 'paid':
+                rf[r.lease_id]['paid'] += float(r.amount or 0)
+        rows = []
+        for l in qs:
+            billed, paid = dep[l.pk]
+            m = mo.get(l.pk)
+            ded = float(m.deductions or 0) if m else 0.0
+            refund_due = float(m.refund or 0) if m else 0.0
+            held = round(paid - ded - rf[l.pk]['paid'], 2)
+            rows.append({'lease': l.number, 'building': l.unit.building.name if l.unit_id else '', 'unit': l.unit.unit_no if l.unit_id else '', 'tenant': l.party.name if l.party_id else '',
+                         'status': l.get_status_display(), 'deposit': float(l.deposit or 0), 'billed': billed, 'paid': paid, 'deductions': ded, 'refund_due': refund_due,
+                         'refunded': rf[l.pk]['paid'], 'refund_status': rf[l.pk]['status'] or (m.get_status_display() if m else ''), 'held': held,
+                         '_url': f'{page}r/lease/{l.pk}', '_m': l._meta.label, '_id': l.pk})
+        if rows:
+            rows.append({'lease': 'Total', **{k: round(sum(r[k] for r in rows), 2) for k in ('deposit', 'billed', 'paid', 'deductions', 'refund_due', 'refunded', 'held')}})
+        return ([('lease', 'Lease', 'text'), ('building', 'Building', 'text'), ('unit', 'Unit', 'text'), ('tenant', 'Tenant', 'text'), ('status', 'Lease status', 'text'),
+                 ('deposit', 'Deposit (lease)', 'number'), ('billed', 'Deposit billed', 'number'), ('paid', 'Deposit paid', 'number'), ('deductions', 'Deductions', 'number'),
+                 ('refund_due', 'Refund due (move-out)', 'number'), ('refunded', 'Refunded', 'number'), ('refund_status', 'Refund status', 'text'), ('held', 'Liability held', 'number')],
+                rows, {'no_totals': ('deposit', 'billed', 'paid', 'deductions', 'refund_due', 'refunded', 'held'), 'filters': ['building', 'status', 'refund_status']})
+
+    def commissions(run):
+        qs = scope(run, 'commission', Commission).filter(Q(created_at__date__gte=run.date_from, created_at__date__lte=run.date_to) | Q(created_at__isnull=True)).select_related('agent', 'broker')
+        data = defaultdict(lambda: {'deals': 0, 'pending': 0.0, 'approved': 0.0, 'paid': 0.0, 'rejected': 0.0, 'reversed': 0.0, '_url': ''})
+        for c in qs:
+            if c.broker_id:
+                k, kind, url = c.broker.name, 'Broker', f'{page}r/commission?broker={c.broker_id}'
+            else:
+                k, kind, url = nm(c.agent) or 'Unassigned', 'Agent', f'{page}r/commission?agent={c.agent_id}' if c.agent_id else f'{page}r/commission'
+            d_ = data[(k, kind)]
+            d_['deals'] += 1
+            d_['_url'] = url
+            d_['pending' if c.status in ('waiting', 'pending') else c.status] += float(c.amount or 0)
+        rows = [{'name': k, 'kind': kind, **{x: (round(y, 2) if isinstance(y, float) else y) for x, y in v.items()}, 'total': round(v['pending'] + v['approved'] + v['paid'], 2)}
+                for (k, kind), v in data.items()]
+        rows.sort(key=lambda r: -r['total'])
+        return [('name', 'Agent / broker', 'text'), ('kind', 'Kind', 'text'), ('deals', 'Deals', 'number'), ('pending', 'Pending', 'number'), ('approved', 'Approved', 'number'),
+                ('paid', 'Paid', 'number'), ('reversed', 'Reversed', 'number'), ('rejected', 'Rejected', 'number'), ('total', 'Earned (pending + approved + paid)', 'number')], rows
+
+    def noi_rows(run, groups):
+        """groups: {name: (units, valuation, url)} → NOI rows for the period."""
+        f, t = run.date_from, run.date_to
+        days = (t - f).days + 1
+        bills = live_bills(run)
+        rows = []
+        for name, (units, valuation, url) in sorted(groups.items()):
+            ub = bills.filter(unit__in=units)
+            rent = sum(collected(run, ub.filter(party__isnull=False, charge__kind__in=('rent', 'service', 'utility'))).values())
+            exp = float(ub.filter(owner__isnull=False, charge__kind__in=('maintenance', 'service'), due_date__gte=f, due_date__lte=t).aggregate(v=Sum('total'))['v'] or 0)
+            po = 0.0
+            for p in PurchaseOrder.objects.filter(status__in=('received', 'invoiced', 'paid'), charge_to='company').filter(Q(unit__in=units) | Q(building__units__in=units)).distinct():
+                d = p.ordered_on or (p.created_at.date() if p.created_at else None)
+                if d is None or f <= d <= t:
+                    po += float(p.invoice_amount if p.invoice_amount is not None else p.total or 0)
+            noi = rent - exp - po
+            annual = noi * 365 / days if days else noi
+            rows.append({'name': name, 'units': len(units), 'rent': round(rent, 2), 'expenses': round(exp, 2), 'purchases': round(po, 2), 'noi': round(noi, 2),
+                         'annualised': round(annual, 2), 'valuation': round(valuation, 2) if valuation else None,
+                         'yield': round(100 * annual / valuation, 2) if valuation else None, '_url': url})
+        return rows
+
+    def noi(run):
+        units = list(scope(run, 'unit', Unit).select_related('building'))
+        groups = {}
+        for u in units:
+            b = u.building
+            g = groups.setdefault(b.name, [[], 0.0, f'{page}r/building/{b.pk}', b])
+            g[0].append(u)
+            g[1] += float(u.valuation or 0)
+        rows = noi_rows(run, {k: (g[0], g[1] or float(g[3].valuation or 0), g[2]) for k, g in groups.items()})
+        for r in rows:
+            r['building'] = r.pop('name')
+        return ([('building', 'Building', 'text'), ('units', 'Units', 'number'), ('rent', 'Rent collected', 'number'), ('expenses', 'Owner-side expenses', 'number'),
+                 ('purchases', 'Vendor purchases (company)', 'number'), ('noi', 'NOI', 'number'), ('annualised', 'NOI annualised', 'number'), ('valuation', 'Valuation', 'number'),
+                 ('yield', 'Yield %', 'number')], rows, {'no_totals': ('yield',)})
+
+    def portfolio(run):
+        units = list(scope(run, 'unit', Unit).select_related('building__project'))
+        vac = vacancy(run, units)
+        leases = scope(run, 'lease', Lease).filter(status__in=LIVE).select_related('unit')
+        bills = live_bills(run)
+        got = collected(run, bills)
+        today = date.today()
+        over = {x['unit_id']: float(x['v'] or 0) for x in bills.filter(status__in=('issued', 'part_paid'), due_date__lt=today).values('unit_id').annotate(v=Sum('total') - Sum('paid'))}
+        bill_unit = {x['id']: x['unit_id'] for x in bills.filter(id__in=got).values('id', 'unit_id')}
+        groups = defaultdict(lambda: {'units': [], 'let': 0, 'rent_roll': 0.0, 'collected': 0.0, 'overdue': 0.0, 'loss': 0.0, 'sqft': [], 'valuation': 0.0, '_url': ''})
+        by_unit = {}
+        for u in units:
+            b = u.building
+            k = b.project.name if b.project_id else b.name
+            g = groups[k]
+            g['_url'] = f'{page}r/project/{b.project_id}' if b.project_id else f'{page}r/building/{b.pk}'
+            g['units'].append(u)
+            g['let'] += u.status in ('let', 'notice')
+            g['overdue'] += over.get(u.pk, 0)
+            g['loss'] += vac[u.pk][1]
+            by_unit[u.pk] = k
+        for bid, v in got.items():
+            k = by_unit.get(bill_unit.get(bid))
+            if k:
+                groups[k]['collected'] += v
+        for l in leases:
+            k = by_unit.get(l.unit_id)
+            if k:
+                groups[k]['rent_roll'] += float(l.annual_rent or 0)
+                r = sqft(l)
+                if r is not None:
+                    groups[k]['sqft'].append(r)
+        rows = [{'project': k, 'units': len(g['units']), 'occupancy': round(100 * g['let'] / len(g['units']), 1) if g['units'] else 0, 'rent_roll': round(g['rent_roll'], 2),
+                 'collected': round(g['collected'], 2), 'overdue': round(g['overdue'], 2), 'loss': round(g['loss'], 2),
+                 'sqft': round(sum(g['sqft']) / len(g['sqft']), 2) if g['sqft'] else None, '_url': g['_url']} for k, g in sorted(groups.items())]
+        return ([('project', 'Project / building', 'text'), ('units', 'Units', 'number'), ('occupancy', 'Occupancy %', 'number'), ('rent_roll', 'Annual rent roll', 'number'),
+                 ('collected', 'Collected in period', 'number'), ('overdue', 'Overdue', 'number'), ('loss', 'Vacancy loss', 'number'), ('sqft', 'Average rent / sq ft', 'number')],
+                rows, {'no_totals': ('sqft',)})
+
+    def consumption(run):
+        meters = scope(run, 'meter', Meter).select_related('building', 'unit__building')
+        rd = {x['meter_id']: x for x in MeterReading.objects.filter(meter__in=meters, read_on__gte=run.date_from, read_on__lte=run.date_to).values('meter_id').annotate(
+            n=Count('id'), c=Sum('consumption'), v=Sum('amount', filter=Q(status='billed')), u=Count('id', filter=Q(unusual=True)), last=Max('read_on'))}
+        rows = []
+        for m in meters:
+            x = rd.get(m.pk)
+            if x is None:
+                continue
+            b = m.building or (m.unit.building if m.unit_id else None)
+            rows.append({'building': b.name if b else '', 'unit': m.unit.unit_no if m.unit_id else ('Shared' if m.shared else 'Common area'), 'kind': m.get_kind_display(), 'meter': m.meter_no,
+                         'readings': x['n'], 'consumption': float(x['c'] or 0), 'unit_name': m.unit_name, 'amount': float(x['v'] or 0), 'unusual': x['u'], 'last_read': x['last'],
+                         '_url': f'{page}r/meter/{m.pk}', '_m': m._meta.label, '_id': m.pk})
+        rows.sort(key=lambda r: (r['building'], r['unit'], r['kind']))
+        return ([('building', 'Building', 'text'), ('unit', 'Unit', 'text'), ('kind', 'Kind', 'text'), ('meter', 'Meter no.', 'text'), ('readings', 'Readings', 'number'),
+                 ('consumption', 'Consumption', 'number'), ('unit_name', 'Unit', 'text'), ('amount', 'Amount billed', 'number'), ('unusual', 'Unusual readings', 'number'),
+                 ('last_read', 'Last reading', 'date')], rows, {'filters': ['building', 'kind']})
+
+    def listings(run):
+        today = date.today()
+        rows = []
+        for l in scope(run, 'listing', Listing).exclude(status='draft').select_related('unit__building', 'agent'):
+            days = None
+            if l.publish_from and l.status in ('published', 'withdrawn'):
+                days = max((min(l.publish_to or today, today) - l.publish_from).days + 1, 0)
+            rows.append({'listing': l.number, 'title': l.title, 'unit': l.unit.label if l.unit_id else '', 'kind': l.get_kind_display(), 'status': l.get_status_display(),
+                         'price': float(l.price or 0), 'published_on': l.publish_from, 'days': days, 'views': l.views, 'enquiries': l.enquiries,
+                         'enquiry_rate': round(100 * l.enquiries / l.views, 1) if l.views else None, 'price_changes': len(l.price_history or []),
+                         'unit_status': l.unit.get_status_display() if l.unit_id else '', 'agent': nm(l.agent), 'channels': ', '.join(l.channels or []),
+                         '_url': f'{page}r/listing/{l.pk}', '_m': l._meta.label, '_id': l.pk})
+        rows.sort(key=lambda r: -(r['enquiries'] or 0))
+        return ([('listing', 'Listing', 'text'), ('title', 'Title', 'text'), ('unit', 'Unit', 'text'), ('kind', 'For', 'text'), ('status', 'Status', 'text'), ('price', 'Price', 'number'),
+                 ('published_on', 'Published on', 'date'), ('days', 'Days published', 'number'), ('views', 'Views', 'number'), ('enquiries', 'Enquiries', 'number'),
+                 ('enquiry_rate', 'Enquiries per 100 views', 'number'), ('price_changes', 'Price changes', 'number'), ('unit_status', 'Unit status', 'text'), ('agent', 'Agent', 'text'),
+                 ('channels', 'Channels', 'text')], rows, {'no_totals': ('price', 'days', 'enquiry_rate'), 'filters': ['status', 'kind', 'unit_status', 'agent']})
+
     return {'prop-occupancy': ('Occupancy by building', 'Property', 'Units per building by status and occupancy %.', occupancy, None, codes),
             'prop-rent-roll': ('Rent roll', 'Property', 'Every active lease with tenant, dates and annual rent.', rent_roll, None, codes),
-            'prop-aged': ('Aged receivables', 'Property', 'Unpaid billing records per tenant / buyer by days overdue.', aged, None, codes)}
+            'prop-aged': ('Aged receivables', 'Property', 'Unpaid billing records per tenant / buyer by days overdue.', aged, None, codes),
+            # v1.40.0 analytics
+            'prop-vacancy': ('Vacancy loss', 'Property', 'Vacant unit-days per building in the period, occupancy % and the rent lost at the asking rent.', vacancy_loss, 'year', codes),
+            'prop-rent-sqft': ('Rent per sq ft', 'Property', 'Annual rent per rentable sq ft of the active leases per building and unit type (average, min, max) and the asking rent of the vacant units.', rent_sqft, None, codes),
+            'prop-renewal': ('Renewal rate', 'Property', 'Leases that ended in the period per building: renewed vs left, renewal % and the average rent change on renewal.', renewal, 'year', codes),
+            'prop-collection': ('Collection efficiency', 'Property', 'Per month: billed (due in the month) vs collected, efficiency % and the overdue amount at month end.', collection, 'year', fin),
+            'prop-deposits': ('Deposit register', 'Property', 'Security deposit per lease: billed, paid, move-out deductions, refund and the liability held.', deposits, None, fin),
+            'prop-commissions': ('Commission report', 'Property', 'Commissions raised in the period per agent and external broker: pending, approved, paid, reversed.', commissions, 'year',
+                                 [a.code(r) for r in ('prop_manager', 'prop_commission', 'prop_finance', 'prop_viewer')]),
+            'prop-noi': ('NOI and yield', 'Property', 'Per building: rent collected less owner-side expenses and company purchases = net operating income; annualised and as yield % on the valuation.', noi, 'year', fin),
+            'prop-portfolio': ('Portfolio comparison', 'Property', 'One row per project (or building): units, occupancy, rent roll, collected, overdue, vacancy loss and rent per sq ft.', portfolio, 'year', codes),
+            'prop-consumption': ('Utility consumption', 'Property', 'Per meter: readings in the period, consumption, amount billed and unusual readings.', consumption, 'year', codes),
+            'prop-listings': ('Listings performance', 'Property', 'Every listing: days published, views, enquiries, price changes and the unit status.', listings, None, codes)}
 
 
 def _maintenance(a):

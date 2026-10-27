@@ -12,6 +12,7 @@ urlpatterns = [
     path('api/dimensions/auto/', V.AutoMapView.as_view()),
     path('api/partners/auto/', V.PartnersView.as_view()),
     path('api/sources/', V.SourcesView.as_view()),
+    path('api/property/paid/', V.PropertyPaidView.as_view()),   # v1.40.0
     path('api/journals/', V.JournalsView.as_view()),
     path('api/journals/build/', V.BuildView.as_view()),
     path('api/journals/export/', V.ExportView.as_view()),
@@ -27,4 +28,7 @@ urlpatterns = [
     path('v1/journals/', V.PublicJournals.as_view()),
     path('v1/journals/<int:pk>/', V.PublicJournal.as_view()),
     path('v1/journals/<int:pk>/ack/', V.PublicAck.as_view()),
+    path('v1/partners/', V.PublicPartners.as_view()),            # v1.44.0 business partners for the accounting application
+    path('v1/partners/<int:pk>/ref/', V.PublicPartnerRef.as_view()),
+    path('v1/items/', V.PublicItems.as_view()),                  # v1.44.0 item master
 ]

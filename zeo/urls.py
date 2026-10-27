@@ -23,6 +23,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('core/',include('Core.urls')),
     path('users/',include('UserManagement.urls')),
+    path('api/v1/', include('ZeoAdmin.urls_v1')),   # v1.61.0 public API v1
     path('employee/',include('EmpManagement.urls')),
     path('organisation/',include('OrganisationManager.urls')),
     path('calendars/',include('calendars.urls')),
@@ -50,8 +51,12 @@ urlpatterns = [
     path('flow/', include('ZeoFlow.urls')),                       # v1.29.0 workflow automation
     path('zeo-crm/', include('ZeoCRM.urls')),                    # v1.21.0 CRM
     path('zeo-property/', include('ZeoProperty.urls')),          # v1.21.0 Property
+    path('zeo-masters/', include('ZeoMasters.urls')),          # v1.41.0 business partners (shared masters under every business app)
     path('zeo-maintenance/', include('ZeoMaintenance.urls')),    # v1.21.0 Maintenance
     path('zeo-people/', include('ZeoPeople.urls')),               # v1.36.0 People
+    path('zeo-hr/', include('ZeoHR.urls')),                       # v1.48.0 HR operations
+    path('insights/', include('ZeoInsights.urls')),               # v1.53.0 report builder and dashboard builder
+    path('zeo-admin/', include('ZeoAdmin.urls')),                 # v1.52.0 administration: scheduled reports, API keys, webhooks, imports, out of office, health
     path('zeo-ai/', include('ZeoAI.urls')),                       # v1.37.0 AI assistants
     path('accounting/', include('ZeoAccounting.urls')),          # v1.35.0 accounting integration
     path('zeo-assets/', include('ZeoAssets.urls')),              # v1.33.0 Asset Management
@@ -62,7 +67,9 @@ urlpatterns = [
     path('ai/', include('AISettings.urls')),                    # v1.16.0
     path('views/', include('SavedViews.urls')),                  # v1.16.0
     path('payroll-plus/', include('PayrollPlus.urls')),         # v1.18.0
+    path('print-templates/', include('PrintTemplates.urls')),   # v1.62.0 print – print templates (designs of the printed documents)
     path('cloud/', include('ZeoCloud.urls')),                  # v1.23.0 ZEO Cloud
+    path('scim/v2/', include('ZeoCloud.scim_urls')),            # v1.54.0 user provisioning (Entra ID, Okta …)
     path('group/', include('ZeoGroup.urls')),               # v1.27.0 group features (public)
     path('licence/', include('ZeoLicence.urls')),           # v1.28.0 Enterprise licence (public)
     path('mobile/', include('ZeoMobile.urls')),             # v1.25.0 mobile app (public)
@@ -72,5 +79,7 @@ urlpatterns = [
 
 
 ]
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# v1.56.1: uploaded files only for signed-in users (zeo/media_auth.py) – Django checks the login, nginx sends the file
+from django.urls import re_path as _re_path
+from zeo import media_auth as _media_auth
+urlpatterns += [_re_path(r'^media/(?P<path>.+)$', _media_auth.serve)]

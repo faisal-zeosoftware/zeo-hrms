@@ -63,6 +63,8 @@ def paused():
 def _tracked(sender):
     if getattr(_local, 'paused', False) or connection.schema_name == 'public':
         return False
+    if sender.__module__ == '__fake__':   # v1.62.0: historical models inside migrations are not tracked
+        return False
     meta = sender._meta
     if meta.app_label in SKIP_APPS or model_key(sender) in SKIP_MODELS or meta.auto_created:
         return False
@@ -141,6 +143,14 @@ def _write(instance, action, changes):
     name = ''
     if user is not None:
         name = (getattr(user, 'get_full_name', lambda: '')() or getattr(user, 'username', '') or getattr(user, 'email', ''))
+        try:   # v1.52.0 a change made while an administrator views ZEO as this user
+            imp = (getattr(req, 'auth', None) or {}).get('imp') if req is not None else None
+            if imp:
+                from django.contrib.auth import get_user_model
+                a = get_user_model().objects.filter(pk=imp).first()
+                name = f'{name} (by {a.get_full_name() or a.username} as this user)' if a else name
+        except Exception:
+            pass
     from django.db import DatabaseError, transaction
     try:
         # v1.13.1: a savepoint, so a company schema that is still being created (history table not there yet)

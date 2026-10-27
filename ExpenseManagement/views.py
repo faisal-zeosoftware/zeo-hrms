@@ -446,7 +446,7 @@ class ExpenseSerializer(NamesMixin, serializers.ModelSerializer):
     class Meta:
         model = Expense
         fields = '__all__'
-        read_only_fields = ('branch_id', 'amount_aed', 'status', 'policy_violations', 'created_by_id')
+        read_only_fields = ('branch_id', 'amount_aed', 'status', 'policy_violations', 'created_by_id', 'receipt_read')
         extra_kwargs = {'date': {'required': False}}     # today when not given
 
     def get_employee_name(self, o):
@@ -484,7 +484,24 @@ class ExpenseViewSet(ScopedViewSet):
             qs = qs.filter(date__lte=p['to'])
         if p.get('category'):
             qs = qs.filter(category_id=p['category'])
+        if p.get('flagged') in ('1', 'true'):   # v1.50.0 over the policy, duplicates, receipt differs
+            qs = qs.exclude(policy_violations=[]).exclude(policy_violations__isnull=True)
         return qs
+
+    def _receipt_read(self, inst):
+        """v1.50.0: what the receipt said (sent by the form after 'Read the receipt'); cleared with a new receipt file."""
+        import json
+        raw = self.request.data.get('receipt_read')
+        if raw in (None, ''):
+            if self.request.FILES.get('receipt'):
+                inst.receipt_read = {}
+            return
+        try:
+            v = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            return
+        if isinstance(v, dict):
+            inst.receipt_read = {k: str(v.get(k) or '')[:120] for k in ('amount', 'vat', 'tax_number', 'currency', 'date', 'merchant')}
 
     def _build(self, ser, inst=None):
         data = dict(ser.validated_data)
@@ -500,6 +517,7 @@ class ExpenseViewSet(ScopedViewSet):
                 raise S.ExpenseError(tr('The expense can only go into a draft or sent-back report of the same employee.'))
         if not inst.date:
             inst.date = date.today()
+        self._receipt_read(inst)
         S.prepare_expense(inst)
         if rep is not None:
             inst.policy_violations = S.check_expense(inst, rep.policy or S.policy_for(S.employee(inst.employee_id)), rep)
@@ -539,6 +557,19 @@ class ExpenseViewSet(ScopedViewSet):
         if rep:
             S.recalc_report(rep)
         return Response(status=204)
+
+    @action(detail=False, methods=['post'], url_path='read-receipt')
+    def read_receipt(self, request):
+        """v1.50.0: read the receipt (photo or PDF) on this server – amount, date, VAT, tax number, currency, merchant."""
+        from .receipts import read
+        f = request.FILES.get('receipt')
+        if f is None:
+            return Response({'detail': tr('Choose the receipt.')}, status=400)
+        if f.size > 12 * 1024 * 1024:
+            return Response({'detail': tr('The receipt is too big (12 MB at most).')}, status=400)
+        out = read(f.name, f.read(), 'AED')
+        out.pop('text', None) if request.query_params.get('text') != '1' else None
+        return Response(out)
 
     @action(detail=False, methods=['post'])
     def check(self, request):
@@ -733,11 +764,22 @@ class TripSerializer(NamesMixin, serializers.ModelSerializer):
     approvals = serializers.SerializerMethodField()
     employee_id = serializers.IntegerField(required=False)
     waiting_for = serializers.SerializerMethodField()
+    journey = serializers.SerializerMethodField()   # v1.50.0
+    can_book = serializers.SerializerMethodField()
+    booking_label = serializers.CharField(source='get_booking_status_display', read_only=True)
 
     class Meta:
         model = Trip
         fields = '__all__'
-        read_only_fields = ('number', 'branch_id', 'department_id', 'status', 'created_by_id')
+        read_only_fields = ('number', 'branch_id', 'department_id', 'status', 'created_by_id', 'booking_status', 'booking_ref', 'booking_cost',
+                            'booking_note', 'booked_by_id', 'ticket_request_id')
+
+    def get_journey(self, o):
+        return S.trip_journey(o)
+
+    def get_can_book(self, o):
+        r = self.context.get('request')
+        return bool(r is not None and o.status == 'approved' and can(r, 'change_trip'))
 
     def get_employee_name(self, o):
         return self.emp_name(o)
@@ -754,6 +796,11 @@ class TripViewSet(ScopedViewSet):
     queryset = Trip.objects.all()
     serializer_class = TripSerializer
     approver_path = 'approvals__approver_user_id'
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        b = self.request.query_params.get('booking')   # v1.50.0 travel desk: to_book / booked
+        return qs.filter(booking_status=b) if b else qs
 
     def create(self, request, *a, **k):
         ser = self.get_serializer(data=request.data)
@@ -791,6 +838,15 @@ class TripViewSet(ScopedViewSet):
         t = self.get_object()
         self.can_edit(t, ('draft', 'rejected'))
         return Response(self.get_serializer(S.submit_trip(t, request.user)).data)
+
+    @action(detail=True, methods=['post'])
+    def book(self, request, pk=None):
+        """v1.50.0 travel desk: {reference, cost, note} or {cancel: true}."""
+        if not can(request, 'change_trip'):
+            return Response({'detail': tr('Only the travel desk books trips.')}, status=403)
+        t = self.get_object()
+        return Response(self.get_serializer(S.book_trip(t, request.user, request.data.get('reference') or '', request.data.get('cost'),
+                                                        request.data.get('note') or '', str(request.data.get('cancel')).lower() in ('1', 'true'))).data)
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):

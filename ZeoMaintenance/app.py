@@ -19,7 +19,7 @@ app = App(
     label='ZeoMaintenance', slug='zeo-maintenance', title='Maintenance', settings_model=MaintSettings, sequence_model=MaintSequence,
     event_model=MaintEvent, file_model=MaintFile, roles=ROLES, role_prefix='mnt_', manager_role='mnt_manager', packs=PACKS,
     pack_labels={k: v['label'] for k, v in PACKS.items()}, pack_descriptions={k: v['description'] for k, v in PACKS.items()},
-    industry_from_company={'PM': 'property_management'},
+    industry_from_company={'PM': 'property_management', 'CON': 'construction', 'OG': 'oil_gas', 'HC': 'healthcare', 'EDU': 'education', 'MFG': 'manufacturing', 'RET': 'retail', 'IT': 'it', 'FIN': 'finance'},   # v1.38.0
     pack_models={'category': (Category, 'code'), 'checklist': (Checklist, 'code')},
     links=(('ZeoProperty', 'Property', 'Work on Property units; tenant and buyer requests from the portal; owner approval above the '
             'agreement limit; costs charged to the tenant or the owner as billing records; move-in / move-out / unit-ready / snag inspections.'),
@@ -96,7 +96,10 @@ def wo_defaults(o, request):
     if o.category_id:
         if o.priority == 'normal' and o.category.priority != 'normal':
             o.priority = o.category.priority
-        if o.who_pays == 'company' and o.category.who_pays not in ('decide', 'company'):
+        if o.who_pays == 'company' and o.category.who_pays not in ('decide', 'company') \
+                and (o.category.who_pays not in ('tenant', 'owner') or o.property_unit_id):
+            # v1.62.0: a tenant / owner default of the category only for a job on a unit – a common-area job (no unit) stayed
+            # "tenant pays", was closed and never billed to anybody
             o.who_pays = o.category.who_pays
     if not o.requester:
         o.requester = user_name(request.user) if request else ''
@@ -682,3 +685,8 @@ def daily():
 
 
 app.dashboard, app.my_work, app.daily = dashboard, my_work, daily
+
+
+# v1.42.0 business partners: partner picker and checks on vendors
+from ZeoMasters.extensions import attach as _attach_partners  # noqa: E402
+_attach_partners(app)

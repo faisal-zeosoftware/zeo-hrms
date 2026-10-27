@@ -605,6 +605,13 @@ def main(argv=None):
             ap.error('frontend folder not found – pass --frontend <path to hrms-project> or set ZEO_FRONTEND_DIR')
         scan_frontend(bag, fe)
     scan_backend(bag, a.backend)
+    # v1.38.0: texts of the server-built registers (manage.py i18n_kit_strings → i18n/kit_strings.json)
+    kit = os.path.join(a.backend, 'i18n', 'kit_strings.json')
+    if os.path.exists(kit):
+        with open(kit, encoding='utf-8') as fh:
+            for row in json.load(fh):
+                for w in row.get('where') or ['kit']:
+                    bag.add(row['text'], w, 'low')
     data = bag.dump()
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     tmp = a.out + '.tmp'

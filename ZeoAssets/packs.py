@@ -96,6 +96,13 @@ PACKS = {
         'rows': {'category': cat(COMMON + [('POS', 'POS terminals and scanners', 'POS', 48, 0, 'sa'), ('DISP', 'Display fixtures and shelving', 'DSP', 60, 0),
                                            ('FRIDGE', 'Refrigeration', 'REF', 84, 5, 's'), ('CCTV', 'CCTV and security', 'CCT', 60, 0)])},
         'after': import_hr},
+    # v1.38.0
+    'it': {
+        'label': 'Information technology', 'description': 'Servers, storage and network, end-user devices, licences and software, data-centre power and cooling.',
+        'highlights': ['Server / network / end-user categories', 'Software licences', 'Brings in the HR assets'],
+        'rows': {'category': cat(COMMON + [('SRV', 'Servers and storage', 'SRV', 60, 5, 'sa'), ('NET', 'Network equipment', 'NET', 60, 0, 'sa'), ('LIC', 'Software licences', 'LIC', 36, 0),
+                                           ('UPS', 'UPS and power', 'UPS', 84, 5), ('DC', 'Data-centre cooling', 'DCC', 120, 5), ('TEST', 'Test devices', 'TST', 36, 0, 's')])},
+        'after': import_hr},
 }
 
 

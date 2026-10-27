@@ -4,7 +4,9 @@ settings.EMAIL_BACKEND = 'zeo.mailguard.GuardedBackend' and the real backend in 
 Every way ZEO sends mail – Django's send_mail, EmailMessage, get_connection(host=…) with the company's own SMTP
 settings – goes through EMAIL_BACKEND, so the check here covers all of them.
 """
+import contextlib
 import logging
+import threading
 import time
 
 from django.conf import settings
@@ -34,6 +36,23 @@ def is_neutralized(schema=None):
     return value
 
 
+_local = threading.local()   # v1.62.0 workbook: no e-mail from this thread (the trial load of a data workbook)
+
+
+@contextlib.contextmanager
+def suppressed():
+    old = getattr(_local, 'off', False)
+    _local.off = True
+    try:
+        yield
+    finally:
+        _local.off = old
+
+
+def is_suppressed():
+    return bool(getattr(_local, 'off', False))
+
+
 def forget(schema=None):
     if schema:
         _cache.pop(schema, None)
@@ -48,7 +67,7 @@ class GuardedBackend(BaseEmailBackend):
         self.real = get_connection(backend=real, fail_silently=fail_silently, **kwargs)
 
     def open(self):
-        if is_neutralized():
+        if is_suppressed() or is_neutralized():   # v1.62.0 workbook
             return False
         return self.real.open()
 
@@ -61,6 +80,8 @@ class GuardedBackend(BaseEmailBackend):
 
     def send_messages(self, email_messages):
         msgs = list(email_messages or [])
+        if msgs and is_suppressed():   # v1.62.0 workbook: a trial load sends nothing
+            return len(msgs)
         if msgs and is_neutralized():
             log.info('neutralized company %s: %d e-mail(s) not sent', getattr(connection, 'schema_name', '?'), len(msgs))
             return len(msgs)

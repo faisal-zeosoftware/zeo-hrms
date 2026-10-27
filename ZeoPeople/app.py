@@ -18,7 +18,7 @@ PAGE = '/main-sidebar/zeo-people/'
 app = App(label='ZeoPeople', slug='zeo-people', title='People', settings_model=PeopleSettings, sequence_model=PeopleSequence, event_model=PeopleEvent,
           file_model=PeopleFile, roles=ROLES, role_prefix='ppl_', manager_role='ppl_manager', packs=PACKS,
           pack_labels={k: v['label'] for k, v in PACKS.items()}, pack_descriptions={k: v['description'] for k, v in PACKS.items()},
-          industry_from_company={'CON': 'construction', 'HC': 'healthcare', 'HOS': 'healthcare', 'RET': 'retail', 'HSP': 'retail'},
+          industry_from_company={'CON': 'construction', 'OG': 'oil_gas', 'HC': 'healthcare', 'HOS': 'healthcare', 'RET': 'retail', 'HSP': 'retail', 'EDU': 'education', 'MFG': 'manufacturing', 'IT': 'it', 'FIN': 'finance', 'PM': 'property_management'},   # v1.38.0
           pack_models={'award': (Award, 'code'), 'competency': (Competency, 'code'), 'benefit_plan': (BenefitPlan, 'code'), 'form_template': (FormTemplate, 'code'),
                        'survey': (Survey, 'number')},
           links=(), page=PAGE)
@@ -121,8 +121,16 @@ def enrol_check(o, request, old):
             raise AppError(f'{o.plan.name}: {why}.', 'plan')
         if Enrolment.objects.filter(plan=o.plan, employee=o.employee, status__in=('requested', 'active')).exists():
             raise AppError('This employee is already enrolled (or has asked to be) in this plan.', 'plan')
-        if o.plan.covers_dependants and o.plan.max_dependants and len(o.dependants or []) > o.plan.max_dependants:
+        deps = o.dependants or []
+        if isinstance(deps, str):          # v1.38.0: one per line from a plain text field, or a bare number – never a 500
+            deps = [x for x in deps.splitlines() if x.strip()]
+        elif isinstance(deps, (int, float)):
+            deps = [''] * int(deps)
+        o.dependants = deps
+        if o.plan.covers_dependants and o.plan.max_dependants and len(deps) > o.plan.max_dependants:
             raise AppError(f'At most {o.plan.max_dependants} dependants.', 'dependants')
+        if not o.plan.covers_dependants and deps:
+            raise AppError('This plan does not cover dependants.', 'dependants')
 
 
 def activate_enrolment(o, request):

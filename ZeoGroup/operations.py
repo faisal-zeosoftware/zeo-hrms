@@ -26,6 +26,7 @@ KINDS = [
     ('salary_components', 'Salary components'),
     ('letter_templates', 'Letter templates'),
     ('form_designs', 'Form designs and extra fields'),
+    ('numbering', 'Numbering pattern and employee code'),   # v1.56.0 setup guide
 ]
 
 
@@ -81,6 +82,11 @@ def _read(kinds):
         out['salary_components'] = [_plain(c) for c in M('PayrollManagement', 'SalaryComponent').objects.filter(branch__isnull=True)]
     if 'letter_templates' in kinds:
         out['letter_templates'] = [_plain(t, skip=('updated_by_id',)) for t in M('SelfService', 'LetterTemplate').objects.filter(branch_id__isnull=True)]
+    if 'numbering' in kinds:   # v1.56.0 – the pattern (with its codes) and the company's employee code rule; counters are not copied
+        P = M('ZeoAdmin', 'NumberingPattern').objects.order_by('id').first()
+        out['numbering'] = _plain(P, skip=('applied_at', 'applied_by_id')) if P else None
+        ec = M('EmployeeProfile', 'EmployeeCodeSetting').objects.filter(branch_id__isnull=True).first()
+        out['employee_code'] = {'prefix': ec.prefix, 'padding': ec.padding, 'enabled': ec.enabled} if ec else None
     if 'form_designs' in kinds:
         out['form_settings'] = [_plain(f) for f in M('DataTools', 'FormSetting').objects.all()]
         out['field_defs'] = [_plain(f) for f in M('Chatter', 'FieldDef').objects.all()]
@@ -177,6 +183,26 @@ def _write(data, kinds, overwrite):
         a = _upsert(FS, data.get('form_settings') or [], lambda ex, r: next((e for e in ex if e.form == r.get('form')), None), overwrite)
         b = _upsert(FD, data.get('field_defs') or [], lambda ex, r: next((e for e in ex if e.model == r.get('model') and e.name == r.get('name')), None), overwrite)
         done('form_designs', (a[0] + b[0], a[1] + b[1], a[2] + b[2]))
+    if 'numbering' in kinds and data.get('numbering'):
+        P = M('ZeoAdmin', 'NumberingPattern')
+        row = P.objects.order_by('id').first()
+        if row is None or overwrite or not row.active:
+            row = row or P()
+            for k, v in data['numbering'].items():
+                setattr(row, k, v)
+            row.save()
+            t = (1, 0, 0) if row.pk else (0, 1, 0)
+        else:
+            t = (0, 0, 1)
+        ecd = data.get('employee_code')
+        if ecd:
+            EC = M('EmployeeProfile', 'EmployeeCodeSetting')
+            ec = EC.objects.filter(branch_id__isnull=True).first()
+            if ec is None or overwrite or not ec.enabled:
+                ec = ec or EC(branch_id=None, next_number=1)
+                ec.prefix, ec.padding, ec.enabled = ecd['prefix'], ecd['padding'], ecd['enabled']
+                ec.save()
+        done('numbering', t)
     return res
 
 

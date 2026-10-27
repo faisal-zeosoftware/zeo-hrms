@@ -177,6 +177,8 @@ class AssetCard(models.Model):
     purchase_date = models.DateField()
     purchase_cost = models.DecimalField('cost', default=0, **MONEY)
     supplier = models.CharField(max_length=150, blank=True)
+    supplier_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+', verbose_name='supplier (business partner)')   # v1.42.0
+    model_item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='+', verbose_name='model (item master)')   # v1.43.0 item master
     invoice_no = models.CharField('invoice no.', max_length=60, blank=True)
     purchase_order = models.CharField('purchase order', max_length=60, blank=True)
     warranty_end = models.DateField('warranty until', null=True, blank=True)
@@ -336,6 +338,7 @@ class CapitalCost(models.Model):
     date = models.DateField()
     description = models.CharField(max_length=200)
     supplier = models.CharField(max_length=150, blank=True)
+    supplier_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+', verbose_name='supplier (business partner)')   # v1.42.0
     invoice_no = models.CharField('invoice no.', max_length=60, blank=True)
     amount = models.DecimalField(**MONEY)
     capitalised = models.BooleanField(default=False)
@@ -455,6 +458,7 @@ class MaintenancePlan(models.Model):
     team = models.ForeignKey(Team, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     technician = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     vendor = models.CharField(max_length=150, blank=True)
+    vendor_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+', verbose_name='vendor (business partner)')   # v1.42.0
     estimate = models.DecimalField('estimated cost', null=True, blank=True, **MONEY)
     is_active = models.BooleanField(default=True)
 
@@ -487,6 +491,7 @@ class WorkOrder(models.Model):
     team = models.ForeignKey(Team, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     technician = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     vendor = models.CharField(max_length=150, blank=True)
+    vendor_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+', verbose_name='vendor (business partner)')   # v1.42.0
     scheduled_on = models.DateField('planned date', null=True, blank=True)
     due_date = models.DateField('finish by', null=True, blank=True)
     estimate = models.DecimalField('estimated cost', null=True, blank=True, **MONEY)
@@ -574,6 +579,7 @@ class Part(models.Model):
     unit = models.CharField(max_length=20, default='pcs')
     manufacturer_no = models.CharField('manufacturer part no.', max_length=80, blank=True)
     supplier = models.CharField(max_length=150, blank=True)
+    supplier_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+', verbose_name='supplier (business partner)')   # v1.42.0
     unit_cost = models.DecimalField('average cost', default=0, max_digits=14, decimal_places=4)
     min_qty = models.DecimalField('minimum stock', default=0, max_digits=12, decimal_places=2)
     reorder_qty = models.DecimalField('reorder quantity', default=0, max_digits=12, decimal_places=2)
@@ -583,6 +589,7 @@ class Part(models.Model):
     is_consumable = models.BooleanField('consumable', default=False)
     is_active = models.BooleanField(default=True)
 
+    item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='ast_parts', verbose_name='item (master)')   # v1.43.0 item master
     class Meta:
         ordering = ['code']
 

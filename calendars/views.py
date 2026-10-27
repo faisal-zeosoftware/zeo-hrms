@@ -2089,6 +2089,10 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     queryset=LeaveApproval.objects.all()
     serializer_class=LvApprovalSerializer
     lookup_field = 'pk'
+
+    def create(self, request, *args, **kwargs):
+        # v1.62.0 approval steps are made by the leave request and its approval chain; a step posted here had no request and nobody saw it
+        return Response({'detail': 'Approval steps are made by the leave request – they cannot be added here.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
     def get_queryset(self):
         import json
 

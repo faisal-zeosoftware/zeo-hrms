@@ -20,11 +20,22 @@ from django.db import transaction
 log = logging.getLogger(__name__)
 TOKEN_URL = 'https://oauth2.googleapis.com/token'
 SCOPE = 'https://www.googleapis.com/auth/firebase.messaging'
-_tok = {'value': '', 'until': 0.0}
+_tok = {}   # client_email → {'value', 'until'} (v1.51.0: one Firebase project per company possible)
 _lock = threading.Lock()
 
 
-def _creds():
+def _creds(schema=''):
+    """v1.51.0: the company's own Firebase project (Settings → Mobile push, kept encrypted) first, else the server file."""
+    if schema and schema != 'public':
+        try:
+            from django_tenants.utils import schema_context
+            with schema_context(schema):
+                from Chatter.messaging import push_credentials
+                c = push_credentials()
+            if c:
+                return c
+        except Exception:
+            log.debug('company push credentials', exc_info=True)
     path = getattr(settings, 'ZEO_FCM_CREDENTIALS', '') or ''
     if not path:
         return None
@@ -37,14 +48,15 @@ def _creds():
         return None
 
 
-def configured():
-    return _creds() is not None
+def configured(schema=''):
+    return _creds(schema) is not None
 
 
 def _access_token(c):
     with _lock:
-        if _tok['value'] and time.time() < _tok['until']:
-            return _tok['value']
+        t = _tok.setdefault(c['client_email'], {'value': '', 'until': 0.0})
+        if t['value'] and time.time() < t['until']:
+            return t['value']
         import jwt
         now = int(time.time())
         assertion = jwt.encode({'iss': c['client_email'], 'scope': SCOPE, 'aud': TOKEN_URL, 'iat': now, 'exp': now + 3600},
@@ -52,8 +64,8 @@ def _access_token(c):
         r = requests.post(TOKEN_URL, data={'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': assertion}, timeout=15)
         r.raise_for_status()
         d = r.json()
-        _tok.update(value=d['access_token'], until=time.time() + int(d.get('expires_in', 3600)) - 300)
-        return _tok['value']
+        t.update(value=d['access_token'], until=time.time() + int(d.get('expires_in', 3600)) - 300)
+        return t['value']
 
 
 def _deliver(log_id):
@@ -64,7 +76,7 @@ def _deliver(log_id):
         return
     devices = list(MobileDevice.objects.filter(user_id=entry.user_id, active=True).exclude(push_token=''))
     entry.devices = len(devices)
-    c = _creds()
+    c = _creds(entry.schema)
     if not devices:
         entry.result = 'no phone with notifications'
     elif c is None:
@@ -102,13 +114,26 @@ def send(user, title, body='', data=None, kind='', schema=''):
     if not uid:
         return None
     try:
+        from django.db import transaction
         from .models import MobileDevice, PushLog
         if not MobileDevice.objects.filter(user_id=uid, active=True).exists():
             return None              # no phone registered – nothing to do, nothing logged
+        try:   # v1.51.0 the company chose which kinds go out as push
+            from Chatter.messaging import push_allowed
+            from django.db import connection
+            from django_tenants.utils import schema_context
+            # v1.56.1: the company's push settings are read in the company (in-app notices are saved in public, where the table
+            # does not exist – the failed read broke the caller's transaction: loan requests could not be saved); a savepoint as well
+            with schema_context(schema or connection.schema_name), transaction.atomic():
+                if not push_allowed(kind):
+                    return None
+        except Exception:
+            pass
         data = dict(data or {})
         if schema:
             data.setdefault('schema', schema)
-        entry = PushLog.objects.create(user_id=uid, title=str(title)[:200], body=str(body or '')[:500], data=data, kind=kind[:30], schema=schema or '')
+        with transaction.atomic():
+            entry = PushLog.objects.create(user_id=uid, title=str(title)[:200], body=str(body or '')[:500], data=data, kind=kind[:30], schema=schema or '')
     except Exception:
         log.exception('push log')
         return None

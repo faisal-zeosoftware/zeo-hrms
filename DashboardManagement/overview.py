@@ -571,6 +571,31 @@ def overview(request):
              kp if has else [], [], '', timed=False, app='expense-options/home', empty=None if has else 'No expense reports yet.')
     safe('expenses', expenses)
 
+    # v1.38.1: People (benefits, surveys, recognition, signatures, 360°) is part of HRMS – one card, like the other modules
+    def engagement():
+        from .reports import REPORTS, _apps_hidden
+        if 'ppl-enrolment' not in REPORTS or 'ppl-enrolment' in _apps_hidden():
+            return
+        kp, items = [], []
+        if opens('ppl-enrolment'):
+            kp.append(_nz(calc.kpi('Enrolments to approve', 'ppl-enrolment', {'status': 'Requested'}, timed=False, tone='warn')))
+        if opens('ppl-claim'):
+            kp.append(_nz(calc.kpi('Claims to approve', 'ppl-claim', {'status': 'Submitted'}, timed=False, tone='warn')))
+        if opens('ppl-sign-request'):
+            kp.append(_nz(calc.kpi('Signatures waiting', 'ppl-sign-request', {'status': 'Sent – waiting'}, timed=False)))
+        if opens('ppl-survey'):
+            kp.append(_nz(calc.kpi('Surveys open', 'ppl-survey', {'status': 'Open'}, timed=False)))
+        if opens('ppl-review-360'):
+            kp.append(_nz(calc.kpi('360° reviews collecting', 'ppl-review-360', {'status': 'Open – collecting'}, timed=False)))
+        if opens('ppl-recognition'):
+            kp.append(_nz(calc.kpi('Recognitions', 'ppl-recognition', {'status': 'Published'}, a, b, tone='good')))
+        if not kp:
+            return
+        has = any(k['value'] for k in kp)
+        card('engagement', 'Benefits and engagement', 'diversity_3', rpt('ppl-enrolment', {'status': 'Requested'}), kp, items, '', timed=False,
+             app='zeo-people/home', empty=None if has else 'Nothing waiting – benefits, surveys, recognition and 360° reviews are quiet.')
+    safe('engagement', engagement)
+
     # v1.17.0: HR operations order – what needs doing first (queue, today's attendance, expiries, probations, payroll),
     # then the state of the workforce, then the modules (the user can still move cards; the admin can save a company layout)
     cards.sort(key=lambda x: ORDER.index(x['key']) if x['key'] in ORDER else len(ORDER))
@@ -578,7 +603,7 @@ def overview(request):
 
 
 ORDER = ['queue', 'attendance', 'documents', 'probation', 'payroll', 'movement', 'leavers', 'headcount', 'leave', 'overtime', 'expenses',   # v1.17.1
-         'policies', 'tickets', 'assets', 'recruitment', 'performance', 'learning']
+         'policies', 'tickets', 'assets', 'recruitment', 'performance', 'learning', 'engagement']
 
 
 def _nz(k):

@@ -8,8 +8,8 @@ Every external call is written to AICallLog (who, when, feature, sizes – never
 from django.db import models
 
 MODES = (('builtin', 'Built-in (free, data stays on the server)'), ('external', 'External AI'))
-PROVIDERS = (('anthropic', 'Anthropic (Claude)'), ('openai', 'OpenAI-compatible'), ('azure', 'Azure OpenAI'))
-FEATURES = (('ask', 'Ask ZEO'), ('documents', 'Documents'), ('test', 'Test connection'))
+PROVIDERS = (('anthropic', 'Anthropic AI'), ('openai', 'OpenAI-compatible'), ('azure', 'Azure OpenAI'))
+FEATURES = (('ask', 'Ask ZEO'), ('documents', 'Documents'), ('tickets', 'HR tickets'), ('test', 'Test connection'))
 
 
 class AISettings(models.Model):
@@ -21,6 +21,7 @@ class AISettings(models.Model):
     key_last4 = models.CharField(max_length=4, blank=True, default='')
     use_ask = models.BooleanField(default=True, help_text='Use the external AI for Ask ZEO')
     use_documents = models.BooleanField(default=False, help_text='Use the external AI to read documents')
+    use_tickets = models.BooleanField(default=False, help_text='v1.61.0 Use the external AI to suggest the category and priority of HR tickets')
     monthly_limit = models.PositiveIntegerField(default=500, help_text='External calls per calendar month (whole company)')
     updated_at = models.DateTimeField(auto_now=True)
     updated_by_id = models.IntegerField(null=True, blank=True)

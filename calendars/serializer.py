@@ -22,6 +22,17 @@ import json
 
 
 
+
+def _uname(u):
+    """v1.62.0 people: "Name (code)" of a user (HRActions.names), else the login name."""
+    if u is None:
+        return None
+    try:
+        from HRActions.names import user_obj_name
+        return user_obj_name(u) or u.username
+    except Exception:
+        return getattr(u, 'username', None)
+
 class WeekendDetailSerializer(serializers.ModelSerializer):
     week_of_month = serializers.ChoiceField(choices=[(i, i) for i in range(1, 6)], required=False, allow_null=True, allow_blank=True)
     month_of_year = serializers.ChoiceField(choices=[(i, i) for i in range(1, 13)], required=False, allow_null=True, allow_blank=True)
@@ -389,6 +400,22 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         model = employee_leave_request
         fields = '__all__'
 
+    def to_internal_value(self, data):
+        # v1.62.0: the supporting document may come as a data URI (JSON clients, the data workbook) – sick and maternity leave
+        # need one and could only be keyed with a multipart upload
+        doc = data.get('lv_document') if hasattr(data, 'get') else None
+        if isinstance(doc, str) and doc.startswith('data:') and ';base64,' in doc:
+            import base64
+            from django.core.files.base import ContentFile
+            head, raw = doc.split(';base64,', 1)
+            ext = {'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg'}.get(head[5:], 'bin')
+            data = data.copy() if hasattr(data, 'copy') else dict(data)
+            try:
+                data['lv_document'] = ContentFile(base64.b64decode(raw), name=f'leave-document.{ext}')
+            except (ValueError, TypeError):
+                raise serializers.ValidationError({'lv_document': ['The document could not be read.']})
+        return super().to_internal_value(data)
+
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
@@ -403,6 +430,11 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
             try:
                 from ShiftPlanner.services import leave_roster_conflicts
                 rep['roster_conflict'] = leave_roster_conflicts(instance)
+            except Exception:
+                pass
+            try:   # v1.51.0 colleagues of the same role away, department staffing
+                from LeavePolicy.conflicts import for_approver
+                rep['team_conflict'] = for_approver(instance)
             except Exception:
                 pass
 
@@ -694,6 +726,7 @@ class LateinEarlyoutApprovalLevelSerializer(serializers.ModelSerializer):
         rep = super(LateinEarlyoutApprovalLevelSerializer, self).to_representation(instance)
         if instance.approver:  
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         return rep
 
 
@@ -890,6 +923,7 @@ class LateinEarlyoutApprovalSerializer(serializers.ModelSerializer):
         return {
             "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
             "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "delegate_to_name": _uname(obj.deligate_to),   # v1.62.0 people
             "response": obj.deligate_response,
             "is_deligate": obj.is_deligate,
         }
@@ -898,6 +932,7 @@ class LateinEarlyoutApprovalSerializer(serializers.ModelSerializer):
         rep = super(LateinEarlyoutApprovalSerializer, self).to_representation(instance)
         if instance.approver:  
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         if instance.lateinearlyout_request:
             rep['lateinearlyout_request'] = instance.lateinearlyout_request.document_number
         if instance.deligate_to:
@@ -1072,9 +1107,11 @@ class LvApprovalLevelSerializer(serializers.ModelSerializer):
 
         if instance.approver:
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
 
         if instance.escalate_to:
             rep['escalate_to'] = instance.escalate_to.username
+            rep['escalate_to_name'] = _uname(instance.escalate_to)   # v1.62.0 people: the person's name (the login name stays in 'escalate_to')
         return rep
     
 class LvApprovalSerializer(serializers.ModelSerializer):
@@ -1110,6 +1147,7 @@ class LvApprovalSerializer(serializers.ModelSerializer):
         return {
             "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
             "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "delegate_to_name": _uname(obj.deligate_to),   # v1.62.0 people
             "response": obj.deligate_response,
             "is_deligate": obj.is_deligate,
         }
@@ -1119,6 +1157,7 @@ class LvApprovalSerializer(serializers.ModelSerializer):
         rep = super(LvApprovalSerializer, self).to_representation(instance)
         if instance.approver:
             rep['approver'] = instance.approver.username   
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         if instance.leave_request:
             rep['leave_request'] = instance.leave_request.document_number 
         if instance.employee_id:
@@ -1436,6 +1475,7 @@ class EmployeeOvertimeSerializer(serializers.ModelSerializer):
             rep['employee'] = instance.employee.emp_code  
         if instance.approved_by:
             rep['approved_by'] = instance.approved_by.username    
+            rep['approved_by_name'] = _uname(instance.approved_by)   # v1.62.0 people: the person's name (the login name stays in 'approved_by')
         return rep
 
 class LVEscalationRuleSerializer(serializers.ModelSerializer):
@@ -1444,15 +1484,14 @@ class LVEscalationRuleSerializer(serializers.ModelSerializer):
         read_only=True
     )
 
-    approver_name = serializers.CharField(
-        source='approver.username',
-        read_only=True
-    )
+    approver_name = serializers.SerializerMethodField()   # v1.62.0 people: names, not login names
+    escalate_to_name = serializers.SerializerMethodField()
 
-    escalate_to_name = serializers.CharField(
-        source='escalate_to.username',
-        read_only=True
-    )
+    def get_approver_name(self, o):
+        return _uname(getattr(o, 'approver', None))
+
+    def get_escalate_to_name(self, o):
+        return _uname(getattr(o, 'escalate_to', None))
     branch = serializers.PrimaryKeyRelatedField(source='workflow.branch',many=True,read_only=True)
 
     class Meta:

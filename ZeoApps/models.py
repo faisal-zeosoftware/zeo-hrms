@@ -30,6 +30,10 @@ class CompanyGroup(models.Model):
     """
     group_id = models.IntegerField(unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # v1.62.0 isolation: the shared standard group this company's own copy replaces here (None = a group made in the
+    # company) and the name the company sees (the stored group name must be unique on the whole server)
+    template_id = models.IntegerField(null=True, blank=True)
+    display_name = models.CharField(max_length=150, blank=True, default='')
 
     class Meta:
         default_permissions = ()

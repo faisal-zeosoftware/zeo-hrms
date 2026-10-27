@@ -284,7 +284,8 @@ def metrics(days=180):
         accepted = offers.filter(status__in=('accepted', 'joined')).order_by('responded_on')
         tth = None
         if accepted.exists() and accepted.first().responded_on:
-            tth = (accepted.first().responded_on - j.created_at.date()).days
+            _r = accepted.first().responded_on   # v1.62.0: a date-and-time field – the report failed (500) once an offer was accepted
+            tth = ((_r.date() if hasattr(_r, 'date') and callable(_r.date) else _r) - j.created_at.date()).days
         rows.append({'job': j.title, 'code': j.job_code, 'status': j.status, 'openings': j.openings, 'opened': j.created_at.date(), 'department': getattr(j.department, 'dept_name', '') if j.department_id else '',
                      'applied': by.get('applied', 0), 'screening': by.get('screening', 0), 'interview': by.get('interview', 0), 'offer': by.get('offer', 0), 'hired': by.get('hired', 0) + by.get('joined', 0),
                      'rejected': by.get('rejected', 0), 'total': apps_.count(), 'offers': offers.count(), 'accepted': accepted.count(), 'time_to_hire_days': tth,

@@ -129,7 +129,8 @@ class IdentitySerializer(serializers.ModelSerializer):
         for label, i, e in (('passport', 'passport_issue_date', 'passport_expiry_date'), ('visa', 'visa_issue_date', 'visa_expiry_date'),
                             ('Emirates ID', 'emirates_id_issue_date', 'emirates_id_expiry_date'),
                             ('labour card', 'labour_card_issue_date', 'labour_card_expiry_date'),
-                            ('driving licence', 'driving_licence_issue_date', 'driving_licence_expiry_date')):
+                            ('driving licence', 'driving_licence_issue_date', 'driving_licence_expiry_date'),
+                            ('insurance card', 'insurance_issue_date', 'insurance_expiry_date')):   # v1.40.1
             if i in attrs or e in attrs:
                 V.check_dates(now(i), now(e), label, errors, i, e, today)
         for k, label in (('work_permit_expiry_date', 'work permit'), ('insurance_expiry_date', 'insurance card')):

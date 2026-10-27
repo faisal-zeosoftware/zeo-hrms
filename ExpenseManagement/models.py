@@ -69,6 +69,7 @@ class ExpensePolicyLimit(models.Model):
     per_expense_limit = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     per_day_limit = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     per_report_limit = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    per_month_limit = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)   # v1.50.0
     block_or_warn = models.CharField(max_length=5, choices=ACTIONS, default='warn')
 
     class Meta:
@@ -120,6 +121,24 @@ class Trip(models.Model):
     notes = models.TextField(blank=True, default='')
     created_by_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # v1.50.0 travel request: travel, ticket, hotel, per diem, booking by the travel desk, settlement
+    MODES = [('air', 'Air'), ('car', 'Car'), ('train', 'Train / bus'), ('other', 'Other')]
+    CLASSES = [('economy', 'Economy'), ('premium', 'Premium economy'), ('business', 'Business'), ('first', 'First')]
+    BOOKING = [('', 'No booking needed'), ('to_book', 'To book'), ('booked', 'Booked'), ('cancelled', 'Cancelled')]
+    travel_mode = models.CharField(max_length=8, choices=MODES, default='air')
+    travel_class = models.CharField(max_length=10, choices=CLASSES, default='economy', blank=True)
+    needs_ticket = models.BooleanField(default=False)
+    use_ticket_entitlement = models.BooleanField(default=False, help_text="use the employee's air-ticket entitlement")
+    needs_hotel = models.BooleanField(default=False)
+    hotel_nights = models.PositiveSmallIntegerField(default=0)
+    per_diem_days = models.DecimalField(max_digits=6, decimal_places=1, default=ZERO)
+    booking_status = models.CharField(max_length=10, choices=BOOKING, blank=True, default='')
+    booking_ref = models.CharField(max_length=100, blank=True, default='')
+    booking_cost = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    booking_note = models.CharField(max_length=255, blank=True, default='')
+    booked_by_id = models.IntegerField(null=True, blank=True)
+    ticket_request_id = models.IntegerField(null=True, blank=True)
+    project_id = models.IntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ['-start_date', '-id']
@@ -191,6 +210,7 @@ class Expense(models.Model):
     trip = models.ForeignKey(Trip, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
     report = models.ForeignKey(ExpenseReport, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
     status = models.CharField(max_length=12, choices=STATUS, default='unreported')
+    receipt_read = models.JSONField(default=dict, blank=True)   # v1.50.0 what the receipt says (OCR): amount, date, VAT, TRN, merchant
     policy_violations = models.JSONField(default=list, blank=True)
     created_by_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

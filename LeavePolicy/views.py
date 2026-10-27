@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 
 from django.apps import apps
 from django.db import transaction
-from django.db.models import Q  # v1.22.0 branch rights
+from django.db.models import Q, Sum  # v1.22.0 branch rights; v1.49.0 Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import serializers, status, viewsets
@@ -392,6 +392,11 @@ class OpeningsView(APIView):
         for i, r in enumerate(rows, 1):
             e = emps.get(str(r.get('employee_code', '')).strip().upper())
             t = types.get(str(r.get('leave_type', '')).strip().lower())
+            if t is not None and e is not None and t.branch_id and t.branch_id != e.emp_branch_id_id:
+                # v1.62.0: a leave type made per branch (same code / name in each branch) – take the employee's branch's own type;
+                # the opening of a Sharjah employee was booked on the Dubai type when both had the code AL-…
+                t = next((x for x in LT.objects.filter(branch_id=e.emp_branch_id_id)
+                          if str(r.get('leave_type', '')).strip().lower() in (x.name.lower(), (x.code or '').lower(), (x.code or '').split('-')[0].lower())), t)
             try:
                 days = float(r.get('days'))
             except (TypeError, ValueError):
@@ -727,3 +732,172 @@ class EscalationView(APIView):
             return Response({'detail': tr('You may not run escalations.')}, status=403)
         from .approvers import escalate_due
         return Response({'escalated': escalate_due()})
+
+
+class BalanceExplainedView(APIView):
+    """v1.49.0 – every balance of an employee explained for this leave year: the rule (how it is earned, carry-forward cap and
+    expiry, encashment limit), opening / carried / earned / taken / encashed / lapsed, what is still to be earned by the year
+    end, the carried days that expire and when, and what may be encashed now. GET ?employee= (default: me)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        c = _ctx(request)
+        emp = _emp(request.query_params.get('employee')) if request.query_params.get('employee') else c.emp
+        if emp is None:
+            return Response({'detail': tr('Employee not found.')}, status=404)
+        if not (c.admin or (c.emp and c.emp.pk == emp.pk) or (c.codes & READ and (c.branches is None or emp.emp_branch_id_id in c.branches))):
+            return Response({'detail': tr('You may not see this employee.')}, status=403)
+        p = engine.policy_for(emp)
+        if p is None:
+            return Response({'employee': person(emp), 'policy': None, 'types': []})
+        today = date.today()
+        ys, ye = engine.leave_year(p, today)
+        names = _type_names()
+        out = []
+        for l in p.lines.all():
+            if l.accrual in ('per_event', 'none') or (l.gender not in ('B', emp.emp_gender or '')):
+                continue
+            led = LeaveLedger.objects.filter(employee_id=emp.pk, leave_type_id=l.leave_type_id)
+            by = {}
+            for k, v in led.filter(date__range=(ys, today)).values_list('kind', 'days'):
+                by[k] = round(by.get(k, 0) + v, 2)
+            before = round(led.filter(date__lt=ys).aggregate(s=Sum('days'))['s'] or 0, 2)
+            carried = engine._carried(emp.pk, l.leave_type_id, ys - timedelta(days=1))
+            bal = float(engine.balance_row(emp.pk, l.leave_type_id).balance or 0)
+            per_year, _st = engine.step_on(l, emp, today)
+            left_months = (ye.year - today.year) * 12 + (ye.month - today.month)
+            to_earn = round(float(per_year or 0) * left_months / 12, 2) if l.accrual == 'monthly' else 0
+            cf_exp = None
+            cf_left = None
+            if carried and l.carry_forward_expiry_months:
+                cf_exp = (ys.replace(day=1) + timedelta(days=31 * l.carry_forward_expiry_months)).replace(day=1) - timedelta(days=1)
+                used = -float(by.get('taken', 0) + by.get('cancelled', 0) + by.get('encashed', 0))
+                cf_left = round(max(carried - max(used, 0), 0), 2) if cf_exp >= today else 0
+            enc_now = None
+            if l.encashable:
+                done = -float(by.get('encashed', 0))
+                cap = float(l.encash_max_per_year) if l.encash_max_per_year is not None else None
+                enc_now = round(max(0, min(bal, (cap - done) if cap is not None else bal)), 2)
+            lim = engine.cf_limit(l, emp, ye)
+            out.append({'leave_type_id': l.leave_type_id, 'leave_type': names.get(l.leave_type_id), 'accrual': l.get_accrual_display(),
+                        'days_per_year': per_year, 'first_year_uae': l.first_year_uae, 'after_probation': l.after_probation,
+                        'carry_forward_max': lim, 'carry_forward_expiry_months': l.carry_forward_expiry_months, 'excess_action': l.get_excess_action_display(),
+                        'encashable': l.encashable, 'encash_max_per_year': l.encash_max_per_year,
+                        'year': {'from': ys, 'to': ye}, 'brought_forward': before, 'carried': carried,
+                        'opening': by.get('opening', 0), 'earned': by.get('accrual', 0), 'taken': -by.get('taken', 0) - by.get('cancelled', 0),
+                        'encashed': -by.get('encashed', 0), 'lapsed': -by.get('lapsed', 0), 'adjusted': by.get('adjustment', 0) + by.get('reset', 0),
+                        'balance': bal, 'to_earn_by_year_end': to_earn, 'balance_at_year_end': round(bal + to_earn, 2),
+                        'carry_at_year_end': round(min(bal + to_earn, lim), 2) if lim is not None else round(bal + to_earn, 2),
+                        'carried_expiry': cf_exp, 'carried_left_to_use': cf_left, 'encashable_now': enc_now})
+        return Response({'employee': person(emp), 'employee_id': emp.pk, 'policy': p.name, 'service_months': engine.months_of_service(emp, today),
+                         'types': out})
+
+
+# ------------------------------------------------------------------ v1.51.0 leave conflicts
+def _may_see(c, request, emp):
+    if c.admin or (c.emp and c.emp.pk == emp.pk):
+        return True
+    if c.codes & READ and (c.branches is None or emp.emp_branch_id_id in c.branches):
+        return True
+    try:
+        from DashboardManagement.services import team_ids
+        return emp.pk in set(team_ids(request.user))
+    except Exception:
+        return False
+
+
+class LeaveCheckView(APIView):
+    """POST {leave_type, start_date, end_date, half_day, employee?, request?, has_document?} → {days, errors, warnings} before sending."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .conflicts import check
+        c = _ctx(request)
+        d = request.data
+        emp = _emp(d.get('employee')) if d.get('employee') else c.emp
+        if emp is None:
+            return Response({'detail': tr('Employee not found.')}, status=404)
+        if not _may_see(c, request, emp):
+            return Response({'detail': tr('You may not see this employee.')}, status=403)
+        LT = apps.get_model('calendars', 'leave_type')
+        lt = LT.objects.filter(pk=d.get('leave_type')).first()
+        a, b = parse_date(str(d.get('start_date') or '')), parse_date(str(d.get('end_date') or ''))
+        if lt is None or a is None or b is None:
+            return Response({'detail': tr('Choose the leave type and the dates.')}, status=400)
+        if b < a:
+            return Response({'days': 0, 'errors': [tr('The end date is before the start date.')], 'warnings': []})
+        if (b - a).days > 400:
+            return Response({'detail': tr('Choose at most a year.')}, status=400)
+        by = request.user.pk
+        res = check(emp, lt, a, b, str(d.get('half_day')).lower() in ('1', 'true'), exclude_id=d.get('request') or None, created_by_id=by,
+                    document=str(d.get('has_document')).lower() in ('1', 'true'))
+        return Response(res)
+
+
+class ConflictSettingsView(APIView):
+    """GET / PUT the conflict settings and the blackout periods; POST blackouts/ adds one, DELETE blackouts/<id>/ removes it."""
+    permission_classes = [IsAuthenticated]
+
+    def _row(self, p):
+        return {'id': p.pk, 'name': p.name, 'start_date': p.start_date, 'end_date': p.end_date, 'branch_ids': p.branch_ids,
+                'department_ids': p.department_ids, 'exempt_leave_type_ids': p.exempt_leave_type_ids, 'action': p.action, 'note': p.note, 'active': p.active}
+
+    def get(self, request, pk=None):
+        from .models import BlackoutPeriod, ConflictSettings
+        c = _ctx(request)
+        s = ConflictSettings.get()
+        D, B, LT = M('OrganisationManager', 'dept_master'), M('OrganisationManager', 'brnch_mstr'), M('calendars', 'leave_type')
+        return Response({'same_role_max': s.same_role_max, 'dept_min_present_pct': s.dept_min_present_pct, 'count_pending': s.count_pending,
+                         'blackouts': [self._row(p) for p in BlackoutPeriod.objects.all()], 'can_edit': bool(c.admin or c.codes & WRITE),
+                         'options': {'departments': [{'id': x.pk, 'name': x.dept_name} for x in D.objects.order_by('dept_name')],
+                                     'branches': [{'id': x.pk, 'name': x.branch_name} for x in B.objects.order_by('branch_name')],
+                                     'leave_types': [{'id': x.pk, 'name': x.name} for x in LT.objects.order_by('name')]}})
+
+    def put(self, request, pk=None):
+        from .models import ConflictSettings
+        c = _ctx(request)
+        if not (c.admin or c.codes & WRITE):
+            return Response({'detail': tr('Only HR changes the leave settings.')}, status=403)
+        s = ConflictSettings.get()
+        d = request.data
+        try:
+            if 'same_role_max' in d:
+                s.same_role_max = max(0, min(50, int(d['same_role_max'])))
+            if 'dept_min_present_pct' in d:
+                s.dept_min_present_pct = max(0, min(100, int(d['dept_min_present_pct'])))
+        except (TypeError, ValueError):
+            return Response({'detail': tr('Give whole numbers.')}, status=400)
+        if 'count_pending' in d:
+            s.count_pending = str(d['count_pending']).lower() in ('1', 'true')
+        s.save()
+        return self.get(request)
+
+    def post(self, request, pk=None):
+        from .models import BlackoutPeriod
+        c = _ctx(request)
+        if not (c.admin or c.codes & WRITE):
+            return Response({'detail': tr('Only HR changes the leave settings.')}, status=403)
+        d = request.data
+        a, b = parse_date(str(d.get('start_date') or '')), parse_date(str(d.get('end_date') or ''))
+        name = (d.get('name') or '').strip()[:120]
+        if not name or a is None or b is None or b < a:
+            return Response({'detail': tr('Give the name and the dates (the end on or after the start).')}, status=400)
+        ints = lambda v: [int(x) for x in (v or []) if str(x).isdigit()]  # noqa: E731
+        p = BlackoutPeriod.objects.filter(pk=d.get('id')).first() if d.get('id') else BlackoutPeriod()
+        if p is None:
+            return Response({'detail': tr('Not found.')}, status=404)
+        p.name, p.start_date, p.end_date = name, a, b
+        p.branch_ids, p.department_ids, p.exempt_leave_type_ids = ints(d.get('branch_ids')), ints(d.get('department_ids')), ints(d.get('exempt_leave_type_ids'))
+        p.action = d.get('action') if d.get('action') in ('warn', 'block') else 'warn'
+        p.note = (d.get('note') or '')[:255]
+        p.active = str(d.get('active', True)).lower() not in ('0', 'false')
+        p.save()
+        return Response(self._row(p), status=201)
+
+    def delete(self, request, pk=None):
+        from .models import BlackoutPeriod
+        c = _ctx(request)
+        if not (c.admin or c.codes & WRITE):
+            return Response({'detail': tr('Only HR changes the leave settings.')}, status=403)
+        BlackoutPeriod.objects.filter(pk=pk).delete()
+        return Response(status=204)

@@ -186,6 +186,7 @@ class Customer(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
 
+    partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='pj_customers', verbose_name='business partner')   # v1.42.0
     class Meta:
         ordering = ['name']
 
@@ -207,6 +208,7 @@ class Contact(models.Model):
     portal_can_approve = models.BooleanField(default=False, help_text='May approve milestones, change and development requests')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='pj_contacts', verbose_name='business partner')   # v1.42.0
     class Meta:
         ordering = ['customer__name', '-is_primary', 'name']
 
@@ -222,6 +224,7 @@ class ServiceProduct(models.Model):
     default_team = models.ForeignKey('SupportTeam', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     is_active = models.BooleanField(default=True)
 
+    item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='pj_services', verbose_name='item (master)')   # v1.43.0 item master
     class Meta:
         ordering = ['name']
 

@@ -90,3 +90,28 @@ class CompanyLanguageSettings(models.Model):
 
     def __str__(self):
         return f'{self.schema_name}: {self.default_lang}'
+
+
+class CompanyTerm(models.Model):
+    """v1.62.0 isolation – a company's own wording of a term (Settings → Languages → Translations edited in a company).
+
+    The packs (Term) are shared by every company on the server; a company administrator's change was a change for every
+    customer. A company's edit is kept here and used for that company only (server messages, PDFs and the browser pack);
+    the platform administrator still edits the shared Term."""
+    schema_name = models.CharField(max_length=63, db_index=True)
+    lang = models.CharField(max_length=10)
+    source = models.TextField()
+    source_hash = models.CharField(max_length=40, editable=False)
+    value = models.TextField(blank=True, default='')
+    is_reviewed = models.BooleanField(default=False)
+    updated_by = models.IntegerField(null=True, blank=True)
+    updated_by_name = models.CharField(max_length=150, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('schema_name', 'lang', 'source_hash')]
+        verbose_name = 'company translation'
+
+    def save(self, *args, **kwargs):
+        self.source_hash = source_hash(self.source)
+        super().save(*args, **kwargs)

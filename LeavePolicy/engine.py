@@ -249,6 +249,11 @@ def validate_request(req):
     if c:
         errors.append(tr('{0} already has {1} {2} from {3:%d/%m/%Y} to {4:%d/%m/%Y} ({5}).', emp.emp_first_name, c.leave_type.name, c.document_number or "", c.start_date, c.end_date, c.status))
     errors += leave_type_problems(req)
+    try:   # v1.51.0 blackout periods that block leave
+        from .conflicts import blackout_errors
+        errors += blackout_errors(req)
+    except Exception:
+        pass
     line = line_for(emp, lt.pk)
     if line is None:
         if errors:

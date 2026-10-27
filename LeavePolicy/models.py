@@ -131,7 +131,8 @@ class OrgRole(models.Model):
 class LevelRole(models.Model):
     """v1.11.0 – an approval level answered by a role instead of a fixed user; escalation by role."""
     ROLES = [('user', 'Named user'), ('reporting_manager', 'Reporting manager'), ('manager_of_manager', "Reporting manager's manager"),
-             ('branch_hr', 'Branch HR manager'), ('department_head', 'Department head'), ('company_hr', 'Company HR manager')]
+             ('branch_hr', 'Branch HR manager'), ('department_head', 'Department head'), ('company_hr', 'Company HR manager'),
+             ('functional_manager', 'Functional (dotted-line) manager')]   # v1.58.0
     level_id = models.IntegerField(unique=True, help_text='calendars.LeaveApprovalLevels id')
     role = models.CharField(max_length=20, choices=ROLES, default='user')
     escalate_role = models.CharField(max_length=20, choices=ROLES, blank=True, default='')
@@ -142,3 +143,35 @@ class ApprovalClock(models.Model):
     approval_id = models.IntegerField(unique=True)
     started_at = models.DateTimeField()
     escalated_at = models.DateTimeField(null=True, blank=True)
+
+
+# ------------------------------------------------------------------ v1.51.0 leave conflicts
+class ConflictSettings(models.Model):
+    """When a leave request is shown with a warning: colleagues of the same role away, too few people left in the
+    department, the public holiday next to it. One row per company."""
+    same_role_max = models.PositiveSmallIntegerField(default=1, help_text='warn when this many others of the same designation in the department are away')
+    dept_min_present_pct = models.PositiveSmallIntegerField(default=50, help_text='warn when fewer of the department are at work (%)')
+    count_pending = models.BooleanField(default=True, help_text='requests waiting for approval count as away')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def get(cls):
+        return cls.objects.order_by('id').first() or cls.objects.create()
+
+
+class BlackoutPeriod(models.Model):
+    """Days when leave is not taken (year-end closing, peak season, an audit): a warning or a block."""
+    ACTIONS = [('warn', 'Warn'), ('block', 'Block (only HR can enter leave)')]
+    name = models.CharField(max_length=120)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    branch_ids = models.JSONField(default=list, blank=True, help_text='[] = every branch')
+    department_ids = models.JSONField(default=list, blank=True, help_text='[] = every department')
+    exempt_leave_type_ids = models.JSONField(default=list, blank=True, help_text='e.g. sick, emergency, bereavement')
+    action = models.CharField(max_length=5, choices=ACTIONS, default='warn')
+    note = models.CharField(max_length=255, blank=True, default='')
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['start_date']

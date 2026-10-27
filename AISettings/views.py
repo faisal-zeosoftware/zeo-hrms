@@ -29,7 +29,7 @@ from .models import AICallLog, AISettings, PROVIDERS
 log = logging.getLogger(__name__)
 
 ADMIN_ONLY = 'Only the company administrator can see or change the AI settings.'
-FIELDS = {'mode', 'provider', 'api_url', 'model', 'api_key', 'clear_key', 'use_ask', 'use_documents', 'monthly_limit'}
+FIELDS = {'mode', 'provider', 'api_url', 'model', 'api_key', 'clear_key', 'use_ask', 'use_documents', 'use_tickets', 'monthly_limit'}
 DOC_RATE = (30, 600)   # document readings per user per 10 minutes
 
 
@@ -79,6 +79,8 @@ def data_sent_notice():
                   'no passwords, no files.'),
         'documents': tr('Documents: the text read from the uploaded document (at most 6,000 characters – names, numbers, dates of '
                         'passports, Emirates IDs, visas …) and its file name. The file itself is not sent.'),
+        'tickets': tr('HR tickets: the subject and the question of a new ticket (at most 2,000 characters) and the names and descriptions of '
+                      'the helpdesk categories. Not the employee\'s name or other records.'),
         'general': tr('The provider receives this data under your contract with them. Check that it is allowed by your company\'s '
                       'data-protection rules (UAE PDPL) before you switch external AI on.'),
     }
@@ -95,10 +97,10 @@ def serialize(row):
     return {
         'mode': row.mode, 'provider': row.provider, 'api_url': row.api_url, 'model': row.model,
         'key_set': bool(row.api_key_enc), 'key_last4': row.key_last4, 'key_unreadable': bool(row.api_key_enc) and key is None,
-        'use_ask': row.use_ask, 'use_documents': row.use_documents, 'monthly_limit': row.monthly_limit, 'used_this_month': used,
+        'use_ask': row.use_ask, 'use_documents': row.use_documents, 'use_tickets': row.use_tickets, 'monthly_limit': row.monthly_limit, 'used_this_month': used,
         'server_external_allowed': S.server_allows_external(),
         'server_note': '' if S.server_allows_external() else tr('External AI is switched off by the server administrator.'),
-        'effective': {'ask': S.feature_mode('ask', row)[0], 'documents': S.feature_mode('documents', row)[0]},
+        'effective': {'ask': S.feature_mode('ask', row)[0], 'documents': S.feature_mode('documents', row)[0], 'tickets': S.feature_mode('tickets', row)[0]},
         'ocr_available': ocr_available(),
         'providers': [{'code': c, 'label': l, 'default_url': S.DEFAULT_URLS.get(c, ''), 'default_model': S.DEFAULT_MODELS.get(c, '')} for c, l in PROVIDERS],
         'data_sent': data_sent_notice(),
@@ -144,7 +146,7 @@ class SettingsView(_Admin):
             if len(m) > 120 or (m and not re.fullmatch(r'[\w.:/@\-]+', m)):
                 errors['model'] = tr('The model name may contain letters, digits and . : / @ - _ (at most 120 characters).')
             row.model = m
-        for f in ('use_ask', 'use_documents'):
+        for f in ('use_ask', 'use_documents', 'use_tickets'):
             if f in d:
                 try:
                     setattr(row, f, _bool(d[f]))

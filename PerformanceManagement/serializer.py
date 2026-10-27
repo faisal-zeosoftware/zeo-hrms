@@ -86,12 +86,25 @@ class GoalSheetSerializer(DisplayFieldsMixin, serializers.ModelSerializer):
     employee_user = serializers.IntegerField(source='employee.users_id', read_only=True)
     cycle_status = serializers.CharField(source='cycle.status', read_only=True)
     kpi_weight = serializers.DecimalField(source='cycle.template.kpi_weight', max_digits=5, decimal_places=2, read_only=True)
+    functional = serializers.SerializerMethodField()   # v1.58.0 functional (dotted-line) manager input
 
     class Meta:
         model = GoalSheet
         fields = '__all__'
         read_only_fields = ('status', 'self_score', 'manager_score', 'proposed_rating', 'final_rating',
                             'acknowledged_on', 'return_reason', 'created_at', 'updated_at')
+
+    def get_functional(self, obj):
+        """v1.58.0: the functional managers' ratings and the blended score – for the reviewers and HR, never for the employee."""
+        req = self.context.get('request') if hasattr(self, 'context') else None
+        if req is None or getattr(req.user, 'pk', None) is None or req.user.pk == obj.employee.users_id:
+            return None
+        try:
+            from ZeoHR.matrix import blended
+            out = blended(obj)
+            return out if out['functional'] else None
+        except Exception:
+            return None
 
     def get_total_weight(self, obj):
         return float(sum((g.weight for g in obj.goals.all()), Decimal('0')))

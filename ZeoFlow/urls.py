@@ -17,4 +17,5 @@ urlpatterns = [
     path('api/dashboard/', v.DashboardView.as_view()),
     path('api/notifications/', v.NotificationView.as_view()),
     path('api/audit/', v.AuditView.as_view()),
+    path('api/record/', v.RecordFlowView.as_view()),     # v1.38.0 workflow strip of a record page
 ] + router.urls

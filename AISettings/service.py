@@ -39,7 +39,7 @@ DEFAULT_URLS = {
     'azure': '',   # https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-10-21
 }
 DEFAULT_MODELS = {'anthropic': 'claude-sonnet-5-5', 'openai': 'gpt-4o-mini', 'azure': ''}
-FEATURE_FIELDS = {'ask': 'use_ask', 'documents': 'use_documents'}
+FEATURE_FIELDS = {'ask': 'use_ask', 'documents': 'use_documents', 'tickets': 'use_tickets'}   # v1.61.0 tickets
 TIMEOUT = 90
 
 

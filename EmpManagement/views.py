@@ -3,6 +3,7 @@ from django.shortcuts import render
 from django.conf import settings
 from datetime import date
 import logging
+logger = logging.getLogger(__name__)   # v1.40.1
 from django.utils import timezone
 from openpyxl import load_workbook
 from .models import (emp_family,Emp_Documents,EmpJobHistory,EmpLeaveRequest,EmpQualification,GeneralRequest,RequestType,
@@ -108,7 +109,11 @@ def _emp_prefetch():
     if _EMP_PF is None:
         names = {r.get_accessor_name() for r in emp_master._meta.related_objects} | {f.name for f in emp_master._meta.many_to_many}
         _EMP_PF = [n for n in EMP_PREFETCH if n in names]
-        for deep in ('emp_leave_balance_set__leave_type', 'employee_leave_request_set__leave_type', 'payslips__payroll_run'):
+        # v1.62.0 speed: + the payslip components / leave lines, the salary components and the document custom fields and
+        # types (one query per payslip / salary line / document before – ~1,600 of the 2,600 queries of the 48-employee list)
+        for deep in ('emp_leave_balance_set__leave_type', 'employee_leave_request_set__leave_type', 'payslips__payroll_run',
+                     'payslips__components__component', 'payslips__leave_details__leave_type', 'salary_structures__component',
+                     'emp_documents__custom_field_values', 'emp_documents__document_type', 'emp_family__custom_field_values'):
             if deep.split('__')[0] in names:
                 _EMP_PF.append(deep)
     return _EMP_PF
@@ -133,6 +138,26 @@ class EmpViewSet(viewsets.ModelViewSet):
 
         # HR / Admin → show all employees
         return queryset
+
+    # v1.56.1 release checklist §16 "Big lists": the list carried every employee's payslips, leave, requests, documents … –
+    # 1,280 employees answered 104 MB in two minutes. Above LITE_ABOVE employees the list leaves the history lists out
+    # (they stay on the record: GET Employee/<id>/); ?full=1 keeps them.
+    LITE_ABOVE = 50
+    HEAVY = ('announcements', 'projects', 'airticket_request', 'document_requests', 'emp_salary', 'payslip', 'advance_salary_requests',
+             'loan_requests', 'assets_requests', 'requests', 'leave_rqsts', 'leave_balance', 'emp_family', 'emp_documents',
+             'emp_qualification', 'emp_job_history', 'emp_market_skills', 'emp_prgrm_skills', 'emp_lang_skills', 'policy_file',
+             'holidays', 'resignation_requests', 'lateinearlyout_request', 'face_encoding')
+
+    def list(self, request, *args, **kwargs):
+        qs = self.filter_queryset(self.get_queryset())
+        if str(request.query_params.get('full', '')).lower() in ('1', 'true') or qs.count() <= self.LITE_ABOVE:
+            return super().list(request, *args, **kwargs)
+        qs = qs.prefetch_related(None).prefetch_related('custom_field_values', 'bank_details')
+        page = self.paginate_queryset(qs)
+        ser = self.get_serializer(page if page is not None else qs, many=True)
+        for k in self.HEAVY:
+            ser.child.fields.pop(k, None)
+        return self.get_paginated_response(ser.data) if page is not None else Response(ser.data)
     # def get_queryset(self):
     #     user = self.request.user
     #     if user.is_authenticated:
@@ -174,8 +199,9 @@ class EmpViewSet(viewsets.ModelViewSet):
 
         # Deactivate linked login user
         if employee.users:
-            employee.users.is_active = False
-            employee.users.save(update_fields=["is_active"])
+            # v1.62.0 isolation: a login that is also in other companies is not switched off for them – only this company's access goes
+            from ZeoCloud.sharedrows import deactivate_login_here
+            deactivate_login_here(employee.users)
 
         return Response(
             {
@@ -620,6 +646,14 @@ class EmpViewSet(viewsets.ModelViewSet):
         # separate annual leaves) – the leave request API decides (overlap, balance incl. pending days, policy rules).
         # Before, types with a pending request were hidden from My leave / the HR leave screen.
         available_leave_types = leave_type.objects.all()
+        # v1.62.0: a company with one set of leave types per branch showed every type twice in My leave (the employee's
+        # branch with its balance and the other branch's with 0). Only the employee's branch and company-wide types; a
+        # balance row of another branch's type is still shown when it holds days.
+        from django.db.models import Q as _Q
+        if user.emp_branch_id_id:
+            available_leave_types = available_leave_types.filter(_Q(branch__isnull=True) | _Q(branch_id=user.emp_branch_id_id))
+            leave_balance = leave_balance.filter(_Q(leave_type__branch__isnull=True) | _Q(leave_type__branch_id=user.emp_branch_id_id)
+                                                 | ~_Q(balance=0) & _Q(balance__isnull=False))
 
         # Serialize data
         leave_balance_serializer = EmployeeLeaveBalanceSerializer(leave_balance, many=True)
@@ -641,6 +675,8 @@ class EmpViewSet(viewsets.ModelViewSet):
                 applicable |= set(available_leave_types.values_list('id', flat=True))
         except Exception:
             applicable |= set(available_leave_types.values_list('id', flat=True))
+        if user.emp_branch_id_id:   # v1.62.0: types of another branch are not offered (see above)
+            applicable &= set(available_leave_types.values_list('id', flat=True)) | set(b.leave_type_id for b in leave_balance)
         return Response({
             "leave_balance": leave_balance_serializer.data,
             "available_leave_types": leave_type_serializer.data,
@@ -904,7 +940,7 @@ class EmpViewSet(viewsets.ModelViewSet):
         }
 
         # Fetch all employees
-        employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
+        employees = limit_by_branch(request, self.filter_queryset(self.get_queryset()), branch_path='emp_branch_id')  # v1.22.0 branch rights; v1.56.1 + the row rules (a self-service login exported every employee of its branch)
 
         # Fetch all distinct field names from Emp_CustomField
         custom_fields = Emp_CustomField.objects.values_list('emp_custom_field', flat=True).distinct()
@@ -1004,7 +1040,7 @@ class EmpViewSet(viewsets.ModelViewSet):
         }
 
         # Fetch all employees
-        employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
+        employees = limit_by_branch(request, self.filter_queryset(self.get_queryset()), branch_path='emp_branch_id')  # v1.22.0 branch rights; v1.56.1 + the row rules (a self-service login exported every employee of its branch)
 
         # Fetch all distinct field names from Emp_CustomField
         custom_fields = Emp_CustomField.objects.values_list('emp_custom_field', flat=True).distinct()
@@ -1150,7 +1186,7 @@ class ReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch
             if not fields_to_include:
                 fields_to_include = list(self.get_available_fields().keys())
 
-            employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
+            employees = limit_by_branch(request, self.filter_queryset(self.get_queryset()), branch_path='emp_branch_id')  # v1.22.0 branch rights; v1.56.1 + the row rules (a self-service login exported every employee of its branch)
 
             report_data = self.generate_report_data(fields_to_include, employees)
             file_path = report_file(file_name, 'Report')  # Use 'file_name' provided by the user
@@ -1281,7 +1317,7 @@ class ReportViewset(BranchReportMixin, viewsets.ModelViewSet):  # v1.22.0 branch
                 selected_fields = []  # No data in the report
 
         # Fetch employees data from emp_master
-        employees = limit_by_branch(request, emp_master.objects.all(), branch_path='emp_branch_id')  # v1.22.0 branch rights
+        employees = limit_by_branch(request, self.filter_queryset(self.get_queryset()), branch_path='emp_branch_id')  # v1.22.0 branch rights; v1.56.1 + the row rules (a self-service login exported every employee of its branch)
 
         # Get unique values for selected_fields
         unique_values = self.get_unique_values_for_fields(employees, selected_fields, report_content)
@@ -2172,6 +2208,11 @@ class Emp_DocumentViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         # Check if there are any existing documents with the same emp_id and document_type
+        # v1.56.1: employee and document type are needed (a KeyError answered 500 before)
+        missing = [f for f in ('emp_id', 'document_type') if not serializer.validated_data.get(f)]
+        if missing:
+            from rest_framework.exceptions import ValidationError as _VE
+            raise _VE({f: ['This field is required.'] for f in missing})
         existing_documents = Emp_Documents.objects.filter(
             emp_id=serializer.validated_data['emp_id'],
             document_type=serializer.validated_data['document_type']
@@ -2743,7 +2784,34 @@ class EmplistViewSet(BranchAccessMixin,viewsets.ReadOnlyModelViewSet):  # Read-o
     queryset = emp_master.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id').order_by('emp_code')
     serializer_class = EmplistSerializer
     permission_classes = [EmployeePermission]
-    
+
+    # v1.40.1: employee pickers on big companies – `?search=` (or `?q=`) matches the code or the name, and
+    # `?page_size=` (+ `?page=`) returns a page as {count, page, page_size, results}. Without page_size the
+    # whole (filtered) list comes back as before, so the other screens are unchanged.
+    def get_queryset(self):
+        from django.db.models import Q, Value as V, F
+        from django.db.models.functions import Concat, Coalesce
+        qs = super().get_queryset()
+        q = (self.request.query_params.get('search') or self.request.query_params.get('q') or '').strip()
+        if q:
+            qs = qs.annotate(_full=Concat(Coalesce(F('emp_first_name'), V('')), V(' '), Coalesce(F('emp_last_name'), V(''))))
+            for word in q.split()[:5]:
+                qs = qs.filter(Q(emp_code__icontains=word) | Q(_full__icontains=word))
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        qs = self.filter_queryset(self.get_queryset())
+        ps = request.query_params.get('page_size')
+        if not ps:
+            return Response(self.get_serializer(qs, many=True).data)
+        try:
+            size = max(1, min(int(ps), 1000)); page = max(1, int(request.query_params.get('page') or 1))
+        except (TypeError, ValueError):
+            size, page = 50, 1
+        total = qs.count()
+        rows = qs[(page - 1) * size: page * size]
+        return Response({'count': total, 'page': page, 'page_size': size, 'results': self.get_serializer(rows, many=True).data})
+
 # EmpLeaveRequest
 class EmpLeaveRequestViewSet(viewsets.ModelViewSet):
     queryset = EmpLeaveRequest.objects.all()
@@ -2959,6 +3027,20 @@ class CommonWorkflowViewSet(viewsets.ModelViewSet):
         queryset = CommonWorkflow.objects.all()
         serializer_class  = CommonWorkflowSerializer   
 
+def _branch_ids_param(request):   # v1.40.1: the sidebar branch filter (?branch_id=[1,2]) of the approvals pages
+    import json as _json
+    raw = request.query_params.get('branch_id')
+    if not raw:
+        return []
+    try:
+        ids = _json.loads(raw)
+        if not isinstance(ids, list):
+            ids = [ids]
+    except Exception:
+        ids = raw.strip('[]').split(',')
+    return [int(i) for i in ids if str(i).strip().isdigit()]
+
+
 class ApprovalViewset(viewsets.ModelViewSet):
     queryset = Approval.objects.all()
     serializer_class = ApprovalSerializer
@@ -2970,13 +3052,17 @@ class ApprovalViewset(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return Approval.objects.none()
 
-        if user.is_superuser:
-            return Approval.objects.all()
-
-        return Approval.objects.filter(
-        Q(approver=user) |
-        Q(deligate_to=user, is_deligate=True)
-    ).distinct()
+        qs = Approval.objects.select_related('general_request', 'general_request__employee', 'general_request__request_type',
+                                             'general_request__branch', 'approver', 'deligate_to').order_by('-id')   # v1.40.1
+        if not user.is_superuser:
+            qs = qs.filter(
+                Q(approver=user) |
+                Q(deligate_to=user, is_deligate=True)
+            ).distinct()
+        ids = _branch_ids_param(self.request)
+        if ids and getattr(self, 'action', None) == 'list':   # v1.40.1
+            qs = qs.filter(general_request__employee__emp_branch_id__in=ids)
+        return qs
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -3044,6 +3130,9 @@ class ApprovalViewset(viewsets.ModelViewSet):
         approval.deligate_response = None
         approval.save()
 
+        # v1.40.1: the e-mail is best effort and the delegation is answered even when the user has no e-mail address
+        # (the success response sat inside "if delegate_user.email", so the request ended in a 500 and the screen
+        # never showed the delegation; an SMTP failure broke it too)
         if delegate_user.email:
 
             subject = "Delegation Assigned"
@@ -3075,13 +3164,16 @@ class ApprovalViewset(viewsets.ModelViewSet):
                 Thank You.
                 """
 
-            send_mail(
-                subject,
-                message,
-                None,
-                [delegate_user.email],
-                fail_silently=False,
-            )
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    None,
+                    [delegate_user.email],
+                    fail_silently=True,
+                )
+            except Exception as _e:   # v1.40.1
+                logger.warning("Delegation e-mail not sent: %s", _e)
 
         created_notification = send_notification_email(
             user=delegate_user,
@@ -3779,6 +3871,8 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
             # ✅ Employee validation
             if not employee:
                 raise ValidationError("Employee is required.")
+            if not serializer.validated_data.get('request_type'):   # v1.56.1: the auto-approval e-mail needs the type (500 before)
+                raise ValidationError({'request_type': ['Choose the document type.']})
 
             # ✅ Branch fallback
             branch = employee.emp_branch_id or employee.work_location
@@ -3840,13 +3934,17 @@ class DocumentApprovalViewset(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return DocumentApproval.objects.none()
 
-        if user.is_superuser:
-            return DocumentApproval.objects.all()
-
-        return DocumentApproval.objects.filter(
-        Q(approver=user) |
-        Q(deligate_to=user, is_deligate=True)
-    ).distinct()
+        qs = DocumentApproval.objects.select_related('document_request', 'document_request__employee', 'document_request__request_type',
+                                                     'document_request__branch', 'approver', 'deligate_to').order_by('-id')   # v1.40.1
+        if not user.is_superuser:
+            qs = qs.filter(
+                Q(approver=user) |
+                Q(deligate_to=user, is_deligate=True)
+            ).distinct()
+        ids = _branch_ids_param(self.request)
+        if ids and getattr(self, 'action', None) == 'list':   # v1.40.1: sidebar branch filter
+            qs = qs.filter(document_request__employee__emp_branch_id__in=ids)
+        return qs
 
 
     @action(detail=True, methods=['post'])
@@ -3897,6 +3995,9 @@ class DocumentApprovalViewset(viewsets.ModelViewSet):
         approval.deligate_response = None
         approval.save()
 
+        # v1.40.1: the e-mail is best effort and the delegation is answered even when the user has no e-mail address
+        # (the success response sat inside "if delegate_user.email", so the request ended in a 500 and the screen
+        # never showed the delegation; an SMTP failure broke it too)
         if delegate_user.email:
 
             subject = "Delegation Assigned"
@@ -3921,42 +4022,45 @@ class DocumentApprovalViewset(viewsets.ModelViewSet):
                 Thank You.
                 """
 
-            send_mail(
-                subject,
-                message,
-                None,
-                [delegate_user.email],
-                fail_silently=False,
-            )
-            created_notification = send_notification_email(
-                user=delegate_user,
-                employee=None,
-                branch=None,
-                title="Delegation Assigned",
-                message=f"{approval.approver.username} has delegated request {approval.document_request.document_number} to you.",
-                delegate_user=approval.approver,
-                template_type="request_created",
-                context={
-                    **get_employee_context(approval.document_request.employee),
-                        "doc_number": approval.document_request.document_number,
-                        "request_type": approval.document_request.request_type.type_name,
-                    },
-                    email_template_model=DocRequestEmailTemplate,
-                    notification_model=DocRequestNotification,
-            )
-
-            print("Notification Created:", created_notification)
-
-            return Response(
-                {
-                    "message": "Approval delegated successfully.",
-                    "approval_id": approval.id,
-                    "approver": approval.approver.username,
-                    "delegate_to": delegate_user.username,
-                    "status": approval.status,
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    None,
+                    [delegate_user.email],
+                    fail_silently=True,
+                )
+            except Exception as _e:   # v1.40.1
+                logger.warning("Delegation e-mail not sent: %s", _e)
+        created_notification = send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            message=f"{approval.approver.username} has delegated request {approval.document_request.document_number} to you.",
+            delegate_user=approval.approver,
+            template_type="request_created",
+            context={
+                **get_employee_context(approval.document_request.employee),
+                    "doc_number": approval.document_request.document_number,
+                    "request_type": approval.document_request.request_type.type_name,
                 },
-                status=status.HTTP_200_OK,
-            )
+                email_template_model=DocRequestEmailTemplate,
+                notification_model=DocRequestNotification,
+        )
+
+        print("Notification Created:", created_notification)
+
+        return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
     @action(detail=True, methods=["post"])
     def send_response(self, request, pk=None):
         approval = self.get_object()
@@ -4264,6 +4368,9 @@ class ResignationApprovalViewset(viewsets.ModelViewSet):
         approval.deligate_response = None
         approval.save()
 
+        # v1.40.1: the e-mail is best effort and the delegation is answered even when the user has no e-mail address
+        # (the success response sat inside "if delegate_user.email", so the request ended in a 500 and the screen
+        # never showed the delegation; an SMTP failure broke it too)
         if delegate_user.email:
 
             subject = "Delegation Assigned"
@@ -4288,42 +4395,45 @@ class ResignationApprovalViewset(viewsets.ModelViewSet):
                 Thank You.
                 """
 
-            send_mail(
-                subject,
-                message,
-                None,
-                [delegate_user.email],
-                fail_silently=False,
-            )
-            created_notification = send_notification_email(
-                user=delegate_user,
-                employee=None,
-                branch=None,
-                title="Delegation Assigned",
-                message=f"{approval.approver.username} has delegated request {approval.resignation_request.document_number} to you.",
-                delegate_user=approval.approver,
-                template_type="request_created",
-                context={
-                    **get_employee_context(approval.resignation_request.employee),
-                        "doc_number": approval.resignation_request.document_number,
-                        "request_type": approval.resignation_request.termination_type,
-                    },
-                    email_template_model=ResignationEmailTemplate,
-                    notification_model=ResignationRequestNotification
-            )
-
-            print("Notification Created:", created_notification)
-
-            return Response(
-                {
-                    "message": "Approval delegated successfully.",
-                    "approval_id": approval.id,
-                    "approver": approval.approver.username,
-                    "delegate_to": delegate_user.username,
-                    "status": approval.status,
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    None,
+                    [delegate_user.email],
+                    fail_silently=True,
+                )
+            except Exception as _e:   # v1.40.1
+                logger.warning("Delegation e-mail not sent: %s", _e)
+        created_notification = send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            message=f"{approval.approver.username} has delegated request {approval.resignation_request.document_number} to you.",
+            delegate_user=approval.approver,
+            template_type="request_created",
+            context={
+                **get_employee_context(approval.resignation_request.employee),
+                    "doc_number": approval.resignation_request.document_number,
+                    "request_type": approval.resignation_request.termination_type,
                 },
-                status=status.HTTP_200_OK,
-            )
+                email_template_model=ResignationEmailTemplate,
+                notification_model=ResignationRequestNotification
+        )
+
+        print("Notification Created:", created_notification)
+
+        return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
     @action(detail=True, methods=["post"])
     def send_response(self, request, pk=None):
         approval = self.get_object()

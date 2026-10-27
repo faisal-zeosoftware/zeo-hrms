@@ -39,7 +39,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Activity, Attachment, DashboardLayout, FieldDef, FieldValue, ListLayout, Message, RecordLog, FIELD_TYPES
+from .models import Activity, Attachment, DashboardLayout, FieldDef, FieldValue, FormLayout, ListLayout, Message, RecordLog, FIELD_TYPES
 from .tracking import model_key
 
 MAX_FILE = 25 * 1024 * 1024
@@ -195,8 +195,20 @@ def att_json(a, request=None):
 
 
 def msg_json(m):
-    return {'id': m.id, 'body': m.body, 'author': uname(m.author), 'author_id': m.author_id, 'at': m.created_at,
-            'attachments': [att_json(a) for a in m.attachments.all()]}
+    from .collab import plain
+    return {'id': m.id, 'body': plain(m.body), 'raw': m.body, 'author': uname(m.author) or m.from_name or m.from_email, 'author_id': m.author_id,
+            'at': m.created_at, 'attachments': [att_json(a) for a in m.attachments.all()],
+            # v1.45.0 note / message / e-mail reply, who it went to
+            'kind': m.kind, 'subject': m.subject, 'recipients': m.recipients or [], 'from_email': m.from_email,
+            # v1.46.0 threads
+            'parent_id': m.parent_id, 'reactions': {k: {'n': len(v), 'users': [uname_id(x) for x in v[:20]], 'ids': v} for k, v in (m.reactions or {}).items() if v},
+            'resolved': m.resolved, 'resolved_by': uname(m.resolved_by) if m.resolved_by_id else '', 'resolved_at': m.resolved_at}
+
+
+def uname_id(uid):
+    from django.contrib.auth import get_user_model
+    u = get_user_model().objects.filter(pk=uid).first()
+    return uname(u) if u else ''
 
 
 def act_json(a, today=None):
@@ -244,6 +256,15 @@ class RecordView(APIView):
                                  'admin': is_admin(request), 'me': request.user.id})
             return err
         q = dict(model=rec.key, object_id=rec.id)
+        label = str(rec.obj)[:255] if rec.obj is not None else ''
+        page = str(request.query_params.get('page') or '')[:255]
+        from . import collab as C, social as SO   # v1.45.0 followers, star, tags, recently viewed
+        try:
+            C.auto_followers(rec, label, page)
+            SO.seen(request.user, rec, label, page)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('followers / recent')
         defs = list(FieldDef.objects.filter(model=rec.key, active=True))
         vals = {v.field_id: v.value for v in FieldValue.objects.filter(field__in=defs, object_id=rec.id)}
         acts = Activity.objects.filter(**q).exclude(state='cancelled').select_related('assigned_to', 'created_by', 'done_by')
@@ -258,6 +279,11 @@ class RecordView(APIView):
             'owner': _owner(rec.key),   # v1.16.0: the form's own designer (employee forms, assets), else null
             'admin': is_admin(request),
             'me': request.user.id,
+            # v1.45.0
+            'followers': C.followers_json(rec.key, rec.id),
+            'following': C.is_following(rec.key, rec.id, request.user),
+            'starred': SO.is_starred(request.user, rec.key, rec.id),
+            'tags': SO.tags_of(rec.key, [rec.id]).get(rec.id, []),
         })
 
 
@@ -272,10 +298,84 @@ class NotesView(APIView):
         ids = [i for i in (request.data.get('attachment_ids') or []) if str(i).isdigit()]
         if not body and not ids:
             return Response({'detail': 'Write a note or attach a file.'}, status=status.HTTP_400_BAD_REQUEST)
-        m = Message.objects.create(model=rec.key, object_id=rec.id, body=body[:20000], author=request.user)
+        # v1.45.0: kind 'message' = Send message (to the followers, by e-mail too); 'note' = Log note (internal, notifies @mentions)
+        from . import collab as C
+        kind = 'message' if request.data.get('kind') == 'message' else 'note'
+        mentions = C.mention_ids(body, request.data.get('mention_ids') or [])
+        label = str(rec.obj)[:255] if rec.obj is not None else ''
+        parent = None
+        if str(request.data.get('parent') or '').isdigit():   # v1.46.0 a reply in a thread
+            parent = Message.objects.filter(pk=request.data['parent'], model=rec.key, object_id=rec.id).first()
+            if parent is None:
+                return Response({'detail': 'The note you reply to is not on this record.'}, status=status.HTTP_400_BAD_REQUEST)
+            parent = parent.parent or parent   # one level of replies, like a thread
+        m = Message.objects.create(model=rec.key, object_id=rec.id, body=body[:20000], author=request.user, kind=kind,
+                                   subject=str(request.data.get('subject') or '')[:200], mentions=mentions, record_label=label,
+                                   page=str(request.data.get('page') or '')[:255], parent=parent)
+        if parent is not None:
+            if parent.resolved:
+                Message.objects.filter(pk=parent.pk).update(resolved=False, resolved_by=None, resolved_at=None)
+            try:
+                C.notify_reply(m, parent, request.user)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception('reply notification')
         if ids:
             m.attachments.set(Attachment.objects.filter(id__in=ids, model=rec.key, object_id=rec.id))
+        extra = request.data.get('emails') or []
+        if isinstance(extra, str):
+            extra = re.split(r'[,;\s]+', extra)
+        try:
+            C.follow(rec.key, rec.id, user=request.user, reason='author', label=label, page=m.page)
+            C.deliver(m, request.user, extra if kind == 'message' else ())
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('message delivery')
         return Response(msg_json(m), status=status.HTTP_201_CREATED)
+
+
+class NoteReactView(APIView):
+    """v1.46.0 POST notes/<pk>/react/ {endpoint, id, emoji} – add or take back a reaction."""
+    permission_classes = [IsAuthenticated]
+    EMOJIS = ('👍', '✅', '❤️', '🎉', '👀', '🙏')
+
+    def post(self, request, pk):
+        rec, err = get_record(request, request.data.get('endpoint'), request.data.get('id'))
+        if err:
+            return err
+        m = Message.objects.filter(pk=pk, model=rec.key, object_id=rec.id).first()
+        if m is None:
+            raise Http404
+        e = str(request.data.get('emoji') or '')
+        if e not in self.EMOJIS:
+            return Response({'detail': 'Choose one of ' + ' '.join(self.EMOJIS)}, status=status.HTTP_400_BAD_REQUEST)
+        r = dict(m.reactions or {})
+        users = list(r.get(e, []))
+        if request.user.id in users:
+            users.remove(request.user.id)
+        else:
+            users.append(request.user.id)
+        r[e] = users
+        m.reactions = {k: v for k, v in r.items() if v}
+        m.save(update_fields=['reactions'])
+        return Response(msg_json(m))
+
+
+class NoteResolveView(APIView):
+    """v1.46.0 POST notes/<pk>/resolve/ {endpoint, id, resolved} – close or reopen a thread."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        rec, err = get_record(request, request.data.get('endpoint'), request.data.get('id'))
+        if err:
+            return err
+        m = Message.objects.filter(pk=pk, model=rec.key, object_id=rec.id, parent__isnull=True).first()
+        if m is None:
+            raise Http404
+        on = str(request.data.get('resolved', True)).lower() not in ('0', 'false', 'no')
+        m.resolved, m.resolved_by, m.resolved_at = on, (request.user if on else None), (timezone.now() if on else None)
+        m.save(update_fields=['resolved', 'resolved_by', 'resolved_at'])
+        return Response(msg_json(m))
 
 
 class NoteDetailView(APIView):
@@ -465,6 +565,31 @@ class TodoView(APIView):
             'planned': mine.filter(due_date__gt=today).count()}})
 
 
+    def post(self, request):
+        """v1.47.0 quick create: a to-do for me (or a colleague of the company) that belongs to no record."""
+        d = request.data
+        summary = str(d.get('summary') or '').strip()
+        if not summary:
+            return Response({'detail': 'Write what is to be done.'}, status=status.HTTP_400_BAD_REQUEST)
+        due = _parse_date(d.get('due_date')) or timezone.localdate()
+        who = request.user
+        if d.get('assigned_to') and str(d.get('assigned_to')) != str(request.user.id):
+            who = _company_users(request).filter(pk=d.get('assigned_to')).first()
+            if who is None:
+                return Response({'detail': 'Choose a user of this company.'}, status=status.HTTP_400_BAD_REQUEST)
+        typ = d.get('activity_type') if d.get('activity_type') in dict(Activity.TYPES) else 'todo'
+        a = Activity.objects.create(model='personal', object_id=str(who.id), record_label='Personal', screen='', page='/main-sidebar/todo',
+                                    activity_type=typ, summary=summary[:255], note=str(d.get('note') or '')[:5000], due_date=due,
+                                    assigned_to=who, created_by=request.user)
+        if who.id != request.user.id:
+            try:
+                from . import collab as C
+                C._bell(who, f'To-do from {uname(request.user)}: {a.summary}', a.note[:300], a.page, 'personal', a.id)
+            except Exception:
+                pass
+        return Response(act_json(a), status=status.HTTP_201_CREATED)
+
+
 class UsersView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -505,6 +630,46 @@ class FieldScreensView(APIView):
         for d in FieldDef.objects.filter(active=True):
             counts[d.screen] = counts.get(d.screen, 0) + 1
         return Response({'counts': counts})
+
+
+class FormLayoutView(APIView):
+    """v1.39.0: the arrangement of a screen's form (drag and drop in the form layout designer). GET ?screen= → {layout, can_design};
+    PUT {screen, data} saves it for the company; DELETE ?screen= puts the form back as built."""
+    permission_classes = [IsAuthenticated]
+
+    def _can(self, request):
+        return has_code(request, 'add_fielddef', 'change_fielddef', 'view_emp_customfield', 'add_emp_customfield')
+
+    def get(self, request):
+        screen = request.query_params.get('screen') or ''
+        row = FormLayout.objects.filter(screen=screen).first() if screen else None
+        return Response({'screen': screen, 'layout': row.data if row else None, 'can_design': self._can(request),
+                         'updated_at': row.updated_at if row else None})
+
+    def put(self, request):
+        if not self._can(request):
+            return Response({'detail': 'You may not change the form layout.'}, status=status.HTTP_403_FORBIDDEN)
+        screen = str(request.data.get('screen') or '')[:255]
+        data = request.data.get('data') or {}
+        if not screen or not isinstance(data, dict) or not isinstance(data.get('blocks', []), list):
+            return Response({'detail': 'screen and data.blocks are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        blocks = []
+        for b in data.get('blocks', [])[:400]:
+            if not isinstance(b, dict) or not str(b.get('key') or ''):
+                continue
+            blocks.append({'key': str(b['key'])[:200], 'width': str(b.get('width') or '')[:10], 'hidden': bool(b.get('hidden'))})
+        sections = [{'before': str(x.get('before') or '')[:200], 'title': str(x.get('title') or '')[:80]}
+                    for x in (data.get('sections') or [])[:60] if isinstance(x, dict) and x.get('title')]
+        _, model = model_of(request, screen)[0::2] if screen else (None, None)
+        row, _ = FormLayout.objects.update_or_create(screen=screen, defaults={'data': {'blocks': blocks, 'sections': sections},
+                                                                               'model': model_key(model) if model else '', 'updated_by': request.user})
+        return Response({'screen': screen, 'layout': row.data, 'can_design': True})
+
+    def delete(self, request):
+        if not self._can(request):
+            return Response({'detail': 'You may not change the form layout.'}, status=status.HTTP_403_FORBIDDEN)
+        FormLayout.objects.filter(screen=request.query_params.get('screen') or '').delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class FieldsView(APIView):
@@ -1095,6 +1260,21 @@ class OrgChartView(APIView):
         by_user = {}
         for e in emp_master.objects.exclude(users=None).only('id', 'users'):
             by_user[e.users_id] = e.id
+        dotted, seconded = {}, {}
+        try:   # v1.58.0 matrix reporting: functional (dotted-line) manager and active assignments per employee
+            from ZeoHR import matrix as MX
+            from ZeoHR.models import MatrixLink
+            from Translations.i18n import tr as _tr
+            ids = [e.id for e in emps]
+            for m in MatrixLink.objects.filter(employee_id__in=ids):
+                if MX.matrix_link(m.employee_id) is not None and by_user.get(m.functional_manager_id):
+                    dotted[m.employee_id] = {'manager': by_user[m.functional_manager_id], 'area': m.area}
+            for a in MX.active_on(ids):
+                where = a.project.title if a.project_id else (a.department.dept_name if a.department_id else (a.host_branch.branch_name if a.host_branch_id else ''))
+                seconded.setdefault(a.employee_id, []).append({'kind': _tr(a.get_kind_display()), 'where': where, 'percent': MX.pct(a.percent),
+                                                               'manager': by_user.get(a.manager_id) if a.manager_id else None})
+        except Exception:
+            pass
         out = []
         for e in emps:
             mgr = by_user.get(e.emp_reporting_manager_id) if getattr(e, 'emp_reporting_manager_id', None) else None
@@ -1110,5 +1290,6 @@ class OrgChartView(APIView):
                         'department': str(e.emp_dept_id) if e.emp_dept_id_id else '',
                         'branch': str(e.emp_branch_id) if e.emp_branch_id_id else '',
                         'email': getattr(e, 'emp_personal_email', '') or '', 'photo': photo,
-                        'manager': mgr if mgr != e.id else None})
+                        'manager': mgr if mgr != e.id else None,
+                        'dotted': dotted.get(e.id), 'assignments': seconded.get(e.id, [])})
         return Response(out)

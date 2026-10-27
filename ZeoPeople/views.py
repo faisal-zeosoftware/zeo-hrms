@@ -593,3 +593,56 @@ class ChatUnreadView(Base):
     def get(self, request):
         n = ChatMessage.objects.filter(conversation__members=request.user).exclude(sender=request.user).exclude(read_by__contains=[request.user.pk]).count()
         return Response({'unread': n})
+
+
+# ------------------------------------------------------------------ v1.61.0 insurer member file
+class InsurerFileView(Base):
+    """GET ?plan=<id>&on=YYYY-MM-DD[&since=YYYY-MM-DD]&file=csv|xlsx – the members of a medical plan (or the changes
+    since a date) for the insurer. Benefits administrators and People managers."""
+
+    @guard
+    def get(self, request):
+        from datetime import date as _date
+        from . import insurer as INS
+        from .models import BenefitPlan, Enrolment
+        if not app.any(request, 'ppl_manager', 'ppl_benefits'):
+            raise AppError('Only the benefits administrator and the People manager can make the insurer file.', status=403)
+        q = request.query_params
+        plan = BenefitPlan.objects.filter(pk=q.get('plan')).first() if str(q.get('plan') or '').isdigit() else None
+        if plan is None:
+            raise AppError('Choose the plan.', 'plan')
+        try:
+            on = _date.fromisoformat(q['on'][:10]) if q.get('on') else today()
+            since = _date.fromisoformat(q['since'][:10]) if q.get('since') else None
+        except ValueError:
+            raise AppError('Give the dates as YYYY-MM-DD.')
+        if since and since > on:
+            raise AppError('"Changes since" must be before the member date.', 'since')
+        only = set(app.regs['enrolment'].scope(request).values_list('pk', flat=True))
+        rs = INS.rows(plan, on, since, only)
+        fmt = (q.get('file') or 'json').lower()   # not ?format= (that one picks the DRF renderer)
+        stem = f'{plan.code}-{"changes-" + since.isoformat() + "-to-" if since else "members-"}{on.isoformat()}'
+        if fmt == 'csv':
+            resp = HttpResponse(INS.as_csv(rs), content_type='text/csv; charset=utf-8')
+            resp['Content-Disposition'] = f'attachment; filename="{stem}.csv"'
+            return resp
+        if fmt == 'xlsx':
+            resp = HttpResponse(INS.as_xlsx(rs, plan, on, since), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            resp['Content-Disposition'] = f'attachment; filename="{stem}.xlsx"'
+            return resp
+        plans = [{'id': p.pk, 'name': p.name, 'provider': p.provider, 'policy_no': p.policy_no, 'covers_dependants': p.covers_dependants}
+                 for p in BenefitPlan.objects.filter(kind='medical', is_active=True).order_by('name')]
+        return Response({'plan': {'id': plan.pk, 'name': plan.name, 'provider': plan.provider, 'policy_no': plan.policy_no},
+                         'on': on, 'since': since, 'columns': [{'key': k, 'label': l} for k, l in INS.COLUMNS], 'rows': rs,
+                         'principals': sum(1 for r in rs if r['member_type'] == 'Principal'), 'dependants': sum(1 for r in rs if r['member_type'] != 'Principal'),
+                         'problems': INS.problems(rs), 'plans': plans})
+
+
+class InsurerPlansView(Base):
+    @guard
+    def get(self, request):
+        from .models import BenefitPlan
+        if not app.any(request, 'ppl_manager', 'ppl_benefits'):
+            raise AppError('Only the benefits administrator and the People manager can make the insurer file.', status=403)
+        return Response({'plans': [{'id': p.pk, 'name': p.name, 'provider': p.provider, 'policy_no': p.policy_no, 'covers_dependants': p.covers_dependants}
+                                   for p in BenefitPlan.objects.filter(kind='medical', is_active=True).order_by('name')]})

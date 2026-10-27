@@ -11,7 +11,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from django.apps import apps
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from .models import (ZERO, AdvanceApplication, Expense, ExpenseAdvance, ExpenseApproval, ExpenseCategory, ExpensePolicy,
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 M = apps.get_model
 TWO = Decimal('0.01')
 DEFAULT_ROLES = ['reporting_manager', 'branch_hr']
-ROLE_LABELS = {'reporting_manager': 'Reporting manager', 'manager_of_manager': "Manager's manager", 'branch_hr': 'Branch HR / finance',
+ROLE_LABELS = {'functional_manager': 'Functional (dotted-line) manager', 'reporting_manager': 'Reporting manager', 'manager_of_manager': "Manager's manager", 'branch_hr': 'Branch HR / finance',
                'department_head': 'Department head', 'company_hr': 'Company HR', 'admin': 'Company admin'}
 # currencies pegged to the US dollar – used when no exchange rate is given
 PEGGED_AED = {'AED': Decimal('1'), 'USD': Decimal('3.6725'), 'SAR': Decimal('0.979333'), 'QAR': Decimal('1.008929'),
@@ -180,6 +180,30 @@ def check_expense(exp, policy, report=None):
             if rep_total > lim.per_report_limit:
                 out.append({'code': 'per_report', 'level': lvl,
                             'message': f'{cat.name}: AED {rep_total:,.2f} in this report is over the report limit of AED {lim.per_report_limit:,.2f}.'})
+        if getattr(lim, 'per_month_limit', None) is not None:   # v1.50.0
+            mon = Expense.objects.filter(employee_id=exp.employee_id, category_id=cat.pk, date__year=exp.date.year,
+                                         date__month=exp.date.month).exclude(status='rejected')
+            if exp.pk:
+                mon = mon.exclude(pk=exp.pk)
+            mon_total = money((mon.aggregate(s=Sum('amount_aed'))['s'] or ZERO) + amt)
+            if mon_total > lim.per_month_limit:
+                out.append({'code': 'per_month', 'level': lvl,
+                            'message': f'{cat.name}: AED {mon_total:,.2f} in {exp.date:%B %Y} is over the monthly limit of AED {lim.per_month_limit:,.2f}.'})
+    # v1.50.0 the same expense twice (same day and amount) and a claim that differs from the receipt
+    if exp.date and amt:
+        dup = Expense.objects.filter(employee_id=exp.employee_id, date=exp.date, amount_aed=amt).exclude(status='rejected')
+        if exp.pk:
+            dup = dup.exclude(pk=exp.pk)
+        if dup.exists():
+            out.append({'code': 'duplicate', 'level': 'warn', 'message': f'Possible duplicate: another expense of AED {amt:,.2f} on {exp.date:%d/%m/%Y}.'})
+    rr = getattr(exp, 'receipt_read', None) or {}
+    try:
+        ra = Decimal(str(rr.get('amount') or '0'))
+    except Exception:
+        ra = ZERO
+    if ra > 0 and exp.amount is not None and (rr.get('currency') or exp.currency) == exp.currency and abs(money(exp.amount) - ra) > Decimal('0.99'):
+        out.append({'code': 'receipt_amount', 'level': 'warn',
+                    'message': f'The receipt says {exp.currency} {ra:,.2f}; the claim is {exp.currency} {money(exp.amount):,.2f}.'})
     return out
 
 
@@ -553,6 +577,7 @@ def act_trip(trip, user, action, note='', is_admin=False):
                 ExpenseAdvance.objects.create(number=next_number(ExpenseAdvance, 'ADV'), employee_id=trip.employee_id, branch_id=trip.branch_id,
                                               trip=trip, amount=trip.advance_requested, date=date.today(), purpose=f'Trip {trip.number}: {trip.purpose}'[:200],
                                               status='approved', approved_by_id=user.pk, created_by_id=user.pk)
+            trip_approved(trip, user)
     elif action == 'reject':
         if not (note or '').strip():
             raise ExpenseError(tr('Give a reason.'))
@@ -662,3 +687,116 @@ def analytics(qs):
 
 def category_kinds():
     return dict(ExpenseCategory.KINDS)
+
+
+# ------------------------------------------------------------------ v1.50.0 travel requests: booking, air ticket, journey
+def travel_desk_users():
+    """Users who book trips: those with the right to change trips (permission groups of this company), else the company
+    administrator."""
+    out = []
+    try:
+        from django.contrib.auth.models import Group
+        from AccessControl.access import company_perms   # only the users of the open company
+        groups = Group.objects.filter(permissions__codename='change_trip')
+        out = [u.profile for u in company_perms().filter(groups__in=groups).select_related('profile').distinct()
+               if u.profile and u.profile.is_active][:10]
+    except Exception:
+        log.debug('travel desk users', exc_info=True)
+    if not out:
+        a = _admin_user()
+        out = [a] if a else []
+    return out
+
+
+def trip_approved(trip, user):
+    """An approved trip: the employee's air-ticket entitlement is used (an air-ticket request is made), or the travel desk
+    is asked to book the ticket / hotel."""
+    msgs = []
+    if trip.needs_ticket and trip.use_ticket_entitlement and not trip.ticket_request_id:
+        Alloc = M('PayrollManagement', 'AirTicketAllocation')
+        Req = M('PayrollManagement', 'AirTicketRequest')
+        emp = employee(trip.employee_id)
+        al = Alloc.objects.filter(employee_id=trip.employee_id, remaining_amount__gt=0).exclude(status='REJECTED').order_by(
+            'expiry_date').first()
+        if al is not None and emp is not None:
+            r = Req.objects.create(document_number=f'{trip.number}-TKT', branch_id=emp.emp_branch_id_id, employee=emp, allocation=al,
+                                   request_type='TICKET', request_date=date.today(), departure_date=trip.start_date, return_date=trip.end_date,
+                                   origin=trip.from_place[:100], destination=trip.to_place[:100], notes=f'Trip {trip.number}: {trip.purpose}'[:500],
+                                   created_by=user if getattr(user, 'pk', None) else None)
+            trip.ticket_request_id = r.pk
+            msgs.append('air ticket requested from the entitlement')
+        else:
+            trip.booking_note = 'No air-ticket entitlement with a balance – the travel desk books the ticket.'
+    needs_desk = (trip.needs_ticket and not trip.ticket_request_id) or trip.needs_hotel
+    if needs_desk and trip.booking_status in ('', None):
+        trip.booking_status = 'to_book'
+        for u in travel_desk_users():
+            _notify(u, f'Trip {trip.number} to book', f'{trip.purpose} – {trip.from_place} → {trip.to_place}, {trip.start_date:%d/%m/%Y} – '
+                    f'{trip.end_date:%d/%m/%Y}' + (' · ticket' if trip.needs_ticket else '') + (f' · hotel {trip.hotel_nights} night(s)' if trip.needs_hotel else ''))
+    trip.save(update_fields=['ticket_request_id', 'booking_status', 'booking_note'])
+    return msgs
+
+
+@transaction.atomic
+def book_trip(trip, user, reference, cost=None, note='', cancel=False):
+    if trip.status not in ('approved', 'closed'):
+        raise ExpenseError(tr('Only an approved trip is booked.'))
+    if cancel:
+        trip.booking_status = 'cancelled'
+    else:
+        if not (reference or '').strip():
+            raise ExpenseError(tr('Give the booking reference (PNR / confirmation number).'))
+        trip.booking_status, trip.booking_ref = 'booked', reference.strip()[:100]
+        trip.booking_cost = money(cost or 0)
+    trip.booking_note = (note or trip.booking_note or '')[:255]
+    trip.booked_by_id = user.pk
+    trip.save(update_fields=['booking_status', 'booking_ref', 'booking_cost', 'booking_note', 'booked_by_id'])
+    emp = employee(trip.employee_id)
+    for u in own_users(emp) if emp else []:
+        _notify(u, f'Trip {trip.number} booked' if not cancel else f'Trip {trip.number} booking cancelled',
+                f'{trip.purpose}: {trip.booking_ref}' + (f' – {trip.booking_note}' if trip.booking_note else ''))
+    return trip
+
+
+def own_users(emp):
+    U = M('UserManagement', 'CustomUser')
+    return list(U.objects.filter(pk__in=own_user_ids(emp)))
+
+
+def trip_journey(trip):
+    """The steps of a trip: request → approval → advance → ticket / booking → expenses → settlement."""
+    steps = []
+    steps.append({'step': 'Requested', 'state': 'done' if trip.status != 'draft' else 'now', 'detail': f'{trip.from_place} → {trip.to_place}' if trip.to_place else '',
+                  'date': trip.created_at.date() if trip.created_at else None})
+    appr = {'draft': 'todo', 'submitted': 'now', 'approved': 'done', 'closed': 'done', 'rejected': 'stop'}[trip.status]
+    last = trip.approvals.exclude(acted_at=None).order_by('-acted_at').first()
+    steps.append({'step': 'Approved' if trip.status in ('approved', 'closed') else ('Rejected' if trip.status == 'rejected' else 'Approval'),
+                  'state': appr, 'detail': (last.note if last and last.note else ''), 'date': last.acted_at.date() if last and last.acted_at else None})
+    advs = list(trip.advances.all())
+    if trip.advance_requested or advs:
+        paid = sum((a.amount for a in advs if a.status in ('paid', 'settled')), ZERO)
+        st = 'done' if advs and all(a.status in ('paid', 'settled') for a in advs) else ('now' if advs else 'todo')
+        steps.append({'step': 'Advance', 'state': st, 'detail': ', '.join(f'{a.number} AED {a.amount:,.2f} {a.get_status_display().lower()}' for a in advs)
+                      or f'AED {trip.advance_requested:,.2f} requested', 'date': None, 'amount': str(paid)})
+    if trip.needs_ticket or trip.needs_hotel:
+        if trip.ticket_request_id:
+            r = M('PayrollManagement', 'AirTicketRequest').objects.filter(pk=trip.ticket_request_id).first()
+            steps.append({'step': 'Air ticket (entitlement)', 'state': 'done' if r and r.status in ('APPROVED', 'PROCESSED') else ('stop' if r and r.status == 'REJECTED' else 'now'),
+                          'detail': f'{r.document_number} {r.get_status_display().lower()}' if r else 'request removed', 'date': r.request_date if r else None})
+        if trip.booking_status or not trip.ticket_request_id:
+            what = ' and '.join(x for x in (('ticket' if trip.needs_ticket and not trip.ticket_request_id else ''),
+                                            (f'hotel ({trip.hotel_nights} nights)' if trip.needs_hotel else '')) if x)
+            steps.append({'step': f'Booking – {what}' if what else 'Booking', 'state': {'booked': 'done', 'cancelled': 'stop', 'to_book': 'now'}.get(trip.booking_status, 'todo'),
+                          'detail': (f'{trip.booking_ref} · AED {trip.booking_cost:,.2f}' if trip.booking_status == 'booked' else trip.booking_note or ''), 'date': None})
+    reps = list(trip.reports.all())
+    spent = sum((r.total for r in reps if r.status not in ('rejected',)), ZERO)
+    steps.append({'step': 'Expenses', 'state': 'done' if reps and all(r.status in ('approved', 'reimbursed') for r in reps) else ('now' if reps else 'todo'),
+                  'detail': ', '.join(f'{r.number} AED {r.total:,.2f} {r.get_status_display().lower()}' for r in reps) or 'No expense report yet',
+                  'date': None, 'amount': str(spent)})
+    adv_paid = sum((a.amount for a in advs if a.status in ('paid', 'settled')), ZERO)
+    bal = money(spent - adv_paid)
+    steps.append({'step': 'Settlement', 'state': 'done' if trip.status == 'closed' else ('now' if reps else 'todo'),
+                  'detail': ('Company pays the employee AED {:,.2f}'.format(bal) if bal > 0 else
+                             ('Employee returns AED {:,.2f} of the advance'.format(-bal) if bal < 0 else 'Even')) if (reps or adv_paid) else '',
+                  'date': None, 'amount': str(bal)})
+    return steps

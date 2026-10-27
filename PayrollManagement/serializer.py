@@ -194,6 +194,8 @@ class PayrollRunSerializer(serializers.ModelSerializer):
         if cache is not None and instance.pk in cache:
             return dict(cache[instance.pk])
         rep = self._rep(instance)
+        if self.parent is not None:   # v1.56.1 nested in each payslip: not the run's list of every employee id (86 MB for 7,500 payslips)
+            rep.pop('employees', None)
         if cache is not None:
             cache[instance.pk] = rep
         return rep
@@ -480,13 +482,19 @@ class PayslipSerializer(serializers.ModelSerializer):
         # Normal payslip only shows components where
         # show_in_payslip=True
 
-        payslip_components = (
-            obj.components
-            .filter(
-                component__show_in_payslip=True
+        # v1.56.1 (release checklist §16): read the prefetched rows of the list (two queries per payslip before – 7,500 payslips
+        # took minutes); a single payslip without the prefetch reads them as before
+        pf = getattr(obj, '_prefetched_objects_cache', {}) or {}
+        if 'components' in pf:
+            payslip_components = [c for c in obj.components.all() if c.component_id and c.component.show_in_payslip]
+        else:
+            payslip_components = (
+                obj.components
+                .filter(
+                    component__show_in_payslip=True
+                )
+                .select_related('component')
             )
-            .select_related('component')
-        )
 
         payslip_components_data = PaySlipComponentSerializer(
             payslip_components,
@@ -495,21 +503,35 @@ class PayslipSerializer(serializers.ModelSerializer):
 
         # Only active salary structure components
         # which are also visible in payslip
-        salary_structures = (
-            obj.employee.salary_structures
-            .filter(
-                is_active=True,
-                component__show_in_payslip=True
-            )
-            .select_related('component')
-        )
+        epf = getattr(obj.employee, '_prefetched_objects_cache', {}) or {}
+        # v1.62.0 speed: in a list the salary lines of an employee are read and serialised once (the same query and order
+        # as before, but not again for each of the employee's payslips – Payslip approvals asked it ~280 times)
+        ss_memo = None
+        if self.parent is not None and isinstance(self.context, dict):
+            ss_memo = self.context.setdefault('_payslip_ss', {})
+        if ss_memo is not None and obj.employee_id in ss_memo:
+            salary_structures_data = ss_memo[obj.employee_id]
+        else:
+            if 'salary_structures' in epf:
+                salary_structures = [x for x in obj.employee.salary_structures.all() if x.is_active and x.component_id and x.component.show_in_payslip]
+            else:
+                salary_structures = (
+                    obj.employee.salary_structures
+                    .filter(
+                        is_active=True,
+                        component__show_in_payslip=True
+                    )
+                    .select_related('component')
+                )
 
-        salary_structures_data = (
-            EmployeeSalaryStructureSerializer(
-                salary_structures,
-                many=True
-            ).data
-        )
+            salary_structures_data = (
+                EmployeeSalaryStructureSerializer(
+                    salary_structures,
+                    many=True
+                ).data
+            )
+            if ss_memo is not None:
+                ss_memo[obj.employee_id] = salary_structures_data
 
         combined = []
 
@@ -653,34 +675,54 @@ class PayslipConfirmedSerializer(serializers.ModelSerializer):
         # Confirmed payslip also only shows
         # show_in_payslip=True
 
-        payslip_components = (
-            obj.components
-            .filter(
-                component__show_in_payslip=True
+        # v1.56.1 (release checklist §16): read the prefetched rows of the list (two queries per payslip before – 7,500 payslips
+        # took minutes); a single payslip without the prefetch reads them as before
+        pf = getattr(obj, '_prefetched_objects_cache', {}) or {}
+        if 'components' in pf:
+            payslip_components = [c for c in obj.components.all() if c.component_id and c.component.show_in_payslip]
+        else:
+            payslip_components = (
+                obj.components
+                .filter(
+                    component__show_in_payslip=True
+                )
+                .select_related('component')
             )
-            .select_related('component')
-        )
 
         payslip_components_data = PaySlipComponentSerializer(
             payslip_components,
             many=True
         ).data
 
-        salary_structures = (
-            obj.employee.salary_structures
-            .filter(
-                is_active=True,
-                component__show_in_payslip=True
-            )
-            .select_related('component')
-        )
+        epf = getattr(obj.employee, '_prefetched_objects_cache', {}) or {}
+        # v1.62.0 speed: in a list the salary lines of an employee are read and serialised once (the same query and order
+        # as before, but not again for each of the employee's payslips – Payslip approvals asked it ~280 times)
+        ss_memo = None
+        if self.parent is not None and isinstance(self.context, dict):
+            ss_memo = self.context.setdefault('_payslip_ss', {})
+        if ss_memo is not None and obj.employee_id in ss_memo:
+            salary_structures_data = ss_memo[obj.employee_id]
+        else:
+            if 'salary_structures' in epf:
+                salary_structures = [x for x in obj.employee.salary_structures.all() if x.is_active and x.component_id and x.component.show_in_payslip]
+            else:
+                salary_structures = (
+                    obj.employee.salary_structures
+                    .filter(
+                        is_active=True,
+                        component__show_in_payslip=True
+                    )
+                    .select_related('component')
+                )
 
-        salary_structures_data = (
-            EmployeeSalaryStructureSerializer(
-                salary_structures,
-                many=True
-            ).data
-        )
+            salary_structures_data = (
+                EmployeeSalaryStructureSerializer(
+                    salary_structures,
+                    many=True
+                ).data
+            )
+            if ss_memo is not None:
+                ss_memo[obj.employee_id] = salary_structures_data
 
         combined = []
 

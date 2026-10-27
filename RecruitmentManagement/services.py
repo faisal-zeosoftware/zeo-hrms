@@ -145,9 +145,11 @@ def accept_offer(offer, user=None):
                                                status='done' if i == 0 else 'pending',
                                                step_date=timezone.localdate() if i == 0 else None)
                                       for i, n in enumerate(steps)])
-    if not offer.onboarding_tasks.exists():
-        OnboardingTask.objects.bulk_create([OnboardingTask(offer=offer, team=t, title=title, due_date=offer.joining_date)
-                                            for t, title in DEFAULT_ONBOARDING_TASKS])
+    # v1.62.0 the HSE link adds its induction / medical tasks when the accepted offer is saved, so "no tasks yet" was never true and
+    # the standard checklist was skipped: add each standard task that is not there yet
+    have = set(offer.onboarding_tasks.values_list('title', flat=True))
+    OnboardingTask.objects.bulk_create([OnboardingTask(offer=offer, team=t, title=title, due_date=offer.joining_date)
+                                        for t, title in DEFAULT_ONBOARDING_TASKS if title not in have])
     job = offer.application.job
     hired = _accepted_offer_count(job)
     if hired >= job.openings and job.status not in ('filled', 'closed'):

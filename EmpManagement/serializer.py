@@ -37,6 +37,17 @@ from UserManagement .models import CustomUser
 
 '''employee set'''
 #EMPLOYEE FAMILY
+
+def _uname(u):
+    """v1.62.0 people: "Name (code)" of a user (HRActions.names), else the login name."""
+    if u is None:
+        return None
+    try:
+        from HRActions.names import user_obj_name
+        return user_obj_name(u) or u.username
+    except Exception:
+        return getattr(u, 'username', None)
+
 class Fam_CustomFieldValueSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         rep = super(Fam_CustomFieldValueSerializer, self).to_representation(instance)
@@ -206,6 +217,24 @@ class DocumentSerializer(serializers.ModelSerializer):
                 else:
                     data['document_type'] = int(value)
 
+        # v1.40.1: the screen echoes emp_id the way GET shows it (the employee's name) or as the employee code;
+        # resolve both to the pk instead of failing with "Expected pk value, received str."
+        if 'emp_id' in data:
+            value = data.get('emp_id')
+            if isinstance(value, str) and value.strip() and not value.strip().isdigit():
+                v = value.strip()
+                emp = emp_master.objects.filter(emp_code__iexact=v).first()
+                if emp is None:
+                    from django.db.models import Value as _V, F
+                    from django.db.models.functions import Concat, Trim, Coalesce
+                    emp = emp_master.objects.annotate(
+                        _full=Trim(Concat(Coalesce(F('emp_first_name'), _V('')), _V(' '), Coalesce(F('emp_last_name'), _V(''))))
+                    ).filter(_full__iexact=v).first()
+                if emp is not None:
+                    data['emp_id'] = emp.pk
+            elif value in ('', None) and self.instance is not None:
+                data.pop('emp_id')   # blank on update keeps the employee
+
         return super().to_internal_value(data)
 
         
@@ -228,6 +257,8 @@ class DocumentSerializer(serializers.ModelSerializer):
         rep = super(DocumentSerializer, self).to_representation(instance)
         if instance.emp_id:
             rep['emp_id'] = f"{instance.emp_id.emp_first_name or ''} {instance.emp_id.emp_last_name or ''}".strip()
+            rep['emp_id_id'] = instance.emp_id_id          # v1.40.1: the pk, for the edit screen
+            rep['employee_code'] = instance.emp_id.emp_code
         # if instance.emp_id:  # Check if emp_state_id is not None
         #     rep['emp_id'] = instance.emp_id.emp_first_name + " " + instance.emp_id.emp_last_name
         if instance.document_type:
@@ -300,17 +331,15 @@ class EmpBankDetailsSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def validate_iban_number(self, value):
-        # v1.13.0: UAE IBAN (AE + 21 digits = 23 characters) with the mod-97 check digits
+        # v1.40.1: one rule for every screen – the company's country decides (UAE: AE + 21 digits; other countries: any
+        # country's IBAN, 15–34 characters), mod-97 check digits; the same check as the employee page and the import
         if value in (None, ''):
             return value
-        import re as _re
-        s = _re.sub(r'\s+', '', str(value)).upper()
-        if not s.startswith('AE') or len(s) != 23 or not s[2:].isdigit():
-            raise serializers.ValidationError('Enter a UAE IBAN: AE followed by 21 digits (23 characters).')
-        moved = s[4:] + s[:4]
-        if int(''.join(str(int(ch, 36)) for ch in moved)) % 97 != 1:
-            raise serializers.ValidationError('This IBAN is not valid (the check digits do not match). Copy it again from the bank letter.')
-        return s
+        from EmployeeProfile.validators import clean_iban
+        try:
+            return clean_iban(value) or None
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
 
 class EmpBankBulkuploadSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True)
@@ -377,8 +406,37 @@ class EmployeeFilterSerializer(serializers.ModelSerializer):
         model = emp_master
         fields = ['id','emp_code', 'emp_first_name', 'emp_last_name']
 
+def _request_details(req, request=None):   # v1.40.1: what the approver needs to see on the approvals page (general / document requests)
+    if req is None:
+        return {}
+    emp = getattr(req, 'employee', None)
+    rt = getattr(req, 'request_type', None)
+    d = {
+        'id': req.id,
+        'document_number': req.document_number,
+        'employee': getattr(emp, 'emp_code', None),
+        'employee_name': ' '.join(x for x in [getattr(emp, 'emp_first_name', ''), getattr(emp, 'emp_last_name', '')] if x).strip() if emp else '',
+        'request_type': getattr(rt, 'name', None) or getattr(rt, 'type_name', None) or '',
+        'reason': req.reason,
+        'total': getattr(req, 'total', None),
+        'remarks': req.remarks,
+        'status': req.status,
+        'branch': getattr(getattr(req, 'branch', None), 'branch_name', None),
+        'created_at_date': req.created_at_date,
+        'document_url': '',
+    }
+    doc = getattr(req, 'request_document', None)
+    if doc:
+        try:
+            d['document_url'] = request.build_absolute_uri(doc.url) if request else doc.url
+        except Exception:
+            d['document_url'] = ''
+    return d
+
+
 class ApprovalSerializer(serializers.ModelSerializer):
     delegation_details = serializers.SerializerMethodField()
+    request_details = serializers.SerializerMethodField()   # v1.40.1
 
     class Meta:
         model = Approval
@@ -388,17 +446,23 @@ class ApprovalSerializer(serializers.ModelSerializer):
         return {
             "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
             "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "delegate_to_name": _uname(obj.deligate_to),   # v1.62.0 people
             "response": obj.deligate_response,
             "is_deligate": obj.is_deligate,
         }
+
+    def get_request_details(self, obj):   # v1.40.1
+        return _request_details(obj.general_request, self.context.get('request'))
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
 
         if instance.general_request:
             rep['general_request'] = instance.general_request.document_number
+            rep['employee_id'] = getattr(instance.general_request.employee, 'emp_code', None)   # v1.40.1
         if instance.approver:
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         if instance.deligate_to:
             rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
         return rep
@@ -465,25 +529,14 @@ class DocRequestSerializer(serializers.ModelSerializer):
                     request_type=request_type
                 ).first()
 
-            if not workflow:
-                raise serializers.ValidationError({
-                    "approval": "Approval workflow is not configured."
-                })
-
-            approval_type = workflow.approval_type
+            # v1.40.1: no workflow / no level for this document type -> the request is approved automatically by the
+            # post_save signal (like leave, loans, advances since 1.37.1); it used to be refused with "Approval workflow is not configured."
+            approval_type = workflow.approval_type if workflow else 'no_approval'
 
             if approval_type == "reporting_manager":
                 if not employee.emp_reporting_manager:
                     raise serializers.ValidationError({
-                        "reporting_manager": "Employee has no reporting manager."
-                    })
-
-            elif approval_type == "multi_approval":
-                first_level = workflow.document_levels.order_by("level").first()
-
-                if not first_level:
-                    raise serializers.ValidationError({
-                        "approval": "No approval levels configured for this workflow."
+                        "reporting_manager": "Employee has no reporting manager. Set it in Employee Master before raising this request."
                     })
 
         return data
@@ -773,7 +826,10 @@ class EmpSerializer(serializers.ModelSerializer):
         cache = getattr(instance, '_prefetched_objects_cache', None)
         if cache is None:
             cache = instance._prefetched_objects_cache = {}
+        wanted = {f.source for f in self.fields.values() if getattr(f, 'source', None)}   # v1.56.1 the light list leaves them out
         for rel, fk, label in self._SHARED_LINKS:
+            if rel not in wanted:
+                continue
             manager = getattr(instance, rel, None)
             if manager is None or rel in cache:
                 continue
@@ -814,6 +870,7 @@ class EmpSerializer(serializers.ModelSerializer):
             rep['emp_relegion'] =instance.emp_relegion.religion
         if instance.emp_reporting_manager:
             rep['emp_reporting_manager'] =instance.emp_reporting_manager.username
+            rep['emp_reporting_manager_name'] = _uname(instance.emp_reporting_manager)   # v1.62.0 people: the person's name (the login name stays in 'emp_reporting_manager')
         if instance.work_location:
                     rep['work_location'] =instance.work_location.branch_name
         if instance.visa_location:
@@ -836,8 +893,35 @@ class EmpSerializer(serializers.ModelSerializer):
                     linked.save(update_fields=['is_active'])
         return super().update(instance, validated_data)        
     
+    def _holidays_in_list(self, obj):
+        """v1.62.0 speed: in the employee list the holiday assignments are read once and the holidays of the same set of
+        calendars are serialised once (5 queries per employee before). Same calendars and holidays as below."""
+        from calendars.serializer import HolidaySerializer
+        ctx = self.context
+        if ctx.get('_emp_hol_assign') is None:
+            rows = []
+            for a in assign_holiday.objects.prefetch_related('branch', 'department', 'category', 'employee'):
+                rows.append((a.related_to, a.holiday_model_id, {x.pk for x in a.branch.all()}, {x.pk for x in a.department.all()},
+                             {x.pk for x in a.category.all()}, {x.pk for x in a.employee.all()}))
+            ctx['_emp_hol_assign'] = rows
+            ctx['_emp_hol_data'] = {}
+        cals = set()
+        for rel, cal, br, dp, ct, em in ctx['_emp_hol_assign']:
+            if (rel == 'branch' and obj.emp_branch_id_id and obj.emp_branch_id_id in br) or \
+               (rel == 'department' and obj.emp_dept_id_id and obj.emp_dept_id_id in dp) or \
+               (rel == 'category' and obj.emp_ctgry_id_id and obj.emp_ctgry_id_id in ct) or \
+               (rel == 'employee' and obj.pk in em):
+                cals.add(cal)
+        key = frozenset(cals)
+        if key not in ctx['_emp_hol_data']:
+            holidays = holiday.objects.filter(calendar__in=cals).order_by('start_date', 'id')
+            ctx['_emp_hol_data'][key] = HolidaySerializer(holidays, many=True).data
+        return ctx['_emp_hol_data'][key]
+
     def get_holidays(self, obj):
         from calendars.serializer import HolidaySerializer
+        if isinstance(self.context, dict) and self.parent is not None and getattr(self.context.get('view'), 'action', '') == 'list':
+            return self._holidays_in_list(obj)
 
         # Collect all applicable holiday calendars for this employee
         holiday_calendars = set()
@@ -1089,6 +1173,8 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
         warn_if_email_not_configured()
         request_type = data.get("request_type")
         employee = data.get("employee")
+        if request_type is None or employee is None:   # v1.40.1: partial update (approve / remarks) has neither
+            return data
 
         if request_type.use_common_workflow:
             first_level = CommonWorkflow.objects.order_by("level").first()
@@ -1098,7 +1184,7 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
                     "approval": "Approval levels are not configured."
                 })
 
-            approval_type = first_level.approval_type
+            approval_type = 'multi_approval'   # v1.40.1: CommonWorkflow has no approval_type (AttributeError before)
 
         else:
             workflow = ApprovalWorkflow.objects.filter(
@@ -1111,21 +1197,9 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
                     request_type=request_type
                 ).first()
 
-            if not workflow:
-                raise serializers.ValidationError({
-                    "approval": "Approval workflow is not configured."
-                })
-
-            first_level = workflow.levels.order_by("level").first()
-            if not first_level:
-                first_level = ApprovalLevel.objects.create(
-                    workflow=workflow,
-                    level=1,
-                    role="Auto Level",
-                    approver=None
-                )
-
-            approval_type = workflow.approval_type
+            # v1.40.1: no workflow / no level for this request type -> approved automatically by the post_save signal
+            # (like leave, loans, advances since 1.37.1); it used to be refused with "Approval workflow is not configured."
+            approval_type = workflow.approval_type if workflow else 'no_approval'
 
         if approval_type == "reporting_manager" and not employee.emp_reporting_manager:
             raise serializers.ValidationError({
@@ -1159,19 +1233,52 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
         
         
     
+def _workflow_levels(approval_type, levels_data, level_model):
+    """v1.40.1: the level rows a workflow gets from the form. No approval / reporting manager have one fixed level
+    (the form still sends an empty row with approver 0 - it used to fail with 'Invalid pk "0"' / 'levels: This field is required');
+    multi approval needs an approver on every level and the levels are numbered 1..n in the order given."""
+    if approval_type == 'reporting_manager':
+        return [{'level': 1, 'role': 'Reporting Manager', 'approver': None}]
+    if approval_type != 'multi_approval':
+        return [{'level': 1, 'role': 'Auto Level', 'approver': None}]
+    out = []
+    for i, ld in enumerate(levels_data or []):
+        ld = dict(ld)
+        ld.pop('workflow', None)
+        if not ld.get('approver'):
+            raise serializers.ValidationError({'levels': [f'Level {i + 1}: choose an approver (or change the approval type to "No approval").']})
+        ld['level'] = i + 1
+        out.append(ld)
+    if not out:
+        raise serializers.ValidationError({'levels': ['Add at least one approval level with an approver (or choose "No approval").']})
+    return out
+
+
 class ApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = ApprovalLevel
         fields = ['id', 'level', 'role', 'approver', 'escalate_to', 'escalate_after_days', 'escalate_after_hours', 'escalate_after_minutes']
+        extra_kwargs = {'role': {'required': False, 'allow_blank': True, 'allow_null': True}, 'level': {'required': False}}   # v1.40.1
+
+    def to_internal_value(self, data):   # v1.40.1: the form sends 0 / '' for "no approver"
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        for k in ('approver', 'escalate_to'):
+            if data.get(k) in (0, '0', '', 'null', None):
+                data[k] = None
+        if data.get('level') in ('', None):
+            data['level'] = 1
+        return super().to_internal_value(data)
+
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         if instance.approver:
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         return rep
 
 
 class ApprovalWorkflowSerializer(serializers.ModelSerializer):
-    levels = ApprovalLevelSerializer(many=True)
+    levels = ApprovalLevelSerializer(many=True, required=False)   # v1.40.1: not needed for "No approval" / "Reporting manager"
     # created_by = serializers.HiddenField(default=serializers.CurrentUserDefault())
 
     class Meta:
@@ -1190,6 +1297,7 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
         levels_data = validated_data.pop('levels', [])
         branches = validated_data.pop('branch', [])
 
+        levels_data = _workflow_levels(validated_data.get('approval_type'), levels_data, ApprovalLevel)   # v1.40.1
         replace_existing_workflows(ApprovalWorkflow, branches, request_type=validated_data.get('request_type'))  # latest configuration wins
         workflow = ApprovalWorkflow.objects.create(**validated_data)
         workflow.branch.set(branches)
@@ -1219,14 +1327,14 @@ class ApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches is not None:
             instance.branch.set(branches)
 
-        if levels_data is not None:
+        if levels_data is not None or instance.approval_type != 'multi_approval':   # v1.40.1: a type change rewrites the fixed level too
 
             instance.levels.all().delete()
 
             # existing logic
             if instance.approval_type == 'multi_approval':
 
-                for level_data in levels_data:
+                for level_data in _workflow_levels('multi_approval', levels_data, ApprovalLevel):   # v1.40.1
                     ApprovalLevel.objects.create(
                         workflow=instance,
                         **level_data
@@ -1269,14 +1377,22 @@ class NotificationSettingsSerializer(serializers.ModelSerializer):
                 if not isinstance(value, (list, tuple)):
                     value = [value]
 
+                # v1.62.0 reports (P1-6): one setting per branch AND document type – the expiry task looks them up by both
+                # (a second document type of a branch was refused, so only one type could ever alert)
+                dt = (getattr(self, 'initial_data', None) or {}).get('document_type') if hasattr(self, 'initial_data') else None
+                if dt is None and instance is not None:
+                    dt = instance.document_type_id
                 qs = NotificationSettings.objects.filter(branch__in=value)
+                dt_id = getattr(dt, 'pk', dt)
+                if str(dt_id or '').isdigit():
+                    qs = qs.filter(document_type_id=int(dt_id))
 
                 if instance:
                     qs = qs.exclude(id=instance.id)
 
                 if qs.exists():
                     raise serializers.ValidationError(
-                        "One or more selected branches already have notification settings."
+                        "One or more selected branches already have notification settings for this document type."
                     )
 
                 return value
@@ -1315,6 +1431,7 @@ class DocRequestTypeSerializer(serializers.ModelSerializer):
 
 class DocApprovalSerializer(serializers.ModelSerializer):
     delegation_details = serializers.SerializerMethodField()
+    request_details = serializers.SerializerMethodField()   # v1.40.1
     class Meta:
         model = DocumentApproval
         fields = '__all__'
@@ -1323,16 +1440,22 @@ class DocApprovalSerializer(serializers.ModelSerializer):
         return {
             "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
             "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "delegate_to_name": _uname(obj.deligate_to),   # v1.62.0 people
             "response": obj.deligate_response,
             "is_deligate": obj.is_deligate,
         }
-    
+
+    def get_request_details(self, obj):   # v1.40.1
+        return _request_details(obj.document_request, self.context.get('request'))
+
     def to_representation(self, instance):
         rep = super(DocApprovalSerializer, self).to_representation(instance)
-        if instance.approver:  
+        if instance.approver:
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         if instance.document_request:
             rep['document_request'] = instance.document_request.document_number
+            rep['employee_id'] = getattr(instance.document_request.employee, 'emp_code', None)   # v1.40.1
         if instance.deligate_to:
             rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
         return rep
@@ -1347,12 +1470,15 @@ class DocApprovalLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentApprovalLevel
         fields = '__all__'
+        extra_kwargs = {'role': {'required': False, 'allow_blank': True, 'allow_null': True}, 'level': {'required': False}}   # v1.40.1
 
     def to_internal_value(self, data):
-        data = data.copy()
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
 
-        if data.get("approver") in [0, "0", ""]:
+        if data.get("approver") in [0, "0", "", "null", None]:
             data["approver"] = None
+        if data.get('level') in ('', None):   # v1.40.1
+            data['level'] = 1
 
         return super().to_internal_value(data)
 
@@ -1360,10 +1486,11 @@ class DocApprovalLevelSerializer(serializers.ModelSerializer):
         rep = super().to_representation(instance)
         if instance.approver:
             rep["approver"] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         return rep
     
 class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
-    levels = DocApprovalLevelSerializer(source='document_levels', many=True)
+    levels = DocApprovalLevelSerializer(source='document_levels', many=True, required=False)   # v1.40.1: not needed for "No approval" / "Reporting manager"
 
     class Meta:
         model = DocumentApprovalWorkflow
@@ -1382,6 +1509,7 @@ class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
 
         if not validated_data.get('request_type'):   # v1.37.1: a workflow without a document type could be saved and was never used
             raise serializers.ValidationError({'request_type': 'Choose the document request type (Requests → Setup → Doc. request types).'})
+        levels_data = _workflow_levels(validated_data.get('approval_type'), levels_data, DocumentApprovalLevel)   # v1.40.1
         replace_existing_workflows(DocumentApprovalWorkflow, branches, request_type=validated_data.get('request_type'))  # latest configuration wins
         workflow = DocumentApprovalWorkflow.objects.create(**validated_data)
         workflow.branch.set(branches)
@@ -1407,24 +1535,17 @@ class DocumentApprovalWorkflowSerializer(serializers.ModelSerializer):
         if branches is not None:
             instance.branch.set(branches)
 
-        if levels_data is not None:
+        if levels_data is not None or instance.approval_type != 'multi_approval':   # v1.40.1: a type change rewrites the fixed level too
+            levels_data = _workflow_levels(instance.approval_type, levels_data, DocumentApprovalLevel)   # v1.40.1
             # ✅ FIX RELATION NAME
             instance.document_levels.all().delete()
 
-            if instance.approval_type == "reporting_manager":
+            for level_data in levels_data:
+                level_data.pop('workflow', None)
                 DocumentApprovalLevel.objects.create(
                     workflow=instance,
-                    level=1,
-                    role="Reporting Manager",
-                    approver=None,
+                    **level_data
                 )
-            else:
-                for level_data in levels_data:
-                    level_data.pop('workflow', None)
-                    DocumentApprovalLevel.objects.create(
-                        workflow=instance,
-                        **level_data
-                    )
 
         return instance
     
@@ -1448,11 +1569,13 @@ class ResignationApprovalLevelSerializer(serializers.ModelSerializer):
 
             if employee and getattr(employee, 'emp_reporting_manager', None):
                 rep['approver'] = employee.emp_reporting_manager.username
+                rep['approver_name'] = _uname(employee.emp_reporting_manager)   # v1.62.0 people
             else:
                 rep['approver'] = None
 
         elif instance.approver:
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
 
         return rep
         
@@ -1466,6 +1589,7 @@ class ResignationApprovalSerializer(serializers.ModelSerializer):
         return {
             "delegate_to_id": obj.deligate_to.id if obj.deligate_to else None,
             "delegate_to": obj.deligate_to.username if obj.deligate_to else None,
+            "delegate_to_name": _uname(obj.deligate_to),   # v1.62.0 people
             "response": obj.deligate_response,
             "is_deligate": obj.is_deligate,
         }
@@ -1479,6 +1603,7 @@ class ResignationApprovalSerializer(serializers.ModelSerializer):
 
         if instance.approver:
             rep['approver'] = instance.approver.username
+            rep['approver_name'] = _uname(instance.approver)   # v1.62.0 people: the person's name (the login name stays in 'approver')
         if instance.deligate_to: 
             rep['deligate_to'] = instance.deligate_to.id if instance.deligate_to else None
 
@@ -1817,8 +1942,14 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
         return None
 class EscalationRuleSerializer(serializers.ModelSerializer):
     request_type = serializers.CharField(source='workflow.request_type.name',read_only=True)
-    approver_name = serializers.CharField(source='approver.username',read_only=True)
-    escalate_to_name = serializers.CharField(source='escalate_to.username',read_only=True)
+    approver_name = serializers.SerializerMethodField()   # v1.62.0 people: names, not login names
+    escalate_to_name = serializers.SerializerMethodField()
+
+    def get_approver_name(self, o):
+        return _uname(getattr(o, 'approver', None))
+
+    def get_escalate_to_name(self, o):
+        return _uname(getattr(o, 'escalate_to', None))
     branch = serializers.PrimaryKeyRelatedField(source='workflow.branch',many=True,read_only=True)
     class Meta:
         model = ApprovalLevel

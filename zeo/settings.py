@@ -64,7 +64,7 @@ if not SECRET_KEY:
     raise RuntimeError('Set ZEO_SECRET_KEY in the environment or in .env (see .env.example).')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool('ZEO_DEBUG', False)
+DEBUG = env_bool('ZEO_DEBUG', True)
 
 CORS_ALLOW_CREDENTIALS = True
 ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1','80.65.208.178'])
@@ -131,6 +131,9 @@ TENANT_APPS = [
     'ZeoProperty',       # v1.21.0 Property app: buildings, units, owners, leases, sales, billing, cheques, tenant / owner / buyer portals
     'ZeoMaintenance',    # v1.21.0 Maintenance app: work orders, quotes, preventive plans, inspections
     'ZeoPeople',         # v1.36.0 People: benefits, e-signature, forms, surveys, recognition, chat, 360° reviews, development plans
+    'ZeoInsights',       # v1.53.0 report builder and dashboard builder
+    'ZeoAdmin',          # v1.52.0 administration: scheduled reports, API keys and webhooks, import memory and undo, out of office, health checks
+    'ZeoHR',             # v1.48.0 HR operations: disciplinary cases, exit interviews, document renewals, PRO services, asset handovers
     'ZeoAI',             # v1.37.0 AI assistants: payroll auditor, attendance & shifts, recruitment, performance, workforce analytics
     'ZeoAccounting',     # v1.35.0 accounting integration: Odoo, Zoho Books, Excel / CSV, ZEO API – department / employee posting
     'ZeoAssets',         # v1.33.0 Asset Management app: one register with HR assets, labels, counts, depreciation
@@ -140,6 +143,7 @@ TENANT_APPS = [
     'SavedViews',        # v1.16.0 saved list views
     'PayrollPlus',       # v1.18.0 payroll controls, leave-encashment approval steps, final settlement
     'ZeoFlow',           # v1.29.0 workflow automation: rules, triggers, conditions, actions, approvals, scheduled actions
+    'PrintTemplates',    # v1.62.0 print – print templates (payslip and every printed document: samples, copies, defaults, branding)
     'django.contrib.admin',
 
 ]
@@ -162,6 +166,8 @@ PG_EXTRA_SEARCH_PATHS = ['extensions']
 SESSION_COOKIE_DOMAIN = '.zeo.com'
 SESSION_COOKIE_SECURE = True
 MEDIA_URL = '/media/'
+ZEO_MEDIA_LOGIN = env('ZEO_MEDIA_LOGIN', 'true').lower() not in ('0', 'false', 'no', 'off')   # v1.56.1: files need a login
+ZEO_MEDIA_ACCEL = env('ZEO_MEDIA_ACCEL', 'false' if DEBUG else 'true').lower() not in ('0', 'false', 'no', 'off')   # nginx sends the file
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 LOGGING = {
     'version': 1,
@@ -197,6 +203,10 @@ CORS_ALLOW_HEADERS = [
     'x-zeo-location',    # v1.30.0 location level: the working location
     'x-zeo-locations',   # v1.30.0 location level: the ticked locations
     'x-zeo-app',         # v1.25.0 mobile app version
+    'x-kiosk-token',     # v1.49.0 the attendance kiosk page when the API is on another host
+    'x-kiosk-session',   # v1.51.0 self-service on the kiosk
+    'x-zeo-idle',        # v1.62.0 seconds since the person last used the app (idle sign-out)
+    'x-zeo-device',      # v1.62.0 the phone app's device id (sign-ins bound to the device)
     'content-type',
     'Authorization',  # Add this if you're using authorization headers
 ]
@@ -228,6 +238,7 @@ MIDDLEWARE = [
     'ZeoProjects.middleware.PortalGuardMiddleware',  # v1.20.0 customer portal users may only use the portal API
     'ZeoProperty.middleware.PortalGuardMiddleware',  # v1.21.0 tenant / owner / buyer portal users may only use the portal API
     'ZeoCloud.middleware.CloudMiddleware',
+    'ZeoCloud.netguard.IPAllowMiddleware',   # v1.61.0 the company's allow-list of networks
     'ZeoLicence.middleware.LicenceMiddleware',  # v1.28.0 Enterprise licence: read-only when it ended, licensed apps (only with ZEO_EDITION=enterprise)  # v1.23.0 ZEO Cloud: company users only, read-only when suspended, app licences
     'ZeoApps.middleware.HRMSActiveMiddleware',  # v1.22.0 a switched-off HRMS answers 409
 ]
@@ -245,6 +256,7 @@ ZEO_LICENCE_EVALUATION_DAYS = int(env('ZEO_LICENCE_EVALUATION_DAYS', '30'))
 ZEO_LICENCE_CONTACT = env('ZEO_LICENCE_CONTACT', '')                   # e-mail shown on the licence screen for renewals
 # v1.28.0 Odoo link for ZEO Cloud invoices and online payment (Adept's cloud server; the API key only in .env)
 ZEO_ODOO_URL = env('ZEO_ODOO_URL', '')
+ZEO_APP_URL = env('ZEO_APP_URL', '')   # v1.45.0: address of the ZEO web app, for the links in e-mails (e.g. https://hr.company.ae)
 ZEO_ODOO_DB = env('ZEO_ODOO_DB', '')
 ZEO_ODOO_LOGIN = env('ZEO_ODOO_LOGIN', '')
 ZEO_ODOO_API_KEY = env('ZEO_ODOO_API_KEY', '')
@@ -377,21 +389,35 @@ AUTHENTICATION_BACKENDS = [
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         # 'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'ZeoCloud.security.SessionJWTAuthentication',   # v1.52.0 JWT + signed-out sessions refused (was rest_framework_simplejwt JWTAuthentication)
+        'ZeoAdmin.apikeys.ApiKeyAuthentication',        # v1.52.0 company API keys for integrations
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         # 'rest_framework.permissions.IsAuthenticated',
     ),
     'EXCEPTION_HANDLER': 'zeo.exceptions.custom_exception_handler',
-
+    # v1.62.0 rate limits (429 when passed): per user, per address without a login, and lower ones for sign-in, codes,
+    # password reset, exports and search. ZEO_THROTTLE=off switches them off (e.g. a load test).
+    'DEFAULT_THROTTLE_CLASSES': ([] if env('ZEO_THROTTLE', 'on').lower() in ('off', '0', 'false') else
+                                 ['zeo.throttles.ZeoUserThrottle', 'zeo.throttles.ZeoAnonThrottle', 'zeo.throttles.ZeoScopedThrottle']),
+    'DEFAULT_THROTTLE_RATES': {
+        'user': env('ZEO_RATE_USER', '600/min'),
+        'anon': env('ZEO_RATE_ANON', '120/min'),
+        'signin': env('ZEO_RATE_SIGNIN', '20/min'),
+        'code': env('ZEO_RATE_CODE', '20/min'),
+        'reset': env('ZEO_RATE_RESET', '10/hour'),
+        'export': env('ZEO_RATE_EXPORT', '60/hour'),
+        'search': env('ZEO_RATE_SEARCH', '120/min'),
+        'paging': env('ZEO_RATE_PAGING', '240/min'),
+    },
 }
 
 REST_USE_JWT = True
 SIMPLE_JWT = {
-    # Customize token settings if needed
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=24),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
+    # v1.62.0 short access tokens (default 30 minutes; the app renews them with the refresh token, which is spent on use)
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(env('ZEO_ACCESS_MINUTES', '30'))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(env('ZEO_REFRESH_DAYS', '14'))),
 }
 
 SHOW_PUBLIC_IF_NO_TENANT_FOUND = True
@@ -412,8 +438,16 @@ CELERY_TIMEZONE = 'Asia/Kolkata'  # or your specific timezone
 CELERY_ENABLE_UTC = True  # Ensure UTC is enabled if needed
 
 CELERY_BEAT_SCHEDULE = {
+    'zeoadmin-schedules': {'task': 'ZeoAdmin.tasks.run_schedules', 'schedule': crontab(minute='*/15')},   # v1.52.0 scheduled reports
+    'zeoadmin-webhooks': {'task': 'ZeoAdmin.tasks.retry_webhooks', 'schedule': crontab(minute='*/5')},    # v1.52.0 webhook retries
+    'zeoadmin-heartbeat': {'task': 'ZeoAdmin.tasks.heartbeat', 'schedule': crontab(minute='*/5')},        # v1.52.0 health: scheduler heartbeat
+    'zeoadmin-daily': {'task': 'ZeoAdmin.tasks.daily', 'schedule': crontab(hour=0, minute=20)},           # v1.52.0 out of office
     'zeoprojects-sla-check': {'task': 'ZeoProjects.tasks.sla_check', 'schedule': crontab(minute='*/15')},   # v1.20.0
     'zeoprojects-mailbox': {'task': 'ZeoProjects.tasks.check_mailboxes', 'schedule': crontab(minute='*/5')},
+    'chatter-replies': {'task': 'Chatter.tasks.check_reply_mailboxes', 'schedule': crontab(minute='*/5')},   # v1.45.0 e-mail replies onto records
+    'chatter-reminders': {'task': 'Chatter.tasks.send_reminders', 'schedule': crontab(minute=5)},   # v1.46.0 record reminders
+    'payrollplus-provisions': {'task': 'PayrollPlus.tasks.month_end_provisions', 'schedule': crontab(day_of_month=1, hour=2, minute=20)},   # v1.49.0
+    'payrollplus-loans': {'task': 'PayrollPlus.tasks.resume_loans', 'schedule': crontab(hour=1, minute=25)},   # v1.49.0 paused loans resume
     'zeoprojects-daily': {'task': 'ZeoProjects.tasks.daily', 'schedule': crontab(hour=7, minute=35)},
     'zeohse-sweep': {'task': 'ZeoHSE.tasks.sweep', 'schedule': crontab(minute='*/15')},          # v1.21.0 HSE permits
     'zeoflow-run-due': {'task': 'ZeoFlow.tasks.run_due', 'schedule': crontab(minute='*/15')},   # v1.29.0 workflow automation scheduler
@@ -484,3 +518,41 @@ ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smt
 # v1.22.3: every e-mail goes through the guard – a neutralized company (test copy) sends none
 EMAIL_BACKEND = 'zeo.mailguard.GuardedBackend'
 
+
+
+# ------------------------------------------------------------------ v1.62.0 HTTPS and security headers (README-UPDATE 83.3)
+# ZEO_HTTPS=true on a server reached over https (behind nginx with a certificate): secure cookies, HSTS, the https address
+# from X-Forwarded-Proto. Leave it off for a test server on plain http.
+ZEO_HTTPS = env_bool('ZEO_HTTPS', False)
+if ZEO_HTTPS:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = env_bool('ZEO_SSL_REDIRECT', True)
+    SECURE_REDIRECT_EXEMPT = [r'^health/?$']
+    SECURE_HSTS_SECONDS = int(env('ZEO_HSTS_SECONDS', '31536000'))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool('ZEO_HSTS_SUBDOMAINS', True)
+    SECURE_HSTS_PRELOAD = env_bool('ZEO_HSTS_PRELOAD', False)
+    if not SECURE_HSTS_PRELOAD:   # the browsers' preload list is a lasting promise for the whole domain – the owner decides (ZEO_HSTS_PRELOAD)
+        SILENCED_SYSTEM_CHECKS = ['security.W021']
+    CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'
+CSRF_TRUSTED_ORIGINS = env_list('ZEO_CSRF_TRUSTED_ORIGINS', [u for u in [ZEO_APP_URL.rstrip('/')] if u.startswith('http')])
+MIDDLEWARE.insert(MIDDLEWARE.index('django.middleware.security.SecurityMiddleware') + 1, 'zeo.headers.SecurityHeadersMiddleware')
+MIDDLEWARE.insert(MIDDLEWARE.index('ZeoCloud.netguard.IPAllowMiddleware') + 1, 'ZeoCloud.geo.CountryMiddleware')
+MIDDLEWARE.append('zeo.exportguard.ExportGuardMiddleware')
+MIDDLEWARE.append('ZeoCloud.stepup.StepUpMiddleware')
+# v1.62.0 uploads: a real-type check of every file; ClamAV when installed (ZEO_CLAMAV=auto | off | the clamd socket path)
+ZEO_CLAMAV = env('ZEO_CLAMAV', 'auto')
+ZEO_MEDIA_RANDOM_NAMES = env_bool('ZEO_MEDIA_RANDOM_NAMES', True)   # new uploads get a random part in the file name
+ZEO_MEDIA_STRICT = env_bool('ZEO_MEDIA_STRICT', False)             # files not linked to a record open for administrators only
+ZEO_GEOIP_DB = env('ZEO_GEOIP_DB', '')                              # a free country database (DB-IP lite CSV or GeoLite2 .mmdb)
+STORAGES = {
+    'default': {'BACKEND': 'zeo.storage.ZeoFileStorage'},
+    'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+}
+CELERY_BEAT_SCHEDULE['zeoadmin-history-nightly'] = {'task': 'ZeoAdmin.tasks.history_nightly', 'schedule': crontab(hour=3, minute=35)}   # v1.62.0 02:05 Gulf time

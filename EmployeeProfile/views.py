@@ -125,6 +125,11 @@ def profile_json(request, emp, can_edit):
     }
 
 
+def _mgr_name(uid):
+    from HRActions.names import user_name   # v1.62.0 people
+    return user_name(uid) if uid else ''
+
+
 class ProfileView(Base):
     def get(self, request, emp_id):
         emp, err = _emp(request, emp_id)
@@ -423,7 +428,7 @@ class ProbationDueView(Base):
                         'branch': e.emp_branch_id.branch_name if e.emp_branch_id_id else '', 'department': e.emp_dept_id.dept_name if e.emp_dept_id_id else '',
                         'joined_date': e.emp_joined_date, 'probation_end_date': i.probation_end_date, 'days_left': (i.probation_end_date - today).days,
                         'probation_status': i.get_probation_status_display(), 'overdue': i.probation_end_date < today,
-                        'manager': e.emp_reporting_manager.username if e.emp_reporting_manager_id else ''})
+                        'manager': _mgr_name(e.emp_reporting_manager_id)})   # v1.62.0 people: by name (was the login name)
         return Response(out)
 
 
@@ -543,7 +548,7 @@ IMPORT_COLUMNS = ['employee_code', 'arabic_name', 'title', 'preferred_name', 'pl
                   'labour_card_issue_date', 'labour_card_expiry_date', 'work_permit_no', 'work_permit_expiry_date', 'mohre_contract_type',
                   'mohre_contract_no', 'mohre_contract_start', 'mohre_contract_end', 'driving_licence_no', 'driving_licence_issue_date',
                   'driving_licence_expiry_date', 'driving_licence_emirate', 'driving_licence_categories',
-                  'insurance_provider', 'insurance_card_no', 'insurance_expiry_date']
+                  'insurance_provider', 'insurance_card_no', 'insurance_issue_date', 'insurance_expiry_date']   # v1.40.1
 
 
 def _import_date(v):
@@ -644,3 +649,161 @@ class IdentityImportView(Base):
                 out.append({'row': i, 'ok': True, 'employee_id': emp.pk, 'employee': S.full_name(emp)})
                 ok += 1
         return Response({'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': out})
+
+
+# ------------------------------------------------------------------ v1.53.2 update the employee record from a document
+class DocRecordView(Base):
+    """POST {record (the reading's record), action: preview | apply, keys, values, file_name, sync}."""
+    def post(self, request, emp_id):
+        from . import docrecord as DR
+        emp, err = _emp(request, emp_id, write=True)
+        if err:
+            return err
+        rec = request.data.get('record')
+        if not isinstance(rec, dict):
+            return deny(tr('Read a document first.'), 400)
+        if request.data.get('action') == 'apply':
+            res = DR.apply(emp, rec, request.data.get('keys') or [], request.user, str(request.data.get('file_name') or '')[:120],
+                           sync=request.data.get('sync', True) not in (False, 'false', 0), values=request.data.get('values') or {})
+            return Response(res)
+        return Response(DR.preview(emp, rec))
+
+
+# ------------------------------------------------------------------ v1.53.2 bulk upload of document files (zip)
+def _can_docs(request):
+    return S.has(request, 'add_emp_documents')
+
+
+class DocBulkView(Base):
+    def get(self, request):
+        """The template list (index.xlsx)."""
+        from django.http import HttpResponse
+        from . import docbulk as DB
+        r = HttpResponse(DB.template_xlsx(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        r['Content-Disposition'] = 'attachment; filename="index.xlsx"'
+        return r
+
+    def post(self, request):
+        from . import docbulk as DB
+        if not _can_docs(request):
+            return deny(tr('You do not have permission to add employee documents.'))
+        f = request.FILES.get('file')
+        if f is None:
+            return deny(tr('Choose the zip file first.'), 400)
+        try:
+            job = DB.start(f, request, read=str(request.data.get('read', 'true')).lower() not in ('false', '0', 'no'),
+                           run_now=str(request.data.get('run_now', '')).lower() in ('1', 'true'))
+        except ValueError as e:
+            return deny(str(e), 400)
+        return Response({'job': job}, status=201)
+
+
+def _bulk_job(request, job):
+    from . import docbulk as DB
+    from django.db import connection
+    st = DB.get(job)
+    if st is None or st.get('schema') != connection.schema_name:
+        return None, deny(tr('This upload has expired. Upload the zip file again.'), 404)
+    if st.get('by') != request.user.pk and not S.has(request):
+        return None, deny(tr('Only the person who uploaded the files can see them.'))
+    return st, None
+
+
+class DocBulkJobView(Base):
+    def get(self, request, job):
+        from . import docbulk as DB
+        st, err = _bulk_job(request, job)
+        if err:
+            return err
+        return Response(DB.public(st, job))
+
+    def put(self, request, job):
+        """[{id, emp_id | employee_code, type, number, issue, expiry, skip}] → the rows again."""
+        from . import docbulk as DB
+        st, err = _bulk_job(request, job)
+        if err:
+            return err
+        if st.get('state') != 'ready':
+            return deny(tr('The files are still being read.'), 409)
+        changes = request.data.get('rows') if isinstance(request.data, dict) else request.data
+        ix = DB.Index(DB._scope(S.user_branches(request)))
+        with DB.locked(job):   # two quick edits must not overwrite each other
+            st = DB.get(job) or st
+            errors = DB.edit(st, changes if isinstance(changes, list) else [], ix)
+            DB._job(job, **st)
+        out = DB.public(st, job)
+        out['errors'] = errors
+        return Response(out)
+
+    def delete(self, request, job):
+        import shutil
+        from . import docbulk as DB
+        st, err = _bulk_job(request, job)
+        if err:
+            return err
+        shutil.rmtree(DB.staging(job), ignore_errors=True)
+        from django.core.cache import cache
+        cache.delete(DB.JOB.format(job))
+        return Response(status=204)
+
+
+class DocBulkImportView(Base):
+    def post(self, request, job):
+        from . import docbulk as DB
+        if not _can_docs(request):
+            return deny(tr('You do not have permission to add employee documents.'))
+        st, err = _bulk_job(request, job)
+        if err:
+            return err
+        if st.get('state') != 'ready':
+            return deny(tr('The files are still being read.'), 409)
+        with DB.locked(job, wait=0) as got:
+            if not got:
+                return deny(tr('The documents are being imported. Wait a moment.'), 409)
+            res = DB.do_import(job, st, request, update_identity=request.data.get('update_identity', True) not in (False, 'false', 0))
+        res['job'] = DB.public(DB.get(job) or st, job)
+        return Response(res)
+
+
+class DocBulkFileView(Base):
+    def get(self, request, job, idx):
+        import mimetypes
+        import os
+        from django.http import FileResponse
+        from . import docbulk as DB
+        st, err = _bulk_job(request, job)
+        if err:
+            return err
+        f = next((f for r in st.get('rows') or [] for f in r['files'] if f['i'] == idx), None)
+        path = os.path.join(DB.staging(job), f"{idx:05d}{f['ext']}") if f else None
+        if not path or not os.path.exists(path):
+            return deny(tr('Not found.'), 404)
+        r = FileResponse(open(path, 'rb'), content_type=mimetypes.guess_type(path)[0] or 'application/octet-stream')
+        r['Content-Disposition'] = f'inline; filename="{os.path.basename(f["path"])}"'
+        return r
+
+
+class DocBulkReportView(Base):
+    def get(self, request, job):
+        from django.http import HttpResponse
+        from . import docbulk as DB
+        st, err = _bulk_job(request, job)
+        if err:
+            return err
+        r = HttpResponse(DB.report_csv(st), content_type='text/csv; charset=utf-8')
+        r['Content-Disposition'] = 'attachment; filename="document-files.csv"'
+        return r
+
+
+class DocBulkTypesView(Base):
+    """Document types and employees for the choices of the review grid."""
+    def get(self, request):
+        from . import docbulk as DB
+        if not _can_docs(request):
+            return deny(tr('You do not have permission to add employee documents.'))
+        ix = DB.Index(DB._scope(S.user_branches(request)))
+        types = [{'id': t.pk, 'name': t.type_name} for t in ix.types.values() if t.is_active]
+        missing = [{'id': f'kind:{k}', 'name': ix.type_label(f'kind:{k}')} for k in S.KIND_LABEL if S.doc_type(k, create=False) is None]
+        emps = [{'id': e.pk, 'code': e.emp_code, 'name': S.full_name(e)} for e in sorted(ix.emps.values(), key=lambda e: e.emp_code or '')
+                if e.is_active is not False]
+        return Response({'types': sorted(types, key=lambda t: t['name'].lower()) + missing, 'employees': emps})

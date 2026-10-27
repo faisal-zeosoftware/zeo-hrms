@@ -1,4 +1,6 @@
 from zeo.report_files import report_file, report_rel  # v1.7.0: report files per company and report
+import logging
+logger = logging.getLogger(__name__)   # v1.40.1
 from django.shortcuts import render
 from rest_framework.response import Response
 from django.http import FileResponse, Http404
@@ -76,6 +78,22 @@ class BranchViewSet(viewsets.ModelViewSet):
     queryset = brnch_mstr.objects.all()
     serializer_class = BranchSerializer
     # permission_classes = [BranchPermission]
+
+    def get_queryset(self):
+        # v1.62.0 speed: the branch list (asked by almost every page, often twice) embeds the branch's projects with
+        # their tasks, its announcements and policies – one query per task / announcement / employee code before
+        # (~790 queries and 2 s for 2 branches). The same rows are now read in a few queries.
+        qs = super().get_queryset()
+        if self.request.method != 'GET':
+            return qs
+        from django.db.models import Prefetch
+        from ProjectManagement.models import Project, Task
+        tasks = Task.objects.select_related('project', 'stage').prefetch_related('task_managers', 'task_members')
+        return qs.prefetch_related(
+            Prefetch('branch_projects', queryset=Project.objects.prefetch_related('branches', Prefetch('tasks', queryset=tasks))),
+            Prefetch('branch_announcements', queryset=Announcement.objects.prefetch_related('branches', 'specific_employees', 'department', 'designation', 'category')),
+            Prefetch('policies', queryset=CompanyPolicy.objects.select_related('department', 'category', 'designation').prefetch_related('branch', 'specific_users')),
+        )
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -106,6 +124,13 @@ class MasterGuardMixin:
     * a record still used by employees cannot be deleted (the employees silently lost it before)."""
     master_prefix = ''     # dept / desgntn / ctgry
     employee_field = ''    # emp_dept_id / ...
+
+    def get_queryset(self):
+        # v1.62.0 speed: the branches of every row in one query (two queries per row before; these lists load on most pages)
+        qs = super().get_queryset()
+        if self.request.method == 'GET' and any(f.name == 'branch' and f.many_to_many for f in qs.model._meta.get_fields()):
+            qs = qs.prefetch_related('branch')
+        return qs
 
     def _branches_for(self):
         from AccessControl.access import ctx
@@ -668,9 +693,81 @@ class permissionviewset(viewsets.ModelViewSet):
         except ImportError:
             return False
 
+    def create(self, request, *args, **kwargs):
+        # v1.62.0 rights only for a login of this company: a row for a login of another company was saved, could not be opened
+        # or removed here, and would have given that login rights in this company the day it was added to it
+        from django.db import connection
+        from UserManagement.models import CustomUser
+        pid = request.data.get('profile')
+        if not CustomUser.objects.filter(pk=pid if str(pid).isdigit() else 0, tenants__schema_name=connection.schema_name).exists():
+            return Response({'profile': ['This login is not a user of this company – add it in Settings › Users first.']}, status=status.HTTP_400_BAD_REQUEST)
+        if 'groups' in request.data:   # v1.62.0 isolation: only groups of this company
+            from ZeoApps import groupscope
+            raw = request.data.getlist('groups') if hasattr(request.data, 'getlist') else request.data.get('groups')
+            ids = [g.get('id') if isinstance(g, dict) else g for g in (raw or [])]
+            ok = groupscope.visible_ids() | set(groupscope.rows()) | set(groupscope.copy_map())
+            if any(str(i).isdigit() and int(i) not in ok for i in ids):
+                from Translations.i18n import tr
+                return Response({'groups': [tr('Choose permission groups of this company only.')]}, status=status.HTTP_400_BAD_REQUEST)
+        return super().create(request, *args, **kwargs)
+
+    def _isolated_update(self, request, instance, partial):
+        """v1.62.0 isolation: the rights row of a login is shared by all its companies (public schema). A company changes only
+        the groups it can see (the groups of the login's other companies are kept), templates are stored as this company's
+        copies for its own users, a login that is in other companies keeps the template (the copy applies here through
+        ZeoCloud/rights.py), and the administrator flag of a login of other companies is changed only by someone who
+        administers all of them."""
+        from ZeoApps import groupscope
+        from Translations.i18n import tr
+        from tenant_users.permissions.models import UserTenantPermissions as UTP
+        sch = groupscope.schema()
+        d = request.data
+        plain = {k: d.get(k) for k in d.keys() if k != 'groups'} if hasattr(d, 'getlist') else {k: v for k, v in dict(d).items() if k != 'groups'}
+        others = list(instance.profile.tenants.exclude(schema_name__in=[sch, 'public']).values_list('schema_name', flat=True))
+        if 'is_superuser' in plain and others and not groupscope.is_platform_admin(request.user):
+            want = str(plain.get('is_superuser')).lower() in ('1', 'true', 'yes')
+            if want != bool(UTP.objects.filter(pk=instance.pk).values_list('is_superuser', flat=True).first()):
+                try:
+                    from ZeoCloud.rights import is_admin
+                    allowed = all(request.user.tenants.filter(schema_name=s).exists() and is_admin(request.user, s) for s in others)
+                except ImportError:
+                    allowed = False
+                if not allowed:
+                    return Response({'is_superuser': [tr('This login is also a user of other companies. Only an administrator of all its companies can change its administrator flag – give it permission groups of this company instead.')]},
+                                    status=status.HTTP_400_BAD_REQUEST)
+        new_groups = None
+        if 'groups' in d:
+            raw = d.getlist('groups') if hasattr(d, 'getlist') else d.get('groups')
+            ids = [g.get('id') if isinstance(g, dict) else g for g in (raw or [])]
+            ids = [int(i) for i in ids if str(i).isdigit()]
+            vis = groupscope.visible_ids() | set(groupscope.rows())
+            cm = groupscope.copy_map()
+            if any(i not in vis and i not in cm for i in ids):
+                return Response({'groups': [tr('Choose permission groups of this company only.')]}, status=status.HTTP_400_BAD_REQUEST)
+            ids = groupscope.substitute(ids)
+            if others:
+                back = {v: k for k, v in cm.items()}
+                ids = [back.get(i, i) for i in ids]
+            through = UTP.groups.through
+            current = set(through.objects.filter(usertenantpermissions_id=instance.pk).values_list('group_id', flat=True))
+            here = vis | set(cm) | set(cm.values())
+            new_groups = sorted((current - here) | set(ids))
+        ser = self.get_serializer(instance, data=plain, partial=partial or 'groups' not in plain)
+        ser.is_valid(raise_exception=True)
+        ser.save()
+        if new_groups is not None:
+            row = UTP.objects.get(pk=instance.pk)
+            row._prefetched_objects_cache = {}
+            row.groups.set(new_groups)
+        groupscope.forget()
+        return Response(self.get_serializer(UTP.objects.get(pk=instance.pk)).data)
+
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
         if not self._invited(instance):
+            from django.db import connection
+            if getattr(connection, 'schema_name', 'public') not in ('', 'public'):
+                return self._isolated_update(request, instance, kwargs.get('partial', False))   # v1.62.0 isolation
             return super().update(request, *args, **kwargs)
         from django.contrib.auth.models import Group
         from django.db import connection
@@ -679,7 +776,11 @@ class permissionviewset(viewsets.ModelViewSet):
         ca = CompanyAccess.objects.get(user_id=instance.profile_id, company__schema_name=connection.schema_name)
         if 'groups' in request.data:
             ids = [g.get('id') if isinstance(g, dict) else g for g in (request.data.get('groups') or [])]
-            ca.groups = list(Group.objects.filter(id__in=[i for i in ids if str(i).isdigit()]).values_list('name', flat=True))
+            # v1.62.0 isolation: only groups of this company (another company's group id was accepted)
+            from ZeoApps import groupscope
+            ok = groupscope.visible_ids() | set(groupscope.rows()) | set(groupscope.copy_map())
+            ids = groupscope.substitute([int(i) for i in ids if str(i).isdigit() and int(i) in ok])
+            ca.groups = list(Group.objects.filter(id__in=ids).values_list('name', flat=True))
         if 'is_superuser' in request.data:
             ca.admin = str(request.data.get('is_superuser')).lower() in ('1', 'true', 'yes')
         ca.save()
@@ -700,8 +801,33 @@ class permissionviewset(viewsets.ModelViewSet):
     def get_serializer_class(self):
         return PermissionSerializer
 
+    def _mine_compact(self, request):
+        """v1.38.0: ?me=1 is asked by every page for the menu and the list rights, and it only needs the codenames.
+        The full rows (name / app / model of ~1,600 permissions per group) were ~1 MB per page load; this is ~30 KB."""
+        from django.db.models import Prefetch
+        from django.contrib.auth.models import Permission
+        rows = (UserTenantPermissions.objects.filter(profile_id=request.user.id).select_related('profile')
+                .prefetch_related(Prefetch('groups__permissions', queryset=Permission.objects.only('id', 'codename')),
+                                  Prefetch('user_permissions', queryset=Permission.objects.only('id', 'codename'))))
+        out = []
+        from ZeoApps.groupscope import label as _glabel
+        for r in rows:
+            codes = set()
+            groups = []
+            for g in r.groups.all():
+                groups.append({'id': g.pk, 'name': _glabel(g), 'permissions': []})   # v1.62.0 isolation: the company's name of it
+                codes.update(p.codename for p in g.permissions.all())
+            codes.update(p.codename for p in r.user_permissions.all())
+            # one de-duplicated list of codenames (the groups repeat the same ones; 45 groups were 5,000 entries)
+            out.append({'id': r.pk, 'user': r.profile.username, 'is_superuser': r.is_superuser, 'is_staff': r.is_staff,
+                        'profile': r.profile_id, 'groups': groups, 'user_permissions': [], 'codes': sorted(codes)})
+        return out
+
     def list(self, request, *args, **kwargs):
-        resp = super().list(request, *args, **kwargs)
+        if request.query_params.get('me') in ('1', 'true') and request.user.is_authenticated:
+            resp = Response(self._mine_compact(request))
+        else:
+            resp = super().list(request, *args, **kwargs)
         try:
             user = request.user
             data = resp.data.get('results') if isinstance(resp.data, dict) else resp.data
@@ -723,7 +849,13 @@ class permissionviewset(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_authenticated:
             from django.db import connection
-            fast = UserTenantPermissions.objects.select_related('profile').prefetch_related('groups__permissions', 'user_permissions')
+            # v1.62.0 speed: the permissions with their content type in the same query (app / model of each permission were
+            # one query per permission per group per user – 4,500 queries and ~50 s for the Assign permissions page)
+            from django.db.models import Prefetch
+            _perms = Permission.objects.select_related('content_type')
+            fast = UserTenantPermissions.objects.select_related('profile').prefetch_related(
+                Prefetch('groups', queryset=Group.objects.prefetch_related(Prefetch('permissions', queryset=_perms))),
+                Prefetch('user_permissions', queryset=_perms))
             mine = self.request.query_params.get('me') in ('1', 'true')
             sch0 = getattr(connection, 'schema_name', 'public')
             company_admin = False
@@ -751,26 +883,18 @@ class permissionviewset(viewsets.ModelViewSet):
 
 STANDARD_GROUP_NAMES = ('HR Manager', 'Payroll Manager')
 STANDARD_GROUP_PREFIXES = ('Projects – ', 'CRM – ', 'Property – ', 'Maintenance – ', 'HSE – ')
+try:   # v1.62.0 isolation: the full list (Asset Management, Accounting, People, HR operations, Business partners too)
+    from ZeoApps.groupscope import STANDARD_GROUP_NAMES, STANDARD_GROUP_PREFIXES   # noqa: F811
+except Exception:
+    pass
 
 
 def company_group_ids():
-    """v1.22.0: the permission groups of the current company – standard role groups, groups made in it, groups of its users."""
-    from django.db import connection
-    from django.db.models import Q
-    try:
-        from ZeoApps.models import CompanyGroup
-        mine = set(CompanyGroup.objects.values_list('group_id', flat=True))
-    except Exception:
-        mine = set()
-    # v1.28.1: groups of the company's OWN users only – a user allocated to several companies (an administrator) pulled
-    # the groups of every company they could open into each of them ("permission grouping can be seen in all companies")
-    from django.db.models import Count
-    from UserManagement.models import CustomUser
-    own_users = CustomUser.objects.filter(tenants__schema_name=connection.schema_name).annotate(_n=Count('tenants')).filter(_n=1).values('pk')
-    q = Q(name__in=STANDARD_GROUP_NAMES) | Q(pk__in=mine) | Q(user__profile__in=own_users)
-    for p in STANDARD_GROUP_PREFIXES:
-        q |= Q(name__startswith=p)
-    return set(Group.objects.filter(q).values_list('pk', flat=True))
+    """v1.22.0: the permission groups of the current company – standard role groups, groups made in it, groups of its users.
+    v1.62.0 isolation: never another company's copies or groups; a template the company has its own copy of is replaced
+    by the copy (ZeoApps/groupscope.py)."""
+    from ZeoApps import groupscope
+    return groupscope.visible_ids()
 
 
 class Groupviewset(viewsets.ModelViewSet):
@@ -782,15 +906,98 @@ class Groupviewset(viewsets.ModelViewSet):
         qs = super().get_queryset()
         if getattr(connection, 'schema_name', 'public') == 'public':
             return qs
+        # v1.62.0 speed: the permissions and their content type prefetched (one query per permission before – Permission groups / Branch permissions pages)
+        from django.db.models import Prefetch
+        qs = qs.prefetch_related(Prefetch('permissions', queryset=Permission.objects.select_related('content_type')))
         return qs.filter(pk__in=company_group_ids()).order_by('name')   # v1.22.0: not the groups of other companies
 
+    # ---- v1.62.0 isolation: the groups are shared (public schema) – a company changes only its own
+    def _in_company(self):
+        from django.db import connection
+        return getattr(connection, 'schema_name', 'public') not in ('', 'public')
+
+    def _template_mode(self, request):
+        """A platform administrator maintaining the shared templates from inside a company (?scope=template)."""
+        from ZeoApps import groupscope
+        return request.query_params.get('scope') == 'template' and groupscope.is_platform_admin(request.user)
+
+    def create(self, request, *args, **kwargs):
+        from ZeoApps import groupscope
+        from Translations.i18n import tr
+        if not self._in_company():
+            return super().create(request, *args, **kwargs)
+        name = str(request.data.get('name') or '').strip()
+        if name and groupscope.name_taken(name):
+            return Response({'name': [tr('A permission group with this name exists in this company already.')]}, status=status.HTTP_400_BAD_REQUEST)
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
+        from ZeoApps import groupscope
+        display = str(serializer.validated_data.get('name') or '').strip()
+        if self._in_company():
+            serializer.validated_data['name'] = groupscope.unique_name(display)   # v1.62.0 isolation: unique in the company only
         g = serializer.save()
         try:
             from ZeoApps.models import CompanyGroup
-            CompanyGroup.objects.get_or_create(group_id=g.pk)
+            CompanyGroup.objects.update_or_create(group_id=g.pk, defaults={'display_name': display if g.name != display else ''})
+            groupscope.forget()
         except Exception:
             pass
+
+    def update(self, request, *args, **kwargs):
+        from ZeoApps import groupscope
+        from Translations.i18n import tr
+        if not self._in_company() or self._template_mode(request):
+            return super().update(request, *args, **kwargs)
+        partial = kwargs.pop('partial', False)
+        g = self.get_object()
+        ser = self.get_serializer(g, data=request.data, partial=partial)
+        ser.is_valid(raise_exception=True)
+        display = str(ser.validated_data.get('name') or '').strip() or groupscope.label(g)
+        perms = ser.validated_data.get('permissions')
+        if display.lower() != groupscope.label(g).strip().lower() and groupscope.name_taken(display, exclude_id=g.pk):
+            return Response({'name': [tr('A permission group with this name exists in this company already.')]}, status=status.HTTP_400_BAD_REQUEST)
+        reason = groupscope.shared_reason(g)
+        if reason:
+            # a shared group (standard template / used by other companies): this company gets its own copy, the others keep theirs
+            c, moved = groupscope.customise(g, permissions=perms, display=display)
+            data = dict(self.get_serializer(c).data)
+            data.update(copied_from=g.pk, users_moved=moved, detail=tr(
+                '"{0}" is shared by other companies, so your changes were saved in your company\'s own copy. Other companies are not affected.', display))
+            return Response(data)
+        from ZeoApps.models import CompanyGroup
+        with transaction.atomic():
+            if perms is not None:
+                g.permissions.set(perms)
+            if display != groupscope.label(g):
+                g.name = display if g.name == display else groupscope.unique_name(display)
+                g.save(update_fields=['name'])
+                CompanyGroup.objects.update_or_create(group_id=g.pk, defaults={'display_name': display if g.name != display else ''})
+        groupscope.forget()
+        return Response(self.get_serializer(Group.objects.get(pk=g.pk)).data)
+
+    def destroy(self, request, *args, **kwargs):
+        from ZeoApps import groupscope
+        from Translations.i18n import tr
+        if not self._in_company() or self._template_mode(request):
+            return super().destroy(request, *args, **kwargs)
+        g = self.get_object()
+        if (groupscope.rows().get(g.pk) or (None, ''))[0]:
+            # this company's copy of a template: back to the standard group (its users get the template again)
+            t, moved = groupscope.reset(g)
+            return Response({'detail': tr('Your own copy was removed – this company uses the standard group "{0}" again.', groupscope.label(t) if t else ''),
+                             'reset_to': t.pk if t else None, 'users_moved': moved}, status=status.HTTP_200_OK)
+        reason = groupscope.shared_reason(g)
+        if reason:
+            return Response({'detail': groupscope.refuse_text(reason)}, status=status.HTTP_403_FORBIDDEN)
+        resp = super().destroy(request, *args, **kwargs)
+        try:
+            from ZeoApps.models import CompanyGroup
+            CompanyGroup.objects.filter(group_id=g.pk).delete()
+            groupscope.forget()
+        except Exception:
+            pass
+        return resp
 
 class permviewset(viewsets.ModelViewSet):
     queryset = Permission.objects.select_related('content_type').order_by('id')
@@ -1031,6 +1238,7 @@ class CompanyPolicyViewSet(viewsets.ModelViewSet):
         buffer.seek(0)
         return FileResponse(buffer, as_attachment=True, filename=f'{policy.title}.pdf')
     
+@api_view(['GET'])   # v1.56.1 a DRF view: sign-in and the user's own companies only (it answered without a login)
 def list_data_in_schema(request):
     schema_name = request.GET.get('schema')  # Use explicit schema name if tenant is unavailable
     if not schema_name:
@@ -1052,7 +1260,7 @@ def list_data_in_schema(request):
 
             return JsonResponse(data)
     except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+        logger.exception("schema-data"); return JsonResponse({"error": "The lists could not be read."}, status=400)
 
 class AnnouncementViewSet(viewsets.ModelViewSet):
     queryset = Announcement.objects.all()
@@ -1493,6 +1701,9 @@ class AssetApprovalViewset(viewsets.ModelViewSet):
         approval.deligate_response = None
         approval.save()
 
+        # v1.40.1: the e-mail is best effort and the delegation is answered even when the user has no e-mail address
+        # (the success response sat inside "if delegate_user.email", so the request ended in a 500 and the screen
+        # never showed the delegation; an SMTP failure broke it too)
         if delegate_user.email:
 
             subject = "Delegation Assigned"
@@ -1517,40 +1728,43 @@ class AssetApprovalViewset(viewsets.ModelViewSet):
                 Thank You.
                 """
 
-            send_mail(
-                subject,
-                message,
-                None,
-                [delegate_user.email],
-                fail_silently=False,
-            )
-            created_notification = send_notification_email(
-                user=delegate_user,
-                employee=None,
-                branch=None,
-                title="Delegation Assigned",
-                message=f"{approval.approver.username} has delegated request {approval.asset_request.document_number} to you.",
-                delegate_user=approval.approver,
-                template_type="request_created",
-                context={
-                    **get_employee_context(approval.asset_request.employee),
-                        "doc_number": approval.asset_request.document_number,
-                        "request_type": approval.asset_request.asset_type.name,
-                    },
-                    email_template_model=AssetEmailTemplate,
-                    notification_model=AssetNotification,
-                    )
-            print("Notification Created:", created_notification)
-            return Response(
-            {
-                "message": "Approval delegated successfully.",
-                "approval_id": approval.id,
-                "approver": approval.approver.username,
-                "delegate_to": delegate_user.username,
-                "status": approval.status,
-            },
-            status=status.HTTP_200_OK,
-        )
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    None,
+                    [delegate_user.email],
+                    fail_silently=True,
+                )
+            except Exception as _e:   # v1.40.1
+                logger.warning("Delegation e-mail not sent: %s", _e)
+        created_notification = send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            message=f"{approval.approver.username} has delegated request {approval.asset_request.document_number} to you.",
+            delegate_user=approval.approver,
+            template_type="request_created",
+            context={
+                **get_employee_context(approval.asset_request.employee),
+                    "doc_number": approval.asset_request.document_number,
+                    "request_type": approval.asset_request.asset_type.name,
+                },
+                email_template_model=AssetEmailTemplate,
+                notification_model=AssetNotification,
+                )
+        print("Notification Created:", created_notification)
+        return Response(
+        {
+            "message": "Approval delegated successfully.",
+            "approval_id": approval.id,
+            "approver": approval.approver.username,
+            "delegate_to": delegate_user.username,
+            "status": approval.status,
+        },
+        status=status.HTTP_200_OK,
+    )
     @action(detail=True, methods=["post"])
     def send_response(self, request, pk=None):
         approval = self.get_object()
@@ -2282,12 +2496,15 @@ class BranchGeoFenceViewSet(viewsets.ModelViewSet):
 class StandardMastersView(APIView):
     """GET ?kind=department|designation|category → the standard list with what already exists.
     POST {kind, branches?} → adds the missing ones and links them to the branches (default: the user's branches)."""
-    CODES = {'department': 'add_dept_master', 'designation': 'add_desgntn_master', 'category': 'add_ctgry_master'}
+    CODES = {'department': 'add_dept_master', 'designation': 'add_desgntn_master', 'category': 'add_ctgry_master',
+             # v1.40.1: the three skill masters of the employee page (Languages, Marketing skills, Programming skills)
+             'language': 'add_languageskill', 'marketing': 'add_marketingskill', 'programming': 'add_programminglanguageskill'}
+    SKILLS = ('language', 'marketing', 'programming')
 
     def _check(self, request, kind):
         from AccessControl.access import ctx
         if kind not in self.CODES:
-            return Response({'detail': 'kind must be department, designation or category.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'kind must be department, designation, category, language, marketing or programming.'}, status=status.HTTP_400_BAD_REQUEST)
         c = ctx(request)
         if not (c.admin or self.CODES[kind] in c.codes):
             return Response({'detail': 'You may not add records to this list.'}, status=status.HTTP_403_FORBIDDEN)
@@ -2299,6 +2516,8 @@ class StandardMastersView(APIView):
         bad = self._check(request, kind)
         if bad:
             return bad
+        if kind in self.SKILLS:   # v1.40.1
+            return Response({'kind': kind, 'items': defaults.preview_skills(kind)})
         return Response({'kind': kind, 'items': defaults.preview(kind)})
 
     def post(self, request):
@@ -2308,6 +2527,8 @@ class StandardMastersView(APIView):
         bad = self._check(request, kind)
         if bad:
             return bad
+        if kind in self.SKILLS:   # v1.40.1: no branches – the skill masters are company-wide
+            return Response(defaults.load_skills(kind), status=status.HTTP_200_OK)
         c = ctx(request)
         allowed = list(c.branches) if getattr(c, 'branches', None) else list(brnch_mstr.objects.values_list('id', flat=True))
         wanted = request.data.get('branches') or allowed

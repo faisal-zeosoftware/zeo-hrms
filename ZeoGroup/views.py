@@ -161,3 +161,72 @@ class RolesView(_G):
         g = self.group(request, key)
         R.remove_role(g, int(pk or 0))
         return Response({'roles': R.role_rows(g)})
+
+
+class ConsolidationView(_G):
+    """v1.53.0 – GET ?from=YYYY-MM&to=YYYY-MM&currency=XXX: the payroll cost of every company in one currency."""
+    need = 'dashboard'
+
+    def get(self, request, key):
+        from datetime import date
+        from django.utils import timezone
+        from . import consolidation as C
+        g = self.group(request, key)
+        today = timezone.localdate()
+        last = C.parse_month(request.query_params.get('to'), today.replace(day=1))
+        first = C.parse_month(request.query_params.get('from'), date(last.year - (1 if last.month < 12 else 0), last.month % 12 + 1, 1))
+        if first > last:
+            return Response({'detail': tr('The start month is after the end month.')}, status=400)
+        cur = (request.query_params.get('currency') or '').upper()[:3] or None
+        data = C.consolidate(g, first, last, cur)
+        data['reporting_currency'] = C.reporting_currency(key)
+        data['can_edit'] = 'copy' in RIGHTS_OF(g)
+        data['currencies'] = C.CURRENCIES
+        return Response(data)
+
+
+def RIGHTS_OF(g):
+    from .scope import RIGHTS
+    return RIGHTS.get(g['role'], set())
+
+
+class RatesView(_G):
+    """v1.53.0 – the group's reporting currency and exchange rates. GET (dashboard right) · POST / DELETE (copy right)."""
+    need = 'dashboard'
+
+    def get(self, request, key):
+        from . import consolidation as C
+        g = self.group(request, key)
+        return Response({'currency': C.reporting_currency(key), 'rates': C.rate_rows(key), 'currencies': C.CURRENCIES,
+                         'pegs': {k: float(v) for k, v in C.USD_PEGS.items()}, 'can_edit': 'copy' in RIGHTS_OF(g),
+                         'company_currencies': [{'company': c.name, 'currency': C.company_currency(c)} for c in g['companies']]})
+
+    def post(self, request, key):
+        from decimal import Decimal, InvalidOperation
+        from . import consolidation as C
+        from .models import ExchangeRate, GroupCurrency
+        g = self.group(request, key, 'copy')
+        d = request.data
+        if d.get('currency') and not d.get('rate'):
+            cur = str(d['currency']).upper()[:3]
+            if len(cur) != 3 or not cur.isalpha():
+                return Response({'detail': tr('Give a 3-letter currency code.')}, status=400)
+            GroupCurrency.objects.update_or_create(key=key, defaults={'currency': cur})
+            return self.get(request, key)
+        cur, to = str(d.get('from_currency') or '').upper()[:3], str(d.get('to_currency') or C.reporting_currency(key)).upper()[:3]
+        m = C.parse_month(d.get('month'))
+        try:
+            rate = Decimal(str(d.get('rate')))
+        except (InvalidOperation, TypeError):
+            rate = None
+        if len(cur) != 3 or len(to) != 3 or cur == to or m is None or rate is None or rate <= 0:
+            return Response({'detail': tr('Give the currency, the month (YYYY-MM) and a rate above 0.')}, status=400)
+        ExchangeRate.objects.update_or_create(key=key, currency=cur, to_currency=to, month=m,
+                                              defaults={'rate': rate, 'note': str(d.get('note') or '')[:120], 'by': request.user})
+        return self.get(request, key)
+
+    def delete(self, request, key):
+        from .models import ExchangeRate
+        self.group(request, key, 'copy')
+        ExchangeRate.objects.filter(key=key, pk=request.query_params.get('id')).delete()
+        return self.get(request, key)

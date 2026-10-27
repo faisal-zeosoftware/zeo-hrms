@@ -58,7 +58,7 @@ def r_probation_due(run):
         st = 'No end date' if days == '' else 'Overdue' if days < 0 else 'Due in 30 days' if days <= 30 else 'Due in 90 days' if days <= 90 else 'Later'
         rows.append({**R.emp_cols(e), 'joined': e.emp_joined_date, 'probation_end': i.probation_end_date, 'days_left': days,
                      'probation': i.get_probation_status_display(), 'extensions': ext.get(e.pk, 0), 'status': st,
-                     'manager': e.emp_reporting_manager.username if e.emp_reporting_manager_id else '',
+                     'manager': __import__('HRActions.names', fromlist=['user_name']).user_name(e.emp_reporting_manager_id),   # v1.62.0 people
                      # v1.17.0 (audit L7): the confirmation date of the employee master next to it, flagged when the two differ
                      'confirmation': e.emp_date_of_confirmation,
                      'differs': 'Yes' if e.emp_date_of_confirmation and i.probation_end_date and e.emp_date_of_confirmation != i.probation_end_date else 'No',

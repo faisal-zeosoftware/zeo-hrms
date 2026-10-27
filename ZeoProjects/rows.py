@@ -26,7 +26,8 @@ def customer_row(c, counts=False):
     r = {'id': c.pk, 'code': c.code, 'name': c.name, 'trn': c.trn, 'email': c.email, 'phone': c.phone, 'website': c.website,
          'address': c.address, 'city': c.city, 'country': c.country, 'email_domains': c.email_domains,
          'account_manager': emp_ref(c.account_manager), 'branch': c.branch_id, 'branch_name': bname(c.branch), 'default_sla': c.default_sla_id,
-         'notes': c.notes, 'is_active': c.is_active, 'created_at': d(c.created_at)}
+         'notes': c.notes, 'is_active': c.is_active, 'created_at': d(c.created_at),
+         'partner': c.partner_id, 'partner_number': c.partner.number if c.partner_id else ''}   # v1.42.0 business partner
     if counts:
         r['open_tickets'] = c.tickets.filter(stage__in=OPEN_STAGES).count()
         r['contracts_active'] = c.contracts.filter(status__in=('active', 'expiring')).count()

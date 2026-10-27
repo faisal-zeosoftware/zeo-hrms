@@ -58,6 +58,15 @@ def holder(role, emp):
     if role == 'company_hr':
         r = OrgRole.objects.filter(role='company_hr').first()
         return _user(r.user_id) if r else None
+    if role == 'functional_manager':
+        # v1.58.0 the dotted-line manager (HR operations › Functional managers, or the manager of an active assignment);
+        # without one the reporting manager answers the level, so a request is never stuck on it
+        try:
+            from ZeoHR.matrix import functional_manager
+            u = functional_manager(emp)
+        except Exception:
+            u = None
+        return _user(u.pk) if u is not None else _manager_user(emp)[1]
     return None
 
 

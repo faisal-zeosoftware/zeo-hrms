@@ -646,3 +646,13 @@ def t_defaults2(o, request):
 
 
 app.regs['ticket'].defaults = t_defaults2
+
+
+# v1.42.0 business partners: supplier / vendor pickers (business partners) next to the typed names
+from ZeoMasters.extensions import attach as _attach_partners  # noqa: E402
+_attach_partners(app)
+
+
+# v1.43.0 item master: item picker on spare parts / asset model on assets
+from ZeoMasters.item_exts import attach as _attach_items  # noqa: E402
+_attach_items(app)

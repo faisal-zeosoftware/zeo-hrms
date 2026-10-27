@@ -149,7 +149,7 @@ class Builder:
         if p not in self.problems:
             self.problems.append(p)
 
-    def add(self, account, label, amount, side, emp=None, dept=None, branch=None, cost=False, level=None, group=None):
+    def add(self, account, label, amount, side, emp=None, dept=None, branch=None, cost=False, level=None, group=None, partner=None, tags=None):
         """amount on the debit (side='debit') or credit side; a negative amount goes to the other side."""
         amount = q2(amount)
         if not amount:
@@ -158,7 +158,7 @@ class Builder:
             self.problem('account', f'No account for "{label}" – fill it in Accounting › Accounts.', group=group or label)
         self.entries.append({'account': account or '?', 'label': label, 'dr': amount if side == 'debit' else ZERO,
                              'cr': amount if side == 'credit' else ZERO, 'emp': emp, 'dept': dept, 'branch': branch, 'cost': cost,
-                             'level': level, 'group': group or label})
+                             'level': level, 'group': group or label, 'bp': partner, 'tags': tags or {}})
 
     # -- rules
     def keeps(self, e):
@@ -188,13 +188,28 @@ class Builder:
                 elif st.connector in ('odoo', 'zoho'):
                     self.problem('dimension', f'{kind.title()} "{d.name(kind, pk)}" has no analytic account / tag in the accounting app.',
                                  kind=kind, id=pk)
+        analytics.update(e.get('tags') or {})   # v1.50.0 project / cost centre of a cost allocation
         partner = ''
-        if emp and st.employee_mode == 'partner':
+        if e.get('bp') and getattr(st, 'partner_lines', True):   # v1.44.0 business partner of a receivable / payable line
+            partner = self.bp_ref(e['bp'])
+        elif emp and st.employee_mode == 'partner':
             partner = d.partner(emp)
             if not partner and st.connector in ('odoo', 'zoho'):
                 self.problem('dimension', f'Employee "{d.name("employee", emp)}" has no partner / contact in the accounting app.',
                              kind='employee', id=emp)
         return account, dept, emp, branch, analytics, partner
+
+    def bp_ref(self, pk):
+        """v1.44.0: the partner id in the accounting app (Partner.accounting_ref); exports carry the BP number."""
+        p = M('ZeoMasters', 'Partner').objects.filter(pk=pk).only('number', 'name', 'accounting_ref').first()
+        if p is None:
+            return ''
+        if self.st.connector in ('odoo', 'zoho'):
+            if not p.accounting_ref:
+                self.problem('partner', f'Business partner {p.name} ({p.number}) is not in the accounting app yet – Accounting › Business partners › Match.',
+                             block=False, id=pk)
+            return p.accounting_ref or ''
+        return p.number
 
     def _pattern(self, pattern, account, kind, pk, e):
         code = self.dims.code(kind, pk)
@@ -391,6 +406,30 @@ def build_provisions(as_of=None, user=None, amounts=None):
     return b.save(user)
 
 
+def build_cost_allocation(month, rows, user=None):
+    """v1.50.0: the month's payroll cost moved from the employee's department to the projects / cost centres it was
+    allocated to (Cr the salary cost on the employee's own department, Dr the same account tagged with the project /
+    cost centre). rows: PayrollPlus.costalloc.compute()['rows']."""
+    st = settings()
+    b = Builder('cost_allocation', month.strftime('%Y-%m'), f'Payroll cost allocation {month:%B %Y}', month_end(month), f'Cost allocation {month:%Y-%m}')
+    base = getattr(st, 'default_expense_account', '') or ''
+    for r in rows:
+        emp, dept, branch = r['employee_id'], r.get('department_id'), r.get('branch_id')
+        acct, lvl = b.accts.find('allocation', 'salary', 'debit', emp, dept, branch, base)
+        for sp in r['splits']:
+            if sp.get('home') and sp['kind'] == 'department' and sp['id'] == dept:
+                continue   # stays where payroll posted it
+            amt = q2(sp['amount'])
+            tag = {'project': 'project', 'cost_center': 'cost_center', 'department': 'department'}[sp['kind']]
+            label = f'Salary cost – {sp.get("name") or tag}'
+            b.add(acct, label, amt, 'debit', None, sp['id'] if sp['kind'] == 'department' else None, branch, cost=False, level=lvl,
+                  group=f'alloc-{sp["kind"]}-{sp["id"]}', tags={} if sp['kind'] == 'department' else {tag: sp.get('name') or str(sp['id'])})
+            b.add(acct, f'Salary cost moved – {r["name"]}', amt, 'credit', emp, dept, branch, cost=True, level=lvl, group='alloc-from')
+    if not b.entries:
+        raise Refused('Nothing is allocated away from the departments this month.')
+    return b.save(user)
+
+
 SETTLEMENT_PROVISION = {'gratuity': 'gratuity', 'leave': 'leave'}
 
 
@@ -474,10 +513,267 @@ def build_expenses(date_from, date_to, user=None):
     return b.save(user)
 
 
+# ------------------------------------------------------------------ v1.40.0 Property app (SRS 9.1 / 23) – one journal per Property document
+# The Property app is a kit app: its hooks give the postable documents (accounting_items) and take the accounting number
+# back (accounting_posted). Accounts come from AccountMap kind 'property' (key below); the default when the accountant
+# has not mapped one yet. Dimensions: branch of the bill, employee (agent) of a commission; building has no dimension kind.
+PROPERTY_ACCOUNTS = [   # (key, label, side, default account, group)
+    ('receivable', 'Tenant / buyer receivable', 'debit', '1200', 'Property – balances'),
+    ('receivable_owner', 'Owner receivable (owner bills)', 'debit', '1210', 'Property – balances'),
+    ('deposit', 'Tenant deposits held (liability)', 'credit', '2400', 'Property – balances'),
+    ('vat_output', 'VAT output (on invoices)', 'credit', '2210', 'Property – balances'),
+    ('vat_input', 'VAT input (on vendor bills)', 'debit', '1410', 'Property – balances'),
+    ('bank', 'Bank (transfers, cheques, direct debit)', 'debit', '1010', 'Property – cash and bank'),
+    ('cash', 'Cash receipts', 'debit', '1000', 'Property – cash and bank'),
+    ('card', 'Card / online receipts (clearing)', 'debit', '1015', 'Property – cash and bank'),
+    ('income_rent', 'Rent income', 'credit', '4100', 'Property – income'),
+    ('income_service', 'Service charge income', 'credit', '4110', 'Property – income'),
+    ('income_utility', 'Utility recharge income', 'credit', '4120', 'Property – income'),
+    ('income_fee', 'Fees income (late fee, reservation, admin)', 'credit', '4130', 'Property – income'),
+    ('income_sale', 'Sale instalments (property sales)', 'credit', '4140', 'Property – income'),
+    ('income_recharge', 'Maintenance recharge income', 'credit', '4150', 'Property – income'),
+    ('income_other', 'Other property income', 'credit', '4190', 'Property – income'),
+    ('income_mgmt', 'Management fee income (owner payouts)', 'credit', '4200', 'Property – income'),
+    ('owner_payable', 'Owner payable (rent collected for owners)', 'credit', '2500', 'Property – payables'),
+    ('agent_payable', 'Agent commission payable (employees)', 'credit', '2190', 'Property – payables'),
+    ('broker_payable', 'Broker commission payable', 'credit', '2510', 'Property – payables'),
+    ('vendor_payable', 'Vendor payable (maintenance)', 'credit', '2100', 'Property – payables'),
+    ('commission_expense', 'Commission expense', 'debit', '6300', 'Property – expenses'),
+    ('maintenance_expense', 'Maintenance / repairs expense', 'debit', '6400', 'Property – expenses'),
+]
+PROP_DEFAULT = {k: a for k, _, _, a, _ in PROPERTY_ACCOUNTS}
+CHARGE_INCOME = {'rent': 'income_rent', 'service': 'income_service', 'utility': 'income_utility', 'fee': 'income_fee', 'sale': 'income_sale',
+                 'maintenance': 'income_recharge', 'deposit': 'deposit', 'other': 'income_other'}
+RECEIPT_ACCOUNT = {'cash': 'cash', 'card': 'card', 'online': 'card'}   # the rest (cheque, transfer, direct debit) → bank
+PROP_KIND = {'prop_bill': 'bills', 'prop_receipt': 'receipts', 'prop_payout': 'payouts', 'prop_commission': 'commissions', 'prop_vendor': 'vendor_bills'}
+PROP_SOURCES = tuple(PROP_KIND)
+
+
+def property_app():
+    """The Property kit app when it is installed and activated in this company, else None."""
+    try:
+        from zeo.appkit.engine import other_app
+        return other_app('ZeoProperty')
+    except Exception:   # noqa: BLE001 – kit not loaded in this process
+        return None
+
+
+def property_items(kind, since=None):
+    prop = property_app()
+    return prop.hooks['accounting_items'](kind, since) if prop else []
+
+
+def _prop_item(kind, pk):
+    for it in property_items(kind, date(2000, 1, 1)):
+        if it['id'] == int(pk):
+            return it
+    raise Refused(f'Property {kind.replace("_", " ")[:-1]} #{pk} not found (or not issued / posted yet).', 404)
+
+
+PARTNER_KEYS = ('receivable', 'receivable_owner', 'owner_payable', 'broker_payable', 'vendor_payable', 'deposit')   # v1.44.0
+
+
+class PropBuilder(Builder):
+    def acct(self, key, emp=None, branch=None):
+        """Account of a Property key: the mapped debit or credit account (whichever is filled), else the default."""
+        a, lvl = self.accts.find('property', key, 'debit', emp, None, branch, '')
+        if not a:
+            a, lvl = self.accts.find('property', key, 'credit', emp, None, branch, PROP_DEFAULT.get(key, ''))
+        return a, lvl
+
+    def put(self, key, label, amount, side, emp=None, branch=None, group=None, partner=None):
+        a, lvl = self.acct(key, emp, branch)
+        if a and q2(amount):   # v1.62.0: which ZEO key each account plays (receivable, income, VAT …) – for invoice / bill sync
+            self.extra.setdefault('doc', {}).setdefault('roles', {})[a] = key
+        self.add(a, label, amount, side, emp, None, branch, cost=True, level=lvl, group=group or key,
+                 partner=partner if key in PARTNER_KEYS else None)
+
+
+def build_prop_bill(pk, user=None):
+    """Dr receivable (tenant / buyer, or the owner) / Cr income by charge kind (security deposit → deposits held), Cr VAT output.
+    A credit note is the same entry the other way round."""
+    it = _prop_item('bills', pk)
+    kind = 'Credit note' if it['credit'] else 'Invoice'
+    b = PropBuilder('prop_bill', it['id'], f"{kind} {it['number']} – {it['party']} – {it['charge']}"[:200], it['date'], it['number'])
+    dr, cr = ('credit', 'debit') if it['credit'] else ('debit', 'credit')
+    br = it.get('branch')
+    desc = it.get('description') or it['charge']
+    b.put('receivable_owner' if it.get('party_kind') == 'owner' else 'receivable', f"{it['party']} – {it['number']}", it['total'], dr, branch=br,
+          partner=it.get('partner_id'))
+    unit = it.get('unit') or ''
+    b.put(CHARGE_INCOME.get(it.get('charge_kind'), 'income_other'), desc if unit in desc else f'{desc} {unit}'.strip(), it['amount'], cr, branch=br)
+    b.put('vat_output', f"VAT – {it['number']}", it.get('vat') or 0, cr, branch=br)
+    b.extra = {'prop_kind': 'bills', 'prop_id': it['id'], 'building': it.get('building', ''),
+               'doc': {**b.extra.get('doc', {}), 'kind': 'credit_note' if it['credit'] else 'invoice', 'number': it['number'],
+                       'date': str(it['date']), 'due': str(it['date']), 'party': it['party'], 'charge': it['charge'],
+                       'description': desc, 'unit': unit, 'amount': float(it['amount']), 'vat': float(it.get('vat') or 0),
+                       'total': float(it['total'])}}   # v1.62.0
+    return b.save(user)
+
+
+def _deposit_billed(bill_number):
+    """Was the deposit bill itself journalled (Dr receivable / Cr deposits held)? Then the receipt clears the receivable."""
+    try:
+        from ZeoProperty.models import Bill
+        pk = Bill.objects.filter(number=bill_number).values_list('pk', flat=True).first()
+    except Exception:   # noqa: BLE001
+        return False
+    return bool(pk) and JournalBatch.objects.filter(source='prop_bill', source_id=str(pk)).exclude(status__in=('cancelled', 'reversed')).exists()
+
+
+def build_prop_receipt(pk, user=None):
+    """Dr bank / cash / card (by method) / Cr receivable per allocated bill; the deposit part goes straight to the deposits
+    liability when the deposit bill was never journalled. Money not allocated yet stays on the receivable (advance)."""
+    it = _prop_item('receipts', pk)
+    b = PropBuilder('prop_receipt', it['id'], f"Receipt {it['number']} – {it['party']}"[:200], it['date'], it['number'])
+    b.put(RECEIPT_ACCOUNT.get(it['method'], 'bank'), f"{it['number']} {it.get('reference') or it['method']}".strip(), it['amount'], 'debit')
+    alloc = ZERO
+    for a in it.get('bills') or []:
+        key = 'deposit' if a.get('deposit') and not _deposit_billed(a['bill']) else 'receivable'
+        b.put(key, f"{it['party']} – {a['bill']}", a['amount'], 'credit', group=f"{key}-{a['bill']}", partner=it.get('partner_id'))
+        alloc += q2(a['amount'])
+    rest = q2(it['amount']) - alloc
+    if rest > 0:
+        b.put('receivable', f"{it['party']} – unallocated", rest, 'credit', group='unalloc', partner=it.get('partner_id'))
+    b.extra = {'prop_kind': 'receipts', 'prop_id': it['id'],
+               'doc': {**b.extra.get('doc', {}), 'kind': 'payment', 'number': it['number'], 'date': str(it['date']), 'party': it['party'],
+                       'amount': float(it['amount']), 'method': it['method'], 'reference': it.get('reference') or '',
+                       'bills': [{'bill': a['bill'], 'amount': float(a['amount'])} for a in it.get('bills') or []]}}   # v1.62.0
+    return b.save(user)
+
+
+REFUND_ACCOUNT = {'deposit': 'deposit', 'reservation': 'income_fee'}   # sale / overpayment / other → the receivable
+
+
+def build_prop_refund(pk, user=None):
+    """Dr deposits held (reservation fee: fees income; others: receivable) / Cr bank. Kept under the receipts source as R<id>."""
+    it = _prop_item('refunds', pk)
+    b = PropBuilder('prop_receipt', f"R{it['id']}", f"Refund {it['number']} – {it['party']}"[:200], it['date'], it['number'])
+    b.put(REFUND_ACCOUNT.get(it.get('kind'), 'receivable'), f"Refund {it.get('kind', '')} – {it['party']}", it['amount'], 'debit', partner=it.get('partner_id'))
+    b.put('bank', f"{it['number']} {it.get('reference') or ''}".strip(), it['amount'], 'credit')
+    b.extra = {'prop_kind': 'refunds', 'prop_id': it['id']}
+    return b.save(user)
+
+
+def build_prop_payout(pk, user=None):
+    """Dr owner payable (net + management fees) / Cr bank (net) / Cr management fee income (fees)."""
+    it = _prop_item('payouts', pk)
+    b = PropBuilder('prop_payout', it['id'], f"Owner payout {it['number']} – {it['owner']}"[:200], it['date'], it['number'])
+    net, fees = q2(it['net']), q2(it.get('fees') or 0)
+    b.put('owner_payable', f"{it['owner']} – {it['number']}", net + fees, 'debit', partner=it.get('partner_id'))
+    b.put('bank', f"Payout {it['number']}", net, 'credit')
+    b.put('income_mgmt', f"Management fees – {it['owner']}", fees, 'credit')
+    b.extra = {'prop_kind': 'payouts', 'prop_id': it['id'], 'collected': it.get('collected'), 'expenses': it.get('expenses')}
+    return b.save(user)
+
+
+def build_prop_commission(pk, user=None):
+    """Dr commission expense / Cr agent payable (employee dimension) or broker payable."""
+    it = _prop_item('commissions', pk)
+    emp = it.get('employee_id') if not it.get('broker') else None
+    b = PropBuilder('prop_commission', it['id'], f"Commission {it['number']} – {it['agent']}"[:200], it['date'], it['number'])
+    if emp:
+        b.dims.emp(emp)
+    b.put('commission_expense', f"Commission {it['number']} – {it['agent']}", it['amount'], 'debit', emp=emp)
+    b.put('broker_payable' if it.get('broker') else 'agent_payable', f"{it['agent']} – {it['number']}", it['amount'], 'credit', emp=emp,
+          partner=it.get('partner_id'))
+    b.extra = {'prop_kind': 'commissions', 'prop_id': it['id']}
+    return b.save(user)
+
+
+def build_prop_vendor(pk, user=None):
+    """Purchase order with the vendor's invoice matched: Dr maintenance expense (+ VAT input when the item carries a vat) / Cr vendor payable."""
+    it = _prop_item('vendor_bills', pk)
+    b = PropBuilder('prop_vendor', it['id'], f"Vendor bill {it.get('invoice_no') or it['number']} – {it['vendor']}"[:200], it['date'], it.get('invoice_no') or it['number'])
+    vat = q2(it.get('vat') or 0)   # TODO v1.40.0: the Property purchase order has no VAT split yet – the whole invoice is expense until it does
+    b.put('maintenance_expense', f"{it.get('description') or it['number']} – {it['vendor']}", q2(it['amount']) - vat, 'debit')
+    b.put('vat_input', f"VAT – {it.get('invoice_no') or it['number']}", vat, 'debit')
+    b.put('vendor_payable', f"{it['vendor']} – {it.get('invoice_no') or it['number']}", it['amount'], 'credit', partner=it.get('partner_id'))
+    b.extra = {'prop_kind': 'vendor_bills', 'prop_id': it['id'],
+               'doc': {**b.extra.get('doc', {}), 'kind': 'bill', 'number': it['number'], 'invoice_no': it.get('invoice_no') or it['number'],
+                       'date': str(it['date']), 'party': it['vendor'], 'description': it.get('description') or it['number'],
+                       'amount': float(it['amount']) - float(vat), 'vat': float(vat), 'total': float(it['amount'])}}   # v1.62.0
+    return b.save(user)
+
+
+PROP_BUILD = {'prop_bill': build_prop_bill, 'prop_receipt': build_prop_receipt, 'prop_payout': build_prop_payout,
+              'prop_commission': build_prop_commission, 'prop_vendor': build_prop_vendor}
+
+
+def build_property(source, pk, user=None):
+    if property_app() is None:
+        raise Refused('The Property app is not active in this company.')
+    if source == 'prop_receipt' and str(pk).upper().startswith('R'):
+        return build_prop_refund(int(str(pk)[1:]), user)
+    return PROP_BUILD[source](int(pk), user)
+
+
+def property_posted(batch, status='posted', paid=False):
+    """Tell the Property app the number of the journal in the accounting app (after post / export / ack / reversal)."""
+    prop = property_app()
+    r = batch.rules or {}
+    if prop is None or batch.source not in PROP_SOURCES or not r.get('prop_id'):
+        return
+    ref = '' if status == 'not_sent' else (batch.external_ref or batch.number)
+    try:
+        prop.hooks['accounting_posted'](r.get('prop_kind') or PROP_KIND[batch.source], r['prop_id'], ref, status=status, paid=paid)
+    except Exception as ex:   # noqa: BLE001 – never block the posting
+        log.exception('property_posted %s', batch.pk)
+        logit(batch, 'property', False, ex)
+
+
+def property_check_paid(user=None):
+    """Odoo: read payment_state of the posted Property invoices and tell Property the ones that are paid / in payment.
+    TODO v1.40.0: Zoho Books journals carry no payment state – only Odoo is read."""
+    st = settings()
+    if st.connector != 'odoo':
+        raise Refused('Only Odoo reports the payment state of an invoice.')
+    con = connector(st)
+    qs = JournalBatch.objects.filter(source='prop_bill', status='posted', connector='odoo').exclude(external_id='')
+    todo = {int(b.external_id): b for b in qs if not (b.rules or {}).get('paid')}
+    if not todo:
+        return {'checked': 0, 'paid': 0}
+    rows = con.call('account.move', 'read', ids=list(todo), fields=['payment_state'])
+    n = 0
+    for r in rows or []:
+        b = todo.get(r.get('id'))
+        if b and r.get('payment_state') in ('paid', 'in_payment'):
+            b.rules = {**(b.rules or {}), 'paid': r['payment_state']}
+            b.save(update_fields=['rules'])
+            property_posted(b, 'posted', paid=True)
+            logit(b, 'paid', True, r['payment_state'], user)
+            n += 1
+    return {'checked': len(todo), 'paid': n}
+
+
+def _prop_auto(source, pk):
+    """Property tells us a document is done (property_payout / property_refund / property_vendor_bill): build when auto_build is on."""
+    st = settings()
+    if not st.auto_build or property_app() is None:
+        return None
+    try:
+        b = build_property(source, pk)
+    except Refused as ex:
+        log.info('%s %s not built: %s', source, pk, ex.message)
+        return None
+    hooks_fire('journal.ready', b)
+    if st.auto_post and b.status == 'ready' and st.connector in ('odoo', 'zoho'):
+        transaction.on_commit(lambda: _post_quiet(b.pk))
+    return b.pk
+
+
+# Hooks the Property app calls through zeo.appkit.engine.call(app, 'ZeoAccounting', name, pk). ZeoAccounting is not a kit
+# app (not in REGISTRY), so those calls are no-ops today; register HOOKS on an App instance when it becomes one.
+HOOKS = {'property_payout': lambda pk: _prop_auto('prop_payout', pk), 'property_refund': lambda pk: _prop_auto('prop_receipt', f'R{pk}'),
+         'property_vendor_bill': lambda pk: _prop_auto('prop_vendor', pk)}
+
+
 def recheck(batch, user=None):
     """Build the batch again from its source (after a mapping was filled in)."""
     if batch.status not in ('draft', 'ready', 'failed'):
         raise Refused('Only a draft, ready or failed journal can be checked again.')
+    if batch.source in PROP_SOURCES:   # v1.40.0
+        return build_property(batch.source, batch.source_id, user)
     if batch.source == 'payroll':
         return build_payroll(int(batch.source_id), user)
     if batch.source == 'settlement':
@@ -537,6 +833,7 @@ def mark_done(batch, status, user=None, external_id='', external_ref=''):
     batch.last_error = ''
     batch.save()
     _apply_provisions(batch)
+    property_posted(batch, 'posted' if status == 'posted' else 'exported')   # v1.40.0
     hooks_fire('journal.posted' if status == 'posted' else 'journal.exported', batch)
 
 
@@ -572,7 +869,17 @@ def post(batch, user=None):
         b.status, b.attempts, b.connector = 'posting', b.attempts + 1, st.connector
         b.save(update_fields=['status', 'attempts', 'connector'])
     try:
-        ext_id, ext_ref = con.post(b)
+        kind = document_kind(b, st)
+        if b.source == 'reversal' and b.reversal_of_id and (b.reversal_of.rules or {}).get('style') == 'documents' and hasattr(con, 'reverse_document'):
+            ext_id, ext_ref = con.reverse_document(b.reversal_of, b)   # v1.62.0 credit note / cancelled payment instead of a JV
+        elif kind and hasattr(con, 'post_document'):
+            if kind == 'payment':
+                _invoice_ids(b)
+            ext_id, ext_ref = con.post_document(b, kind)   # v1.62.0 customer invoice / credit note, customer payment, vendor bill
+            b.rules = {**(b.rules or {}), 'style': 'documents', 'doc_kind': kind}
+            b.save(update_fields=['rules'])
+        else:
+            ext_id, ext_ref = con.post(b)
     except Exception as ex:   # noqa: BLE001 – every failure is shown on the journal and retried
         b.status, b.last_error = 'failed', str(ex)[:2000]
         b.save(update_fields=['status', 'last_error'])
@@ -581,6 +888,39 @@ def post(batch, user=None):
     mark_done(b, 'posted', user, ext_id, ext_ref)
     logit(b, 'post', True, f'{st.connector} {ext_ref or ext_id}', user)
     return b
+
+
+def document_kind(batch, st=None):
+    """v1.62.0: 'invoice' / 'credit_note' / 'payment' / 'bill' when the company sends documents instead of journal vouchers,
+    else None. Only Property invoices and credit notes, receipts (not refunds) and vendor bills are documents; payroll,
+    provisions, settlements, expenses, owner payouts, commissions and refunds always go as journal vouchers."""
+    st = st or settings()
+    if st.post_style != 'documents' or st.connector not in ('odoo', 'zoho'):
+        return None
+    doc = (batch.rules or {}).get('doc') or {}
+    if batch.source == 'prop_bill':
+        return doc.get('kind') or 'invoice'
+    if batch.source == 'prop_receipt' and not str(batch.source_id).upper().startswith('R'):
+        return 'payment'
+    if batch.source == 'prop_vendor':
+        return 'bill'
+    return None
+
+
+def _invoice_ids(batch):
+    """v1.62.0: the ids in the accounting app of the invoices a receipt pays (bills synced as documents), on rules['doc']['bills']."""
+    doc = (batch.rules or {}).get('doc') or {}
+    nums = [x['bill'] for x in doc.get('bills') or []]
+    if not nums:
+        return
+    found = {}
+    for jb in JournalBatch.objects.filter(source='prop_bill', reference__in=nums, status='posted').exclude(external_id=''):
+        if (jb.rules or {}).get('style') == 'documents' and jb.connector == batch.connector:
+            found[jb.reference] = jb.external_id
+    for x in doc['bills']:
+        x['invoice_id'] = found.get(x['bill'], '')
+    batch.rules = {**batch.rules, 'doc': doc}
+    batch.save(update_fields=['rules'])
 
 
 @transaction.atomic
@@ -604,6 +944,7 @@ def reverse(batch, user=None, on=None):
     batch.status = 'reversed'
     batch.save(update_fields=['status'])
     _apply_provisions(batch, undo=True)
+    property_posted(batch, 'not_sent')   # v1.40.0: the Property document can be journalled again
     logit(batch, 'reverse', True, r.number, user)
     if batch.connector in ('odoo', 'zoho') and batch.external_id:   # posted there – post the reversal there too
         if batch.connector == settings().connector:
@@ -735,6 +1076,30 @@ def map_partners(create=False):
             n += 1
             made += 1 if was_made else 0
     return {'matched': n, 'created': made}
+
+
+def map_business_partners(create=False):
+    """v1.44.0: find (or make) each business partner with a receivable / payable in the accounting app – by its BP number as the
+    reference – and keep the id in Partner.accounting_ref."""
+    con = connector()
+    if con is None:
+        raise Refused('Connect Odoo or Zoho Books first.')
+    Partner = M('ZeoMasters', 'Partner')
+    qs = Partner.objects.filter(merged_into__isnull=True, accounting_ref='').exclude(status='archived').exclude(used_in=[])
+    n = made = 0
+    for p in qs:
+        if p.parent_id and p.parent.kind == 'company':
+            continue   # a person of a company: the company is the accounting partner
+        try:
+            ref, was_made = con.partner(p.name, p.number, create, is_company=p.kind == 'company', vat=p.tax_id, email=p.email,
+                                        customer=bool(p.balance_receivable) or 'Supplier' not in (p.roles_text or ''))
+        except TypeError:   # an older connector
+            ref, was_made = con.partner(p.name, p.number, create)
+        if ref:
+            Partner.objects.filter(pk=p.pk).update(accounting_ref=str(ref))
+            n += 1
+            made += 1 if was_made else 0
+    return {'matched': n, 'created': made, 'left': qs.count()}
 
 
 def accounts_check(batch=None):

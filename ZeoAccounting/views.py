@@ -10,7 +10,9 @@ GET  api/dimensions/?kind=department     departments / employees / branches with
 POST api/dimensions/auto/                {kind, create} – match (and create) the analytic accounts / tag options
 POST api/partners/auto/                  {create} – match (and create) the employee partners / contacts
 GET  api/sources/                        payroll runs and final settlements that can be posted, with their journal
-GET  api/journals/?status=&source=       journals                                    POST api/journals/build/ {source, id | as_of | from, to}
+                                         + "property": bills, receipts (and refunds R<id>), payouts, commissions, vendor bills (v1.40.0)
+POST api/property/paid/                  v1.40.0 read the paid state of the posted Property invoices from Odoo → Property
+GET  api/journals/?status=&source=       journals                                    POST api/journals/build/ {source, id | ids | as_of | from, to}
 GET  api/journals/<id>/                  a journal with its lines and log
 POST api/journals/<id>/<action>/         post | recheck | reverse | cancel | exported
 GET  api/journals/<id>/missing/          accounts the journal uses that the accounting app does not have
@@ -52,11 +54,13 @@ POST = {'post_accounting', 'manage_accounting'}
 MANAGE = {'manage_accounting'}
 
 SETTING_FIELDS = ['connector', 'department_mode', 'employee_mode', 'branch_mode', 'dims_on', 'dept_gl_pattern', 'emp_gl_pattern', 'branch_gl_pattern',
-                  'post_as', 'auto_build', 'auto_post', 'journal_code', 'currency', 'payable_account', 'rounding_account', 'gratuity_expense_account',
+                  'post_as', 'auto_build', 'auto_post', 'partner_lines', 'journal_code', 'currency', 'payable_account', 'rounding_account', 'gratuity_expense_account',
                   'gratuity_provision_account', 'leave_expense_account', 'leave_provision_account', 'settlement_payable_account',
                   'default_expense_account', 'default_deduction_account', 'odoo_url', 'odoo_db', 'odoo_login', 'odoo_api', 'odoo_company_id',
                   'odoo_dept_plan_id', 'odoo_emp_plan_id', 'odoo_branch_plan_id', 'zoho_api_domain', 'zoho_accounts_domain', 'zoho_org_id',
-                  'zoho_client_id', 'zoho_dept_tag_id', 'zoho_emp_tag_id', 'zoho_branch_tag_id']
+                  'zoho_client_id', 'zoho_dept_tag_id', 'zoho_emp_tag_id', 'zoho_branch_tag_id',
+                  # v1.62.0 JV or invoices / payments / bills
+                  'post_style', 'sales_journal_code', 'purchase_journal_code', 'bank_journal_code', 'sale_tax_ref', 'purchase_tax_ref']
 
 
 def d2(v):
@@ -115,6 +119,7 @@ class SettingsView(Base):
             'branch_mode': AccountingSettings._meta.get_field('branch_mode').choices,
             'dims_on': AccountingSettings._meta.get_field('dims_on').choices,
             'post_as': AccountingSettings._meta.get_field('post_as').choices,
+            'post_style': AccountingSettings._meta.get_field('post_style').choices,   # v1.62.0
             'odoo_api': AccountingSettings._meta.get_field('odoo_api').choices}})
 
     def put(self, request):
@@ -202,6 +207,10 @@ def account_items():
                           'default_debit': c.gl_account or '', 'default_credit': ''})
     except LookupError:
         pass
+    if S.property_app() is not None:   # v1.40.0 Property app accounts
+        for key, label, side, default, group in S.PROPERTY_ACCOUNTS:
+            items.append({'kind': 'property', 'key': key, 'label': label, 'group': group, 'side': side,
+                          'default_debit': default if side == 'debit' else '', 'default_credit': default if side == 'credit' else ''})
     return items
 
 
@@ -224,7 +233,7 @@ class AccountsView(Base):
                 setattr(obj, f, (str(r.get(f) or '')).strip())
             for f in ('department_id', 'employee_id', 'branch_id'):
                 setattr(obj, f, int(r[f]) if r.get(f) else None)
-            if obj.kind not in ('component', 'settlement', 'expense', 'payable', 'provision'):
+            if obj.kind not in ('component', 'settlement', 'expense', 'payable', 'provision', 'property'):
                 raise S.Refused(f'Unknown kind {obj.kind}.')
             obj.save()
             keep.append(obj.pk)
@@ -290,6 +299,8 @@ class PartnersView(Base):
     need = MANAGE
 
     def post(self, request):
+        if request.data.get('business'):   # v1.44.0 business partners (tenants, owners, customers, suppliers…)
+            return Response(S.map_business_partners(bool(request.data.get('create'))))
         return Response(S.map_partners(bool(request.data.get('create'))))
 
 
@@ -320,7 +331,21 @@ class SourcesView(Base):
         except LookupError:
             pass
         prov = [{'month': k[1], 'journal': v} for k, v in have.items() if k[0] == 'provision']
-        return Response({'payroll': runs, 'settlements': sets, 'provisions': prov})
+        out = {'payroll': runs, 'settlements': sets, 'provisions': prov}
+        if S.property_app() is not None:   # v1.40.0 Property documents of the last 90 days (the hook's default), same shape as the payroll rows
+            def prow(src, it, sid, label, party, amount):
+                return {'id': sid, 'number': it['number'], 'date': it['date'], 'label': label, 'party': party, 'amount': d2(S.q2(amount)),
+                        'status': it.get('external_ref') or it.get('status') or '', 'journal': have.get((src, str(sid)))}
+            prop = {'bills': [prow('prop_bill', i, i['id'], f"{'Credit note' if i['credit'] else 'Invoice'} {i['number']} – {i['charge']}", i['party'], i['total'])
+                              for i in S.property_items('bills')],
+                    'receipts': [prow('prop_receipt', i, i['id'], f"Receipt {i['number']} – {i['method']}", i['party'], i['amount']) for i in S.property_items('receipts')]
+                    + [prow('prop_receipt', i, f"R{i['id']}", f"Refund {i['number']} – {i['kind']}", i['party'], i['amount']) for i in S.property_items('refunds')],
+                    'payouts': [prow('prop_payout', i, i['id'], f"Payout {i['number']}", i['owner'], i['net']) for i in S.property_items('payouts')],
+                    'commissions': [prow('prop_commission', i, i['id'], f"Commission {i['number']}", i['agent'], i['amount']) for i in S.property_items('commissions')],
+                    'vendor_bills': [prow('prop_vendor', i, i['id'], f"Vendor bill {i.get('invoice_no') or i['number']}", i['vendor'], i['amount'])
+                                     for i in S.property_items('vendor_bills')]}
+            out['property'] = {k: sorted(v, key=lambda r: (str(r['date']), str(r['number'])), reverse=True) for k, v in prop.items()}
+        return Response(out)
 
 
 class JournalsView(Base):
@@ -355,10 +380,33 @@ class BuildView(Base):
             b = S.build_provisions(date.fromisoformat(d['as_of']) if d.get('as_of') else None, request.user)
         elif src == 'expense':
             b = S.build_expenses(date.fromisoformat(d['from']), date.fromisoformat(d['to']), request.user)
+        elif src in S.PROP_SOURCES:   # v1.40.0 {source, id} or {source, ids:[…]} – one journal per Property document
+            ids = d.get('ids') or [d.get('id')]
+            made, errors = [], []
+            for pk in ids:
+                try:
+                    made.append(S.build_property(src, pk, request.user))
+                except S.Refused as ex:
+                    if len(ids) == 1:
+                        raise
+                    errors.append(f'{pk}: {ex.message}')
+            for x in made:
+                S.hooks_fire('journal.ready', x) if x.status == 'ready' else None
+            if not made:
+                raise S.Refused('; '.join(errors) or 'Nothing to post.')
+            return Response({**batch_row(made[-1]), 'built': [batch_row(x) for x in made], 'errors': errors}, status=201)
         else:
             raise S.Refused('Choose what to post.')
         S.hooks_fire('journal.ready', b) if b.status == 'ready' else None
         return Response(batch_row(b), status=201)
+
+
+class PropertyPaidView(Base):
+    """v1.40.0 POST – reads the payment state of the posted Property invoices from Odoo and tells Property the paid ones."""
+    need = POST
+
+    def post(self, request):
+        return Response(S.property_check_paid(request.user))
 
 
 class JournalView(Base):
@@ -555,6 +603,73 @@ class PublicJournals(PublicBase):
         bs = list(qs[:100])
         return Response({'results': [public_journal(b, lines=request.query_params.get('lines') == '1') for b in bs],
                          'next_since': bs[-1].id if bs else None})
+
+
+def public_partner(p):
+    """v1.44.0 – a business partner for the accounting application (customer / supplier master)."""
+    return {'id': p.pk, 'number': p.number, 'name': p.name, 'legal_name': p.legal_name, 'arabic_name': p.arabic_name, 'kind': p.kind,
+            'company': {'id': p.parent_id, 'number': p.parent.number} if p.parent_id else None, 'roles': p.roles_text, 'status': p.status,
+            'tax_id': p.tax_id, 'licence_no': p.licence_no, 'email': p.email, 'phone': p.phone, 'mobile': p.mobile,
+            'address': {'street': p.street, 'building_no': p.building_no, 'additional_no': p.additional_no, 'district': p.district, 'city': p.city,
+                        'postal_code': p.postal_code, 'state': p.state, 'country': p.country, 'country_code': p.country_code, 'text': p.address},
+            'einvoice': {'channel': p.einvoice_channel, 'endpoint_id': p.einvoice_id, 'scheme': p.einvoice_scheme, 'buyer_id_type': p.buyer_id_type,
+                         'buyer_id': p.buyer_id},
+            'payment_term': p.payment_term.name if p.payment_term_id else '', 'currency': p.currency, 'credit_limit': d2(p.credit_limit) if p.credit_limit is not None else None,
+            'credit_hold': p.credit_hold, 'balance': {'receivable': d2(p.balance_receivable), 'payable': d2(p.balance_payable), 'overdue': d2(p.balance_overdue)},
+            'banks': [{'bank': b.bank, 'iban': b.iban, 'account_no': b.account_no, 'swift': b.swift, 'currency': b.currency, 'default': b.is_default} for b in p.banks.all()],
+            'accounting_ref': p.accounting_ref, 'updated': p.updated_at.isoformat() if p.updated_at else None}
+
+
+def public_item(i):
+    return {'id': i.pk, 'number': i.number, 'code': i.code, 'name': i.name, 'arabic_name': i.arabic_name, 'kind': i.kind, 'active': i.is_active,
+            'uom': {'code': i.uom.code, 'unece': i.uom.unece_code} if i.uom_id else None, 'barcode': i.barcode, 'hs_code': i.hs_code,
+            'sale_price': d2(i.sale_price), 'tax': {'code': i.tax.code, 'rate': d2(i.tax.rate)} if i.tax_id else None, 'tax_category': i.tax_category,
+            'exemption_reason': i.exemption_reason, 'valuation': i.valuation, 'standard_cost': d2(i.standard_cost) if i.standard_cost is not None else None,
+            'stock_qty': d2(i.stock_qty), 'stock_value': d2(i.stock_value),
+            'accounts': {'income': i.income_account, 'expense': i.expense_account, 'stock': i.stock_account},
+            'updated': i.updated_at.isoformat() if i.updated_at else None}
+
+
+def _since(request, qs):
+    v = request.query_params.get('updated_since')
+    if v:
+        from django.utils.dateparse import parse_datetime, parse_date
+        dt = parse_datetime(v) or (parse_date(v) and timezone.make_aware(timezone.datetime.combine(parse_date(v), timezone.datetime.min.time())))
+        if dt:
+            qs = qs.filter(updated_at__gte=dt)
+    return qs
+
+
+class PublicPartners(PublicBase):
+    """GET /accounting/v1/partners/?updated_since=2026-10-01&page=1 – 200 per page."""
+    def get(self, request):
+        from ZeoMasters.models import Partner
+        qs = _since(request, Partner.objects.filter(merged_into__isnull=True).select_related('parent', 'payment_term').prefetch_related('banks').order_by('id'))
+        page = max(int(request.query_params.get('page') or 1), 1)
+        rows = list(qs[(page - 1) * 200: page * 200 + 1])
+        return Response({'results': [public_partner(p) for p in rows[:200]], 'next_page': page + 1 if len(rows) > 200 else None})
+
+
+class PublicPartnerRef(PublicBase):
+    """POST {"accounting_ref": "42"} – the accounting application tells ZEO its id of the partner."""
+    def post(self, request, pk):
+        from ZeoMasters.models import Partner
+        if not request.user.can_ack:
+            return Response({'detail': 'This application may only read.'}, status=403)
+        ref = str(request.data.get('accounting_ref') or '')[:60]
+        n = Partner.objects.filter(pk=pk).update(accounting_ref=ref)
+        if not n:
+            return Response({'detail': 'Not found.'}, status=404)
+        return Response({'id': pk, 'accounting_ref': ref})
+
+
+class PublicItems(PublicBase):
+    def get(self, request):
+        from ZeoMasters.models import Product
+        qs = _since(request, Product.objects.select_related('uom', 'tax').order_by('id'))
+        page = max(int(request.query_params.get('page') or 1), 1)
+        rows = list(qs[(page - 1) * 200: page * 200 + 1])
+        return Response({'results': [public_item(i) for i in rows[:200]], 'next_page': page + 1 if len(rows) > 200 else None})
 
 
 class PublicJournal(PublicBase):

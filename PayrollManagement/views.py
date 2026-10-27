@@ -149,8 +149,16 @@ class EmployeeSalaryStructureViewSet(viewsets.ModelViewSet):
     serializer_class = EmployeeSalaryStructureSerializer
 
 class BenefitLiabilityAPIView(APIView):
+    # v1.62.0: salary, gratuity and leave liability of every employee – only for company admins and users with the right to view
+    # employee salaries; before, any signed-in employee could read it (a view without a list is not narrowed by the row rules)
+    queryset = EmployeeSalaryStructure.objects.none()
 
     def get(self, request):
+        from AccessControl.access import ctx
+        from rest_framework.exceptions import PermissionDenied
+        c = ctx(request)
+        if not (c.admin or 'view_employeesalarystructure' in c.codes):
+            raise PermissionDenied('You do not have permission to view the benefit liability report.')
 
         as_of_date = request.GET.get(
             "as_of_date"
@@ -277,6 +285,13 @@ class PayslipViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(status__in=self.RELEASED)
         except Exception:
             qs = qs.filter(status__in=self.RELEASED)
+        if getattr(self, 'action', None) != 'retrieve':   # v1.56.1 lists: the components, leave lines and structures in one query each
+            from django.db.models import Prefetch
+            from .models import PayslipComponent, EmployeeSalaryStructure
+            qs = qs.select_related('employee__emp_dept_id', 'employee__emp_desgntn_id', 'payroll_run').prefetch_related(
+                Prefetch('components', queryset=PayslipComponent.objects.select_related('component')),
+                'leave_details__leave_type',
+                Prefetch('employee__salary_structures', queryset=EmployeeSalaryStructure.objects.select_related('component')))
         return qs
 
     def _scoped(self):
@@ -303,6 +318,13 @@ class PayslipViewSet(viewsets.ModelViewSet):
                 payroll_run__month=month,
                 payroll_run__year=year
             )
+            try:   # v1.62.0 print – the company's default payslip design; the old payslip when there is none
+                from PrintTemplates.hooks import payslip_response
+                _r = payslip_response(request, payslip)
+                if _r is not None:
+                    return _r
+            except ImportError:
+                pass
             return generate_payslip_pdf(request, payslip)
         except Payslip.DoesNotExist:
             return Response(
@@ -996,6 +1018,9 @@ class LoanApprovalviewset(viewsets.ModelViewSet):
         approval.deligate_response = None
         approval.save()
 
+        # v1.40.1: the e-mail is best effort and the delegation is answered even when the user has no e-mail address
+        # (the success response sat inside "if delegate_user.email", so the request ended in a 500 and the screen
+        # never showed the delegation; an SMTP failure broke it too)
         if delegate_user.email:
 
             subject = "Delegation Assigned"
@@ -1020,42 +1045,45 @@ class LoanApprovalviewset(viewsets.ModelViewSet):
                 Thank You.
                 """
 
-            send_mail(
-                subject,
-                message,
-                None,
-                [delegate_user.email],
-                fail_silently=False,
-            )
-            created_notification = send_notification_email(
-                user=delegate_user,
-                employee=None,
-                branch=None,
-                title="Delegation Assigned",
-                message=f"{approval.approver.username} has delegated request {approval.loan_request.document_number} to you.",
-                delegate_user=approval.approver,
-                template_type="request_created",
-                context={
-                    **get_employee_context(approval.loan_request.employee),
-                        "doc_number": approval.loan_request.document_number,
-                        "request_type": approval.loan_request.loan_type,
-                    },
-                    email_template_model=LoanEmailTemplate,
-                    notification_model=LoanNotification,
-            )
-
-            print("Notification Created:", created_notification)
-
-            return Response(
-                {
-                    "message": "Approval delegated successfully.",
-                    "approval_id": approval.id,
-                    "approver": approval.approver.username,
-                    "delegate_to": delegate_user.username,
-                    "status": approval.status,
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    None,
+                    [delegate_user.email],
+                    fail_silently=True,
+                )
+            except Exception as _e:   # v1.40.1
+                logger.warning("Delegation e-mail not sent: %s", _e)
+        created_notification = send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            message=f"{approval.approver.username} has delegated request {approval.loan_request.document_number} to you.",
+            delegate_user=approval.approver,
+            template_type="request_created",
+            context={
+                **get_employee_context(approval.loan_request.employee),
+                    "doc_number": approval.loan_request.document_number,
+                    "request_type": approval.loan_request.loan_type,
                 },
-                status=status.HTTP_200_OK,
-            )
+                email_template_model=LoanEmailTemplate,
+                notification_model=LoanNotification,
+        )
+
+        print("Notification Created:", created_notification)
+
+        return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
     @action(detail=True, methods=["post"])
     def send_response(self, request, pk=None):
         approval = self.get_object()
@@ -1263,6 +1291,16 @@ def _segregation(approval, user):
 class PayslipApprovalViewSet(viewsets.ModelViewSet):
     queryset = PayslipApproval.objects.all()
     serializer_class = PayslipApprovalSerializer
+
+    def get_queryset(self):
+        # v1.62.0 speed: each approval embeds its payslip (run, employee, components, leave lines, salary lines) – about
+        # nine queries per approval before (2,400 queries for the Payslip approvals page); now a few for the whole list
+        qs = super().get_queryset()
+        if self.request.method != 'GET':
+            return qs
+        # (prefetch only – a join would change the order of this unordered list)
+        return qs.prefetch_related('request__payroll_run', 'request__employee__emp_dept_id', 'request__employee__emp_desgntn_id',
+                                   'request__components__component', 'request__leave_details__leave_type')
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -1467,6 +1505,9 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
         approval.deligate_response = None
         approval.save()
 
+        # v1.40.1: the e-mail is best effort and the delegation is answered even when the user has no e-mail address
+        # (the success response sat inside "if delegate_user.email", so the request ended in a 500 and the screen
+        # never showed the delegation; an SMTP failure broke it too)
         if delegate_user.email:
 
             subject = "Delegation Assigned"
@@ -1490,40 +1531,43 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
                 Thank You.
                 """
 
-            send_mail(
-                subject,
-                message,
-                None,
-                [delegate_user.email],
-                fail_silently=False,
-            )
-            created_notification = send_notification_email(
-                user=delegate_user,
-                employee=None,
-                branch=None,
-                title="Delegation Assigned",
-                message=f"{approval.approver.username} has delegated request {approval.request.document_number} to you.",
-                delegate_user=approval.approver,
-                template_type="request_created",
-                context={
-                    **get_employee_context(approval.request.employee),
-                    "doc_number": approval.request.document_number,
-                },
-                email_template_model=AdvanceSalaryEmailTemplate,
-                notification_model=AdvanceSalaryNotification
-            )
-            print("Notification Created:", created_notification)
-            
-            return Response(
-            {
-                "message": "Approval delegated successfully.",
-                "approval_id": approval.id,
-                "approver": approval.approver.username,
-                "delegate_to": delegate_user.username,
-                "status": approval.status,
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    None,
+                    [delegate_user.email],
+                    fail_silently=True,
+                )
+            except Exception as _e:   # v1.40.1
+                logger.warning("Delegation e-mail not sent: %s", _e)
+        created_notification = send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            message=f"{approval.approver.username} has delegated request {approval.request.document_number} to you.",
+            delegate_user=approval.approver,
+            template_type="request_created",
+            context={
+                **get_employee_context(approval.request.employee),
+                "doc_number": approval.request.document_number,
             },
-            status=status.HTTP_200_OK,
+            email_template_model=AdvanceSalaryEmailTemplate,
+            notification_model=AdvanceSalaryNotification
         )
+        print("Notification Created:", created_notification)
+            
+        return Response(
+        {
+            "message": "Approval delegated successfully.",
+            "approval_id": approval.id,
+            "approver": approval.approver.username,
+            "delegate_to": delegate_user.username,
+            "status": approval.status,
+        },
+        status=status.HTTP_200_OK,
+    )
     @action(detail=True, methods=["post"])
     def send_response(self, request, pk=None):
         approval = self.get_object()
@@ -1633,7 +1677,9 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
 
             serializer.save(
                 document_number=document_number,
-                created_by=self.request.user   # ✅ FIX HERE
+                created_by=self.request.user,   # ✅ FIX HERE
+                # v1.62.0 the branch was left empty, so the approval workflow (looked up by branch) never started
+                branch=serializer.validated_data.get('branch') or branch_id,
             )
 class AirticketWorkflowViewSet(viewsets.ModelViewSet):
     queryset = AirticketApprovalWorkflow.objects.all()
@@ -1711,6 +1757,9 @@ class AirticketApprovalViewSet(viewsets.ModelViewSet):
         approval.deligate_response = None
         approval.save()
 
+        # v1.40.1: the e-mail is best effort and the delegation is answered even when the user has no e-mail address
+        # (the success response sat inside "if delegate_user.email", so the request ended in a 500 and the screen
+        # never showed the delegation; an SMTP failure broke it too)
         if delegate_user.email:
 
             subject = "Delegation Assigned"
@@ -1735,42 +1784,45 @@ class AirticketApprovalViewSet(viewsets.ModelViewSet):
                 Thank You.
                 """
 
-            send_mail(
-                subject,
-                message,
-                None,
-                [delegate_user.email],
-                fail_silently=False,
-            )
-            created_notification = send_notification_email(
-                user=delegate_user,
-                employee=None,
-                branch=None,
-                title="Delegation Assigned",
-                message=f"{approval.approver.username} has delegated request {approval.request.document_number} to you.",
-                delegate_user=approval.approver,
-                template_type="request_created",
-                context={
-                    **get_employee_context(approval.request.employee),
-                        "doc_number": approval.request.document_number,
-                        "request_type": approval.request.request_type,
-                    },
-                    email_template_model=AirticketEmailTemplate,
-                    notification_model=AirticketNotification,
-            )
-
-            print("Notification Created:", created_notification)
-
-            return Response(
-                {
-                    "message": "Approval delegated successfully.",
-                    "approval_id": approval.id,
-                    "approver": approval.approver.username,
-                    "delegate_to": delegate_user.username,
-                    "status": approval.status,
+            try:
+                send_mail(
+                    subject,
+                    message,
+                    None,
+                    [delegate_user.email],
+                    fail_silently=True,
+                )
+            except Exception as _e:   # v1.40.1
+                logger.warning("Delegation e-mail not sent: %s", _e)
+        created_notification = send_notification_email(
+            user=delegate_user,
+            employee=None,
+            branch=None,
+            title="Delegation Assigned",
+            message=f"{approval.approver.username} has delegated request {approval.request.document_number} to you.",
+            delegate_user=approval.approver,
+            template_type="request_created",
+            context={
+                **get_employee_context(approval.request.employee),
+                    "doc_number": approval.request.document_number,
+                    "request_type": approval.request.request_type,
                 },
-                status=status.HTTP_200_OK,
-            )
+                email_template_model=AirticketEmailTemplate,
+                notification_model=AirticketNotification,
+        )
+
+        print("Notification Created:", created_notification)
+
+        return Response(
+            {
+                "message": "Approval delegated successfully.",
+                "approval_id": approval.id,
+                "approver": approval.approver.username,
+                "delegate_to": delegate_user.username,
+                "status": approval.status,
+            },
+            status=status.HTTP_200_OK,
+        )
     @action(detail=True, methods=["post"])
     def send_response(self, request, pk=None):
         approval = self.get_object()
@@ -2264,6 +2316,52 @@ class LeaveEncashmentViewSet(viewsets.ModelViewSet):
             self.get_serializer(encashment).data,
             status=status.HTTP_201_CREATED,
         )
+
+    # v1.40.1: the Edit screen can change the formula (and the days): the amount is worked out again with the
+    # employee's current salary values and saved as formula_used, like on create. `formula` was write-only and
+    # not a model field, so PUT/PATCH used to drop it silently.
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        formula = serializer.validated_data.pop('formula', None)
+        sent = 'formula' in request.data and str(request.data.get('formula') or '').strip()
+        formula = (str(sent).strip() if sent else (instance.formula_used or DEFAULT_ENCASHMENT_FORMULA)).strip()
+        obj = serializer.save()
+        days = self._decimal(obj.encashment_days)
+        if days is None or days <= 0:
+            return Response({"error": "encashment_days must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+        if obj.status in ('processed',):
+            # the money has gone to payroll: nothing to recalculate
+            return Response(self.get_serializer(obj).data)
+        variables = get_formula_variables(employee=obj.employee)
+        variables["encashment_days"] = days
+        balance = emp_leave_balance.objects.filter(employee=obj.employee, leave_type=obj.leave_type).first()
+        leave_balance = Decimal(str(balance.balance or 0)) if balance else Decimal(str(obj.leave_balance or 0))
+        variables["leave_balance"] = leave_balance
+        salary = self._get_salary_values(obj.employee, variables)
+        variables.setdefault("total_salary", salary["total_salary"])   # listed by formula-variables, so usable here
+        from .formula import calculate
+        amount, err, _w = calculate(formula, variables)
+        if err:
+            transaction.set_rollback(True)
+            return Response({"error": "Unable to calculate leave encashment.", "details": str(err), "formula": formula},
+                            status=status.HTTP_400_BAD_REQUEST)
+        obj.formula_used = formula
+        obj.encashment_amount = amount
+        obj.leave_balance = leave_balance
+        obj.basic_salary = salary["basic_salary"]
+        obj.total_salary = salary["total_salary"]
+        obj.fixed_days = variables.get("fixed_days", Decimal("0.00"))
+        obj.calendar_days = variables.get("calendar_days", Decimal("0.00"))
+        obj.save()
+        return Response(self.get_serializer(obj).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
 
     @staticmethod
     def _get_employee(employee_id):

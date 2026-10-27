@@ -110,4 +110,9 @@ def copy_setup(new, source=None, user=None):
         done['salary_structures'] = _join(M('PayrollManagement', 'SalaryStructure'), 'branch', source, new)
         done['pay_structures'] = _join(M('PayrollManagement', 'PayStructure'), 'branch', source, new)
         done['document_types'] = _join(M('EmpManagement', 'document_type'), 'branch', source, new)
+    try:   # v1.56.1: the approval chains the source branch did not have (reporting manager)
+        from ZeoAdmin.approval_defaults import ensure as _chains
+        done['approval_chains'] = _chains([new], user=user)
+    except Exception:
+        log.exception('approval chains of the new branch')
     return done

@@ -156,6 +156,14 @@ def _make(job, data, apps, user_id, own_thread=True):
         except Exception as e:   # the company exists; the defaults can be loaded in Settings → Country settings
             log.exception('country defaults of %s', schema)
             failed['country defaults'] = str(e)[:200]
+        try:   # v1.56.1: the standard approval chains (reporting manager) – every request of a new company was refused before
+            from django_tenants.utils import schema_context
+            from ZeoAdmin.approval_defaults import ensure as _chains
+            with schema_context(schema):
+                defaults += [f'Approval chain: {x}' for x in _chains(user=user)]
+        except Exception as e:   # noqa: BLE001
+            log.exception('approval chains of %s', schema)
+            failed['approval chains'] = str(e)[:200]
         _job(job, step=STEPS[3], step_no=4, defaults=defaults, failed=failed)
 
         try:   # v1.28.1: the creator AND every system administrator can open the new company at once (before: only the

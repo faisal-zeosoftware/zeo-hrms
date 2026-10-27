@@ -79,6 +79,56 @@ def holidays(e, d_from, d_to):
         return set()
 
 
+class _CalendarLookup:
+    """v1.62.0 speed: the weekly-off and holiday calendars of many employees from one read of the assignments – the same
+    choice as calendars.utils.get_employee_weekend_days / get_employee_holidays (the first assignment by id for the
+    employee, their branch or their department; no branch / department matches an assignment without any), which ran
+    five queries per employee (Home's attendance cards, the attendance reports)."""
+
+    def __init__(self, d_from, d_to):
+        from django.db.models import Prefetch
+        AW, AH, H = _model('calendars.assign_weekend'), _model('calendars.assign_holiday'), _model('calendars.holiday')
+        EM = _model('EmpManagement.emp_master')
+        self.d_from, self.d_to, self.H = d_from, d_to, H
+        def rows(M, fk):
+            out = []
+            qs = M.objects.select_related(fk).prefetch_related(
+                Prefetch('employee', queryset=EM.objects.only('id')), 'branch', 'department').order_by('pk')
+            for a in qs:
+                out.append(({x.pk for x in a.employee.all()}, {x.pk for x in a.branch.all()}, {x.pk for x in a.department.all()}, getattr(a, fk)))
+            return out
+        self.wk = rows(AW, 'weekend_model')
+        self.ho = rows(AH, 'holiday_model')
+        self.hol_dates = {}
+
+    @staticmethod
+    def _first(rows, e):
+        b, d = e.emp_branch_id_id, e.emp_dept_id_id
+        for emps, brs, dps, model in rows:
+            if e.pk in emps or (b in brs if b is not None else not brs) or (d in dps if d is not None else not dps):
+                return model
+        return None
+
+    def weekend_days(self, e):
+        m = self._first(self.wk, e)
+        wk = set(m.get_weekend_days()) if m is not None else set()
+        return wk or {'Saturday', 'Sunday'}
+
+    def holidays(self, e):
+        m = self._first(self.ho, e)
+        if m is None:
+            return set()
+        if m.pk not in self.hol_dates:
+            out = set()
+            for h in self.H.objects.filter(calendar_id=m.pk, start_date__lte=self.d_to, end_date__gte=self.d_from):
+                d = h.start_date
+                while d <= h.end_date:
+                    out.add(d)
+                    d += timedelta(days=1)
+            self.hol_dates[m.pk] = out
+        return set(self.hol_dates[m.pk])
+
+
 def holiday_names(d_from, d_to):
     H = _model('calendars.holiday')
     out = {}
@@ -146,9 +196,17 @@ def days(emps, d_from, d_to, today, with_late=True):
         starts.append(AD.objects.exclude(status='not_marked').order_by('date').values_list('date', flat=True).first())
     starts.append(Att.objects.order_by('date').values_list('date', flat=True).first())
     att_start = min([x for x in starts if x], default=None)
+    try:
+        cal = _CalendarLookup(d_from, last) if len(emps) > 1 else None   # v1.62.0 one read for all employees
+    except Exception:
+        cal = None
     for e in emps:
-        wk = weekend_days(e)
-        hol = holidays(e, d_from, last)
+        if cal is not None:
+            wk = cal.weekend_days(e)
+            hol = cal.holidays(e)
+        else:
+            wk = weekend_days(e)
+            hol = holidays(e, d_from, last)
         first = max(d_from, e.emp_joined_date) if e.emp_joined_date else d_from
         rows = []
         d = first

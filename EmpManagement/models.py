@@ -34,6 +34,10 @@ from django.db import transaction
 
 
 #EmpManagement
+class _KeepLinked(Exception):
+    """v1.62.0: internal – the employee already has its login (see emp_master.save)."""
+
+
 class emp_master(models.Model):    
     GENDER_CHOICES = [ ("M", "Male"), ("F", "Female"),("O", "Other"),]
     MARITAL_STATUS_CHOICES = [("M", "Married"),("S", "Single"),('divorced','Divorced'),('widow','Widowed'),("D", "Divorced"),("W", "Widowed")]
@@ -160,6 +164,18 @@ class emp_master(models.Model):
                 logger.error(f"No company found for schema: {schema_name}")
 
             try:
+                # v1.62.0: a login already chosen for this employee (Users field, import column "Users") is kept – before, ticking
+                # self-service made a second login named after the employee code and moved the employee to it, so the chosen
+                # login was no longer linked to its employee
+                if self.users_id:
+                    linked = self.users
+                    if not linked.is_active:
+                        linked.is_active = True
+                        linked.save(update_fields=['is_active'])
+                    if company_instance is not None and not linked.tenants.filter(pk=company_instance.pk).exists():
+                        linked.tenants.add(company_instance)
+                    logger.info(f"Self-service on for {self.emp_code} with its own login {linked.username}.")
+                    raise _KeepLinked()
                 # Check if a user already exists for this employee code
                 user = user_model.objects.filter(username=username).first()
                 # v1.18.0: employee codes repeat between companies (EMP1001 …). A login of ANOTHER company with the same code
@@ -200,8 +216,14 @@ class emp_master(models.Model):
                     user.must_change_password = True
                     user.save()
                     logger.info(f"User {user.username} created and linked to employee {self.emp_code}.")
+                    _linked = False
+                    try:   # v1.56.0: an e-mail link to choose the password (no password in the e-mail) when ZEO_APP_URL is set
+                        from ZeoAdmin.invites import welcome as _welcome
+                        _linked = _welcome(user, self)
+                    except Exception:
+                        logger.exception('sign-in link failed')
                     try:   # v1.18.0: the temporary password goes to the employee only
-                        if email:
+                        if email and not _linked:
                             from django.core.mail import send_mail
                             send_mail('Your ZEO HRMS login',
                                       f'Dear {self.emp_first_name},\n\nYour self-service login was created.\nUser name: {user.username}\n'
@@ -209,13 +231,19 @@ class emp_master(models.Model):
                                       None, [email], fail_silently=True)
                     except Exception:
                         logger.exception('welcome e-mail failed')
+            except _KeepLinked:
+                pass
             except Exception as e:
                 logger.error(f"Error handling user for {self.emp_code}: {e}")
                 raise
 
         # --- Handle User Deactivation ---
         if deactivate_user_required:
-            if self.users:
+            from ZeoCloud.sharedrows import other_companies   # v1.62.0 isolation
+            if self.users and other_companies(self.users):
+                # a login also used in other companies stays as it is there (switching it off locked the person out of them)
+                logger.info(f"Self-service off for {self.emp_code}: login {self.users.username} kept – it is used in other companies.")
+            elif self.users:
                 self.users.is_active = False
                 self.users.is_ess = False
                 self.users.save()
@@ -230,7 +258,15 @@ class emp_master(models.Model):
         # Deactivate the user with the same emp_code as username
         user_model = get_user_model()
         try:
-            user_model.objects.filter(username=self.emp_code).update(is_active=False)  # Use update() instead of save()
+            # v1.62.0 isolation: the employee's OWN login – employee codes repeat between companies, and the login named like
+            # the code (e.g. EMP1001) may be another company's; a login used in other companies only loses this company
+            from ZeoCloud.sharedrows import deactivate_login_here
+            if self.users_id:
+                deactivate_login_here(self.users)
+            else:
+                u = user_model.objects.filter(username=self.emp_code, tenants__schema_name=connection.schema_name).first()
+                if u is not None:
+                    deactivate_login_here(u)
             logger.info(f"User {self.emp_code} deactivated successfully.")
         except Exception as e:
             logger.warning(f"Error deactivating user {self.emp_code}: {e}")
@@ -910,7 +946,7 @@ class EmployeeMarketingSkill(models.Model):
     def __str__(self):
         return f"{self.emp_id} - {self.value}"
 @receiver(pre_save, sender=EmployeeMarketingSkill)
-def update_value_field(sender, instance, **kwargs):
+def update_value_field_marketing(sender, instance, **kwargs):   # v1.62.0 own name: a second def with the same name left this receiver only weakly referenced, so it could stop running in a long process
     if instance.marketing_skill:
         instance.value = instance.marketing_skill.marketing
 class EmployeeProgramSkill(models.Model):
@@ -924,7 +960,7 @@ class EmployeeProgramSkill(models.Model):
     def __str__(self):
         return f"{self.emp_id} - {self.value}"
 @receiver(pre_save, sender=EmployeeProgramSkill)
-def update_value_field(sender, instance, **kwargs):
+def update_value_field_program(sender, instance, **kwargs):   # v1.62.0 own name: a second def with the same name left this receiver only weakly referenced, so it could stop running in a long process
     if instance.program_skill:
         instance.value = instance.program_skill.programming_language
 class EmployeeLangSkill(models.Model):
@@ -1504,7 +1540,7 @@ class Approval(models.Model):
                 notification_model=RequestNotification,
             )
 @receiver(post_save, sender=GeneralRequest)
-def create_initial_approval(sender, instance, created, **kwargs):
+def create_initial_general_approval(sender, instance, created, **kwargs):   # v1.62.0 own name: a second def with the same name left this receiver only weakly referenced, so it could stop running in a long process
     if not created:
         return
     
@@ -1751,7 +1787,7 @@ class EmployeeBankDetail(models.Model):
     account_number = models.CharField(max_length=50, unique=True)
     bank_address = models.TextField(blank=True, null=True)
     route_code = models.CharField(max_length=9, validators=[RegexValidator(r'^\d{9}$', 'Must be a 9-digit number')],null=True,blank=True)
-    iban_number = models.CharField(max_length=23, validators=[RegexValidator(r'^[A-Z0-9]{23}$', 'Must be a 23-character IBAN')],null=True,blank=True) # For international banking
+    iban_number = models.CharField(max_length=34, validators=[RegexValidator(r'^[A-Z0-9]{15,34}$', 'Enter the IBAN without spaces (15 to 34 letters and digits)')],null=True,blank=True) # For international banking; v1.40.1: 34 (SA 24, QA 29, KW 30), column widened by EmployeeProfile 0005
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -2124,7 +2160,7 @@ class DocumentApproval(models.Model):
     
 
 @receiver(post_save, sender=DocumentRequest)
-def create_initial_approval(sender, instance, created, **kwargs):
+def create_initial_document_approval(sender, instance, created, **kwargs):   # v1.62.0 own name: a second def with the same name left this receiver only weakly referenced, so it could stop running in a long process
 
     if not created:
         return

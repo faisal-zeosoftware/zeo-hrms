@@ -105,6 +105,7 @@ class Vendor(models.Model):
     rating = models.PositiveSmallIntegerField('rating (1–5)', null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
+    partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='mnt_vendors', verbose_name='business partner')   # v1.42.0
     class Meta:
         ordering = ['name']
 

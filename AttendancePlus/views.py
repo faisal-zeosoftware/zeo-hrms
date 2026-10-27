@@ -359,6 +359,8 @@ class PunchViewSet(APViewSet):
             S.set_pin(e.id, request.data.get('pin'))
         except S.Refused as exc:
             return refused(exc)
+        own = me(request)   # v1.62.0 a PIN set by HR for somebody else is a start PIN; the employee's own PIN is theirs
+        M.EmployeeKey.objects.filter(employee_id=e.id).update(pin_must_change=not (own is not None and own.id == e.id))
         return Response({'detail': tr('Kiosk PIN saved.')})
 
     @action(detail=True, methods=['post'])
@@ -555,10 +557,31 @@ class CorrectionViewSet(APViewSet):
             e, by_hr = _emp(target), True
         if e is None:
             raise PermissionDenied(tr('Your login is not linked to an employee.'))
+        # v1.49.0 regularisation reasons: proof photo / document and the monthly limit of the chosen reason
+        from . import v149
+        code = (request.data.get('reason_code') or '').strip()
+        photo = request.FILES.get('photo') or request.data.get('photo') or None
+        if photo and isinstance(photo, str):
+            from calendars.face_utils import convert_base64_to_file
+            photo = convert_base64_to_file(photo, 'regularise') if photo.startswith('data:') else None
+        day = S.pdate(request.data.get('date')) if hasattr(S, 'pdate') else None
+        if day is None:
+            from django.utils.dateparse import parse_date
+            day = parse_date(str(request.data.get('date') or '')) or E.local(E.now()).date()
+        if code:
+            v149.reasons()
+            problem = v149.check_reason(e.id, code, day, bool(photo), bool(request.FILES.get('attachment')))
+            if problem:
+                return Response({'detail': tr(problem)}, status=400)
         try:
             cr = S.new_correction(e, request.data, request.user, by_hr=by_hr, attachment=request.FILES.get('attachment'))
         except S.Refused as exc:
             return refused(exc)
+        if code or photo:
+            cr.reason_code = code[:20]
+            if photo:
+                cr.photo = photo
+            cr.save(update_fields=['reason_code', 'photo'])
         return Response(self.get_serializer(cr).data, status=201)
 
     def _obj(self, pk):
@@ -645,7 +668,7 @@ class KioskInfoView(TokenView):
         except S.Refused as exc:
             return refused(exc)
         out = {'name': k.name, 'allow_qr': k.allow_qr, 'allow_pin': k.allow_pin, 'allow_face': k.allow_face,
-               'show_site_qr': k.show_site_qr, 'time': E.local(E.now()).strftime('%Y-%m-%d %H:%M:%S')}
+               'show_site_qr': k.show_site_qr, 'take_photo': k.take_photo, 'self_service': k.self_service, 'time': E.local(E.now()).strftime('%Y-%m-%d %H:%M:%S')}
         if k.show_site_qr:
             out['site_qr'], out['expires_in'] = S.site_qr(k)
         return Response(out)
@@ -683,7 +706,16 @@ class KioskPunchView(TokenView):
             kind = request.data.get('kind') or 'auto'
             if kind not in dict(M.PUNCH_KINDS):
                 raise S.Refused('Unknown punch type.')
+            shot = request.data.get('photo') or None   # v1.49.0 kiosk photo with every punch
+            if k.take_photo and not shot:
+                raise S.Refused('Look at the camera – the kiosk takes a photo with every punch.')
+            if shot and isinstance(shot, str):
+                from calendars.face_utils import convert_base64_to_file
+                shot = convert_base64_to_file(shot, 'kiosk') if shot.startswith('data:') else None
             p, created = E.add_punch(e, None, kind, 'kiosk', kiosk=k, device_ref=k.name, ip=S.client_ip(request), verified_by=how)
+            if shot and created and not p.photo:
+                p.photo = shot
+                p.save(update_fields=['photo'])
         except (S.Refused, E.PunchError) as exc:
             return refused(exc)
         name = ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x)
@@ -759,3 +791,221 @@ class ADMSGetRequest(ADMSView):
 class ADMSDeviceCmd(ADMSView):
     def post(self, request):
         return _plain('OK')
+
+
+# ------------------------------------------------------------------ v1.49.0 regularisation reasons, overtime law and breakdown, punch photos
+class _V149(APIView):
+    permission_classes = []
+    zeo_access = False
+    zeo_scope = False
+
+    def initial(self, request, *args, **kwargs):
+        from rest_framework.permissions import IsAuthenticated
+        self.permission_classes = [IsAuthenticated]
+        super().initial(request, *args, **kwargs)
+
+    def hr(self, request):
+        x = c(request)
+        return x.admin or bool({'change_attendancerule', 'view_attendancerule', 'change_correctionrequest', 'view_punch', 'change_punch', 'view_attendance', 'change_attendance'} & x.codes)
+
+
+class RegularisationReasonsView(_V149):
+    def get(self, request):
+        from . import v149
+        rs = v149.reasons()
+        if not (request.query_params.get('all') and self.hr(request)):
+            rs = rs.filter(is_active=True)
+        return Response([v149.reason_json(r) for r in rs])
+
+    def post(self, request):
+        from . import v149
+        if not (c(request).admin or {'change_attendancerule', 'change_attendance'} & c(request).codes):
+            raise PermissionDenied(tr('Only attendance administrators change the reasons.'))
+        d = request.data
+        r = M.RegularisationReason.objects.filter(pk=d.get('id')).first() if d.get('id') else M.RegularisationReason()
+        if r is None:
+            return Response({'detail': tr('Reason not found.')}, status=404)
+        code = (d.get('code') or r.code or '').strip().upper()[:20]
+        if not code or not (d.get('name') or r.name):
+            return Response({'detail': tr('Give the code and the name.')}, status=400)
+        if M.RegularisationReason.objects.filter(code=code).exclude(pk=r.pk).exists():
+            return Response({'detail': tr('This code is used by another reason.')}, status=400)
+        r.code, r.name = code, (d.get('name') or r.name)[:120]
+        if d.get('kind') in dict(M.CorrectionRequest.KINDS):
+            r.kind = d['kind']
+        for f in ('needs_photo', 'needs_attachment', 'waive_penalty', 'is_active'):
+            if f in d:
+                setattr(r, f, d.get(f) in (True, 'true', '1', 1))
+        if 'max_per_month' in d:
+            r.max_per_month = _int(d.get('max_per_month')) or None
+        if 'order' in d:
+            r.order = _int(d.get('order')) or 0
+        r.save()
+        return Response(v149.reason_json(r), status=201)
+
+
+class OtLawView(_V149):
+    """GET the overtime rates of the company country's law; POST {rules: [ids] (empty = all), country} – put them on the attendance rules."""
+    def get(self, request):
+        from . import v149
+        out = v149.law(request.query_params.get('country'))
+        out['countries'] = [{'code': k, 'law': v[1]} for k, v in v149.OT_LAW.items()]
+        return Response(out)
+
+    def post(self, request):
+        from . import v149
+        if not (c(request).admin or {'change_attendancerule', 'change_attendance'} & c(request).codes):
+            raise PermissionDenied(tr('Only attendance administrators change the rules.'))
+        n, L = v149.apply_law(request.data.get('rules') or None, request.data.get('country'))
+        return Response({'updated': n, **L})
+
+
+class OtBreakdownView(_V149):
+    """GET ?year=&month=[&employee=] – my (or, for HR / the manager, an employee's) overtime calculation of the month."""
+    def get(self, request):
+        from . import v149
+        x = c(request)
+        emp_id = request.query_params.get('employee')
+        e = me(request)
+        if emp_id and (e is None or str(e.id) != str(emp_id)):
+            if not (hr_for_employee(request, emp_id) or int(emp_id) in team_ids(request)):
+                raise PermissionDenied(tr('You may not see this employee.'))
+            e = _emp(emp_id)
+        if e is None:
+            raise PermissionDenied(tr('Your login is not linked to an employee.'))
+        t = E.local(E.now()).date()
+        y, m = _int(request.query_params.get('year')) or t.year, _int(request.query_params.get('month')) or t.month
+        if not 1 <= m <= 12:
+            return Response({'detail': tr('Month 1–12.')}, status=400)
+        return Response(v149.breakdown(e, y, m))
+
+
+class PunchPhotosView(_V149):
+    """GET ?from=&to=&only=flagged|void – punches with a photo (kiosk photo or selfie) for HR to check;
+    POST {id, action: ok|flag|void, note}."""
+    def get(self, request):
+        from . import v149
+        from django.utils.dateparse import parse_date
+        if not self.hr(request):
+            raise PermissionDenied(tr('Only HR sees the punch photos.'))
+        t = E.local(E.now()).date()
+        a = parse_date(request.query_params.get('from') or '') or (t - timedelta(days=7))
+        b = parse_date(request.query_params.get('to') or '') or t
+        ids = visible_employee_ids(request)
+        rows = v149.photos(ids, a, b, request.query_params.get('only') or '')
+        for r in rows:   # absolute links – the SPA may run on another host than the API
+            for k in ('photo', 'profile'):
+                if r.get(k) and r[k].startswith('/'):
+                    r[k] = request.build_absolute_uri(r[k])
+        return Response({'from': a, 'to': b, 'rows': rows})
+
+    def post(self, request):
+        if not self.hr(request):
+            raise PermissionDenied(tr('Only HR checks the punch photos.'))
+        p = M.Punch.objects.filter(pk=request.data.get('id')).first()
+        if p is None or not can_see_employee(request, p.employee_id):
+            return Response({'detail': tr('Punch not found.')}, status=404)
+        act, note = request.data.get('action'), (request.data.get('note') or '')[:200]
+        if act == 'flag':
+            p.note = ('[flagged] ' + note).strip()[:255]
+            p.save(update_fields=['note'])
+        elif act == 'ok':
+            p.note = note[:255] if note else (p.note or '').replace('[flagged]', '').strip()
+            p.save(update_fields=['note'])
+        elif act == 'void':
+            p.is_void, p.void_reason = True, (note or tr('Photo does not match the employee'))[:255]
+            p.save(update_fields=['is_void', 'void_reason'])
+            try:
+                E.recompute_day(_emp(p.employee_id), p.work_date or E.local(p.ts).date())
+            except Exception:
+                pass
+        else:
+            return Response({'detail': tr('Unknown action.')}, status=400)
+        return Response({'id': p.pk, 'void': p.is_void, 'flagged': (p.note or '').startswith('[flagged]'), 'note': p.note})
+
+
+# ----------------------------------------------------------------------------- v1.51.0 self-service on the kiosk
+class KioskEssView(TokenView):
+    """POST {action: login, id, pin} → session; with X-Kiosk-Session: GET home | POST {action: payslip, id} | leave {…} | ask {…} | logout."""
+    def get(self, request):
+        from . import kiosk_ess as K
+        try:
+            k = _kiosk(request)
+            e = K.from_token(k, request.META.get('HTTP_X_KIOSK_SESSION') or request.query_params.get('session'))
+            return Response(K.home(k, e))
+        except S.Refused as exc:
+            return refused(exc)
+
+    def post(self, request):
+        from . import kiosk_ess as K
+        try:
+            k = _kiosk(request)
+            act = request.data.get('action') or 'login'
+            if act == 'login':
+                e, tok = K.login(k, request.data.get('id') or request.data.get('employee_code'), request.data.get('pin'))
+                return Response(K.home(k, e))
+            e = K.from_token(k, request.META.get('HTTP_X_KIOSK_SESSION') or request.data.get('session'))
+            if act == 'set_pin':   # v1.62.0 the employee replaces the start PIN with their own
+                K.set_pin(e, request.data.get('pin'), request.data.get('pin2'))
+                return Response(K.home(k, e))
+            if act != 'logout' and K.must_change_pin(e):
+                raise S.Refused('Choose your own PIN first.', 403)
+            if act == 'payslip':
+                return Response({**K.payslip(e, request.data.get('id')), 'session': K.token(k, e)})
+            if act == 'leave':
+                return Response({**K.request_leave(e, request.data), 'session': K.token(k, e)}, status=201)
+            if act == 'check':
+                from LeavePolicy.conflicts import check
+                from django.utils.dateparse import parse_date
+                from django.apps import apps as _a
+                lt = _a.get_model('calendars', 'leave_type').objects.filter(pk=request.data.get('leave_type')).first()
+                a, b = parse_date(str(request.data.get('start_date') or '')), parse_date(str(request.data.get('end_date') or ''))
+                if lt is None or a is None or b is None or b < a:
+                    raise S.Refused('Choose the leave type and the dates.')
+                return Response({**check(e, lt, a, b, False, created_by_id=e.users_id), 'session': K.token(k, e)})
+            if act == 'ask':
+                return Response({**K.ask_hr(e, request.data), 'session': K.token(k, e)}, status=201)
+            if act == 'logout':
+                return Response({'ok': True})
+            raise S.Refused('Unknown action.')
+        except S.Refused as exc:
+            return refused(exc)
+
+
+class KioskPinsView(_V149):
+    """v1.51.0 HR: kiosk PINs of the employees (staff without a ZEO login cannot set their own). GET ?q= the employees with
+    has_pin / locked; POST {employee, pin} sets a PIN, {employee, unlock: true} lifts the lock after wrong PINs."""
+    def get(self, request):
+        from EmpManagement.models import emp_master
+        if not is_hr(request):
+            raise PermissionDenied(tr('Only HR sets kiosk PINs.'))
+        ids = hr_employee_ids(request)
+        qs = emp_master.objects.filter(is_active=True)
+        if ids is not None:
+            qs = qs.filter(pk__in=ids)
+        q = (request.query_params.get('q') or '').strip()
+        if q:
+            qs = qs.filter(Q(emp_code__icontains=q) | Q(emp_first_name__icontains=q) | Q(emp_last_name__icontains=q))
+        keys = {k.employee_id: k for k in M.EmployeeKey.objects.all()}
+        now = E.now()
+        rows = []
+        for e in qs.order_by('emp_code')[:500]:
+            k = keys.get(e.pk)
+            rows.append({'id': e.pk, 'code': e.emp_code, 'name': ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x), 'has_login': bool(e.users_id),
+                         'has_pin': bool(k and k.pin_hash), 'locked': bool(k and k.locked_until and k.locked_until > now)})
+        return Response(rows)
+
+    def post(self, request):
+        target = request.data.get('employee')
+        if not target or not hr_for_employee(request, target):
+            raise PermissionDenied(tr('Only HR sets kiosk PINs.'))
+        if request.data.get('unlock'):
+            M.EmployeeKey.objects.filter(employee_id=target).update(failed_pins=0, locked_until=None)
+            return Response({'detail': tr('PIN unlocked.')})
+        try:
+            S.set_pin(int(target), request.data.get('pin'))
+        except S.Refused as exc:
+            return refused(exc)
+        # v1.62.0 a PIN typed by HR is a start PIN: the employee chooses their own at the first kiosk self-service sign-in
+        M.EmployeeKey.objects.filter(employee_id=target).update(failed_pins=0, locked_until=None, pin_must_change=True)
+        return Response({'detail': tr('Kiosk PIN saved – the employee chooses their own PIN at the first kiosk use.')})

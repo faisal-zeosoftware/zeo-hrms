@@ -126,7 +126,34 @@ def dashboard(group, user, fresh=False):
         rows = [company_summary(c, user, fresh) for c in comps]
     keys = ['employees', 'joiners', 'leavers', 'on_leave', 'payroll_gross', 'payroll_net', 'payslips', 'documents_30', 'approvals']
     total = {k: sum(_num(r.get(k)) for r in rows) for k in keys}
-    return {'companies': rows, 'total': total, 'today': timezone.localdate().isoformat()}
+    # v1.53.0: the payroll of companies in other currencies is converted to the group's reporting currency
+    out_cur, missing = 'AED', []
+    try:
+        from . import consolidation as C
+        out_cur = C.reporting_currency(group['key'])
+        rates = C.Rates(group['key'])
+        by_schema = {c.schema_name: c for c in comps}
+        g_rc = n_rc = 0.0
+        for r in rows:
+            comp = by_schema.get(r.get('schema_name'))
+            r['currency'] = C.company_currency(comp) if comp else out_cur
+            m = C.parse_month(r.get('payroll_month'))
+            if m is None:
+                r['payroll_gross_rc'] = r['payroll_net_rc'] = 0.0
+                continue
+            rate, how = rates.find(r['currency'], out_cur, m)
+            if rate is None:
+                missing.append(r['company'])
+                r['payroll_gross_rc'] = r['payroll_net_rc'] = None
+                continue
+            r['payroll_gross_rc'] = round(_num(r.get('payroll_gross')) * float(rate), 2)
+            r['payroll_net_rc'] = round(_num(r.get('payroll_net')) * float(rate), 2)
+            g_rc += r['payroll_gross_rc']
+            n_rc += r['payroll_net_rc']
+        total['payroll_gross'], total['payroll_net'] = round(g_rc, 2), round(n_rc, 2)
+    except Exception:
+        log.exception('group dashboard currency')
+    return {'companies': rows, 'total': total, 'today': timezone.localdate().isoformat(), 'currency': out_cur, 'currency_missing': missing}
 
 
 # ------------------------------------------------------------------ reports

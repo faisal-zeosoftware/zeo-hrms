@@ -126,6 +126,49 @@ def load_religions():
     return added
 
 
+# v1.40.1: standard lists of the three classic skill masters (Core.LanguageSkill / MarketingSkill / ProgrammingLanguageSkill).
+# They were empty in a new company (only the language list is filled by `load_master_data`), so the Language / Skill
+# dropdowns of the employee page had nothing to pick. Offered from the employee page as "Load the standard list".
+LANGUAGE_SKILLS = ['Arabic', 'English', 'Hindi', 'Urdu', 'Malayalam', 'Tamil', 'Telugu', 'Bengali', 'Tagalog', 'Nepali', 'Sinhala',
+                   'French', 'German', 'Spanish', 'Russian', 'Chinese', 'Persian', 'Turkish', 'Punjabi', 'Kannada', 'Marathi', 'Gujarati',
+                   'Amharic', 'Swahili', 'Italian', 'Portuguese']
+MARKETING_SKILLS = ['Digital marketing', 'Social media marketing', 'Content marketing', 'Search engine optimisation (SEO)', 'Search engine marketing (SEM / PPC)',
+                    'E-mail marketing', 'Brand management', 'Market research', 'Product marketing', 'Public relations', 'Event marketing',
+                    'Copywriting', 'Graphic design', 'Video production', 'Marketing analytics', 'CRM / lead management', 'Sales / business development',
+                    'Telemarketing', 'Customer service', 'Negotiation', 'Presentation skills', 'E-commerce / marketplaces', 'Influencer marketing',
+                    'Account management', 'Tender / proposal writing']
+PROGRAMMING_SKILLS = ['Python', 'JavaScript', 'TypeScript', 'Java', 'C#', 'C / C++', 'PHP', 'Go', 'Kotlin', 'Swift', 'Dart / Flutter', 'Ruby', 'Rust',
+                      'SQL', 'PL/SQL', 'HTML / CSS', 'Angular', 'React', 'Vue', 'Node.js', 'Django', '.NET', 'Spring', 'Laravel', 'Android', 'iOS',
+                      'Odoo', 'SAP ABAP', 'Power BI', 'Excel / VBA', 'Linux / shell', 'Docker / Kubernetes', 'AWS', 'Azure', 'Git']
+SKILL_KINDS = {
+    'language': ('Core.LanguageSkill', 'language', LANGUAGE_SKILLS),
+    'marketing': ('Core.MarketingSkill', 'marketing', MARKETING_SKILLS),
+    'programming': ('Core.ProgrammingLanguageSkill', 'programming_language', PROGRAMMING_SKILLS),
+}
+
+
+def preview_skills(kind):
+    """[{name, exists}] of a skill kind."""
+    model_label, name_f, rows = SKILL_KINDS[kind]
+    model = apps.get_model(model_label)
+    have = {(v or '').strip().lower() for v in model.objects.values_list(name_f, flat=True)}
+    return [{'code': '', 'name': n, 'description': '', 'exists': n.lower() in have} for n in rows]
+
+
+@transaction.atomic
+def load_skills(kind):
+    """Add the missing standard entries of a skill kind; nothing is changed or removed. Returns {'created': [...], 'linked': 0}."""
+    model_label, name_f, rows = SKILL_KINDS[kind]
+    model = apps.get_model(model_label)
+    have = {(v or '').strip().lower() for v in model.objects.values_list(name_f, flat=True)}
+    created = []
+    for n in rows:
+        if n.lower() not in have:
+            model.objects.create(**{name_f: n})
+            created.append(n)
+    return {'created': created, 'linked': 0}
+
+
 def load_all(branches, user=None, schema=None, create=True):
     result = {k: load(k, branches, user, schema, create) for k in KINDS}
     if not create:

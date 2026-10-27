@@ -104,7 +104,7 @@ class PackView(APIView):
         if not L or not L['active']:
             return Response({'detail': t('Unknown language "{0}".', None, [lang])}, status=status.HTTP_404_NOT_FOUND)
         public_only = not (request.user and request.user.is_authenticated)
-        etag = f'W/"{code}-{L["version"]}-{"p" if public_only else "f"}"'
+        etag = f'W/"{code}-{L["version"] if public_only else S.pack_version(code)}-{"p" if public_only else "f"}"'   # v1.62.0 isolation
         if request.META.get('HTTP_IF_NONE_MATCH') == etag:
             r = HttpResponse(status=304)
             r['ETag'] = etag
@@ -124,7 +124,7 @@ def me_payload(request):
     lang, src = S.resolve(None, uid, schema)
     L = S.language(lang) or {}
     return {'lang': lang, 'source': src, 'user_lang': own if own in allowed else None,
-            'company_default': S.company_default(schema), 'dir': L.get('dir', 'ltr'), 'version': L.get('version', 1),
+            'company_default': S.company_default(schema), 'dir': L.get('dir', 'ltr'), 'version': S.pack_version(lang, schema) if L else 1,   # v1.62.0 isolation
             'date_format': L.get('date_format', 'dd/MM/yyyy'), 'languages': _languages(schema)}
 
 
@@ -245,7 +245,29 @@ def _lang_param(request, required=True):
     return code
 
 
-def term_row(r):
+def _company_scope(request):
+    """v1.62.0 isolation: the company whose own wording an edit changes – None for the platform administrator (superuser),
+    who edits the shared packs. The packs are shared by every company on the server: a company administrator's edit
+    used to change the wording for every customer."""
+    if getattr(request.user, 'is_superuser', False):
+        return None
+    return _schema()
+
+
+def _overrides(schema, lang, hashes=None):
+    from .models import CompanyTerm
+    qs = CompanyTerm.objects.filter(schema_name=schema, lang=lang)
+    if hashes is not None:
+        qs = qs.filter(source_hash__in=list(hashes))
+    return {o.source_hash: o for o in qs}
+
+
+def term_row(r, ov=None):
+    if ov is not None:   # v1.62.0 isolation: the company's own wording of the term
+        d = term_row(r)
+        d.update(value=ov.value, is_reviewed=ov.is_reviewed, edited=True, company=True, updated_by=ov.updated_by_name or None,
+                 updated_at=ov.updated_at)
+        return d
     return {'id': r.id, 'lang': r.lang, 'source': r.source, 'value': r.value, 'module': r.module, 'where': r.where[:5],
             'where_count': len(r.where or []), 'in_source': r.in_source, 'is_reviewed': r.is_reviewed, 'edited': r.edited,
             'placeholders': S.placeholders(r.source), 'updated_by': r.updated_by_name or None,
@@ -291,8 +313,10 @@ class TermsView(_Translator):
                                 not_reviewed=Count('id', filter=Q(is_reviewed=False) & ~Q(value='')),
                                 reviewed=Count('id', filter=Q(is_reviewed=True)))
         modules = list(base.values('module').annotate(count=Count('id')).order_by('module'))
-        return Response({'lang': lang, 'count': total, 'page': page, 'page_size': size,
-                         'results': [term_row(r) for r in rows], 'counts': counts, 'modules': modules})
+        sch = _company_scope(request)
+        ov = _overrides(sch, lang, [r.source_hash for r in rows]) if sch else {}   # v1.62.0 isolation
+        return Response({'lang': lang, 'count': total, 'page': page, 'page_size': size, 'company_scope': bool(sch),
+                         'results': [term_row(r, ov.get(r.source_hash)) for r in rows], 'counts': counts, 'modules': modules})
 
 
 def _check_value(source, value):
@@ -327,9 +351,14 @@ class TermView(_Translator):
             err = _check_value(row.source, v)
             if err:
                 raise ValidationError({'value': [err]})
+            sch = _company_scope(request)
+            if sch:   # v1.62.0 isolation: the company's own wording – the shared term stays as it is for the other companies
+                return Response(self._company_edit(request, sch, row, v, data))
             row.value = v
             if 'is_reviewed' not in data and not v:
                 row.is_reviewed = False
+        if 'is_reviewed' in data and 'value' not in data and _company_scope(request):
+            return Response(self._company_edit(request, _company_scope(request), row, None, data))   # v1.62.0 isolation
         if 'is_reviewed' in data:
             rv = data.get('is_reviewed')
             if not isinstance(rv, bool):
@@ -344,6 +373,33 @@ class TermView(_Translator):
         S.bump(row.lang)
         return Response(term_row(row))
 
+    def _company_edit(self, request, sch, row, value, data):
+        """v1.62.0 isolation: save the company's own wording (an empty value = back to the shared translation)."""
+        from .models import CompanyTerm
+        ov = _overrides(sch, row.lang, [row.source_hash]).get(row.source_hash)
+        if value is not None and (value == '' or value == row.value) and 'is_reviewed' not in data:
+            if ov is not None:
+                ov.delete()
+            S.bump(row.lang)
+            return term_row(row)
+        if ov is None:
+            ov = CompanyTerm(schema_name=sch, lang=row.lang, source=row.source, value=row.value, is_reviewed=row.is_reviewed)
+        if value is not None:
+            ov.value = value
+            if 'is_reviewed' not in data and not value:
+                ov.is_reviewed = False
+        if 'is_reviewed' in data:
+            rv = data.get('is_reviewed')
+            if not isinstance(rv, bool):
+                raise ValidationError({'is_reviewed': [t('Reviewed must be true or false.')]})
+            if rv and not ov.value:
+                raise ValidationError({'is_reviewed': [t('Translate the text before marking it reviewed.')]})
+            ov.is_reviewed = rv
+        ov.updated_by, ov.updated_by_name = request.user.pk, _who(request)
+        ov.save()
+        S.bump(row.lang)
+        return term_row(row, ov)
+
 
 class ReviewView(_Translator):
     def post(self, request):
@@ -355,6 +411,22 @@ class ReviewView(_Translator):
         if not isinstance(rv, bool):
             raise ValidationError({'is_reviewed': [t('Reviewed must be true or false.')]})
         qs = Term.objects.filter(pk__in=ids)
+        sch = _company_scope(request)
+        if sch:   # v1.62.0 isolation: "reviewed" of the company's own wording only
+            from .models import CompanyTerm
+            n, langs = 0, set()
+            for row in qs:
+                ov = _overrides(sch, row.lang, [row.source_hash]).get(row.source_hash) or CompanyTerm(
+                    schema_name=sch, lang=row.lang, source=row.source, value=row.value)
+                if rv and not ov.value:
+                    continue
+                ov.is_reviewed, ov.updated_by, ov.updated_by_name = rv, request.user.pk, _who(request)
+                ov.save()
+                n += 1
+                langs.add(row.lang)
+            for lg in langs:
+                S.bump(lg)
+            return Response({'updated': n, 'company_scope': True})
         if rv:
             qs = qs.exclude(value='')
         langs = set(qs.values_list('lang', flat=True))
@@ -420,6 +492,12 @@ class ImportView(_Translator):
             raise ValidationError({'file': [t('Import up to {0} rows at a time.', None, [MAX_IMPORT_ROWS])]})
         existing = {r.source_hash: r for r in Term.objects.filter(lang=lang)}
         from .models import source_hash
+        sch = _company_scope(request)
+        from .models import CompanyTerm
+        if sch:   # v1.62.0 isolation: a company imports its own wording (compared with what the company sees now)
+            for h, o in _overrides(sch, lang).items():
+                existing[h] = o
+        M = CompanyTerm if sch else Term   # the rows written below (the company's own ones in a company)
         res = {'lang': lang, 'dry_run': dry, 'rows': 0, 'new': 0, 'changed': 0, 'unchanged': 0, 'empty': 0, 'errors': [], 'samples': []}
         todo_new, todo_upd, seen = [], [], set()
         who, uid = _who(request), request.user.pk
@@ -449,14 +527,19 @@ class ImportView(_Translator):
             row = existing.get(h)
             if row is None:
                 res['new'] += 1
-                todo_new.append(Term(lang=lang, source=src, source_hash=h, value=val, in_source=False, edited=True,
-                                     is_reviewed=bool(rv), updated_by=uid, updated_by_name=who))
+                todo_new.append(M(lang=lang, source=src, source_hash=h, value=val, is_reviewed=bool(rv), updated_by=uid, updated_by_name=who,
+                                     **({'schema_name': sch} if sch else {'in_source': False, 'edited': True})))
                 if len(res['samples']) < 20:
                     res['samples'].append({'english': src, 'old': None, 'new': val})
             elif row.value != val or (rv is not None and rv != row.is_reviewed):
                 res['changed'] += 1
                 if len(res['samples']) < 20:
                     res['samples'].append({'english': src, 'old': row.value, 'new': val})
+                if sch and not isinstance(row, CompanyTerm):   # v1.62.0 isolation: a shared term → a new company row
+                    row = CompanyTerm(schema_name=sch, lang=lang, source=row.source, source_hash=h, value=val,
+                               is_reviewed=row.is_reviewed if rv is None else rv, updated_by=uid, updated_by_name=who)
+                    todo_new.append(row)
+                    continue
                 row.value = val
                 if rv is not None:
                     row.is_reviewed = rv
@@ -468,9 +551,9 @@ class ImportView(_Translator):
         if not dry and (todo_new or todo_upd):
             from django.db import transaction
             with transaction.atomic():
-                Term.objects.bulk_create(todo_new, batch_size=1000)
-                Term.objects.bulk_update(todo_upd, ['value', 'is_reviewed', 'edited', 'updated_by', 'updated_by_name'], batch_size=1000)
-                Term.objects.filter(pk__in=[x.pk for x in todo_upd]).update(updated_at=_now())
+                M.objects.bulk_create(todo_new, batch_size=1000)
+                M.objects.bulk_update(todo_upd, ['value', 'is_reviewed', 'updated_by', 'updated_by_name'] + ([] if sch else ['edited']), batch_size=1000)
+                M.objects.filter(pk__in=[x.pk for x in todo_upd]).update(updated_at=_now())
             S.bump(lang)
         res['message'] = (t('Preview: {0} new, {1} changed, {2} unchanged, {3} without translation, {4} with errors. Nothing is saved yet.',
                             None, [res['new'], res['changed'], res['unchanged'], res['empty'], len(res['errors'])]) if dry else
@@ -498,8 +581,12 @@ class ExportView(_Translator):
         for c in ws[1]:
             c.font = Font(bold=True, color='FFFFFF')
             c.fill = PatternFill('solid', fgColor='4338CA')
+        sch = _company_scope(request)
+        ov = _overrides(sch, lang) if sch else {}   # v1.62.0 isolation: the company's own wording
         for r in qs.iterator(chunk_size=2000):
-            ws.append([r.source, r.value, r.module, 'Yes' if r.is_reviewed else 'No', ', '.join((r.where or [])[:3])])
+            o = ov.get(r.source_hash)
+            val, rv = (o.value, o.is_reviewed) if o is not None else (r.value, r.is_reviewed)
+            ws.append([r.source, val, r.module, 'Yes' if rv else 'No', ', '.join((r.where or [])[:3])])
         for col, w in zip('ABCDE', (60, 60, 22, 10, 50)):
             ws.column_dimensions[col].width = w
         rtl = L.get('dir') == 'rtl'

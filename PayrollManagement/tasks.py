@@ -130,7 +130,8 @@ def accrue_air_tickets():
 def get_all_tenant_schemas(): 
     # Implement this function based on your tenant management system 
     TenantModel = get_tenant_model() 
-    return TenantModel.objects.values_list('schema_name', flat=True)
+    # v1.56.1 not the public schema (it has no HR tables – every run logged "Error processing tenant public")
+    return TenantModel.objects.exclude(schema_name='public').values_list('schema_name', flat=True)
 
 @shared_task
 def advance_salary_escalate_approval_task(approval_id, schema_name):

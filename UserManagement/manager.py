@@ -41,16 +41,19 @@ class CustomUserManager(BaseUserManager):
         if not extra_fields.get("is_superuser"):
             raise ValueError(_("Superuser must have is_superuser=True."))
 
+        # v1.38.1: the user is committed first, then given the companies. Inside one transaction a company that lives in a
+        # ZEO Cloud own database switched the connection to that database and back, and the next insert in the main
+        # database waited for the user row of its own still-open transaction (setup_zeo hung on a lock).
         with transaction.atomic():
             user = self.create_user(username, password, email=email, **extra_fields)
 
-            # imported here to avoid circular imports
-            from UserManagement.models import company
-            from UserManagement.utils import grant_admin_access
+        # imported here to avoid circular imports
+        from UserManagement.models import company
+        from UserManagement.utils import grant_admin_access
 
-            for tenant in company.objects.exclude(schema_name="public"):
-                user.tenants.add(tenant)
-                grant_admin_access(user, tenant)
+        for tenant in company.objects.exclude(schema_name="public"):
+            user.tenants.add(tenant)
+            grant_admin_access(user, tenant)
 
         return user
 

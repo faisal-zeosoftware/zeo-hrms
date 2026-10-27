@@ -1,0 +1,12039 @@
+[
+ {
+  "text": "% on the list price",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "-10 = 10% below the list price (kind = % on the list price)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "0 = does not expire",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "1 – poor",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "15-min STEL",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "360° review",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "360° reviewer weights",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "360° reviews",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "5 – excellent",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "8-hour TWA",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "[\"Check oil level\", \"Replace filter\", …]",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "[\"Walls and paint\", \"Doors and locks\", …]",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "[{\"area\": \"…\", \"action\": \"…\", \"kind\": \"training|coaching|project|reading|other\", \"due\": \"2026-12-31\", \"done\": false}]",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "[{\"label\": \"Down payment\", \"percent\": 20, \"due\": \"2026-11-01\"}]",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "[{\"name\": \"reason\", \"label\": \"Reason\", \"type\": \"text|textarea|number|date|choice|yesno|file\", \"required\": true, \"options\": \"A|B\"}]",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "[{\"text\": \"…\", \"type\": \"rating|yesno|choice|text\", \"options\": \"A|B|C\", \"required\": true}]",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "A new opportunity must get its first call / message within this time",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "a person may give it per month (0 = no limit)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "A quality record never closes a linked HSE finding – each action keeps its own verification.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "A quotation line below this needs approval",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "A thank-you or award to a colleague, with points. Published ones show on the Recognition wall.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "A unit held for a tenant or buyer until it expires.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Abnormal",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Accepted",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "accepted / rejected on",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "access / best time",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Account",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "account",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "account manager",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "account owner",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "accounting",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Accounting reference",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Accounts",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "accumulated depreciation",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Action",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "action",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Action closure on time %",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "action level",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "actions",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Actions an employee takes to grow (training, coaching, projects). Ticking items updates the progress; the employee and the mentor can edit.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Actions in progress",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Activate",
+  "where": [
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Activate (sign)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "activated at",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "activated by",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Active",
+  "where": [
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Activities",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Activity",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "activity",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Activity type",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Activity types",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "actual cost",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "actual result",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Add reviewers",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Add to Performance KPI library",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "address",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Advance / before delivery",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Affected workers",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Agent",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "agent",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Agent and limit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "agent commission %",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Agent commissions from leases and sales.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Agreements",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "agrees to marketing",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Air emissions",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Air ticket",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "allocated",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Allowance (phone, fuel, education…)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "amount",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "amount claimed",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "An addition component with this code is made when the first claim is paid in payroll",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "An employee in a plan. Request → the benefits administrator approves → the employee share goes to payroll.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Annual rent",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "annual rent",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "answers",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "answers are anonymous",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Any recognised method can be used – the score is kept with the method, never compared across methods.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Anyone",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "API",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Applicability and interpretation must be confirmed by competent local specialists – a complete form is not proof of legal compliance.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Applicability rationale",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Applicable – compliant",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Applicable – compliant,partial=Applicable – partially compliant,noncompliant=Noncompliant,pending=Pending evidence,na=Not applicable",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Applicable – partially compliant",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "applies to",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "approval by",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "approval note",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Approve",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Approve and close",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Approve assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approve discount",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Approve disposal",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Approve disposition",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approve for use",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approve report",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approve settlement",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approve transfer",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Approved",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Approved amount",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "approved amount",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Approved amount (empty = as claimed)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "approved at",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "approved by",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approved carrier",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approved disposal destination",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approved for implementation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Approved for use",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "approver",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Archive",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Archived",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Area",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "area (sq ft)",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "ask holders to confirm their assets",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Ask the user",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Ask vendors for quotes",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "asking rent (per year)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "asking sale price",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "aspect",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Aspects and impacts",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Assessed",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "assessed competent",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Assessed on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "assessed on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "assessment type",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Assessments",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "assessor",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Asset",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "asset",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "asset (Maintenance)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset auditor",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset categories with their depreciation rule and accounts. Each category is an HR asset type.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "asset code",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "asset code prefix",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset coordinator / storekeeper",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset count",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset counts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "asset is out of service during the work",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset Management",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset manager",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "asset out of service during the work",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Asset viewer (read only)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Assets",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "assets",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Assets not counted yet will be marked missing.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Assign",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "assign new leads",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "assign new opportunities",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Assign to",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "assign to agent",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Assigned",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "assigned to",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Assignment rule",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Assignment rules",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Assignment rules, then round robin",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "assurance",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "attendees",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "audience",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Audit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "audit",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Audit completion %",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Audit findings",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Audit report",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Auditee / area owner",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "auditors",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Audits",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "audits need manager approval to close",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Available",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "average cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "averaging",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Award",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "award",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Awards",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Awards and their points. Anyone can give a Thank you; managers give the bigger awards.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "awkward posture",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Bank",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "bank",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "bank details for payouts",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Bank transfer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "barcode",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "base unit",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "based on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Batch / lot / serial",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "bathrooms",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "BBS observations",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "bedrooms",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Bedrooms given",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Benefit plan",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Benefit plans",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Benefits",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Benefits administrator",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "bill",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "billing address",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Billing record",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "billing record (Property)",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Billing records",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "bin / shelf",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Biological agents",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "blind count (auditors do not see the expected list)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Book an asset for a period (pool cars, projectors, tools, test equipment). Bookings cannot overlap.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Both",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Bounced",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "branch",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Branch of the record – users see the records of their branches; empty = every branch",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Branch of the record – users see the records of their branches; empty = every branch (empty = all)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Branch of the record; empty = every branch",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Branch that owns the account; empty = every branch",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Branch that works this territory",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Breakdown",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "budget",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Budget given",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "budget up to",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Build a form: fields (text, number, date, choice, yes/no, file), who may fill it, who approves, whether it is signed. Employees fill it in Self service → Forms.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Building",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "building",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "building (Property)",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Buildings",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Buildings, towers and communities.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Bundle / kit",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Buy",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Buyer",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "buyer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Buyer portal",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "buyer portal on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "By days",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Calculate",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Calculate a month",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Calibration",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Calibration date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "calibration date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Call",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Calls, e-mails, meetings and tasks.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "came in by",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Campaign",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "campaign",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Campaign is (value = code)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Campaigns",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Cancel",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Cancel draft",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Cancelled",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Capital cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Capital costs",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Capitalisation date",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Capitalise",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "capitalise items costing at least",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "capitalised",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "capitalised on",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Carbon (CO₂e)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Card",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Carrier / facility permit no.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "CAS number",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Cash",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Categories",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "categories",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Category",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "category",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Ceiling",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "certificate no",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Certification / standard",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Change request",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Charge type",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "charge type",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Charge types",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Cheaper items are expensed: no depreciation",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Check in",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Check out",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Check out now",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Check-in",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Check-out",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Checked out",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Checked out / assigned",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Checklist",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "checklist",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Checklist item",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Checklists",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Chemical",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Chemical / material",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Chemical name",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Chemical vapours and gases",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Chemicals",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Chemicals and SDS",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Cheque",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "cheque date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "cheque no.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Cheques",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "cities / areas",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "city",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "City contains (value)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Claim",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "claim limit per year",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "claim type",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Claimant (third party / contractor)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "claimant employee",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "claimed",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Claims",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Claims owner",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Cleared",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Clinical findings (restricted)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Clinical findings are visible only to occupational health and the HSE manager; a line manager sees only the fitness outcome and restrictions of their own staff.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Close",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Close and adjust stock",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Close and summarise",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Close audit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Close review",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Close with open checklist lines",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Closed",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "closed at",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "closed by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "closing book value",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "code",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Cold",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Collect inputs (KPIs, actions, audits)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Comma separated; empty = everyone",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Commercial",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Commission",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Commission approver",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Commissions",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "community / building",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Community / building contains (value)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Community / building given",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Companies you sell to (shared with the Sales and Accounting apps). People are contacts inside the account.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Company",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "company",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "company = same as the company master; chosen = picked for this app",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Company checklist",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Company given",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Company values",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Compatibility group",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Competencies",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "competencies",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Competency",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Competency / course",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Competency record",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Competency types",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Competitor",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "competitor position",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Competitors",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "competitors",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Complaint",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Complaints, breakdowns and incidents about assets – from employees, scans, mobile or e-mail – with SLA, escalation and feedback.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Complete",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Completed",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Completed on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "completed on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Compliance",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Compliance assessments",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Compliance register",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Compressed gas",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Condition",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "condition",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Confirm",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Confirm disposal",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Confirm fixed",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Confirmed",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "confirmed by the holder",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Confirmed orders (from accepted quotations). Tracked until delivered and invoiced; the Sales / Inventory apps take over delivery and invoicing when installed.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "consumable",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Contact",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "contact",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "contact (CRM)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Contact only – no opportunity",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "contact person",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Contacts",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Contained",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Containment / quarantine",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Contract",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Contract / amendment",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "contractor",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Contractors and suppliers.",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Contracts administrator",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Control action owner (if exceeded)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Controls implemented",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Controls in progress",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Convert to contact + opportunity",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Converted",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "converted at",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "converted to account",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "converted to contact",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "converted to opportunity",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Coordinator",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "coordinator",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Copy as a new survey",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Core",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Corrective",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Correspondence / notes",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Corrosive – acid",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Corrosive – base",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "cost",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Cost line",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Cost lines",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Costs",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Costs of an asset under construction, or additions to an asset. They join the cost when the asset is capitalised.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "count",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Count adjustment",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "count by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Count line",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Count lines",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "counted",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "counted at",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "counted by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Counting",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "country",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "covers dependants",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Create due work orders now",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "create the job days before",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "create the work order days before",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "create tickets from e-mail",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Create work order",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Create work orders for the findings",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "created at",
+  "where": [
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "credit",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "credit limit",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Critical",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Critical and high assets",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "criticality",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "CRM",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "CRM manager",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "CRM viewer (read only)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "currency",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "current qty",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Customer",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "customer (account)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Customer / third party",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Customer and supplier",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Customer complaint",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "customer reference",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Customers",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "cycle",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Daily",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Daily dose",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "damaged",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Danger / Warning",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "data",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "date",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "date and time",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Date notified",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "date of expense",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Date plans",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Days",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "days to finish",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Deals",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "debit",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Decide per job",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "decided at",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "decided by",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Decision",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Decision maker",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "decision note",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "decisions",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Decline",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "decline reason",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Declined",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Declining balance",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "declining rate % per year",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "deductible",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Deduction component code; made on first enrolment when empty (BEN-<plan code>)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Deductions",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "deductions",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "deductions – details",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "default agent commission %",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "default check-out days",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "default for new products",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "default labour rate per hour",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "default priority",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "defect type",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Delivered",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Delivery note / project ref.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "delivery note / project ref.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Department",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "department",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "departments (codes, comma separated; empty = all)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "dependants",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "deposit received",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "deposit to refund",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Deposited",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Deposited on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "depreciated up to",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "depreciation",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Depreciation line",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Depreciation lines",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "depreciation method",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Depreciation run",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Depreciation runs",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "depreciation start",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Depreciation starts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "description",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Descriptions of levels 1–5, one per line",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Details",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Development plan",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Development plans",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "deviation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "difference",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "differences",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Direct debit",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Direct report",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "discount % an agent may give without approval",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "discount total",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "disposal",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Disposal confirmed",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Disposal date",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Disposal destination",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Dispose",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Disposed",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Disposed on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Disposition",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "disposition",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Disputed",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Disqualified",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Disqualify",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "disqualify reason",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Do not assign",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Do not charge the tenant / owner",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Do not create a sales order",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Do not make an account",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Do not publish",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Do not send",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Document",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Documents",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "documents the employee must give",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Donation",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Done",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "done at",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "done by",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Done items",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Downtime (hours)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "downtime hours",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Draft",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Draft renewal",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "drawer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Driving / fitness to drive",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Drop",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Dropped",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Due",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "due",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "due after (days)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Due back",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "due back",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Due date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "due date",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Duration (min)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "duration (minutes)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Dust",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Dust / particulates",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "E-mail",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "e-mail each submission to",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "E-mail the quotation to the customer",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "E-signature",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "e-signature asks for a one-time code sent by e-mail",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "e.g. [90, 60, 30, 7]",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "e.g. Annual 2026 (matches the Performance cycle name)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "e.g. LAP → LAP-0001",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "e.g. VIP, Government, Reseller",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "e.g. VIP, Newsletter, Reseller",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Effective date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "effective date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "effective from",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Effectiveness of the controls",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "eligible after (months of service)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "eligible categories / grades",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "email",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Emergency",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "emergency justification",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "emergency measures",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Emergency plan",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Employee",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "employee",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Employee / custodian",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "employee share per month",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "employer cost per month",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Empty = company name",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Empty = double declining (200% ÷ life in years)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Empty = every category",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Empty = purchase date",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "End",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "end",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "End date",
+  "where": [
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "End enrolment",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "End of month + days",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Ended",
+  "where": [
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Ends on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Energy",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Engagement",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Engagement, pulse, onboarding, exit and training surveys. Rating (1–5), yes / no, choice and free-text questions; anonymous when ticked.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Enquiries and deals moving through a pipeline.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Enquiries that are not qualified yet. Score them, qualify, then convert to a contact, an account and an opportunity.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Enrolment",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "enrolment",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "enrolment needs the benefits administrator's approval",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Enrolments",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Entered by hand",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Entered in HSE",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Entered manually",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "environment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Environmental aspect",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Environmental conditions",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Environmental exceedances",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Environmental monitoring",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Environmental noise",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Equipment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Equipment you maintain (AC units, pumps, lifts, generators …).",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Ergonomic",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Ergonomic assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Ergonomics",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "escalate after (hours late)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "escalation level",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Estimate / who pays",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Estimated cost",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "estimated cost",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "estimated liability",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "estimated value",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Estimated value at least (value)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Event / exhibition",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "every",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Every asset",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Every asset of the company – the same assets as HR → Assets. Check out, move, transfer, reserve, check, capitalise and dispose.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Every check-out, check-in, move, transfer and GPS position (read only).",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Every employee",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Every repair or job: assign, quote, approve, do, close. Anyone may report a job; technicians see theirs.",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Every unit with its status: available → reserved → let / sold; under notice; under maintenance.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Everyone can read approved chemicals (handling, PPE, emergency measures) – the emergency information for responders.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Evidence",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "evidence",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Evidence files",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "evidence required",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Evidence submitted",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Exceedance – controls",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "exceeded",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Excise",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Existing account (else made from the company name)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Exit",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "expected",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Expected close",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "expected close",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "expected location",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "expected value",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Expired",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Expired or missing competencies block permit issue when HSE settings say so (else a warning).",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "expires at",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "expires on",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Exported",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Exposure category",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Exposure limit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Exposure limits",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Extend",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "External / certification",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "External / customer site",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Faulty",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Fee",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Fee and maintenance approval limit agreed with each owner.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Feedback",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "feedback",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "fields",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Filled forms. Fill a form from Self service → Forms (the screen shows the form's own fields).",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Finance",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Finance / payables",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Finding",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "finding",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Findings",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "findings",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "finish by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Finish counting",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Finish – submit report",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "First cheque no.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "first contact within (hours)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "First day of the month",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "fiscal year starts in month (1–12)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Fit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Fit with restrictions",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Fit,fit_restrictions=Fit with restrictions,temp_unfit=Temporarily unfit,unfit=Unfit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Fitness",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Fitness status",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "fits assets",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "fits categories",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "fix due",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "fix within (hours)",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "fixed asset (capitalise)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Fixed asset accountant",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Fixed prices per product",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Flammable",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Floor",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "floor",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "floors",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Follow-up date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "followup date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Food handling",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "For",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "for",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "for asset",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Force exertion",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Form",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "form",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Form submissions",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Form templates",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Formal change control required",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Forms",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "formula",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Found",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "found",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Found damaged",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Found in another place",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "found location",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "frequency",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "frequency days",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "From",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "from",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "from 360° review",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "From HR: employee, department or location holding it",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "from owner",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "from quantity",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "from quotation",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "From store",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "from store",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "from tenant / buyer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "From the next month",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Full month in the month it starts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Functional",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Furnished",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "furnishing",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "General",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "generated on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Give to",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Given",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "given by",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "GL account – accumulated depreciation",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "GL account – asset",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "GL account – depreciation expense",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "GL account – gain / loss on disposal",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Good",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Goods",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Goods and services you quote and sell (shared with the Sales and Inventory apps). Cost is restricted to managers.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Government registration ref.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "government registration ref.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "GPS position",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "GPS tracker id",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "grade",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "group",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "GST",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Had a call / meeting",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Had a meeting / site visit",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Hand over to Maintenance",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Hand over with open checklist items",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "hand work orders over to the Maintenance app",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Handed over",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "handed over on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Handling and storage",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Handover checklist",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Handover date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "handover planned",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Has a phone",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Has an e-mail",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Hazard classification (GHS)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "hazardous",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Hazardous waste (kg)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "health",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Health assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Heat stress",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "held by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "held by employee",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Helpdesk",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Helpdesk agent",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Helpdesk tickets",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "High",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "higher is better",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Hot",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Hours per shift",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "HR asset",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "HR asset type",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "hr comment",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "HR comment (restricted)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "HR Learning certificate",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "HR Learning course whose certificate gives this competency",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "HR letter",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "HR officer (forms, e-signature, surveys)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "HR officer / People manager",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "HR only",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "HSE review",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "I have read it",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "I have this asset",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "icon",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "ID",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "ID / trade licence reference",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "IMAP over SSL",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "IMAP port",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "IMAP server",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Impact assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "impacts",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Implemented by",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Implemented on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Implementing",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Import",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Improvement opportunity",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "In hand",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "In progress",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "In review",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "in stock (all stores)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "incident",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Incident (damage, loss, safety)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Industrial hygiene",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "industry",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "industry source",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Influencer",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Inspected",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Inspection",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "inspection",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Inspection / test",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Inspection date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "inspection date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Inspection result",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Inspections",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Inspections completed",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "inspector",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "installed on",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Instant reading",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Instead of one asset: every asset of this category",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Instrument",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "instrument",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "insurer",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "intended use",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Interest",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "interest level",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "interested in",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Internal",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Internal customer",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Internal customer / other",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Internal requirement",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Interpretation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Investigation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "invoice no.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "invoice no. (accounting)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Invoice no. in accounting",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Invoice ref.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "invoice ref.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Invoiced",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "is active",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "is default",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "ISO 45001, ISO 14001, company procedure …",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Issue",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Issue from store",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Issue to owner",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Issued",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "issued",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Issuing authority",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "items",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Job / similar exposure group",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "job role",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "job title",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Job title contains (value)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Jobs that repeat (AC service, fire alarm test …). A work order is created automatically before each due date.",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "jurisdiction",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Jurisdiction / source",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "keep chat messages for (days; 0 = forever)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Keep contact",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Key your website form posts with (POST /zeo-crm/api/capture/<key>/). Empty = capture off",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Keys returned",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "keys returned",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Kind",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "kind",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "KPI",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "kpi",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "KPI value",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "KPI values",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "KPIs and objectives",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Lab report no., meter reading …",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "label heading",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "label size",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Laboratory",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Labour",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "labour cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Labour hours",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "labour hours",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "labour rate",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Land",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Landlords whose units you manage or sell.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Large 100 × 50 mm",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "last assigned",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "last latitude",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "last longitude",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "last physical check",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "last seen",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Latitude",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "latitude",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Law / regulation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Layout / facility",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Lead",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "lead",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "lead auditor",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Lead score rule",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Lead score rules",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "lead score that marks a lead as qualified",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Lead source is (value = code)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Leadership",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Leads",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Lease",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "lease",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "lease (Property)",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Lease contracts; activating one makes the rent schedule and the deposit as billing records.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "lease ends",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Lease move-in",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Lease schedule",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Lease start",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "lease to renew (Property)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Leased / rented",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Leases",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Leasing",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "leasing fee per new lease",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Leasing officer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Leave empty for a base unit (pcs, kg, m). A box of 12 pcs: base = pcs, factor = 12",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Legal / other requirement",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "legal name",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Length",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "lessor / owner",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Let",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Letters, offers, contracts, policies and forms signed electronically. Attach the PDF (Attachments / Files) or write the text; the signer reads it, gets a one-time code by e-mail, draws or types the signature; ZEO stamps the PDF and keeps the audit trail (who, when, from where).",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "levels",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Life insurance",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Lifts per hour, cycles per minute …",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Lighting",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "limit max",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "limit min",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Limit source / jurisdiction",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "limit value",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Limits depend on the jurisdiction, site and activity – enter them from the applicable permit or regulation.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Lines",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "lines counted",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Lines: product, description, qty, uom, unit price, discount %, tax",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Link the HR course whose certificate gives this competency: HR certificates then create and renew the competency records.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Linked HR course",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "links off",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Links to other apps switched off",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "list price",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Listing",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "listing",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Listings",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Location",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "location",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "location (Maintenance)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "location / building",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Location move",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Locations",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Log a call / message",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Longitude",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "longitude",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "looking to",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Looking to (value = rent / buy / service)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Lost",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Lost / stolen",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "lost note",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Lost reason",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "lost reason",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Lost reasons",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "lost stage",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Low",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Low,medium=Medium,high=High,critical=Critical",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Low,medium=Medium,high=High,very_high=Very high",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "LTIFR",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "MAC tool",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "mailbox password",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "mailbox user",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "maintenance / expenses",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance coordinator",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance manager",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance plan",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance planner",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance plans",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance recharge",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Maintenance viewer (read only)",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Major",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Major damage",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "make",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Make a development plan",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Make a revision",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Make the lease",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Make the sale contract",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Management agreement",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Management agreements",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Management decisions",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "management fee % of collected rent",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "management fees",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Management of change",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Management review",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Management reviews",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Manager",
+  "where": [
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "manager approves jobs above",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Managers",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Managers only",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "managers only",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Manifest / consignment no.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Manifest no.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Manual",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "manual handling",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "manufacturer",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "manufacturer part no.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Mark as under construction",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Mark done",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Mark implemented",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Mark sent",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Mark sent / e-mail",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Mark the opportunity as won",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Marketing campaigns – pick them on leads and opportunities to see what each campaign brought.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Masters",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Material",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Material icon name",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "max dependants",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Maximum quantity",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "measure",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Medical insurance",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Medium",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Medium 70 × 35 mm",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Meeting",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Member / card no.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "member / card no.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "members",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "mentor / coach",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Merge into another contact",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "message",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Message / WhatsApp",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Message to the signer",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "message to the signer",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Meter (km / hours)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Meter plans",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Meter reading",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Meter reading (km / hours)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "meter reading (km / hours)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Method",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "method",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Method statement",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Minimum (e.g. lux)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "minimum selling price",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "minimum stock",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Minor",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Minor damage",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "misplaced",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Missing",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "missing",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Missing accessories",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Mixed use",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Mobile",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "model",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Money received; posting allocates it to the oldest open billing records.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Monitoring parameter",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Monitoring point",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Monitoring sample",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Month (any date in it)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Monthly",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Monthly or yearly depreciation: calculate, check, post (locks the run) and export the journal for the accounts.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Monthly values",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Months",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "months",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Move",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Move stage",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Move-in",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Move-in checklist",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "move-in inspection (Maintenance)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Move-in, move-out, unit-ready, snag and routine inspections with a checklist.",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Move-out",
+  "where": [
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "move-out (Property)",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Move-out date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "move-out date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "move-out inspection (Maintenance)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Move-out inspection and deposit settlement.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Move-outs",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Movement",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Movements",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "My branches",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "name",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Near misses reported",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "needed by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Needs approval",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Negative points lower the score",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "net book value",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Net days after invoice",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "net to owner",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "New",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "New annual rent",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "New cheque / payment",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "New expiry date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "New hazards introduced",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "New leads",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "New location",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "New quotation",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "New revision",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "New risk level",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "New score",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "New work order",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Next action date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "next at meter",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "next due",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "NIOSH lifting equation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "No depreciation",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "No repeat",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "No show",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "No tax",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Noise",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Noncompliant",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Nonconformity",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Normal",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Not applicable",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Not available",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Not counted yet",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Not found",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Not on the list (found here)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Not renewing",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Not selected",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Not sent",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Not yet assessed",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Note",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "note",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Note / reason",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "notes",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "notes to the customer",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Notice date",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "notice given on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "number",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Number of payments",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "number of payments",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "number of payments / cheques",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Nurture (not now)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Nurturing",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Objective",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Objective achieved",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Obligation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "obligation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Observation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "observations",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Occupational health",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Occupational health provider",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Offer",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Offer letter",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Offered",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "offered for",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Offers",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "On hold",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Onboarding",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "One asset in a count: found, misplaced, damaged, missing, or found here but not on the list.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "One per line, e.g. Dubai, Sharjah. Used to match leads by city",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "One per line: name – relation – date of birth",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "one submission per employee",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Only these billing records",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Only while the Maintenance app is active and linked",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Open",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "open questions",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Open questions, one per line (e.g. What should this person keep doing?)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "open renewal opportunities (days before lease end)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Open the survey",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Open – collecting",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Open – invite reviewers",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "opening book value",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Operating conditions",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Operational controls",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Opportunities",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Opportunity",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "opportunity",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "opportunity (CRM)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Opportunity title",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "or round robin among the territory agents",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "order",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Organic peroxide",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Other",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Outcome",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "outcome",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "overall",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "overall discount %",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Owned",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Owner",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "owner",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "owner approves maintenance above",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Owner portal",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "owner portal on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Owner statement",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Owner statements",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Owners",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "ownership",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Oxidiser",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Pack items can be used only after a manager reviewed them",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "packs installed",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Paid",
+  "where": [
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "paid",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Paid ads",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Paid amount",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "paid amount",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "paid in payroll month",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Paid out",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Paid outside payroll",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "parameter",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "parent",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "parent account",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "parking spaces",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Part",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "part",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "part group",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "part of",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Part paid",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Part request",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Part requests",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Partner / broker",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Parts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Parts and components",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "parts cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Parts used",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Pay in payroll",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "payment method",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Payment plan",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "payment plan",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Payment ref.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "payment ref. (accounting / payroll)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Payment term",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "payment term",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Payment terms",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Payout ref.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "payout ref. (accounting)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Payroll month (empty = next month)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Peer",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Pending",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "pending / approved / rejected",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Pending approval",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Pending evidence",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Pension / savings",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "People",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "People and companies you sell to. Duplicate e-mail / phone numbers are flagged.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "People manager",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "People manager / HR",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "People viewer (read only)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "performance",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "period",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "period from",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "period to",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Periodic",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Permanent",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Permit / licence",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Permit no.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Permits closed without violation %",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Person",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "person",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "person in charge",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Personal",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Personnel / responsibilities",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "phone",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Phone / e-mail",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Phone call",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Physical check",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "physical check every (months)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Physical stock count of a store; closing posts the differences as adjustments.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Physical verification: choose the place and categories, start, scan every asset, approve. Results go to the assets and to HR.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Pipeline",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "pipeline",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Pipelines",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Places inside",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Places to maintain. With ZEO Property, work orders can use the Property units directly.",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "plan",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Plan move-out",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Planned",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Planned date",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "planned date",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "planned on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Planning",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "points",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Points a lead collects. At the qualify score (CRM setup) a new lead becomes Qualified; hot / warm / cold follow the score.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "points name",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Points redeemed for a gift, voucher or a day off. The People manager approves.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Policy",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Policy acknowledgement",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "policy no.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Policy reference",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "portal address",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Portfolio",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Post (allocate to bills)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Post and lock",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Post-change review",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Post-change review and close",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Post-dated cheques",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Post-dated cheques: in hand → deposited → cleared (a receipt is posted) or bounced.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Posted",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Posted (locked)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "posted at",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "posted by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Potential impact",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Pre-employment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Pre-start verified – start",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "prestart checks",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Preventive",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Preventive plan",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Preventive plans",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Preventive, corrective and breakdown work on an asset: assign, start, checklist, parts, work done, close.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Price",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "price",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Price book",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "price book",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Price book prices",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Price books",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Priced offers with product lines. A discount above the limit (CRM setup) waits for the CRM manager. Accepted → sales order.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Prices",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "prices include tax",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Prices offered to the customer.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Printed on quotations",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Priority",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "priority",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "probability",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "probability %",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Procedure",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Process",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Procurement",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Product",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "product",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Product / process",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Product categories",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Product category",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "product code",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Products",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "progress %",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "project",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Promised delivery",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "promised delivery",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Property",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Property / site visits.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Property accountant",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Property damage",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Property manager",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "property manager",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Property viewer (read only)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Proposed change",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Prospect",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "provider",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "provider / insurer",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Publish",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Published",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Pulse (short)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "purchase date",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "purchase order",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Purchases",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Purpose",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "purpose",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Put it in",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "qty",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Qualified",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Qualify",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Quality nonconformities",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Quantity",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "quantity",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Quantity affected",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Quantity of each part in each store (changed only by stock movements).",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Quarterly",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Question",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "questions",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Quotation",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Quotations",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "quotations valid for (days)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Quote",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Quotes",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Radiation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Raise a ticket",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Raise action",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Raise control action",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "raised by",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "raised by (e-mail)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "rate",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "rate %",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Rates use the multiplier and hours set in HSE settings; never compare rates with different definitions.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Rating",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "rating",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Rating (1–5)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "rating (1–5)",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Re-inspection result",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reading",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Readings",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reason",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "reason",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reason from the bank",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reassess",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reassess after controls",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "reassess on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "REBA",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Recalculate score",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Receipt",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "receipt no. (accounting)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Receipts",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Receipts from suppliers, issues to work orders, transfers between stores, returns and count adjustments.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Received",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "received on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "recharge mark-up %",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "recognised",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Recognition",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "recognition needs the People manager's approval before it is published",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Recognitions",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Recommended controls",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Record assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Record cheques",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Record containment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Record GPS position",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Record insurer decision",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Record payment / settle",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Record result",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Record results",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Record transfer",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "recorded by",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "recovered amount",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Recurring maintenance by days, weeks, months or meter (km / hours); work orders are made before each due date.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "reference",
+  "where": [
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Referral drive",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "refundable",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Refuse discount",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Refuse settlement",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Registered",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "registers",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Regrade",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reimbursement claims on an enrolment (medical bills, gym…). Approved claims can be paid in the next payroll.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "reinspection result",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reject",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reject disposal",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Reject transfer",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Rejected",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Related permit / licence / certificate",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Relation",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "relation",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Remarks",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Remind",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Remind non-responders",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "remind non-responders every (days)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Renewal",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "renewal date",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Renewal due",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "renewal of",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "renewal reminders (days before lease end)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "renewal status",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Renewed",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Renewing",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Rent",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Rent (per year)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "rent collected",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Rent collected less maintenance and fees, per owner and period.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reopen",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Reopen counting",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "reorder quantity",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Repair",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Repair cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "repair cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "repeat",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Repeat every (months)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Repeat finding",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "repeat until",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Repetitive motion",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Replaced",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Report a fault",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Report approved – actions open",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Report for approval",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Report summary",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reporting manager",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Request",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "request",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Request settlement approval",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Requested",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "requested by",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Requested part",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Requested parts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "requester confirms the work",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "requester email",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "requester phone",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Requester rating (1–5)",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "requester rating (1–5)",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "require review",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Required PPE",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Requirement reference",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Requirement summary",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "requirements",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Requirements contain (value)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Reservation",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "reservation",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "reservation (Property)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Reservation deposit",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "reservation valid (days)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reservations",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reserve",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Reserve the unit (Property)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Reserved",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "reserved on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reset the password if a login exists",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Residential",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "residual value",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "residual value %",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Resolution",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "resolution",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Resolve",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "resolve due",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "resolved at",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Resolved – to confirm",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "respond within (hours)",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "responded at",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "response due",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Restricted (HSE only)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Restricted: claims officer, HSE manager and senior management only.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Restrictions (shared with the manager)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Result",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "result",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Result recorded",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Results are compared with the selected limit version; the system never draws medical conclusions from them.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Retired",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Return",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Return assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Return report",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Return to store",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Return to supplier",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Return to work",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Returned",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Returned to tenant",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reverse",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Reversed",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "review",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "review date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Review note",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "review status",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reviewed",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Reviewer",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "reviewer",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Reviewers",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "reviewers stay anonymous to the employee",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "revised from",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "revision",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Reward",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "reward",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Rewards",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Rework",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "RFID tag",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Risk assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "risk assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "risk level",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "role in the account",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Room / area",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Root cause",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "root cause",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Round robin to sales agents",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Routine",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "RULA",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "run",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Safety data sheet",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "salary component code for approved claims",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "salary component for the employee share",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Sale",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "sale",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sale contract",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sale contracts",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sale handover",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sale instalment",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sale price",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sale value",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Sales",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales agent",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "sales agent",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "sales agents",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales areas. A lead whose city matches an area gets the territory; assignment rules can give it to the territory agents.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales officer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sales order",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "sales order",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales order value",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales orders",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales target",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales targets",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "sales tax",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sales team lead",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sample date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "sample type",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "sampled on",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Sampling location",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Sampling method",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Scan",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Scheduled",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "scheduled on",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "scope",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "score",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Scrap",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Screen",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Screening",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Screening note",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "SDS date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "SDS file",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "SDS revision",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Security deposit",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "security deposit",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "security deposit (% of annual rent)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Select quote",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Selected",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Self",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Self, manager, peers, direct reports and internal customers rate the competencies and answer the open questions; HR closes and shares the summary.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Semi-furnished",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "send assets to Maintenance",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Send for approval",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Send for HSE review",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Send for review",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Send for signature",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Send portal login",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Send to Maintenance",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Sent",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "sent at",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Sent – waiting",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "serial",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "serial number",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "serial number required",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Service",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Service charge",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Service request",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Settle deposit",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Settled",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "settled on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Setup",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "severity",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Share with the employee",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Shared with the employee",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "shipping address",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Shown above the form",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "signal word",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Signature request",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "signature requests expire after (days)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Signatures",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Signed",
+  "where": [
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "signed at",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "signed ip",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Signed on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "signed on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "signer (employee)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "signer e-mail (outside person)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "signer name (outside person)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Significance = severity × probability, against the threshold in HSE settings.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "significant",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Site",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "site",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Sites, buildings, floors, rooms and stores. Add a floor plan to place assets on it.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "SKU / internal code",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "SLA rule",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "SLA rules",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Small 50 × 25 mm",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "snag inspection (Maintenance)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Snag list",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Social media",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Software / control system",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Soil / ground",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Sold",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Source",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "source",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Sources",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Spare part",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Spare parts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Spare parts and consumables with minimum stock; stock is kept per store (stores are locations).",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Spare parts storekeeper",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Special / exposure follow-up",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Special prices per customer group: fixed prices per product (with quantity breaks) or a % on the list price.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "specification",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Specification / acceptance criteria",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Staff",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Staff must acknowledge",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Stage",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "stage",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Stages",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Standard / requirement",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "standard terms on quotations",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "start",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Start audit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Start counting",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "start date",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Start work",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "started at",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "state",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Statements",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Status",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "status",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Stock",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Stock by store",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Stock count",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Stock counts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Stock movement",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Stock movements",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Storage / segregation",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "storage location",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "store",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Store / warehouse",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Stored on site",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Straight line",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "strengths",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Subject",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "subject",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Submission",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Submissions",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "submissions need approval",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Submit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Submitted",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Submitted to insurer",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "subtotal",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Summary",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Summary / change note",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Superseded",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Supplier",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "supplier",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Supplier / contractor",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Supplier / contractor audits",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "supplier invoice / reference",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Support and maintenance teams; tickets and work orders go to a team, then to a technician.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Survey",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Surveys",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "tags",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "target",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "target date",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Targets per agent or territory and period. The \"Targets vs actual\" report shows attainment.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Task",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "task",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Tax code",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Tax codes",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "tax registration no. (TRN / GSTIN)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "tax total",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Team",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "team",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "team e-mail",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "team leader",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Teams",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Technical",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Technician",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "technician",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Technicians ask the store for parts (for a work order); the storekeeper approves and issues them.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Temporarily unfit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Temporary",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Temporary changes: when it must be removed or extended",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Temporary until",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Tenant",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "tenant",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Tenant / buyer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "tenant / buyer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "tenant / buyer in Property",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Tenant and buyer",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "tenant deductions",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Tenant gives notice",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Tenant portal",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "tenant portal on",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Tenants and buyers",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Tenants and buyers (one record per person or company).",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Terminate early",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Terminated",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "terms",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "terms and conditions",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Territories",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Territory",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "territory",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "territory manager",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "text to sign (when there is no PDF)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "The asset will not be depreciated until it is capitalised.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "The behaviours rated in 360° reviews, with the meaning of levels 1–5.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "The depreciation is added to the assets and the run is locked.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "the employee signs the submission (e-signature)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "The first rule that matches a new lead / opportunity gives it the agent. No match → round robin to all sales agents.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "The list of expected assets is taken now. Auditors and holders are told.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "The other contact keeps everything; this one is closed. Continue?",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "The stock is set to the counted quantities.",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Third-party liability",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Ticket",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "ticket",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "ticket prefix",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Tickets",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Time",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Title",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "title",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "to",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "To do",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "To review",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "to store",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "total",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "total cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Toxic",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "track stock (Inventory app)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "trade",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "trade licence expiry",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "trade licence no.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "trade name",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Training and competency",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Training compliance %",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Training feedback",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Transfer",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Transfer date",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Transfer to",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Transferred",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "TRIR",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Type",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "type",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Type of change",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "typical pricing",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Under assessment",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Under assessment,approved=Approved,disputed=Disputed,rejected=Rejected",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Under construction (CWIP)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Under maintenance",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Under notice",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "unexpected",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Unfit",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Unfurnished",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Unit",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "unit",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "unit (Property)",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "unit code",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "unit cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "unit no.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Unit of measure",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Unit ready",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Unit sales: payment plan, signing, handover and snags.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Unit type",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "unit type",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Unit types",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Units",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "units",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Units of measure",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "units of the base unit",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "unpaid bills",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "unplanned",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Until",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "until",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "update the location when closing",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "updated at",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Upload SDS",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Urgent",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Use as is (concession)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Use as is (concession),rework=Rework,repair=Repair,scrap=Scrap,return=Return to supplier,regrade=Regrade",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Use parts",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "useful life (months)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "User",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "user feedback",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "user rating (1–5)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "usual duration (hours)",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Utility",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "v1.22.0: branch of the record – users see the records of their branches (Settings › Branch permissions); empty = every branch",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "valid from",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "valid to",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "valid until",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "validated by",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "validity months",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "value",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "value difference",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "value of one point (for rewards)",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "VAT",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "VAT %",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "VAT / GST rates of the country pack. Verify with the tax authority before use.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "VAT on commercial rent %",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Vehicle",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Vendor",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "vendor",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Vendor / other cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "vendor / other cost",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Vendor invoice",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "vendor invoice no.",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Vendors",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Verification",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Verifier",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Verify and close",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "version",
+  "where": [
+   "ZeoHSE/registers.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Version-controlled: changing a limit that has samples creates a new version. Select limits for the jurisdiction, substance, method and averaging period.",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Very high",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Vibration",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Viewing",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Viewing done",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Viewings",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Villa community",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Void",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Volume",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Waiting for approval",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Waiting for quotes",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Waiting for the user",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Warm",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "warn about duplicate contacts",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Warranty / developer",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "warranty until",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Waste",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Waste carrier",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Waste record",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "waste type",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Wastewater / discharge",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Water consumption",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Water reactive",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "weaknesses",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Web form",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "web form key",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Webinar",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "website",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Weekly",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Weeks",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Weight",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Wellness / gym",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "What changes",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "What is still wrong",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "What is wrong",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "What tenants, buyers and owners owe. Invoices are made in your accounting system – export this list to Excel and record the invoice number here.",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "What the company offers. Every employee sees the active plans and can ask to enrol; the employee share is deducted in payroll.",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "What was done",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "What you offer. With ZEO Property, pick the unit – its status follows Property.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "when",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "when campaign is",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "when community / building contains",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "when looking to",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "When one owner owns the whole building",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "when requirements contain",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "when source is",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "when territory is",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "When the Maintenance app is active and linked, new work orders are done there; their status comes back to the asset",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "When the owner pays (e.g. maintenance)",
+  "where": [
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "when value at least",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Where it was found",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "who can give",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "Who pays",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "who pays",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Who you compete with. Pick competitors on an opportunity; the \"Lost to competitors\" report shows where you lose.",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Why",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "with",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "With every place under it; empty = the whole branch",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "With the Maintenance app",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Withdrawn",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Won",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "won as",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Won as (contract / order ref.)",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Won opportunities",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Won opportunity value",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "won stage",
+  "where": [
+   "ZeoCRM/app.py"
+  ]
+ },
+ {
+  "text": "Wording used on screens, e.g. {\"deal\": \"Opportunity\"}",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py",
+   "ZeoPeople/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Work",
+  "where": [
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Work done",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "work done",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Work instruction",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Work order",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "work order",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "work order (Maintenance)",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoProperty/app.py"
+  ]
+ },
+ {
+  "text": "Work orders",
+  "where": [
+   "ZeoAssets/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "work orders above this cost need approval",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Work restrictions (shared with the manager)",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Work to do",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "Working",
+  "where": [
+   "ZeoCRM/app.py",
+   "ZeoMaintenance/app.py"
+  ]
+ },
+ {
+  "text": "Workplace injury",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Workstation / job",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "Write-off",
+  "where": [
+   "ZeoAssets/app.py"
+  ]
+ },
+ {
+  "text": "year",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "{\"self\": 10, \"manager\": 40, \"peer\": 25, \"subordinate\": 15, \"customer\": 10}",
+  "where": [
+   "ZeoPeople/app.py"
+  ]
+ },
+ {
+  "text": "{key: {value: compliant|noncompliant|na|observation, note}}",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "{safety|environment|health|quality|legal|operational: {level: none|low|medium|high, note}}",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ },
+ {
+  "text": "{training, documents, permits, competency, emergency}: true",
+  "where": [
+   "ZeoHSE/registers.py"
+  ]
+ }
+]

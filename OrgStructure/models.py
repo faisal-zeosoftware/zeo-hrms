@@ -247,6 +247,28 @@ class CountryPolicy(models.Model):
         return self.name
 
 
+class CountryPolicyVersion(models.Model):
+    """v1.59.0 – a law change from a date: the gratuity rules of the policy from `effective_from` (annual_leave and overtime are
+    kept for later – the leave and overtime engines run from Leave policies and the overtime setup, so the API takes gratuity only). The newest version with effective_from ≤ the day applies (payroll:
+    the first day of the pay period; end of service: the last working day), so earlier months keep the old rules."""
+    policy = models.ForeignKey(CountryPolicy, on_delete=models.CASCADE, related_name='versions')
+    effective_from = models.DateField()
+    gratuity = models.JSONField(default=dict, blank=True)
+    annual_leave = models.JSONField(default=dict, blank=True)
+    overtime = models.JSONField(default=dict, blank=True)
+    law_reference = models.CharField(max_length=300, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['policy', '-effective_from']
+        unique_together = [('policy', 'effective_from')]
+
+    def __str__(self):
+        return f'{self.policy.code} from {self.effective_from}'
+
+
 class BranchCountryPolicy(models.Model):
     branch_id = models.IntegerField(unique=True)
     country_policy = models.ForeignKey(CountryPolicy, on_delete=models.CASCADE, related_name='branches')

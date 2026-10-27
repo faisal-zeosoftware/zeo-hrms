@@ -41,8 +41,8 @@ class Command(BaseCommand):
         p.add_argument('--uae-leave', action='store_true', help='Load the UAE leave types and Office / Labour policies')
         p.add_argument('--expense-defaults', action='store_true', help='Load UAE expense categories and a default policy')
         # v1.21.0 apps of the company and its industry type (each app's default industry; Settings → Apps can change both later)
-        p.add_argument('--apps', default='hrms,projects',
-                       help='Apps the company uses, comma separated: hrms, projects, crm, property, maintenance, hse (default: hrms,projects)')
+        p.add_argument('--apps', default=None,
+                       help='Apps the company uses, comma separated: hrms, projects, crm, property, maintenance, assets, people, hse (default for a new company: hrms,projects; add payroll for payroll. On a re-run only the apps named are switched on – none is switched off)')
         p.add_argument('--industry', default=None,
                        help='Company industry type: IT, HC, FIN, EDU, MFG, CON, OG, PM, RET or OTH (General)')
         p.add_argument('--no-country-defaults', action='store_true',
@@ -90,7 +90,19 @@ class Command(BaseCommand):
             self.stdout.write(f'Administrator {user.username} exists.')
 
         # 4. company (saving it creates the schema and all company tables – takes a minute)
-        t = company.objects.filter(name=o['company']).first() or (company.objects.filter(schema_name=o['schema']).first() if o.get('schema') else None)
+        # v1.62.0: the same name ignoring case and spacing is the same company (as on the Companies screen, v1.28.1) – before, a
+        # second company "FRESH  install trading llc" was created next to "Fresh Install Trading LLC"
+        o['company'] = ' '.join(str(o['company'] or '').split())
+        t = company.objects.filter(name__iexact=o['company']).first()
+        if t is not None and o.get('schema') and t.schema_name != o['schema']:
+            raise CommandError(f'A company named "{t.name}" already exists (schema "{t.schema_name}"). Use a different name, '
+                               f'or leave out --schema to set up that company again.')
+        t = t or (company.objects.filter(schema_name=o['schema']).first() if o.get('schema') else None)
+        is_new = t is None
+        # v1.56.1: a re-run ("safe to run again") left out --apps and the default hrms,projects switched Payroll / other core apps
+        # of an existing company off. New company: default hrms,projects as before; existing company: apps only when --apps is given.
+        if o.get('apps') is None and is_new:
+            o['apps'] = 'hrms,projects'
         if t is None:
             self.stdout.write('Creating the company schema and its tables (about a minute)…')
             t = company(name=o['company'], schema_name=o.get('schema') or None, country=country, currency=currency, timezone=o['timezone'],
@@ -141,8 +153,16 @@ class Command(BaseCommand):
             if o.get('uae_leave'):
                 from LeavePolicy import setup as leave_setup
                 r = leave_setup.load(user)
-                self.stdout.write(self.style.SUCCESS(f'UAE leave setup: {len(r.get("created_leave_types", []))} leave types, '
-                                                     f'{len(r.get("created_policies", []))} policies.'))
+                nt, np_ = len(r.get('created_leave_types', [])), len(r.get('created_policies', []))
+                # v1.62.0: the country defaults above usually made them already – "0 leave types" read as if nothing was there
+                self.stdout.write(self.style.SUCCESS(f'UAE leave setup: {nt} leave types and {np_} policies added'
+                                                     + (' (the others were already there from the country defaults).' if not (nt and np_) else '.')))
+            try:   # v1.56.1: the standard approval chains (reporting manager) – without them every request of a new company was refused
+                from ZeoAdmin.approval_defaults import ensure as _chains
+                added = _chains(user=user)
+                self.stdout.write(self.style.SUCCESS('Approval chains (reporting manager): ' + ('; '.join(added) or 'already there') + '.'))
+            except Exception as e:   # noqa: BLE001
+                self.stdout.write(f'Approval chains not set up: {e}')
         if o.get('expense_defaults'):
             call_command('load_expense_defaults', schema=t.schema_name, stdout=self.stdout)
         # v1.20.0: Projects app defaults (SLA policy, teams, products, categories, plan template) and its role groups
@@ -160,7 +180,26 @@ class Command(BaseCommand):
                 t.industry_type = o['industry'].upper()
                 t.save(update_fields=['industry_type'])
             keys = [k.strip().lower() for k in (o.get('apps') or '').split(',') if k.strip()]
-            done, failed = AS.setup_new_company(t, keys, user)
+            if is_new:
+                done, failed = AS.setup_new_company(t, keys, user)
+            else:   # an existing company: switch on what --apps names, never switch an app off
+                done, failed = [], {}
+                with schema_context(t.schema_name):
+                    from ZeoApps.models import AppState
+                    for k in keys:
+                        if k not in AS.BY_KEY:
+                            continue
+                        try:
+                            if k in AS.CORE:
+                                st = AppState.objects.filter(app=k).first() or AppState(app=k)
+                                if not st.active:
+                                    st.active = True; st.save()
+                            else:
+                                AS.activate(k, None, user)
+                            done.append(k)
+                        except Exception as e:
+                            failed[k] = str(getattr(e, 'message', e))[:200]
+                    done = sorted(set(done) | set(AppState.objects.filter(active=True).values_list('app', flat=True)))
             with schema_context(t.schema_name):
                 for k in AS.KEYS:
                     if AS.installed(k):
@@ -173,6 +212,14 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f'{k} not activated ({why}); activate it in Settings → Apps.'))
         except Exception as e:
             self.stdout.write(self.style.WARNING(f'Apps not set ({e}); choose them in Settings → Apps.'))
+        try:   # v1.62.0: link the app records to business partners now that every app's tables exist (the migrations of a new
+            # company run before the later apps are created and said "not linked here – run masters_link")
+            from django.core.management import call_command as _call
+            from io import StringIO
+            _call('masters_link', schema=t.schema_name, stdout=StringIO())
+            self.stdout.write(self.style.SUCCESS('Business partners linked (masters_link).'))
+        except Exception as e:   # noqa: BLE001
+            self.stdout.write(self.style.WARNING(f'Business partners not linked ({e}); run: python manage.py masters_link --schema {t.schema_name}'))
         self.stdout.write(self.style.SUCCESS(
             f'Done. Log in with the e-mail "{user.email}" and choose "{t.name}". Next: Settings → Branch permissions, '
             f'Organisation → Settings, Employees → Setup.'))

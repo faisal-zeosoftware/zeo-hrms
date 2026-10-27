@@ -140,20 +140,51 @@ class GroupSerializer(serializers.ModelSerializer):
     permissions = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Permission.objects.all()
     )
+    # v1.62.0 isolation: a group name only has to be unique in the company (the view stores a server-wide free name)
+    name = serializers.CharField(max_length=120)
     class Meta:
         model = Group
         fields='__all__'
     
+    def validate_name(self, v):
+        # v1.62.0 isolation: stored names stay unique on the server – checked here where the name is saved as given
+        # (public schema / platform maintenance of the templates); in a company the view checks the company's names
+        from ZeoApps import groupscope
+        req = self.context.get('request')
+        if not groupscope.schema() or (req is not None and req.query_params.get('scope') == 'template'):
+            qs = Group.objects.filter(name=v.strip())
+            if self.instance is not None:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError('group with this name already exists.')
+        return v.strip()
+
     def to_representation(self, instance):
         representation = super().to_representation(instance)
         representation['permissions'] = permserializer(instance.permissions.all(), many=True).data
+        try:   # v1.62.0 isolation: the name the open company gave it ("HR Manager" for its own copy of the standard group)
+            from ZeoApps import groupscope
+            if groupscope.schema():
+                representation['name'] = groupscope.label(instance)
+                tid = (groupscope.rows().get(instance.pk) or (None, ''))[0]
+                representation['company_copy'] = bool(tid)
+                representation['standard'] = groupscope.is_standard_name(instance.name)
+        except Exception:
+            pass
         return representation
 
 class PermissionSerializer(serializers.ModelSerializer):
     user = serializers.CharField(source="profile.username", read_only=True)
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        representation['groups'] = GroupSerializer(instance.groups.all(), many=True).data
+        # v1.62.0 speed: a group is turned into JSON once per list (every user of a group repeated its ~1,600 permissions)
+        memo = self.__dict__.setdefault('_zgroup_memo', {})
+        groups = []
+        for g in instance.groups.all():
+            if g.pk not in memo:
+                memo[g.pk] = GroupSerializer(g).data
+            groups.append(memo[g.pk])
+        representation['groups'] = groups
         representation['user_permissions'] = permserializer(instance.user_permissions.all(), many=True).data
         return representation
 

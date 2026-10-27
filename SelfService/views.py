@@ -422,7 +422,7 @@ class LetterTemplatesView(Base):
 def _tpl_json(t):
     return {'id': t.id, 'letter_type': t.letter_type, 'letter_label': t.get_letter_type_display(), 'language': t.language, 'branch_id': t.branch_id,
             'title': t.title, 'body': t.body, 'footer': t.footer, 'signatory_name': t.signatory_name, 'signatory_title': t.signatory_title,
-            'show_salary': t.show_salary, 'is_active': t.is_active, 'updated_at': t.updated_at}
+            'show_salary': t.show_salary, 'is_active': t.is_active, 'updated_at': t.updated_at, 'version': t.version}
 
 
 def _save_tpl(request, t, created=False):
@@ -454,8 +454,68 @@ def _save_tpl(request, t, created=False):
     if err:
         return Response(err, status=400)
     t.updated_by_id = request.user.pk
+    if not created and t.version == 0:   # v1.61.0 the wording before the first versioned change is kept as version 1
+        old = LetterTemplate.objects.get(pk=t.pk)
+        L.snapshot(old, old.updated_by_id, 'Wording before versions were kept')
+        t.version = old.version
     t.save()
+    L.snapshot(t, request.user.pk, str(d.get('change_note') or '')[:300])
+    t.refresh_from_db()
     return Response(_tpl_json(t), status=201 if created else 200)
+
+
+def _ver_json(v, names):
+    return {'id': v.id, 'version': v.version, 'title': v.title, 'body': v.body, 'footer': v.footer, 'signatory_name': v.signatory_name,
+            'signatory_title': v.signatory_title, 'show_salary': v.show_salary, 'note': v.note, 'saved_at': v.saved_at,
+            'saved_by': names.get(v.saved_by_id, ''), 'letters': 0}
+
+
+class LetterTemplateVersionsView(Base):
+    """v1.61.0 GET the versions of a template (newest first, with the number of letters issued with each);
+    POST {restore: <version id>, change_note} – the old wording becomes the current one (as a new version)."""
+
+    def get(self, request, pk):
+        if not S.can(request, *S.TEMPLATE_HR, *S.LETTER_HR):
+            return deny(tr('Only HR can see letter templates.'))
+        t = LetterTemplate.objects.filter(pk=pk).first()
+        if t is None:
+            return deny(tr('Template not found.'), 404)
+        if t.version == 0:
+            L.snapshot(t, t.updated_by_id, 'Wording before versions were kept')
+            t.refresh_from_db()
+        from django.contrib.auth import get_user_model
+        from django.db.models import Count
+        vs = list(t.versions.all())
+        names = {u.pk: (u.get_full_name() or u.username) for u in get_user_model().objects.filter(pk__in=[v.saved_by_id for v in vs if v.saved_by_id])}
+        used = dict(LetterRequest.objects.filter(template_id=t.pk, template_version__isnull=False)
+                    .values_list('template_version').annotate(n=Count('id')))
+        rows = []
+        for v in vs:
+            r = _ver_json(v, names)
+            r['letters'] = used.get(v.version, 0)
+            r['current'] = v.version == t.version
+            rows.append(r)
+        return Response({'template': _tpl_json(t), 'versions': rows})
+
+    def post(self, request, pk):
+        if not S.can(request, *S.TEMPLATE_HR):
+            return deny(tr('Only HR can change letter templates.'))
+        t = LetterTemplate.objects.filter(pk=pk).first()
+        if t is None:
+            return deny(tr('Template not found.'), 404)
+        d = _data(request)
+        v = t.versions.filter(pk=d.get('restore')).first() if str(d.get('restore') or '').isdigit() else None
+        if v is None:
+            return Response({'restore': tr('Choose the version to restore.')}, status=400)
+        if v.version == t.version:
+            return Response({'restore': tr('This is the current version already.')}, status=400)
+        from .models import TEMPLATE_VERSIONED
+        for f in TEMPLATE_VERSIONED:
+            setattr(t, f, getattr(v, f))
+        t.updated_by_id = request.user.pk
+        t.save()
+        L.snapshot(t, request.user.pk, (str(d.get('change_note') or '').strip() or f'Restored version {v.version}')[:300])
+        return self.get(request, pk)
 
 
 class LetterTemplateView(Base):
@@ -738,10 +798,17 @@ class MyPayslipPdfView(Base):
         p = S.my_payslips(emp).filter(pk=pk).first() if emp else None
         if p is None:
             return deny(tr('Payslip not found.'), 404)
-        if p.payslip_pdf and p.payslip_pdf.name:
+        from PayrollPlus.models import PayrollPlusSettings   # v1.50.0: a chosen language (or the bilingual setting) is made fresh
+        if p.payslip_pdf and p.payslip_pdf.name and not request.GET.get('lang') and PayrollPlusSettings.get().payslip_language != 'en_ar':
             return _file(p.payslip_pdf, f'payslip-{p.payroll_run.year}-{p.payroll_run.month:02d}.pdf')
         from PayrollManagement.utils import generate_payslip_pdf
-        resp = generate_payslip_pdf(request, p)
+        resp = None
+        try:   # v1.62.0 print – the company's default payslip design; the old payslip when there is none
+            from PrintTemplates.hooks import payslip_response
+            resp = payslip_response(request, p)
+        except ImportError:
+            pass
+        resp = resp or generate_payslip_pdf(request, p)
         resp['Content-Disposition'] = f'attachment; filename="payslip-{p.payroll_run.year}-{p.payroll_run.month:02d}.pdf"'
         return resp
 

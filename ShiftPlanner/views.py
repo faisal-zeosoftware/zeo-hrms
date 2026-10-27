@@ -142,7 +142,7 @@ def names():
     M = apps.get_model
     return {'b': dict(M('OrganisationManager', 'brnch_mstr').objects.values_list('id', 'branch_name')),
             'd': dict(M('OrganisationManager', 'dept_master').objects.values_list('id', 'dept_name')),
-            'u': dict(M('UserManagement', 'CustomUser').objects.values_list('id', 'username'))}
+            'u': __import__('HRActions.names', fromlist=['user_names']).user_names(M('UserManagement', 'CustomUser').objects.values_list('id', flat=True))}   # v1.62.0 people: names
 
 
 def csv_response(filename, header, rows):
@@ -173,7 +173,9 @@ def shift_row(s, rule, n=None, usage=None):
            'night_shift': (rule.night_shift if (rule and not rule.night_auto) else crosses_midnight(s)),
            'night_auto': rule.night_auto if rule else True, 'ot_after_minutes': rule.ot_after_minutes if rule else 0,
            'shift_allowance': fl(rule.shift_allowance) if rule else 0.0, 'night_allowance': fl(rule.night_allowance) if rule else 0.0,
-           'branch_ids': list(rule.branch_ids or []) if rule else [], 'notes': rule.notes if rule else '', 'has_rules': rule is not None}
+           'branch_ids': list(rule.branch_ids or []) if rule else [], 'notes': rule.notes if rule else '', 'has_rules': rule is not None,
+           'segments': list(rule.segments or []) if rule else [], 'split_gap_minutes': d['split_gap_minutes'] if d else 0,
+           'skills': list(rule.skills or []) if rule else []}
     if n is not None:
         row['branches'] = [n['b'].get(int(b), str(b)) for b in row['branch_ids']]
     if usage is not None:
@@ -212,6 +214,35 @@ def shift_input(data, shift=None, rule=None, r=None):
     en = _ptime(data.get('end_time'), 'end_time', errors) if 'end_time' in data or shift is None else shift.end_time
     if (st is None) != (en is None) and not errors.get('start_time') and not errors.get('end_time'):
         errors['end_time' if st else 'start_time'] = tr('Enter both start and end time (or neither for a day-off shift).')
+    if 'segments' in data:   # v1.61.0 split shift
+        raw = data.get('segments') or []
+        segs = []
+        if not isinstance(raw, list):
+            errors['segments'] = tr('Give the parts of the shift as a list.')
+            raw = []
+        for i, p in enumerate(raw):
+            a = _ptime((p or {}).get('start'), 'segments', errors)
+            b = _ptime((p or {}).get('end'), 'segments', errors)
+            if a and b:
+                segs.append((a, b))
+        if len(segs) == 1 and 'segments' not in errors:
+            errors['segments'] = tr('A split shift has at least two parts – or remove the parts for a normal shift.')
+        if len(segs) > 4:
+            errors['segments'] = tr('At most four parts.')
+        if len(segs) >= 2 and 'segments' not in errors:
+            from .resolver import segment_spans
+
+            class _R:
+                segments = [{'start': hhmm(a), 'end': hhmm(b)} for a, b in segs]
+            spans = segment_spans(_R, date.today())
+            if (spans[-1][1] - spans[0][0]) > timedelta(hours=24):
+                errors['segments'] = tr('The parts must fit in 24 hours, in order.')
+            for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
+                if (a2 - b1) < timedelta(minutes=15):
+                    errors['segments'] = tr('Leave at least 15 minutes between the parts (else it is one shift with a break).')
+            if 'segments' not in errors:
+                st, en = segs[0][0], segs[-1][1]   # the shift runs from the first part to the last
+        rv['segments'] = [{'start': hhmm(a), 'end': hhmm(b)} for a, b in segs] if len(segs) >= 2 else []
     if st and en and st == en:
         errors['end_time'] = tr('The end time must differ from the start time.')
     sv['start_time'], sv['end_time'] = st, en
@@ -280,6 +311,12 @@ def shift_input(data, shift=None, rule=None, r=None):
             rv['night_auto'] = False   # set by hand
     if 'notes' in data:
         rv['notes'] = (data.get('notes') or '')[:255]
+    if 'skills' in data:   # v1.61.0 skills needed on the shift
+        from .skills import clean_needs
+        try:
+            rv['skills'] = clean_needs(data.get('skills'))
+        except ValueError as e:
+            errors['skills'] = str(e)
     if 'branch_ids' in data:
         raw = data.get('branch_ids') or []
         if isinstance(raw, str):
@@ -763,6 +800,26 @@ class CellsView(Base):
         return Response({'saved': len(cells), 'problems': S.check_period(p, ids)})
 
 
+class SkillsCoverView(Base):
+    """v1.61.0 GET the skill gaps of the roster (?from=&to=); with ?date=&shift=&skill=&level= the people who could cover one."""
+
+    def get(self, request, pk):
+        from . import skills as SK
+        p = get_period(self.r, pk)
+        q = request.GET
+        if q.get('skill'):
+            d = pdate(q.get('date'), 'date')
+            sid = pint(q.get('shift'), 'shift', True)
+            sk = pint(q.get('skill'), 'skill', True)
+            lv = pint(q.get('level'), 'level') or 1
+            return Response({'date': d, 'shift': sid, 'skill': sk, 'level': lv, 'candidates': SK.candidates(p, d, sid, sk, lv)})
+        a = pdate(q.get('from'), 'from', required=False)
+        b = pdate(q.get('to'), 'to', required=False)
+        out = SK.coverage(p, a, b)
+        out['can_change'] = self.r.can_manage_period(p)
+        return Response(out)
+
+
 # ------------------------------------------------------------------ 3. availability
 def avail_row(a, n=None):
     return {'id': a.id, 'employee_id': a.employee_id, 'employee': person(S.emp_by_id(a.employee_id)), 'kind': a.kind, 'kind_label': a.get_kind_display(),
@@ -1058,7 +1115,8 @@ def req_row(q, r, shifts, n):
     me = r.emp.pk if r.emp else None
     row['can'] = {'accept': q.status == 'peer' and me is not None and me == q.swap_employee_id,
                   'approve': q.status == 'pending' and r.can_decide_for(emp),
-                  'withdraw': q.status in ('peer', 'pending') and (me == q.employee_id or q.created_by_id == r.user.pk)}
+                  'withdraw': q.status in ('open', 'peer', 'pending') and (me == q.employee_id or q.created_by_id == r.user.pk),
+                  'take': q.kind == 'offer' and q.status == 'open' and me is not None and me != q.employee_id}
     return row
 
 
@@ -1066,6 +1124,10 @@ def _visible_req(r, q):
     me = r.emp.pk if r.emp else None
     if me in (q.employee_id, q.swap_employee_id) or q.created_by_id == r.user.pk:
         return True
+    if q.kind == 'offer' and q.status == 'open' and r.emp is not None:   # v1.49.0: colleagues of the branch see open offers
+        emp = S.emp_by_id(q.employee_id)
+        if emp is not None and emp.emp_branch_id_id == r.emp.emp_branch_id_id:
+            return True
     emp = S.emp_by_id(q.employee_id)
     return r.manages_emp(emp) or r.is_manager_of(emp)
 
@@ -1077,6 +1139,8 @@ class RequestsView(Base):
         me = self.r.emp.pk if self.r.emp else -1
         if scope == 'mine':
             qs = qs.filter(Q(employee_id=me) | Q(swap_employee_id=me))
+        elif scope == 'offers':   # v1.49.0 shifts offered by colleagues that I may take
+            qs = qs.filter(kind='offer', status='open', date__gte=date.today()).exclude(employee_id=me)
         elif scope == 'team':
             qs = qs.filter(employee_id__in=list(self.r.team))
         st = request.GET.get('status')
@@ -1092,12 +1156,12 @@ class RequestsView(Base):
         d = request.data
         kind = d.get('kind')
         if kind not in dict(ShiftRequest.KINDS):
-            raise PlanError(tr('Choose swap, change or cancel.'), problems={'kind': 'Required.'})
+            raise PlanError(tr('Choose swap, change, cancel or offer.'), problems={'kind': 'Required.'})
         emp = _target_emp(self.r, d.get('employee'), 'shift requests')
         day = pdate(d.get('date'), 'date')
         if day < date.today():
             raise PlanError(tr('You can only change today or later days.'), problems={'date': 'In the past.'})
-        if ShiftRequest.objects.filter(employee_id=emp.pk, date=day, status__in=('peer', 'pending')).exists():
+        if ShiftRequest.objects.filter(employee_id=emp.pk, date=day, status__in=('open', 'peer', 'pending')).exists():
             raise PlanError(tr('There is already an open request for this day. Withdraw it first.'), status=409)
         cur_id, cur_off = S.current_shift(emp, day)
         shifts = S.shifts_by_id()
@@ -1114,6 +1178,10 @@ class RequestsView(Base):
                 raise PlanError(tr('You already work this shift on that day.'), problems={'to_shift': 'Same shift.'})
             S.refuse_if_leave(emp, day)
             q.to_shift_id, q.status = to, 'pending'
+        elif kind == 'offer':   # v1.49.0 give the shift to any colleague of the branch who takes it
+            if q.from_shift_id is None:
+                raise PlanError(tr('There is no shift to offer on that day.'), status=409)
+            q.status = 'open'
         elif kind == 'cancel':
             if q.from_shift_id is None:
                 raise PlanError(tr('There is no shift to cancel on that day.'), status=409)
@@ -1140,7 +1208,9 @@ class RequestsView(Base):
             q.status = 'peer'
         q.save()
         shift_txt = S.shift_label(shifts.get(q.from_shift_id)) if q.from_shift_id else 'Off'
-        if q.kind == 'swap':
+        if q.kind == 'offer':
+            pass   # colleagues see it under "Shifts offered by colleagues"; the manager decides once someone takes it
+        elif q.kind == 'swap':
             notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title=tmsg('Shift swap request'),
                         message=tmsg('{0} asks to swap: their {1:%a %d %b} ({2}) for your {3:%a %d %b} ({4}). Accept or decline in My schedule.', person(emp), day, shift_txt, q.swap_date, S.shift_label(shifts.get(q.swap_shift_id)) if q.swap_shift_id else "Off"))
         else:
@@ -1162,6 +1232,11 @@ def apply_request(q, user):
         S.set_shift(emp, q.date, q.to_shift_id, 'change', user, note=q.reason)
     elif q.kind == 'cancel':
         S.set_shift(emp, q.date, None, 'cancel', user, note=q.reason or 'Shift cancelled')
+    elif q.kind == 'offer':   # v1.49.0 the colleague works the shift, the employee is off
+        taker = S.emp_by_id(q.swap_employee_id)
+        S.refuse_if_leave(taker, q.date)
+        S.set_shift(taker, q.date, q.from_shift_id, 'swap', user, note=f'Took the shift of {emp.emp_code}')
+        S.set_shift(emp, q.date, None, 'swap', user, note=f'Shift given to {taker.emp_code}')
     else:
         other = S.emp_by_id(q.swap_employee_id)
         dates = sorted({q.date, q.swap_date or q.date})
@@ -1202,8 +1277,23 @@ class RequestAction(Base):
                 notify.send(employee=emp, kind='swap', title=tmsg('Swap accepted'), message=tmsg('{0} accepted your swap for {1:%d %b %Y}. It now waits for approval.', person(self.r.emp), q.date))
                 RequestsView._tell_approver(emp, q)
             return Response(req_row(q, self.r, shifts, n))
+        if action == 'take':   # v1.49.0 a colleague takes an offered shift
+            if q.kind != 'offer' or q.status != 'open' or self.r.emp is None or me == q.employee_id:
+                raise PlanError(tr('This shift is not open to you.'), status=409)
+            if self.r.emp.emp_branch_id_id != emp.emp_branch_id_id:
+                raise PlanError(tr('Only colleagues of the branch can take this shift.'), status=403)
+            S.refuse_if_leave(self.r.emp, q.date)
+            cur_id, cur_off = S.current_shift(self.r.emp, q.date)
+            if cur_id and not cur_off:
+                raise PlanError(tr('You already work a shift on that day.'), status=409)
+            q.swap_employee_id, q.swap_date, q.status, q.peer_decided_at = self.r.emp.pk, q.date, 'pending', timezone.now()
+            q.save()
+            notify.send(employee=emp, kind='swap', title=tmsg('Your shift was taken'),
+                        message=tmsg('{0} takes your shift of {1:%a %d %b}. It now waits for approval.', person(self.r.emp), q.date))
+            RequestsView._tell_approver(emp, q)
+            return Response(req_row(q, self.r, shifts, n))
         if action == 'withdraw':
-            if q.status not in ('peer', 'pending') or not (me == q.employee_id or q.created_by_id == request.user.pk):
+            if q.status not in ('open', 'peer', 'pending') or not (me == q.employee_id or q.created_by_id == request.user.pk):
                 raise PlanError(tr('Only the requester can withdraw an open request.'), status=403)
             q.status = 'withdrawn'
             q.save()
@@ -1239,7 +1329,7 @@ def day_rows(emp, a, b, book=None, shifts=None):
     lv = S.leave_map([emp.pk], a, b)
     hol = holidays(emp, a, b)
     reqs = {}
-    for q in ShiftRequest.objects.filter(Q(employee_id=emp.pk) | Q(swap_employee_id=emp.pk), status__in=('peer', 'pending'), date__gte=a, date__lte=b):
+    for q in ShiftRequest.objects.filter(Q(employee_id=emp.pk) | Q(swap_employee_id=emp.pk), status__in=('open', 'peer', 'pending'), date__gte=a, date__lte=b):
         reqs.setdefault(q.date, []).append({'id': q.id, 'kind': q.get_kind_display(), 'status': q.get_status_display()})
     out = []
     for d in S.days(a, b):
@@ -1627,7 +1717,16 @@ class MetaView(Base):
             'branches': list(br.values('id', 'branch_name')),
             'departments': list(M('OrganisationManager', 'dept_master').objects.values('id', 'dept_name')),
             'approvers': list(M('UserManagement', 'CustomUser').objects.filter(tenants__schema_name=_schema(request)).values('id', 'username').distinct()[:300]),
+            'skills': _skills_list(),   # v1.61.0 skills a shift can need
         })
+
+
+def _skills_list():
+    try:
+        from django.apps import apps
+        return list(apps.get_model('LearningPlus', 'Skill').objects.filter(is_active=True).values('id', 'name', 'category'))
+    except LookupError:
+        return []
 
 
 # ------------------------------------------------------------------ v1.18.0: on-call duty

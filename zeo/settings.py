@@ -59,7 +59,7 @@ def env_list(name, default=()):
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env('siRaD0tfx_h1O5tM0WVHMs0PIk2pXx7qt_2DIxC0gtT1NACjmTOdsMVb8kYxBdle8Qw')
+SECRET_KEY = env('ZEO_SECRET_KEY')
 if not SECRET_KEY:
     raise RuntimeError('Set ZEO_SECRET_KEY in the environment or in .env (see .env.example).')
 

@@ -510,8 +510,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = 'aparnaudhayan@gmail.com'
-EMAIL_HOST_PASSWORD = 'tupg ltue yjzw vvaw'
+EMAIL_HOST_USER = 'aparnaudhayan03@gmail.com'
+EMAIL_HOST_PASSWORD = 'ruuh gtwd yzaz yeaw'
 DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')

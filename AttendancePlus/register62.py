@@ -11,6 +11,7 @@ GET  api/late-early/?view=waiting|pending|all&status=   late in / early out requ
 POST api/late-early/<id>/approve|reject/ {note}   the current level (calendars LateinEarlyoutApproval)
 How overtime hours, rates and pay are calculated is not changed here.
 """
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -52,6 +53,8 @@ def _ot_hr(request):
 
 def _month(g):
     m = g.get('month') or ''
+    if not m:   # v1.62.0 people: no month chosen = the last 31 days (a new month starts with an empty list otherwise)
+        return date.today() - timedelta(days=31), date.today()
     try:
         y, mo = [int(x) for x in m.split('-')[:2]]
         d0 = date(y, mo, 1)
@@ -130,7 +133,8 @@ def overtime_rows(request, g):
         mine = stk == 'pending' and (hr or e.pk in team)
         out.append({
             'id': o.pk, 'employee_id': e.pk, 'employee_display': _person(e), 'date': o.date,
-            'hours': float(h), 'hours_hm': hm(h), 'type': t, 'type_label': tr(OT_LABEL.get(t, t.capitalize())),
+            'hours': float(h), 'hours_hm': hm(h),
+            'hours_label': hm(h) + (' · ' + tr('over 2 h') if h > 2 else ''),   # v1.62.0 people: UAE Art. 19 limit flagged in the list 'type': t, 'type_label': tr(OT_LABEL.get(t, t.capitalize())),
             'rate': float(rate) if rate else None,
             'type_rate': f"{tr(OT_LABEL.get(t, t.capitalize()))} ×{Decimal(str(rate)).normalize():f}" if rate else tr(OT_LABEL.get(t, t)),
             'weighted_hm': hm(h * Decimal(str(rate))) if rate else '',
@@ -244,13 +248,16 @@ def late_early_rows(request, g):
         if r.status == 'PENDING':
             who = (names.get(cur.deligate_to_id) if cur and cur.is_deligate and cur.deligate_to_id else names.get(cur.approver_id, '')) if cur else ''
             stage = tr('Level {0} of {1} – waiting for {2}', cur.level, total, who) if cur else tr('Waiting for approval')
+            short = tr('Level {0} of {1}', cur.level, total) if cur else stage
         else:
             who, stage = '', tr(r.get_status_display())
+            short = stage
         out.append({
             'id': r.pk, 'number': r.document_number, 'employee_id': r.employee_id, 'employee_display': _person(r.employee), 'date': r.date,
             'type': r.request_type, 'type_label': tr(LE_LABEL.get(r.request_type, r.request_type)),
             'minutes_label': (tr('{0} min', mins) if mins else ''), 'reason': r.reason or '', 'branch': r.branch.branch_name if r.branch_id else '',
-            'status': r.status.lower(), 'status_label': tr(r.get_status_display()), 'stage_label': stage, 'waiting_for': who,
+            'status': r.status.lower(), 'status_label': tr(r.get_status_display()), 'stage_label': stage, 'waiting_for': re.sub(r' \(\S+\)$', '', who or ''),   # v1.62.0 people: name only in the list
+            'stage_short': short,
             'can_act': bool(cur is not None and (_le_mine(cur, request.user) or getattr(request.user, 'is_superuser', False))),
             'waiting_for_me': bool(cur is not None and _le_mine(cur, request.user)),
             'history': [{'level': a.level, 'approver': names.get(a.approver_id, ''), 'status': tr(a.get_status_display()), 'note': a.note or '',
@@ -305,3 +312,112 @@ class LateEarlyActionView(APIView):
             a.reject(note=note)
             return Response({'detail': tr('Rejected.')})
         return Response({'detail': tr('Unknown action.')}, status=400)
+
+
+# ------------------------------------------------------------------ shift override as date ranges (v1.62.0 people)
+def _override_ranges(request, g):
+    """calendars.ShiftOverride keeps one row per employee and day; the list shows them as ranges: the same employee and shift on
+    days that follow each other (rest days in between do not break a range)."""
+    from calendars.models import ShiftOverride
+    qs = ShiftOverride.objects.select_related('employee', 'override_shift', 'created_by').order_by('employee__emp_code', 'date')
+    ids = hr_employee_ids(request)
+    if ids is not None and not ctx(request).admin:
+        qs = qs.filter(employee_id__in=ids | team_ids(request))
+    if str(g.get('employee') or '').isdigit():
+        qs = qs.filter(employee_id=int(g['employee']))
+    if g.get('when') == 'current':
+        qs = qs.filter(date__gte=date.today())
+    out, cur = [], None
+    for o in qs:
+        sid = o.override_shift_id
+        if cur and cur['employee_id'] == o.employee_id and cur['shift_id'] == sid and (o.date - cur['to']).days <= 3:
+            cur['to'] = o.date
+            cur['days'] += 1
+            cur['ids'].append(o.pk)
+            continue
+        cur = {'employee_id': o.employee_id, 'employee_display': _person(o.employee), 'shift_id': sid,
+               'shift': o.override_shift.name if sid and o.override_shift else tr('Day off'), 'from': o.date, 'to': o.date, 'days': 1, 'ids': [o.pk]}
+        out.append(cur)
+    today = date.today()
+    for i, r in enumerate(out):
+        r['id'] = r['ids'][0]   # the first day's row stands for the range (actions work on the whole range)
+        r['period'] = r['from'].strftime('%d/%m/%Y') if r['from'] == r['to'] else f"{r['from'].strftime('%d/%m/%Y')} – {r['to'].strftime('%d/%m/%Y')}"
+        r['status_label'] = tr('Current') if r['from'] <= today <= r['to'] else (tr('Coming') if r['from'] > today else tr('Past'))
+        r['status'] = 'current' if r['from'] <= today <= r['to'] else ('coming' if r['from'] > today else 'past')
+        r['days_label'] = tr('{0} days', r['days']) if r['days'] != 1 else tr('1 day')
+    q = (g.get('q') or g.get('search') or '').lower().strip()
+    if q:
+        out = [r for r in out if q in f"{r['employee_display']} {r['shift']}".lower()]
+    return list(reversed(sorted(out, key=lambda r: r['from'])))
+
+
+def _can_override(request):
+    x = ctx(request)
+    return x.admin or bool(x.codes & {'add_shiftoverride', 'change_shiftoverride'}) or is_hr(request)
+
+
+class OverridesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(_override_ranges(request, request.query_params))
+
+    def post(self, request):
+        """One override for a date range: {employee, override_shift, from, to, skip_weekends}. Existing days in the range are replaced."""
+        from calendars.models import ShiftOverride, Shift
+        from EmpManagement.models import emp_master
+        if not _can_override(request):
+            return Response({'detail': tr('You may not change shifts.')}, status=403)
+        d = request.data
+        e = emp_master.objects.filter(pk=d.get('employee') or 0).first()
+        if e is None:
+            return Response({'employee': [tr('Choose the employee.')]}, status=400)
+        ids = hr_employee_ids(request)
+        if ids is not None and not ctx(request).admin and e.pk not in ids:
+            return Response({'detail': tr('This employee is not in your branches.')}, status=403)
+        sh = Shift.objects.filter(pk=d.get('override_shift') or 0).first()
+        if sh is None:
+            return Response({'override_shift': [tr('Choose the shift.')]}, status=400)
+        try:
+            a = date.fromisoformat(str(d.get('from'))[:10])
+            b = date.fromisoformat(str(d.get('to') or d.get('from'))[:10])
+        except ValueError:
+            return Response({'from': [tr('Give the first and last day.')]}, status=400)
+        if b < a or (b - a).days > 366:
+            return Response({'to': [tr('The last day must be after the first day (at most one year).')]}, status=400)
+        skip = str(d.get('skip_weekends', '')).lower() in ('1', 'true', 'yes', 'on')
+        n, day = 0, a
+        while day <= b:
+            if not (skip and day.weekday() >= 5):
+                ShiftOverride.objects.update_or_create(employee=e, date=day, defaults={'override_shift': sh, 'created_by': request.user})
+                n += 1
+                if day <= date.today():
+                    try:
+                        E.recompute_day(e, day)
+                    except Exception:
+                        pass
+            day += timedelta(days=1)
+        return Response({'detail': tr('{0}: {1} from {2} to {3} ({4} days).', _person(e), sh.name, a.strftime('%d/%m/%Y'), b.strftime('%d/%m/%Y'), n)}, status=201)
+
+
+class OverrideActionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, action):
+        from calendars.models import ShiftOverride
+        if not _can_override(request):
+            return Response({'detail': tr('You may not change shifts.')}, status=403)
+        if action != 'remove':
+            return Response({'detail': tr('Unknown action.')}, status=400)
+        rng = next((r for r in _override_ranges(request, {}) if r['id'] == pk), None)
+        if rng is None:
+            return Response({'detail': tr('Shift override not found.')}, status=404)
+        rows = list(ShiftOverride.objects.filter(pk__in=rng['ids']).select_related('employee'))
+        ShiftOverride.objects.filter(pk__in=rng['ids']).delete()
+        for o in rows:
+            if o.date <= date.today():
+                try:
+                    E.recompute_day(o.employee, o.date)
+                except Exception:
+                    pass
+        return Response({'detail': tr('Shift override removed ({0} days) – the normal shift applies again.', len(rows))})

@@ -85,8 +85,11 @@ router.register(r'Emp-bulkupload-overtime', EmpBulkuploadOvertimeViewSet, basena
 
 
 
+from .face_register import FaceRegisterListView   # v1.62.10 (item 171)
+
 urlpatterns = [
     # Other paths
+    path('api/face-register/', FaceRegisterListView.as_view(), name='face-register'),   # v1.62.10 (item 171)
     path('api/', include(router.urls)),
     path('api/leave-balance/apply-openings/', ApplyOpeningsAPIView.as_view(), name='apply-openings'),
     path('api/immediate-reject/', ImmediateRejectAPIView.as_view(), name='immediate-reject'),

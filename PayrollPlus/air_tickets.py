@@ -244,8 +244,11 @@ class AllocationsView(AtBase):
         qs = A.objects.select_related('employee', 'employee__emp_branch_id', 'policy', 'policy__country').prefetch_related('policy__rules')
         qs = self.in_branches(qs, 'employee__emp_branch_id', request).order_by('employee__emp_code', '-allocated_date')
         taken = set(R.objects.filter(status__in=USED_REQ, request_type='TICKET').values_list('allocation_id', flat=True))
+        from .air_policy import taken_ids as _v1660_taken
+        taken = _v1660_taken(taken)   # v1.66.0 (item 120): partial use – an allocation with travellers left is not taken
         rows = [alloc_row(a, today, a.id in taken) for a in qs]
-        open_rows = [r for r in rows if r['state'] in ('approved', 'ticket_taken', 'pending') and Decimal(r['remaining']) > 0]
+        # v1.62.2 (item 54): an allocation whose ticket was already taken is not owed any more – same rule as the provisions
+        open_rows = [r for r in rows if r['state'] in ('approved', 'pending') and Decimal(r['remaining']) > 0 and r['id'] not in taken]
         soon = today + timedelta(days=90)
         due = [r for r in open_rows if r['eligible_now'] or (r['next_eligible'] and r['next_eligible'] <= soon)]
         emp_ids = {r['employee_id'] for r in rows}
@@ -335,6 +338,8 @@ class MineView(AtBase):
         R = M('PayrollManagement', 'AirTicketRequest')
         today = timezone.localdate()
         taken = set(R.objects.filter(employee=emp, status__in=USED_REQ, request_type='TICKET').values_list('allocation_id', flat=True))
+        from .air_policy import taken_ids as _v1660_taken
+        taken = _v1660_taken(taken)   # v1.66.0 (item 120)
         allocs = list(A.objects.filter(employee=emp).select_related('employee', 'employee__emp_branch_id', 'policy', 'policy__country')
                       .prefetch_related('policy__rules', 'policy__eligible_departments', 'policy__eligible_designations',
                                         'policy__eligible_categories', 'policy__branch').order_by('-allocated_date'))

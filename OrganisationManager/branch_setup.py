@@ -11,12 +11,44 @@ copy_setup(new_branch) copies from the oldest other branch (or a given one):
 - salary components of that branch – copied (same codes and formulas); salary / pay structures and document types – joined.
 Nothing that already exists for the new branch is changed. Safe to run again.
 """
+import contextvars
 import logging
 
 from django.apps import apps
 from django.db import transaction
 
 log = logging.getLogger(__name__)
+
+# v1.62.1 (user request 2 Nov): the branch form chooses where a new branch takes its setup from.
+# CHOICE is set around the save by BranchSerializer: None = the first branch (as before), 'none' = copy nothing,
+# or a branch id. RESULT holds what was copied, for the answer of the request.
+CHOICE = contextvars.ContextVar('zeo_branch_copy_from', default=None)
+RESULT = contextvars.ContextVar('zeo_branch_copy_result', default=None)
+
+
+def for_new_branch(new, user=None):
+    """Called by the post_save signal of a new branch: copies from the chosen branch (or the first one)."""
+    choice = CHOICE.get()
+    if choice == 'none':
+        # nothing copied – but every request type still gets its default approval (reporting manager), so the branch's
+        # requests do not fail with "Approval workflow not configured" while it is being set up
+        try:
+            from ZeoAdmin.approval_defaults import ensure as _chains
+            _chains([new], user=user)
+        except Exception:
+            log.exception('approval chains of the new branch')
+        RESULT.set({'source': None, 'skipped': True})
+        return {}
+    Branch = M('OrganisationManager', 'brnch_mstr')
+    source = None
+    if choice not in (None, ''):
+        source = Branch.objects.exclude(pk=new.pk).filter(pk=choice).first()
+    if source is None and not Branch.objects.exclude(pk=new.pk).exists():
+        return {}
+    done = copy_setup(new, source=source, user=user)
+    src = source or Branch.objects.exclude(pk=new.pk).order_by('pk').first()
+    RESULT.set({'source': src.branch_name if src else None, 'copied': done})
+    return done
 
 
 def M(app, model):

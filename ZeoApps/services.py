@@ -410,7 +410,7 @@ def set_core_default(keys, industry=''):
         s.save()
 
 
-def setup_new_company(tenant, keys, user=None):
+def setup_new_company(tenant, keys, user=None, progress=None):
     """Company creation: the apps ticked on the form (at least one). HRMS / Projects on or off; CRM, Property, Maintenance and
     HSE activated with the industry that matches the company industry type (it can be changed later in Settings → Apps)."""
     from django_tenants.utils import schema_context
@@ -420,12 +420,22 @@ def setup_new_company(tenant, keys, user=None):
     done, failed = [], {}
     with schema_context(tenant.schema_name):
         set_core_default(keys, getattr(tenant, 'industry_type', '') or '')
+        try:   # v1.62.1 (user request 2 Nov): a new company finishes the required setup steps before HR transactions
+            from ZeoAdmin.setup_gate import enforce_new
+            enforce_new()
+        except Exception:
+            log.exception('setup gate of %s', tenant.schema_name)
         try:   # v1.62.0 print – the sample print templates of the new company (payslip, letters, settlement …)
             from PrintTemplates.services import seed as _print_seed
             _print_seed()
         except Exception:
             log.exception('print templates of %s', tenant.schema_name)
-        for k in keys:
+        for i, k in enumerate(keys):
+            if progress is not None:   # v1.62.1: progress of the company job – (done so far, total, app name)
+                try:
+                    progress(i, len(keys), str(BY_KEY[k][2]) if k in BY_KEY else k)
+                except Exception:
+                    pass
             if k in ('hrms', 'projects'):
                 try:
                     make_roles(k)

@@ -80,6 +80,25 @@ def set_cookie(response, request, user):
     return token
 
 
+def _company_logo(path):
+    """v1.62.1 (tester 30-10 item 183): the company logo field has no upload folder, so logos are saved at the top of
+    media/ – not under logos/ – and the "logos stay public" rule never applied: without the sign-in cookie (sign-in page,
+    company picker on another domain, e-mails, a first load before the cookie is set) the logo answered 401 and showed
+    as a broken image. A file that is a company's logo is public (cached 5 minutes)."""
+    from django.core.cache import cache
+    k = 'zeo:logo:' + path
+    v = cache.get(k)
+    if v is None:
+        try:
+            from django_tenants.utils import get_tenant_model, schema_context
+            with schema_context('public'):
+                v = 'y' if get_tenant_model().objects.filter(logo=path).exists() else 'n'
+        except Exception:
+            v = 'n'
+        cache.set(k, v, 300)
+    return v == 'y'
+
+
 def serve(request, path):
     path = posixpath.normpath(path).lstrip('/')
     if path.startswith('..') or '/../' in f'/{path}/':
@@ -89,7 +108,7 @@ def serve(request, path):
     if not full.startswith(root + os.sep):
         raise Http404
     # the sign-in check comes first: without a login a missing file answers the same as a present one (nothing to probe)
-    if getattr(settings, 'ZEO_MEDIA_LOGIN', True) and not path.startswith(PUBLIC_PREFIXES):
+    if getattr(settings, 'ZEO_MEDIA_LOGIN', True) and not path.startswith(PUBLIC_PREFIXES) and not _company_logo(path):
         user = user_of(request)
         if user is None:
             r = HttpResponse('<!doctype html><meta charset="utf-8"><title>Sign in</title><body style="font:15px system-ui;padding:40px">'

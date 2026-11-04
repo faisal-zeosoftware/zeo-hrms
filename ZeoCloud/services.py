@@ -382,6 +382,7 @@ def check_user_add(user, company_obj):
 # ------------------------------------------------------------------ jobs (company creation runs in the background)
 JOB = 'zeo:cloudjob:{}'
 STEPS = ['Creating the company', 'Setting up the apps', 'Giving access', 'Finishing']
+PLAN = [('create', STEPS[0], 60), ('apps', STEPS[1], 28), ('access', STEPS[2], 6), ('finish', STEPS[3], 6)]   # v1.62.1 %
 
 
 def _job(job, **kw):
@@ -391,7 +392,8 @@ def _job(job, **kw):
 
 
 def job_status(job):
-    return cache.get(JOB.format(job))
+    from ZeoApps.job_progress import with_elapsed
+    return with_elapsed(cache.get(JOB.format(job)))
 
 
 def default_country():
@@ -440,6 +442,8 @@ def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, cou
     from django.db import close_old_connections
     if own_thread:
         close_old_connections()
+    from ZeoApps.job_progress import Progress
+    P = Progress(lambda **kw: _job(job, **kw), PLAN)   # v1.62.1: % and what is being done now
     try:
         from UserManagement.models import company as Company, CustomUser
         connection.set_schema_to_public()
@@ -452,20 +456,28 @@ def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, cou
         comp = Company(name=name[:100], schema_name=schema, country=country or default_country(), industry_type=industry or 'OTH')
         if template_ready():   # seconds: copy of the ready template schema (kept up to date by migrate_schemas)
             from django_tenants.clone import CloneSchema
-            CloneSchema().clone_schema(TEMPLATE, schema, clone_mode='DATA')
+            P.begin('create', 'Copying the ready company template')
+            with P.copy(TEMPLATE, 'Copying the ready company template'):
+                CloneSchema().clone_schema(TEMPLATE, schema, clone_mode='DATA')
             comp.auto_create_schema = False
-        comp.save()   # without the template: creates the schema and runs the company migrations (about 2 minutes)
+            P.sub(0.97, 'Registering the company')
+            comp.save()
+        else:
+            P.begin('create', 'Creating the database')
+            with P.migrations(schema):
+                comp.save()   # without the template: creates the schema and runs the company migrations (about 2 minutes)
         AccountCompany.objects.create(company=comp, account=acc, extra=extra, db_alias='')   # made in the main database
         forget(schema)
-        _job(job, step=STEPS[1], step_no=2)
+        P.begin('apps', 'Preparing the apps')
         from ZeoApps.services import setup_new_company
         user = CustomUser.objects.filter(pk=user_id).first()
-        done, failed = setup_new_company(comp, ['hrms'] + apps, user)
-        _job(job, step=STEPS[2], step_no=3)
+        done, failed = setup_new_company(comp, ['hrms'] + apps, user,
+                                         progress=lambda i, n, app: P.sub(i / max(n, 1), ('Setting up {0} ({1} of {2})', [app, i + 1, n])))
+        P.begin('access', 'The account owner can open the company')
         people = {u for u in [acc.owner, user if grant_creator else None] if u is not None}   # Adept staff are not added
         for u in people:
             grant_admin(u, comp)
-        _job(job, step=STEPS[3], step_no=4)
+        P.begin('finish', 'Recording the company on the account')
         moved = ''
         target = db or acc.db_alias   # v1.26.0: the database chosen on Create company, else the account's default one
         if target and not DatabaseServer.objects.filter(key=target, account=acc, state='ready').exists():
@@ -477,10 +489,10 @@ def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, cou
             moved = mv.state if mv.state == 'done' else f'not moved: {mv.error}'[:200]
         event(acc, 'company', f'Company created – {comp.name}' + (' (extra company)' if extra else ''), user, schema=schema, apps=done)
         cache.delete(f'zeo:cloud:usage:{acc.pk}')
-        _job(job, state='done', step='Done', step_no=len(STEPS), company_id=comp.pk, apps=done, failed=failed, moved=moved)
+        P.finish('done', company_id=comp.pk, apps=done, failed=failed, moved=moved)
     except Exception as e:
         log.exception('cloud company')
-        _job(job, state='failed', error=str(e)[:300])
+        P.finish('failed', error=str(e)[:300])
         try:
             from UserManagement.models import company as Company
             from django_tenants.utils import schema_exists

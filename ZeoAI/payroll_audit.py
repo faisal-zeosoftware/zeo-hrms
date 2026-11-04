@@ -196,6 +196,18 @@ def audit(run, user=None):
                   employee=e, payslip_id=p.pk, current=unpaid[p.employee_id])
         if bank_ok and p.employee_id not in bank_ok:
             c.add('bank_missing', 'warning', f'{name}: no active bank account with IBAN', 'The WPS salary file needs an IBAN for every employee paid by transfer. Add the bank details or mark the employee as paid in cash.', employee=e, payslip_id=p.pk)
+    # v1.62.2 (item 41): a pension formula component next to the statutory scheme of the same contribution (GPSSA twice)
+    try:
+        from PayrollManagement.payroll_guards import duplicate_setup, notes_of
+        dup = duplicate_setup()
+        if dup:
+            n_rep = sum(1 for p in slips if notes_of(p.pk).get('replaced'))
+            c.add('statutory_duplicate', 'warning', 'Pension deducted by two components: ' + ', '.join(f'{a.name} ({a.code}) and {b.name} ({b.code})' for a, b in dup),
+                  'Both components take the same contribution. Payroll uses the statutory scheme (Payroll › Statutory schemes, rates by date in Legal rates) and '
+                  f'leaves the other off the payslip ({n_rep} payslip(s) in this run). Switch the duplicate component off in the salary structures, and confirm '
+                  'that the rate of the statutory scheme is the one that applies to your employees.')
+    except Exception:
+        pass
     # left out
     if prev:
         Emp = M('EmpManagement', 'emp_master')
@@ -247,12 +259,28 @@ def summary_text(a, rows, s):
     crit = sum(1 for r in rows if r.severity == 'critical')
     warn = sum(1 for r in rows if r.severity == 'warning')
     info = sum(1 for r in rows if r.severity == 'info')
-    t = a.totals.get('now', {})
-    out = f'{a.payslips} payslips, gross {t.get("gross", 0):,.2f}, net {t.get("net", 0):,.2f}. '
+    return summary_of(a.payslips, a.totals.get('now', {}), crit, warn, info, s.block_on_critical)
+
+
+def summary_of(payslips, t, crit, warn, info, block):
+    """v1.62.0 ui: the audit summary in the reader's language (numbers as placeholders)."""
+    from Translations.i18n import tr
+    out = tr('{0} payslips, gross {1}, net {2}.', payslips, f'{t.get("gross", 0):,.2f}', f'{t.get("net", 0):,.2f}') + ' '
     if crit:
-        out += f'{crit} critical finding(s) – approval {"is refused" if s.block_on_critical else "is not advised"} until they are resolved or dismissed. '
-    out += f'{warn} warning(s) to look at, {info} for information.'
+        out += (tr('{0} critical finding(s) – approval is refused until they are resolved or dismissed.', crit) if block else
+                tr('{0} critical finding(s) – approval is not advised until they are resolved or dismissed.', crit)) + ' '
+    out += tr('{0} warning(s) to look at, {1} for information.', warn, info)
     return out
+
+
+def summary_display(a):
+    """v1.62.0 ui: the stored summary again, now in the language of the request (it was stored in English)."""
+    try:
+        c = a.counts or {}
+        s = AIAssistantSettings.get()
+        return summary_of(a.payslips, (a.totals or {}).get('now', {}), int(c.get('critical', 0)), int(c.get('warning', 0)), int(c.get('info', 0)), s.block_on_critical)
+    except Exception:
+        return a.summary
 
 
 def gate(run):
@@ -260,8 +288,10 @@ def gate(run):
     s = AIAssistantSettings.get()
     a = AuditRun.objects.filter(payroll_run_id=run.pk).first()
     if a is None:
-        return ('audit', 'Run the AI payroll audit before approving this run (Payroll → AI payroll auditor).') if s.require_audit else ('ok', '')
+        from Translations.i18n import tr   # v1.62.0 ui: messages in the user's language
+        return ('audit', tr('Run the AI payroll audit before approving this run (Payroll → AI payroll auditor).')) if s.require_audit else ('ok', '')
     n = a.findings.filter(severity='critical', status='open').count()
     if n and s.block_on_critical:
-        return 'critical', f'{n} critical finding(s) of the AI payroll audit are still open – resolve or dismiss them before approving the run.'
+        from Translations.i18n import tr   # v1.62.0 ui
+        return 'critical', tr('{0} critical finding(s) of the AI payroll audit are still open – resolve or dismiss them before approving the run.', n)
     return 'ok', ''

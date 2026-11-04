@@ -33,12 +33,12 @@ def _mode(req):
 
 
 def _days_list(emp, a, b, mode):
-    from LeavePolicy.engine import _weekend_days, _holidays
-    wk, hol = (_weekend_days(emp), _holidays(emp)) if mode == 'working' else (set(), set())
+    if mode == 'working':   # v1.62.6 (item 22): roster > shift override > shift pattern > weekend calendar (calendars/workdays.py)
+        from calendars.workdays import working_days
+        return working_days(emp, a, b)
     out, d = [], a
     while d <= b:
-        if mode != 'working' or (d.strftime('%A').lower() not in wk and d not in hol):
-            out.append(d)
+        out.append(d)
         d += timedelta(days=1)
     return out
 
@@ -163,6 +163,11 @@ def settle(rj, treatment, leave_type_id=None, user=None, note='', count='working
         new = float(req.calculate_leave_days())
         back = round(old - new, 2)
         LR.objects.filter(pk=req.pk).update(end_date=new_end, number_of_days=new, approved_days=new, applied_days=new)
+        try:   # v1.62.11 (item 95): the automatic out of office of the leave ends too – approvals back to the approver
+            from ZeoAdmin.delegation import leave_cut
+            leave_cut(req.pk, new_end)
+        except Exception:
+            pass
         engine.post(emp.pk, req.leave_type_id, rj.rejoining_date, 'cancelled', back, ref=req, note=f'{req.document_number}: back early on {rj.rejoining_date:%d/%m/%Y}',
                     user_id=getattr(user, 'pk', None), move_balance=True)
         AC.objects.filter(employee=emp, date__gte=rj.rejoining_date, date__lte=g['dates'][-1], is_manual=False, remarks__startswith=engine.TAG).delete()

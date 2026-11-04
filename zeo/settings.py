@@ -200,6 +200,8 @@ CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [o for o in ('https://localh
 FORMAT_MODULE_PATH = ['LanguagePack.formats']   # v1.15.0
 CORS_ALLOW_HEADERS = [
     'x-language',        # v1.15.0
+    'x-include-inactive',   # v1.62.1 a master's own register lists inactive records too
+    'x-branch-ids',      # v1.62.0 ui: the top-bar branch selection (narrows lists and reports)
     'x-zeo-location',    # v1.30.0 location level: the working location
     'x-zeo-locations',   # v1.30.0 location level: the ticked locations
     'x-zeo-app',         # v1.25.0 mobile app version
@@ -326,6 +328,7 @@ DATABASES = {
         'PORT': '5432',
     }
 }
+
 # v1.24.0 ZEO Cloud: a company can live in the own database of its account ('control' = this main database)
 from ZeoCloud.dbsettings import with_cloud_databases   # noqa: E402
 DATABASES = with_cloud_databases(DATABASES)
@@ -512,6 +515,7 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'aparnaudhayan03@gmail.com'
 EMAIL_HOST_PASSWORD = 'ruuh gtwd yzaz yeaw'
+
 DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
@@ -546,6 +550,7 @@ MIDDLEWARE.insert(MIDDLEWARE.index('django.middleware.security.SecurityMiddlewar
 MIDDLEWARE.insert(MIDDLEWARE.index('ZeoCloud.netguard.IPAllowMiddleware') + 1, 'ZeoCloud.geo.CountryMiddleware')
 MIDDLEWARE.append('zeo.exportguard.ExportGuardMiddleware')
 MIDDLEWARE.append('ZeoCloud.stepup.StepUpMiddleware')
+MIDDLEWARE.append('ZeoAdmin.setup_gate.SetupGateMiddleware')   # v1.62.1 a new company finishes the required setup steps before HR transactions
 # v1.62.0 uploads: a real-type check of every file; ClamAV when installed (ZEO_CLAMAV=auto | off | the clamd socket path)
 ZEO_CLAMAV = env('ZEO_CLAMAV', 'auto')
 ZEO_MEDIA_RANDOM_NAMES = env_bool('ZEO_MEDIA_RANDOM_NAMES', True)   # new uploads get a random part in the file name

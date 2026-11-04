@@ -101,8 +101,19 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
             many=True,
             context={"user": user_profile, "request": _R()}
         )
-
-        return Response(serializer.data)
+        data = serializer.data
+        # v1.62.0 ui: the company menu shows each company's apps (name + country + apps)
+        try:
+            from ZeoApps import services as _ZA
+            for row in data:
+                try:
+                    with schema_context(row.get('schema_name')):
+                        row['apps'] = _ZA.active_keys()
+                except Exception:
+                    row['apps'] = []
+        except Exception:
+            pass
+        return Response(data)
     # @action(detail=True, methods=['get'])
     # def tenants(self, request, pk=None):
     #     user_profile = self.get_object()
@@ -285,8 +296,17 @@ class CompanyViewSet(viewsets.ModelViewSet):
         keys = [a.strip() for a in str(apps).split(',') if a.strip()] if apps else ['hrms', 'payroll', 'projects']
         from .company_jobs import start, status as job_status
         user = request.user if getattr(request.user, 'is_authenticated', False) else None
+        # v1.62.1 (user request 2 Nov): "Starting setup" – standard defaults, or the setup of a branch of a company the user administers
+        from ZeoApps.company_copy import check_request, CopyRefused
+        try:
+            plan = check_request(user, request.data)
+        except CopyRefused as e:
+            body = {'detail': e.message}
+            if e.field:
+                body[e.field] = [e.message]
+            return Response(body, status=e.status)
         sync = str(request.data.get('sync') or request.query_params.get('sync') or '').lower() in ('1', 'true', 'yes')
-        job, schema = start(dict(serializer.validated_data), keys, user, run_now=sync)
+        job, schema = start(dict(serializer.validated_data), keys, user, run_now=sync, copy=plan)
         if sync:
             st = job_status(job) or {}
             if st.get('state') == 'failed':
@@ -308,6 +328,24 @@ class CompanyViewSet(viewsets.ModelViewSet):
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception('apps of the new company %s', instance.schema_name)
+
+
+class CompanyCopySourcesView(APIView):
+    """v1.62.1 (user request 2 Nov) – GET /users/api/company-copy-sources/ → {companies: [{id, name, schema_name}]}: the companies
+    the signed-in user administers, which the Create company form offers under "Copy from an existing company".
+    ?company=<id> adds {branches: [{id, name, code}]} of that company (403 when the user does not administer it)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from ZeoApps.company_copy import sources, branches_of, can_administer
+        out = {'companies': sources(request.user)}
+        cid = request.query_params.get('company')
+        if cid:
+            c = company.objects.filter(pk=cid).exclude(schema_name='public').first() if str(cid).isdigit() else None
+            if c is None or not can_administer(request.user, c):
+                return Response({'detail': 'You can copy the setup only from a company you administer.'}, status=status.HTTP_403_FORBIDDEN)
+            out['branches'] = branches_of(c)
+        return Response(out)
 
 
 class CompanyJobView(APIView):

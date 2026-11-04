@@ -339,7 +339,7 @@ class OfferViewSet(BaseViewSet):
     serializer_class = OfferSerializer
     filter_params = {'status': 'status__in', 'application': 'application_id'}
     action_verbs = {'approve': 'change', 'send': 'change', 'accept': 'change', 'decline': 'change', 'withdraw': 'change',
-                    'convert_to_employee': 'change', 'letter': 'view'}
+                    'convert_to_employee': 'change', 'letter': 'view', 'link_employee': 'change'}
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, status='pending_approval')
@@ -378,6 +378,19 @@ class OfferViewSet(BaseViewSet):
         emp = run(services.convert_to_employee, offer, request.user, request.data.get('emp_code'), not force)
         return Response({'detail': f'Employee {emp.emp_code} created.', 'employee_id': emp.id, 'emp_code': emp.emp_code,
                          'offer': OfferSerializer(offer).data}, status=201)
+
+    @action(detail=True, methods=['post'])
+    def link_employee(self, request, pk=None):
+        """v1.62.0 talent-ops: link the accepted offer to the employee who already exists (default: the one proposed)."""
+        from EmpManagement.models import emp_master
+        offer = self.get_object()
+        emp_id = request.data.get('employee')
+        emp = emp_master.objects.filter(pk=emp_id).first() if emp_id else services.existing_employee(offer)
+        if emp is None:
+            raise ValidationError({'detail': 'No existing employee found for this candidate – use Create employee.'})
+        run(services.link_employee, offer, emp, request.user)
+        return Response({'detail': f'Linked to employee {emp.emp_code}.', 'employee_id': emp.id, 'emp_code': emp.emp_code,
+                         'offer': OfferSerializer(offer).data})
 
     @action(detail=True, methods=['get'])
     def letter(self, request, pk=None):

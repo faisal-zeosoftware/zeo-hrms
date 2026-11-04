@@ -398,6 +398,20 @@ class PunchViewSet(APViewSet):
 
 
 # ----------------------------------------------------------------------------- daily results
+def _any_date(v):
+    """v1.62.1: a date as yyyy-mm-dd or dd/mm/yyyy (None when empty; ValueError when not a date)."""
+    from datetime import datetime as _dt
+    if v in (None, ''):
+        return None
+    s = str(v).strip()[:10]
+    for f in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y'):
+        try:
+            return _dt.strptime(s, f).date()
+        except ValueError:
+            pass
+    raise ValueError(s)
+
+
 class DayViewSet(APViewSet):
     queryset = M.AttendanceDay.objects.all()
     serializer_class = SER.DaySerializer
@@ -409,6 +423,37 @@ class DayViewSet(APViewSet):
 
     def create(self, request, *args, **kwargs):
         raise PermissionDenied(tr('Daily results are calculated from punches. Use Recalculate or add a punch / correction.'))
+
+    @action(detail=True, methods=['post'])
+    def ask_recheck(self, request, pk=None):
+        """v1.62.0 people – "Ask to recheck" on Daily attendance: the employee is asked (in-app notification and e-mail when
+        configured) to confirm where they are now with a location recheck from the mobile app / My attendance – the same
+        location recheck as the Recheck screen (calendars AttendanceRecheck). Only for a day that is clocked in and not out."""
+        day = self.get_object()
+        from EmpManagement.models import emp_master
+        e = emp_master.objects.filter(pk=day.employee_id).first()
+        if e is None:
+            return Response({'detail': tr('Employee not found.')}, status=404)
+        if not day.first_in or day.last_out:
+            return Response({'detail': tr('A recheck is asked while the employee is at work: clocked in and not yet out.')}, status=400)
+        name = ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x)
+        try:
+            from zeo.module_helpers import notify
+            notify(employee=e, title=tr('Please confirm your location'),
+                   message=tr('HR asks you to confirm where you are now: open My attendance and press Recheck location ({0}).', day.date.strftime('%d/%m/%Y')),
+                   notification_type='attendance', template_type='attendance_recheck')
+        except Exception:
+            pass
+        sent_mail = False
+        try:
+            from calendars.models import Attendance
+            from calendars.views import AttendanceRecheckViewSet
+            att = Attendance.objects.filter(employee_id=e.pk, date=day.date).first()
+            if att is not None:
+                sent_mail = bool(AttendanceRecheckViewSet().send_recheckin_email(att))
+        except Exception:
+            sent_mail = False
+        return Response({'detail': tr('{0} was asked to confirm the location.', name) + (' ' + tr('An e-mail was sent too.') if sent_mail else '')})
 
     @action(detail=False, methods=['get'])
     def my_month(self, request):
@@ -484,13 +529,21 @@ class DayViewSet(APViewSet):
         from EmpManagement.models import emp_master
         if not is_hr(request):
             raise PermissionDenied(tr('Only HR can recalculate attendance.'))
-        a = E.as_date(request.data.get('from') or request.data.get('date') or E.today())
-        b = E.as_date(request.data.get('to') or a)
+        # v1.62.1 (tester 30-10 item 195): a date the screen sends as dd/mm/yyyy (or any bad value) ended in a 500
+        try:
+            a = _any_date(request.data.get('from') or request.data.get('date')) or E.today()
+            b = _any_date(request.data.get('to')) or a
+        except ValueError:
+            raise ValidationError({'from': tr('Enter the dates as dd/mm/yyyy.')})
         if b < a or (b - a).days > 62:
             raise ValidationError({'to': tr('Pick a range of up to 62 days.')})
         if b > E.today():       # v1.12.0: days after today are calculated when they come (no empty future rows)
             b = E.today()
         emp_id = request.data.get('employee')
+        if isinstance(emp_id, dict):
+            emp_id = emp_id.get('id')
+        if emp_id not in (None, '') and not str(emp_id).isdigit():
+            raise ValidationError({'employee': tr('Choose the employee from the list.')})
         ids = hr_employee_ids(request)
         if emp_id:
             if ids is not None and int(emp_id) not in ids:
@@ -500,14 +553,50 @@ class DayViewSet(APViewSet):
             emps = emp_master.objects.filter(is_active=True)
             if ids is not None:
                 emps = emps.filter(id__in=ids)
-        n = 0
+        # v1.62.1 (tester 30-10 item 195): all employees for a month is ~1,500 employee-days (about 0.2 s each) – the
+        # request ran for minutes and the web server ended it with an Internal Server Error; one bad day also stopped
+        # the whole run. Now: more than 300 employee-days are recalculated in the background (as the punch import does),
+        # and a day that cannot be calculated is logged and skipped.
+        import logging
+        log = logging.getLogger(__name__)
+        todo = []
         for e in emps:
             d = a
             while d <= b:
-                E.recompute_day(e, d)
+                todo.append((e, d))
                 d += timedelta(days=1)
-                n += 1
-        return Response({'detail': tr('Recalculated {0} employee-days.', n), 'count': n})
+
+        def _run(items):
+            bad = 0
+            for e, d in items:
+                try:
+                    E.recompute_day(e, d)
+                except Exception:
+                    bad += 1
+                    log.exception('recompute %s %s', getattr(e, 'pk', e), d)
+            return bad
+
+        if len(todo) > 300:
+            import threading
+            from django.db import close_old_connections, connection as _c
+            schema = _c.schema_name
+
+            def _bg():
+                close_old_connections()
+                try:
+                    _c.set_schema(schema)
+                    _run(todo)
+                finally:
+                    close_old_connections()
+            threading.Thread(target=_bg, daemon=True).start()
+            return Response({'detail': tr('{0} employee-days are being recalculated in the background. Refresh the list in a few minutes.', len(todo)),
+                             'count': len(todo), 'background': True}, status=st.HTTP_202_ACCEPTED)
+        bad = _run(todo)
+        n = len(todo) - bad
+        msg = tr('Recalculated {0} employee-days.', n)
+        if bad:
+            msg += ' ' + tr('{0} days could not be calculated – see the server log.', bad)
+        return Response({'detail': msg, 'count': n, 'failed': bad})
 
 
 # ----------------------------------------------------------------------------- corrections
@@ -850,12 +939,15 @@ class OtLawView(_V149):
         from . import v149
         out = v149.law(request.query_params.get('country'))
         out['countries'] = [{'code': k, 'law': v[1]} for k, v in v149.OT_LAW.items()]
+        out['night_rules'] = v149.night_settings()   # v1.62.6 (item 24): night window of the law and the shift-worker option
         return Response(out)
 
     def post(self, request):
         from . import v149
         if not (c(request).admin or {'change_attendancerule', 'change_attendance'} & c(request).codes):
             raise PermissionDenied(tr('Only attendance administrators change the rules.'))
+        if isinstance(request.data.get('night_rules'), dict):   # v1.62.6 (item 24): save the night rules only
+            return Response({'night_rules': v149.save_night_settings(request.data['night_rules'])})
         n, L = v149.apply_law(request.data.get('rules') or None, request.data.get('country'))
         return Response({'updated': n, **L})
 
@@ -1009,3 +1101,48 @@ class KioskPinsView(_V149):
         # v1.62.0 a PIN typed by HR is a start PIN: the employee chooses their own at the first kiosk self-service sign-in
         M.EmployeeKey.objects.filter(employee_id=target).update(failed_pins=0, locked_until=None, pin_must_change=True)
         return Response({'detail': tr('Kiosk PIN saved – the employee chooses their own PIN at the first kiosk use.')})
+
+
+class RamadanView(_V149):
+    """v1.67.0 (item 25a) GET the Ramadan hours (periods per year, reduction, Ramadan times per shift, the law and its sources);
+    POST {enabled, reduce_hours, periods: [{year, from, to, note}], shift_times: {shift_id: {start, end}}, exclude_category_ids} –
+    attendance administrators only. Days already calculated change when they are recalculated (POST recalculate: true does the
+    days of the periods up to today)."""
+    def get(self, request):
+        from . import v167
+        if not self.hr(request):
+            raise PermissionDenied(tr('Only HR sees the attendance settings.'))
+        out = v167.ramadan_settings()
+        try:
+            from calendars.models import Shift
+            from ShiftPlanner.models import ShiftRule
+            rules = {x.shift_id: x for x in ShiftRule.objects.all()}
+            out['shifts'] = [{'id': s.pk, 'name': s.name, 'code': (rules[s.pk].code if s.pk in rules else ''),
+                              'start': s.start_time.strftime('%H:%M') if s.start_time else None,
+                              'end': s.end_time.strftime('%H:%M') if s.end_time else None}
+                             for s in Shift.objects.order_by('name') if s.start_time and s.end_time]
+        except Exception:
+            out['shifts'] = []
+        return Response(out)
+
+    def post(self, request):
+        from . import v167
+        if not (c(request).admin or {'change_attendancerule', 'change_attendance'} & c(request).codes):
+            raise PermissionDenied(tr('Only attendance administrators change the rules.'))
+        out, errors = v167.save_ramadan(request.data)
+        if errors:
+            return Response({'detail': tr('Please correct the marked fields.'), 'errors': errors}, status=400)
+        if str(request.data.get('recalculate', '')).lower() in ('1', 'true', 'yes'):
+            from EmpManagement.models import emp_master
+            n, t = 0, E.today()
+            for p in out['periods']:
+                a, b = v167._pd(p['from']), min(v167._pd(p['to']), t)
+                for e in emp_master.objects.filter(is_active=True):
+                    d = a
+                    while d <= b:
+                        if M.AttendanceDay.objects.filter(employee_id=e.id, date=d).exists():
+                            E.recompute_day(e, d, sync_calendar=False)
+                            n += 1
+                        d += timedelta(days=1)
+            out['recalculated'] = n
+        return Response(out)

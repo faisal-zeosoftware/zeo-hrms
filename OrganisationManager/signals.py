@@ -10,6 +10,11 @@ from django.db.models.signals import post_migrate
 from django.dispatch import receiver
 from django.contrib.auth.models import Group, Permission
 from PayrollManagement .models import SalaryComponent
+import contextvars
+
+# v1.62.1 (user request 2 Nov): (name, code) of the first branch chosen on the Create company form ("Copy from an existing
+# company"); None = the company name and BR-<schema> as before. Set by UserManagement.company_jobs around the creation.
+FIRST_BRANCH = contextvars.ContextVar('zeo_first_branch', default=None)
 
 
 @receiver(post_schema_sync)
@@ -27,10 +32,11 @@ def create_tenant_defaults(sender, tenant, **kwargs):
         SalaryComponent = apps.get_model('PayrollManagement', 'SalaryComponent')
 
         # Branch
+        _first = FIRST_BRANCH.get()
         branch = brnch_mstr.objects.create(
-            branch_name=tenant.name,
+            branch_name=(_first[0] if _first else tenant.name)[:100],
             # branch_logo=tenant.logo,
-            branch_code=f"BR-{tenant.schema_name[:10].upper()}",
+            branch_code=(_first[1] if _first else f"BR-{tenant.schema_name[:10].upper()}")[:50],
             probation_period_days=30,
             br_country=tenant.country,
             br_city="Sample City",
@@ -256,9 +262,9 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
 
     # v1.22.0: a branch added later gets the first branch's calendars, leave types, workflows and salary components
     try:
-        from OrganisationManager.branch_setup import copy_setup
+        from OrganisationManager.branch_setup import for_new_branch   # v1.62.1: the branch chosen on the form
         if brnch_mstr.objects.exclude(pk=instance.pk).exists():
-            copy_setup(instance, user=getattr(instance, 'br_created_by', None))
+            for_new_branch(instance, user=getattr(instance, 'br_created_by', None))
     except Exception:
         import logging
         logging.getLogger(__name__).exception('The set-up of the first branch could not be copied to the new branch')
@@ -391,6 +397,10 @@ PAYROLL_CODES = [
     "delete_employeesalarystructure",
     "view_employeesalarystructure",
     "import_employeesalarystructure",
+
+    # v1.62.3 (item 141, user decision 1 Nov): payroll preparers always see the payslips of their runs (drafts too) – without it
+    # they saw released payslips only and could not confirm / send the run's payslips for approval
+    "view_payslip",
 
     # Payslip Approvals
     "add_payslipapproval",

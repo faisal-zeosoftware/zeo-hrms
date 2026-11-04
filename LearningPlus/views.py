@@ -401,8 +401,9 @@ class MyLearningView(LPView):
             if not can_see_employee(request, emp_id):
                 raise PermissionDenied(tr('Not your record.'))
             emp = _emp(emp_id)
-        if emp is None:
-            raise ValidationError({'detail': tr('Your login is not linked to an employee.')})
+        if emp is None:   # v1.62.0 talent-ops: an empty answer (was a 400 on every Learning page for HR logins without an employee)
+            return Response({'employee': None, 'nominations': [], 'online': [], 'available': [], 'certificates': [],
+                             'detail': tr('Your login is not linked to an employee.')})
         noms = []
         for n in m.Nomination.objects.filter(employee=emp).select_related('session__course').order_by('-session__start_date'):
             r = m.ParticipantResult.objects.filter(nomination=n).first()

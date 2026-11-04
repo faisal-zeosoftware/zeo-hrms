@@ -207,6 +207,11 @@ def _run(source_schema, pk, src_id, name, kinds, user_id):
             from ZeoApps.models import CompanyOption
             CompanyOption.objects.update_or_create(key='test_company_of', defaults={'value': {'schema': src.schema_name, 'name': src.name, 'by': user_id}})
             neutralize_company(user_id)
+            try:   # v1.62.1 a copy of a set-up company is set up: the required-setup rule only while the source still waits
+                from .setup_gate import follow
+                follow(src.schema_name)
+            except Exception:
+                log.exception('setup gate of the test company')
         from zeo.mailguard import forget
         forget(schema)
         _set(source_schema, pk, state='done', step='Ready', result=res)

@@ -20,6 +20,7 @@ from django.db import connection, transaction
 log = logging.getLogger(__name__)
 KEY = 'zeo:dup:{}'
 STEPS = ['Copying the data', 'Registering the company', 'Giving access to the users', 'Finishing']
+PLAN = [('copy', STEPS[0], 80), ('register', STEPS[1], 10), ('users', STEPS[2], 6), ('finish', STEPS[3], 4)]   # v1.62.1 %
 
 
 def schema_for(name):
@@ -43,7 +44,8 @@ def _set(job, **kw):
 
 
 def status(job):
-    return cache.get(KEY.format(job))
+    from ZeoApps.job_progress import with_elapsed
+    return with_elapsed(cache.get(KEY.format(job)))
 
 
 def start(source, name, neutralize, user):
@@ -69,6 +71,8 @@ def _db_of(comp):
 def _run(job, source_id, name, schema, neutralize, user_id):
     from django.db import close_old_connections
     close_old_connections()
+    from ZeoApps.job_progress import Progress
+    P = Progress(lambda **kw: _set(job, **kw), PLAN)   # v1.62.1: % and what is being done now
     try:
         from django_tenants.utils import schema_context
         from django_tenants.clone import CloneSchema
@@ -77,14 +81,17 @@ def _run(job, source_id, name, schema, neutralize, user_id):
         src = company.objects.get(pk=source_id)
         # 1. data – v1.24.0: in the database the company lives in (the copy stays next to it)
         db_key = _db_of(src)
+        P.begin('copy', ('Copying every table and row of {0}', [src.name]))
         if db_key:
             from ZeoCloud.dbrouting import pin
-            with pin(db_key):
+            # v1.62.1: the % of the copy is estimated in that database too (before: no % until the copy ended)
+            with P.copy(src.schema_name, 'Copying every table and row', db=db_key), pin(db_key):
                 CloneSchema().clone_schema(src.schema_name, schema, clone_mode='DATA')
         else:
-            CloneSchema().clone_schema(src.schema_name, schema, clone_mode='DATA')
+            with P.copy(src.schema_name, 'Copying every table and row'):
+                CloneSchema().clone_schema(src.schema_name, schema, clone_mode='DATA')
         # 2. the company row (no automatic schema: it exists already, and no "new company" defaults)
-        _set(job, step=STEPS[1], step_no=2)
+        P.begin('register', 'Settings, address, logo and WPS details of the original')
         skip = {'id', 'schema_name', 'name', 'created_on', 'paid_until'}
         data = {f.attname: getattr(src, f.attname) for f in company._meta.concrete_fields if f.name not in skip}
         new = company(schema_name=schema, name=name[:100], **data)
@@ -108,14 +115,14 @@ def _run(job, source_id, name, schema, neutralize, user_id):
         except Exception:
             log.exception('cloud link of the copy')
         # 3. the same users
-        _set(job, step=STEPS[2], step_no=3)
+        P.begin('users', 'The users of the original can open the copy')
         for u in CustomUser.objects.filter(tenants=src):
             u.tenants.add(new)
         me = CustomUser.objects.filter(pk=user_id).first()
         if me is not None:
             me.tenants.add(new)
         # 4. neutralize, and note where the copy came from
-        _set(job, step=STEPS[3], step_no=4)
+        P.begin('finish', 'Safe test copy: e-mail and outside AI switched off' if neutralize else 'Noting where the copy came from')
         with schema_context(schema):
             from ZeoApps.models import CompanyOption
             CompanyOption.objects.update_or_create(key='duplicated_from', defaults={'value': {
@@ -124,11 +131,11 @@ def _run(job, source_id, name, schema, neutralize, user_id):
                 neutralize_company(user_id)
         from zeo.mailguard import forget
         forget(schema)
-        _set(job, state='done', step='Done', step_no=len(STEPS), company_id=new.pk)
+        P.finish('done', company_id=new.pk)
         log.info('company %s duplicated as %s (%s)', src.schema_name, schema, 'neutralized' if neutralize else 'live')
     except Exception as e:   # leave nothing half made
         log.exception('duplicate company failed')
-        _set(job, state='failed', error=str(e)[:300])
+        P.finish('failed', error=str(e)[:300])
         try:
             from UserManagement.models import company
             from django_tenants.utils import schema_exists

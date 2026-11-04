@@ -18,6 +18,7 @@ urlpatterns = [
     path('api/recruitment/applications/<int:pk>/draft/', V.DraftView.as_view()),
     path('api/performance/employees/<int:pk>/plan/save/', V.PlanSaveView.as_view()),
     path('api/performance/employees/<int:pk>/<str:what>/', V.EmployeeAIView.as_view()),
+    path('api/performance/attention/', V.AttentionView.as_view()),   # v1.62.0 talent-ops
     path('api/performance/template/', V.TemplateView.as_view()),
     path('api/performance/training/', V.TrainingView.as_view()),
     path('api/performance/certificates/', V.CertificatesView.as_view()),

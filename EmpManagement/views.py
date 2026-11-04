@@ -2198,6 +2198,12 @@ class Emp_DocumentViewSet(viewsets.ModelViewSet):
         if user.is_authenticated:
             if user.is_superuser or user.is_staff:  # Check if user is a superuser or staff
                 return Emp_Documents.objects.all()  # Return all instances of emp_family
+            # v1.62.10 (item 168): HR with the document rights work on their branches' documents – Update on Expiring documents
+            # answered 404 for an HR manager who has an employee record (only the own documents were found)
+            from Chatter.views import has_code
+            if has_code(self.request, 'view_emp_documents', 'change_emp_documents'):
+                from AccessControl.access import limit_by_branch
+                return limit_by_branch(self.request, Emp_Documents.objects.all(), emp_field='emp_id')
             elif hasattr(user, 'emp_id'):  # Assuming 'emp_id' is the attribute that stores employee ID
                 return Emp_Documents.objects.filter(emp_id=user.emp_id)
             elif user.is_ess:  # If user is an ESS, filter based on created_by
@@ -3216,7 +3222,7 @@ class ApprovalViewset(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------
@@ -4080,7 +4086,7 @@ class DocumentApprovalViewset(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------
@@ -4453,7 +4459,7 @@ class ResignationApprovalViewset(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------

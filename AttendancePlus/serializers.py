@@ -39,9 +39,60 @@ class EmpMixin:
 
 
 class RuleSerializer(EmpMixin, serializers.ModelSerializer):
+    # v1.67.0 (items 23, 25b–d): settings kept outside the table (ZeoApps CompanyOption 'attendance_rule_extras') and the rest days,
+    # written to the weekend records the 1.62.6 working-day rule reads (AttendancePlus/v167.py)
+    EXTRA = ('after_night_hours', 'before_next_hours', 'back_to_back', 'rest_day_hours_by')
+
     class Meta:
         model = M.AttendanceRule
         fields = '__all__'
+
+    def to_internal_value(self, data):
+        raw = data
+        out = super().to_internal_value(data)
+        from . import v167
+        errs = {}
+        self._extras = v167.clean_rule_extras({k: raw.get(k) for k in self.EXTRA if k in raw}, errs)
+        self._rest_days = None
+        if 'rest_days' in raw:
+            try:
+                self._rest_days = v167.norm_days(raw.get('rest_days'))
+            except ValueError:
+                errs['rest_days'] = tr('Choose the rest days from Mon … Sun.')
+        if errs:
+            raise serializers.ValidationError(errs)
+        return out
+
+    def _save_extras(self, obj):
+        from . import v167
+        if getattr(self, '_extras', None):
+            v167.save_rule_extras(obj.pk, self._extras)
+        days = getattr(self, '_rest_days', None)
+        if days is not None:
+            cur = v167.rest_days_of_rule(obj)
+            if days != cur['days'] or (cur['mixed'] and days):
+                req = self.context.get('request')
+                if req is not None and not v167.can_set_weekends(req):
+                    raise serializers.ValidationError({'rest_days': tr('You may not change weekends (Assign weekend rights).')})
+                level, ids = v167.rule_target(obj)
+                try:
+                    self._rest_result = v167.set_rest_days(level, ids, days, getattr(req, 'user', None))
+                except ValueError as e:
+                    raise serializers.ValidationError({'rest_days': str(e)})
+
+    def create(self, validated_data):
+        from django.db import transaction
+        with transaction.atomic():
+            obj = super().create(validated_data)
+            self._save_extras(obj)
+        return obj
+
+    def update(self, instance, validated_data):
+        from django.db import transaction
+        with transaction.atomic():
+            obj = super().update(instance, validated_data)
+            self._save_extras(obj)
+        return obj
 
     def validate(self, data):
         g = lambda k: data.get(k, getattr(self.instance, k, None) if self.instance else None)  # noqa: E731
@@ -72,6 +123,20 @@ class RuleSerializer(EmpMixin, serializers.ModelSerializer):
     def to_representation(self, obj):
         d = super().to_representation(obj)
         d['scope_label'] = obj.get_scope_display()
+        try:   # v1.67.0 (items 23, 25b–d)
+            from . import v167
+            d.update(v167.rule_extras(obj))
+            wr = self.context.get('_weekend_rules')
+            if wr is None:
+                from calendars.workdays import WeekendRules
+                wr = self.context['_weekend_rules'] = WeekendRules()
+            rd = v167.rest_days_of_rule(obj, wr)
+            d['rest_days'] = [x[:3] for x in rd['days']]
+            d['rest_days_info'] = rd
+            if getattr(self, '_rest_result', None):
+                d['rest_days_saved'] = self._rest_result
+        except Exception:
+            pass
         return d
 
 

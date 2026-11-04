@@ -70,7 +70,16 @@ def user_label(user_id):
     if not user_id:
         return ''
     u = M('UserManagement', 'CustomUser').objects.filter(pk=user_id).first()
-    return (u.get_full_name() or u.username) if u else ''
+    if u is None:
+        return ''
+    try:   # v1.62.0 talent-ops: the employee's name (logins have no first / last name, so the user name gdis_mark showed)
+        from HRActions.names import user_obj_name
+        n = user_obj_name(u, with_code=False)
+        if n:
+            return n
+    except Exception:
+        pass
+    return u.get_full_name() or u.username
 
 
 def branch_name(bid):
@@ -1140,6 +1149,15 @@ def clearance(employee_id):
     for model, kind in ((AssetDamage, 'damage'), (AssetLoss, 'loss')):
         for o in model.objects.filter(employee_id=employee_id, status='reported'):
             items.append({'kind': f'{kind}_pending', 'asset_id': o.asset_id, 'number': o.number, 'text': f'{o.number} waits for approval'})
+    # v1.62.0 talent-ops: the signed hand-over forms of HR operations are part of the same issue / return process – a return form
+    # still waiting for the employee's signature keeps the clearance open
+    try:
+        HO = apps.get_model('ZeoHR', 'AssetHandover')
+        for h in HO.objects.filter(employee_id=employee_id, kind='return', status__in=('draft', 'sent')):
+            items.append({'kind': 'handover', 'number': h.number, 'handover_id': h.pk,
+                          'text': f'Return form {h.number} waits for the employee\'s signature' if h.status == 'sent' else f'Return form {h.number} is not sent for signature yet'})
+    except LookupError:
+        pass
     pending = RecoveryInstalment.objects.filter(employee_id=employee_id, status='pending')
     due = money(pending.aggregate(s=Sum('amount'))['s'] or 0)
     if due > 0:

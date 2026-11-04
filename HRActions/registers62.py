@@ -10,6 +10,7 @@ POST api/resignations/<id>/approve/ {note}      the current level (the approver,
 POST api/resignations/<id>/reject/  {note}
 Statuses, numbering, the approval chain and its e-mails stay in EmpManagement (EmployeeResignation / ResignationApproval).
 """
+import re
 from datetime import date, timedelta
 
 from django.apps import apps
@@ -99,11 +100,12 @@ def rows_for(request, view='all', status='', kind='', q=''):
                 total = max(total, levels_of[wf.pk] if wf.approval_type == 'multi_approval' else (1 if wf.approval_type == 'reporting_manager' else 0))
         except Exception:
             pass
-        waiting = ''
+        waiting, short = '', None
         if st == 'Pending' and cur is not None:
             who = names.get(cur.deligate_to_id) if cur.is_deligate and cur.deligate_to_id else names.get(cur.approver_id, '')
             waiting = who
             stage_key, stage = 'approval', tr('Level {0} of {1} – waiting for {2}', cur.level, max(total, cur.level), who or tr('the approver'))
+            short = tr('Level {0} of {1}', cur.level, max(total, cur.level))
         elif st == 'Pending':
             stage_key, stage = 'approval', tr('Waiting for approval')
         elif st == 'Rejected':
@@ -124,7 +126,9 @@ def rows_for(request, view='all', status='', kind='', q=''):
             'notice_required': need, 'notice_given': given,
             'notice_label': (tr('{0} of {1} days', given, need) if need else tr('{0} days', given)) if given is not None else '',
             'notice_short': bool(need and given is not None and given < need),
-            'status': st.lower(), 'status_label': tr(st), 'stage': stage_key, 'stage_label': stage, 'waiting_for': waiting,
+            'status': st.lower(), 'status_label': tr(st), 'stage': stage_key, 'stage_label': stage, 'waiting_for': re.sub(r' \(\S+\)$', '', waiting or ''),   # v1.62.0 people: name only in the list
+           
+            'stage_short': short or stage,   # v1.62.0 people: the list column (who it waits for is its own column)
             'in_notice': bool(in_notice), 'reason': r.reason_for_leaving or '',
             'can_act': bool(cur is not None and (_mine(cur, request.user) or getattr(request.user, 'is_superuser', False))),
             'waiting_for_me': bool(cur is not None and _mine(cur, request.user)),

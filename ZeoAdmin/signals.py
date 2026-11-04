@@ -49,6 +49,31 @@ def _step(sender, instance, created, raw=False, **kw):
         log.exception('out of office step')
 
 
+def _leave_before(sender, instance, raw=False, **kw):   # v1.62.11 (item 95)
+    if raw:
+        return
+    instance._ooo_old = sender.objects.filter(pk=instance.pk).values('status', 'start_date', 'end_date').first() if instance.pk else None
+
+
+def _leave_after(sender, instance, created, raw=False, **kw):   # v1.62.11 (item 95)
+    if raw:
+        return
+    old = getattr(instance, '_ooo_old', None)
+    try:
+        from .delegation import leave_changed
+        leave_changed(instance, (old or {}).get('status'), old)
+    except Exception:
+        log.exception('out of office from leave %s', instance.pk)
+
+
+def _leave_gone(sender, instance, **kw):   # v1.62.11 (item 95)
+    try:
+        from .delegation import leave_deleted
+        leave_deleted(instance.pk)
+    except Exception:
+        log.exception('out of office of a deleted leave')
+
+
 def _policy(key):
     """v1.56.0 – an HR policy default of the setup guide (None when not set)."""
     try:
@@ -93,6 +118,18 @@ def install():
         log.exception('out of office signals')
     try:
         post_save.connect(_step, sender=apps.get_model('ZeoFlow', 'ApprovalStep'), dispatch_uid='zeoadmin_ooo_flowstep')
+    except LookupError:
+        pass
+    # v1.62.11 (item 95) payslip approvals out of office; a leave approved / cancelled / moved → automatic out of office
+    try:
+        post_save.connect(_approval, sender=apps.get_model('PayrollManagement', 'PayslipApproval'), dispatch_uid='zeoadmin_ooo_payslip')
+    except LookupError:
+        pass
+    try:
+        LR = apps.get_model('calendars', 'employee_leave_request')
+        pre_save.connect(_leave_before, sender=LR, dispatch_uid='zeoadmin_ooo_leave_pre')
+        post_save.connect(_leave_after, sender=LR, dispatch_uid='zeoadmin_ooo_leave_post')
+        post_delete.connect(_leave_gone, sender=LR, dispatch_uid='zeoadmin_ooo_leave_del')
     except LookupError:
         pass
     # v1.56.0 HR policy defaults of the setup guide: notice period of a resignation, contract type of a new employee

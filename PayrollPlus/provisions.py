@@ -58,12 +58,27 @@ def _liabilities(as_of):
                 out['leave'][r['_emp']] = (Decimal(str(r.get('liability') or 0)).quantize(Q2), f"{r.get('balance', '')} days")
     except Exception:
         pass
+    # v1.66.0 (items 118, 120, 121): the same open entitlements (partial use: what the family has not used) + the value accrued in the
+    # running cycle of policies with monthly accrual (air_policy.liabilities); without those policy rules the figures are as before
+    try:
+        from .air_policy import liabilities as _v1660_air
+        out['air_ticket'] = _v1660_air(as_of)
+        return out
+    except ImportError:
+        pass
     AT = apps.get_model('PayrollManagement', 'AirTicketAllocation')
     agg = defaultdict(Decimal)
-    for a in AT.objects.filter(is_active=True).exclude(status__in=('used', 'expired', 'cancelled', 'Used', 'Expired', 'Cancelled')):
-        if a.expiry_date and a.expiry_date < as_of:
+    # v1.62.2 (item 54): only open entitlements – the statuses excluded here ('used', 'cancelled' …) do not exist (allocations are
+    # PENDING / APPROVED / REJECTED), so rejected allocations, allocations used up (remaining 0 counted as the full amount when
+    # None) and allocations whose ticket was already taken were in the liability. Same rule as the Air tickets page (is_open)
+    # and an allocation with an approved / processed ticket request is used.
+    from .air_tickets import is_open, USED_REQ
+    taken = set(apps.get_model('PayrollManagement', 'AirTicketRequest').objects.filter(status__in=USED_REQ, request_type='TICKET')
+                .values_list('allocation_id', flat=True))
+    for a in AT.objects.filter(is_active=True).exclude(status__iexact='REJECTED'):
+        if not is_open(a, as_of) or a.pk in taken:
             continue
-        agg[a.employee_id] += Decimal(str(a.remaining_amount if a.remaining_amount is not None else a.amount or 0))
+        agg[a.employee_id] += Decimal(str(a.remaining_amount or 0))
     for k, v in agg.items():
         out['air_ticket'][k] = (v.quantize(Q2), 'open entitlement')
     return out
@@ -131,7 +146,15 @@ def post(run, user=None):
     """Send the run's closing amounts as the month-end provisions journal (Accounting integration)."""
     from ZeoAccounting import services as A
     amounts = {'gratuity': {}, 'leave': {}}
-    for l in run.lines.filter(kind__in=('gratuity', 'leave')):
+    kinds = ('gratuity', 'leave')
+    try:   # v1.66.0 (item 118): the air ticket provision is posted too when Air ticket rules › "Post the air ticket provision" is on
+        from .air_policy import settings as _v1660_air_settings
+        if _v1660_air_settings()['post_provision']:
+            amounts['air_ticket'] = {}
+            kinds = KINDS
+    except ImportError:
+        pass
+    for l in run.lines.filter(kind__in=kinds):
         amounts[l.kind][l.employee_id] = l.closing
     batch = A.build_provisions(run.month, user, amounts=amounts)
     run.status = 'posted'

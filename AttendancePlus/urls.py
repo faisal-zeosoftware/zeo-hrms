@@ -21,6 +21,7 @@ urlpatterns = [
     path('api/kiosk-pins/', V.KioskPinsView.as_view()),           # v1.51.0 HR sets kiosk PINs
     path('api/regularisation-reasons/', V.RegularisationReasonsView.as_view()),   # v1.49.0
     path('api/ot-law/', V.OtLawView.as_view()),
+    path('api/ramadan/', V.RamadanView.as_view()),   # v1.67.0 (item 25a)
     path('api/ot-breakdown/', V.OtBreakdownView.as_view()),
     path('api/punch-photos/', V.PunchPhotosView.as_view()),
     path('api/device/push/', V.DevicePushView.as_view()),
@@ -31,5 +32,7 @@ urlpatterns = [
     path('api/late-early/', R62.LateEarlyView.as_view()),
     path('api/late-early/stats/', R62.LateEarlyStatsView.as_view()),
     path('api/late-early/<int:pk>/<str:action>/', R62.LateEarlyActionView.as_view()),
+    path('api/shift-overrides/', R62.OverridesView.as_view()),   # v1.62.0 people: overrides as date ranges
+    path('api/shift-overrides/<int:pk>/<str:action>/', R62.OverrideActionView.as_view()),
     path('api/', include(router.urls)),
 ]

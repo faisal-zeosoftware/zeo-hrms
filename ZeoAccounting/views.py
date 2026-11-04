@@ -196,11 +196,19 @@ def account_items():
                   'default_debit': st.gratuity_expense_account, 'default_credit': st.gratuity_provision_account})
     items.append({'kind': 'provision', 'key': 'leave', 'label': 'Leave salary (expense / provision)', 'group': 'Provisions', 'side': 'both',
                   'default_debit': st.leave_expense_account, 'default_credit': st.leave_provision_account})
+    try:   # v1.66.0 (item 118): the air ticket provision (accounts of Air ticket rules; a mapping here wins)
+        from PayrollPlus.air_policy import accounts as _v1660_air_accounts
+        _ae, _ap = _v1660_air_accounts()
+        items.append({'kind': 'provision', 'key': 'air_ticket', 'label': 'Air ticket (expense / provision)', 'group': 'Provisions', 'side': 'both',
+                      'default_debit': _ae, 'default_credit': _ap})
+    except ImportError:
+        pass
     for key, label, side in (('salary', 'Salary due', 'debit'), ('notice', 'Pay in lieu of notice', 'debit'), ('overtime', 'Overtime', 'debit'),
                              ('air_ticket', 'Air ticket', 'debit'), ('unpaid', 'Unpaid leave', 'credit'), ('notice_short', 'Notice not served', 'credit'),
-                             ('assets', 'Asset recovery', 'credit'), ('loan', 'Loan balance', 'credit'), ('advance', 'Salary advance', 'credit')):
+                             ('assets', 'Asset recovery', 'credit'), ('loan', 'Loan balance', 'credit'), ('advance', 'Salary advance', 'credit'),
+                             ('other', 'Other additions and deductions', 'both')):   # v1.62.11 (EOS gap check): other lines can have their account
         items.append({'kind': 'settlement', 'key': key, 'label': label, 'group': 'Final settlement', 'side': side,
-                      'default_debit': st.default_expense_account if side == 'debit' else '', 'default_credit': st.default_deduction_account if side == 'credit' else ''})
+                      'default_debit': st.default_expense_account if side != 'credit' else '', 'default_credit': st.default_deduction_account if side != 'debit' else ''})
     try:
         for c in M('ExpenseManagement', 'ExpenseCategory').objects.order_by('name'):
             items.append({'kind': 'expense', 'key': str(c.pk), 'label': c.name, 'group': 'Expense categories', 'side': 'debit',

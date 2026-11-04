@@ -169,17 +169,26 @@ SETTLEMENT = {
         ('Branch|الفرع', 'employee.branch'), ('Date of joining|تاريخ الالتحاق', 'settlement.joined'),
         ('Last working day|آخر يوم عمل', 'settlement.last_working_date'), ('Exit type|نوع إنهاء الخدمة', 'settlement.exit_type'),
         ('Total service|مدة الخدمة', 'settlement.service'), ('Unpaid days|أيام بدون أجر', 'settlement.unpaid_days'),
-        ('Basic salary|الراتب الأساسي', 'settlement.basic'), ('Monthly wage|الأجر الشهري', 'settlement.wage')]))),
+        ('Basic salary|الراتب الأساسي', 'settlement.basic'), ('Monthly wage|الأجر الشهري', 'settlement.wage'),
+        # v1.62.11 (EOS settings)
+        ('Emirates ID|رقم الهوية الإماراتية', 'settlement.emirates_id'), ('Contract type|نوع العقد', 'settlement.contract_type'),
+        ('Reason for leaving|سبب ترك العمل', 'settlement.reason'), ('Journal|القيد المحاسبي', 'settlement.journal')]))),
     'earnings': ('Earnings', sec('Earnings', 'المستحقات', lines_table('settlement.earnings', [
         ('Item|البند', 'label'), ('Basis|الأساس', 'basis', 'basis'), ('Amount|المبلغ', 'amount', 'num')],
-        ('Total earnings|إجمالي المستحقات', 'settlement.total_earnings'), 'lines earn'))),
+        ('Total earnings|إجمالي المستحقات', 'settlement.total_earnings'), 'lines earn')
+        # v1.62.11 (EOS settings): the salary breakup, one line per month, and the components left out of the final salary
+        + '{% if settlement.breakup %}<table class="lines"><thead><tr><th>[[Salary breakup|تفصيل الراتب]]</th><th class="num">[[Amount|المبلغ]]</th></tr></thead><tbody>'
+          '{% for b in settlement.breakup %}<tr><td>{{ b.label }}</td><td class="num">{{ b.amount }}</td></tr>{% endfor %}'
+          '{% for x in settlement.excluded %}<tr><td class="muted">[[Left out of the final salary|مستثنى من الراتب النهائي]]: {{ x.name }}</td><td class="num muted">{{ x.amount }}</td></tr>{% endfor %}'
+          '</tbody></table>{% endif %}')),
     'deductions': ('Deductions', sec('Deductions', 'الاستقطاعات', lines_table('settlement.deductions', [
         ('Item|البند', 'label'), ('Basis|الأساس', 'basis', 'basis'), ('Amount|المبلغ', 'amount', 'num')],
         ('Total deductions|إجمالي الاستقطاعات', 'settlement.total_deductions'), 'lines ded'))),
     'notes': ('Notes', '{% if settlement.notes %}<div class="blk notes"><b>[[Notes|ملاحظات]]</b><ul>{% for n in settlement.notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}'),
     'totals': ('Net payable', '<section class="blk">' + tiles([('Total earnings|إجمالي المستحقات', 'settlement.total_earnings'),
                                                               ('Total deductions|إجمالي الاستقطاعات', 'settlement.total_deductions'),
-                                                              ('Net payable|صافي المستحق', 'settlement.net_display', 'net')]) + '</section>'),
+                                                              ('Net payable|صافي المستحق', 'settlement.net_display', 'net')]).replace(
+        '[[Net payable|صافي المستحق]]', '{% if settlement.recoverable %}[[Net recoverable from the employee|صافي المبلغ المسترد من الموظف]]{% else %}[[Net payable|صافي المستحق]]{% endif %}') + '</section>'),   # v1.62.11 (EOS settings)
     'net_words': ('Amount in words', '<div class="blk words"><b>[[Amount in words|المبلغ كتابةً]]:</b> {{ settlement.net_words }}'
                   '{% if settlement.net_words_ar %}<div class="words-ar" dir="rtl">{{ settlement.net_words_ar }}</div>{% endif %}</div>'),
     'payment': ('Payment', '<div class="blk payment">{% if settlement.paid_on %}[[Paid on|دُفع في]] <b>{{ settlement.paid_on }}</b> · [[Reference|المرجع]] '

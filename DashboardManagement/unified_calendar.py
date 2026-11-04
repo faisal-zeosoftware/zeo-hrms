@@ -221,7 +221,7 @@ class Cal:
                     st, en = sh.start_time, sh.end_time
                     end_day = d + timedelta(days=1) if en and st and en <= st else d
                     self.add('shift', f'{e.id}-{d}', sh.name, datetime.combine(d, st) if st else d, datetime.combine(end_day, en) if en else d,
-                             all_day=not st, employee=_who(e), link=M_ + 'shift-options/shift-override' if (e.id, d) in res.over else None,
+                             all_day=not st, employee=_who(e), link=M_ + 'shift-planner/override' if (e.id, d) in res.over else None,
                              extra={'override': (e.id, d) in res.over})
             return
         if (self.d_to - self.d_from).days > 45:

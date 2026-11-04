@@ -100,6 +100,26 @@ class BranchViewSet(viewsets.ModelViewSet):
         context['tenant_id'] = self.request.query_params.get('tenant_id')
         return context  
     
+    @action(detail=True, methods=['post'], url_path='copy-setup')
+    def copy_setup(self, request, pk=None):
+        """v1.62.1 (user request 2 Nov): copy the setup of another branch into this one – calendars, leave types with
+        their entitlements and approvals, salary components and pay structures. Only what this branch does not have yet
+        is added; nothing it has is changed, so it can be run again after the source branch got something new."""
+        from Translations.i18n import tr
+        from OrganisationManager.branch_setup import copy_setup
+        if not (request.user.is_superuser or request.user.has_perm('OrganisationManager.change_brnch_mstr')):
+            return Response({'detail': tr('You do not have the right to change branches.')}, status=403)
+        branch = self.get_object()
+        src_id = request.data.get('source') or request.data.get('copy_setup_from')
+        source = brnch_mstr.objects.exclude(pk=branch.pk).filter(pk=src_id).first() if src_id else None
+        if source is None:
+            return Response({'source': [tr('Choose the branch to copy from.')]}, status=400)
+        done = copy_setup(branch, source=source, user=request.user)
+        added = sum(v for v in done.values() if isinstance(v, int))
+        return Response({'source': source.branch_name, 'copied': done, 'added': added,
+                         'detail': tr('{0} items copied from {1}.', added, source.branch_name) if added
+                         else tr('Nothing new – this branch already has the setup of {0}.', source.branch_name)})
+
     @action(detail=True, methods=['get'])
     def departments(self, request, pk=None):
         branch = self.get_object()
@@ -1784,7 +1804,7 @@ class AssetApprovalViewset(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------

@@ -259,7 +259,10 @@ def _unpaid_between(emp, a, b):
     v = Decimal(str(AC.objects.filter(employee=emp, date__range=(a, b)).aggregate(t=Sum('unpaid_fraction'))['t'] or 0))
     try:
         AD = M('AttendancePlus', 'AttendanceDay')
-        v += AD.objects.filter(employee_id=emp.pk, date__range=(a, b), status='absent').count()
+        # v1.62.2 (item 52): an absent day is in the attendance calendar too (Absent, unpaid 1 – the nightly job writes it), so
+        # it was counted twice (83 days instead of 41). Only absent days the calendar does not have yet are added.
+        in_cal = set(AC.objects.filter(employee=emp, date__range=(a, b)).values_list('date', flat=True))
+        v += sum(1 for d in AD.objects.filter(employee_id=emp.pk, date__range=(a, b), status='absent').values_list('date', flat=True) if d not in in_cal)
     except LookupError:
         pass
     return v
@@ -283,9 +286,20 @@ def _salary_for(wage, a, b):
     return total, days
 
 
-def _annual_type():
+def _annual_type(emp=None):
+    """The annual leave type of the employee. v1.62.4 (item 65): the copy of the employee's branch (same code / name, the one the
+    policy and the requests use) – before, the first 'annual' type of the company (head office) was read for everybody: GD-0048
+    (Dubai branch) was paid 10 days from the head-office type instead of the 30 days of the branch's Annual Leave."""
     LT = M('calendars', 'leave_type')
-    return LT.objects.filter(leave_category='annual').order_by('id').first()
+    base = LT.objects.filter(leave_category='annual').order_by('id').first()
+    if base is None or emp is None:
+        return base
+    try:
+        from LeavePolicy import engine
+        tw = engine.twin_type(base.pk, getattr(emp, 'emp_branch_id_id', None))
+    except Exception:
+        tw = None
+    return (LT.objects.filter(pk=tw).first() if tw else None) or base
 
 
 
@@ -307,8 +321,11 @@ def _add_years(d, n):
         return d.replace(year=d.year + n, day=28)
 
 
-def _gratuity_steps(eos, res, basic):
-    """(basis, [steps]) – years × days × basic ÷ 30 per slab of the gratuity table (or the UAE law), and the cap."""
+def _gratuity_steps(eos, res, basic, daily_mode=None):
+    """(basis, [steps]) – years × days × basic ÷ 30 per slab of the gratuity table (or the UAE law), and the cap.
+    v1.62.11 (EOS settings): daily_mode 'basic_365' – the daily wage is basic × 12 ÷ 365."""
+    if daily_mode == 'basic_365':
+        return _gratuity_steps_365(eos, res, basic)
     try:
         years = Decimal(str(eos.years_of_service or 0))
         days_total = Decimal(str(eos.gratuity_days or 0))
@@ -345,6 +362,23 @@ def _gratuity_steps(eos, res, basic):
         return '', None
 
 
+def _gratuity_steps_365(eos, res, basic):
+    """v1.62.11 (EOS settings): the gratuity steps when the daily wage is basic × 12 ÷ 365 (the company's setting)."""
+    try:
+        years = Decimal(str(eos.years_of_service or 0))
+        days_total = Decimal(str(eos.gratuity_days or 0))
+        daily = basic * 12 / 365
+        steps = [tr('Eligible service {0} years (unpaid days taken off)', q2(years)), tr('{0} gratuity days', q2(days_total))]
+        capped = days_total * daily > Decimal(str(eos.gratuity_amount or 0)) + Decimal('1')
+        steps.append(tr('{0} days × basic {1:,.2f} × 12 ÷ 365 ({2} a day) = {3:,.2f}', q2(days_total), basic, f'{daily:.4f}',
+                        q2(days_total * daily) if capped else q2(eos.gratuity_amount)))
+        steps.append(tr('Capped at 2 years’ pay: {0:,.2f}', q2(eos.gratuity_amount)) if capped else tr('Cap 2 years’ basic {0:,.2f} – not reached', q2(basic * 24)))
+        return tr('{0} years × days × basic {1:,.2f} × 12 ÷ 365 (UAE Labour Law Art. 51)', q2(years), basic), steps
+    except Exception:
+        log.debug('gratuity steps', exc_info=True)
+        return '', None
+
+
 NAT_COUNTRY = {'FILIPINO': 'Philippines', 'EMIRATI': 'United Arab Emirates', 'BRITISH': 'United Kingdom', 'DUTCH': 'Netherlands', 'SWISS': 'Switzerland',
                'FRENCH': 'France', 'GREEK': 'Greece', 'THAI': 'Thailand', 'CHINESE': 'China', 'SUDANESE': 'Sudan', 'SENEGALESE': 'Senegal'}
 
@@ -367,6 +401,12 @@ def ticket_policy(emp):
     """The active air ticket policy of the employee (country, then department / designation / category / branch if the policy limits them)."""
     P = M('PayrollManagement', 'AirTicketPolicy')
     best = None
+    try:   # v1.66.0 (item 123): "most specific wins" / "refuse" – the policy that wins for the employee (default 'first': as below)
+        from . import air_policy as _AP
+        if _AP.settings()['overlap'] != 'first':
+            return _AP.policy_for(emp)
+    except ImportError:
+        pass
     for p in P.objects.filter(is_active=True, country_id__in=_home_countries(emp)).prefetch_related('rules').order_by('id'):
         ok = True
         for rel, val in (('eligible_departments', emp.emp_dept_id_id), ('eligible_designations', emp.emp_desgntn_id_id),
@@ -388,19 +428,71 @@ def _air_tickets(emp, lwd, res, add, info):
     A = M('PayrollManagement', 'AirTicketAllocation')
     R = M('PayrollManagement', 'AirTicketRequest')
     allocs = list(A.objects.filter(employee=emp, is_active=True).exclude(status='REJECTED').select_related('policy').order_by('allocated_date', 'id'))
-    first = True
+    # v1.62.3 (item 106): one open entitlement per policy is paid, not every unused allocation (two allocations of one cycle were
+    # both paid – 4,400 for one ticket of 2,200). Per policy: the allocations after the last one used (ticket / cash taken or
+    # nothing left) are the open cycle – the newest of them is paid; an older unused one belongs to an earlier cycle (the policy
+    # has no carry-forward) and is shown, not paid. When the ticket earned on exit (2. below) is due, it is that cycle's
+    # entitlement and no older allocation of the policy is paid on top.
+    from . import air_policy as _AP   # v1.66.0 (items 120, 121, 261)
+    open_by_policy = {}
     for a in allocs:
-        if a.status != 'APPROVED':
-            continue
         used = R.objects.filter(allocation=a, status__in=('APPROVED', 'PROCESSED')).exists()
+        if used and _AP.is_partial(a.policy_id):   # v1.66.0 (item 120): partial use – what the family did not use is still owed
+            used = _AP.partial_taken(a)
         left = Decimal(str(a.remaining_amount if a.remaining_amount is not None else a.amount or 0))
         if used or left <= 0:
+            open_by_policy[a.policy_id] = []   # a later cycle starts after a used allocation
+            continue
+        if a.status != 'APPROVED':
             continue
         if a.expiry_date and a.expiry_date < lwd:
             continue
-        add('air_ticket' if first else f'air_ticket_{a.pk}', tr('Air ticket allowance – approved allocation not used'), 'earning', left,
-            tr('{0}, allocated {1:%d/%m/%Y}', a.policy.name if a.policy_id else tr('allocation'), a.allocated_date), 'ticket')
-        first = False
+        open_by_policy.setdefault(a.policy_id, []).append((a, left))
+    due_policy = [None]
+
+    def _pay_open():
+        first = True
+        for pid, lst in open_by_policy.items():
+            pr = _AP.policy_rules(pid)
+            # decision 261: "carry forward at exit" pays every unused earlier cycle, not only the latest (default: the latest)
+            pay = [] if pid == due_policy[0] and not pr['exit_carry_forward'] else (lst if pr['exit_carry_forward'] else lst[-1:])
+            for a, left in lst:
+                basis = tr('{0}, allocated {1:%d/%m/%Y}', a.policy.name if a.policy_id else tr('allocation'), a.allocated_date)
+                if (a, left) in pay and a.policy.allowance_type == 'TICKET' and not pr['ticket_only_cash_at_exit']:   # decision 261
+                    info(f'ticket_only_{a.pk}', tr('Air ticket allocation not paid – the ticket-only policy is not paid in cash at exit'), basis, 'ticket')
+                elif (a, left) in pay:
+                    add('air_ticket' if first else f'air_ticket_{a.pk}', tr('Air ticket allowance – approved allocation not used'), 'earning',
+                        left, basis + (tr(' – earlier cycle carried forward') if pr['exit_carry_forward'] and (a, left) != lst[-1] else ''), 'ticket')
+                    first = False
+                else:
+                    info(f'ticket_skip_{a.pk}', tr('Air ticket allocation not paid – one open entitlement of the policy is paid'), basis, 'ticket')
+    buf = []   # the lines of 2. come after the open allocations, as before
+    _air_ticket_due(emp, lwd, allocs, lambda *a, **k: buf.append((add, a, k)), lambda *a, **k: buf.append((info, a, k)), due_policy)
+    _pay_open()
+    for f, a, k in buf:
+        f(*a, **k)
+    _v1660_accrued_at_exit(emp, lwd, add, info)   # v1.66.0 (item 121)
+
+
+def _v1660_accrued_at_exit(emp, lwd, add, info):
+    """v1.66.0 (item 121): a policy with monthly accrual – the value accrued in the running cycle up to the last working day (pro-rata,
+    unpaid days left out) is paid at exit; a ticket-only policy that is not paid in cash at exit (decision 261) shows it only."""
+    from . import air_policy as _AP
+    p = ticket_policy(emp)
+    if p is None or not emp.emp_joined_date or _AP.policy_rules(p.pk)['accrual'] != 'monthly':
+        return
+    amt, lines = _AP.accrued(emp, p, lwd)
+    if amt <= 0:
+        return
+    label = tr('Air ticket accrued to the last working day (pro-rata)')
+    if p.allowance_type == 'TICKET' and not _AP.policy_rules(p.pk)['ticket_only_cash_at_exit']:
+        info('ticket_accrued_only', tr('{0} – not paid: the ticket-only policy is not paid in cash at exit', label), tr('{0:,.2f}', amt), 'ticket')
+        return
+    add('air_ticket_accrued', label, 'earning', amt, tr('{0}: monthly accrual of the ticket value', p.name), 'ticket', lines)
+
+
+def _air_ticket_due(emp, lwd, allocs, add, info, due_policy):
+    """v1.62.3 (item 106): part 2 of _air_tickets (unchanged) – the ticket earned on exit; notes the policy when it is paid."""
     p = ticket_policy(emp)
     if p is None or not emp.emp_joined_date:
         return
@@ -421,6 +513,15 @@ def _air_tickets(emp, lwd, res, add, info):
              tr('{0}: allocation of {1:%d/%m/%Y} – not paid again', p.name, covered[-1].allocated_date), 'ticket')
         return
     cash = p.allowance_type in ('CASH', 'BOTH') or any(r.rule_type == 'ENCASHMENT' for r in p.rules.all())
+    try:   # v1.66.0 (decision 261): a ticket-only policy that is not paid in cash at exit – shown, not paid
+        from . import air_policy as _AP
+        if not cash and not _AP.policy_rules(p.pk)['ticket_only_cash_at_exit']:
+            info('ticket_only_due', tr('Air ticket earned on exit not paid – the ticket-only policy is not paid in cash at exit'),
+                 tr('{0}: one ticket every {1} years; the ticket earned on {2:%d/%m/%Y} was not given', p.name, freq, end), 'ticket')
+            return
+    except ImportError:
+        pass
+    due_policy[0] = p.pk   # v1.62.3 (item 106)
     add('air_ticket_due', tr('Air ticket earned on exit ({0} – {1})', start.year, end.year), 'earning', p.amount,
         tr('{0}: one ticket every {1} years; the ticket earned on {2:%d/%m/%Y} was not given{3}', p.name, freq, end,
            '' if cash else tr(' (ticket policy – paid in cash at exit)')), 'ticket',
@@ -501,6 +602,36 @@ def _decided_assets(st, emp, lines, add):
         lines.append({'key': 'clearance', 'label': tr('Asset clearance not complete – {0}', '; '.join(i['name'] for i in open_cards[:3])), 'kind': 'block',
                       'amount': 0, 'basis': '', 'section': 'assets'})
 
+def _overtime_due(emp, a, b, add, info):
+    """v1.62.2 (item 56): overtime after the last payroll in the final settlement, worked out as payroll does it – the variables of
+    get_formula_variables (approved / HR-entered OT hours, OT policy rates, rate-weighted hours) for the days a–b and the formula of
+    the employee's overtime component(s) (evaluate_formula). Before, the settlement used its own fixed formula (basic ÷ 30 ÷ 8 ×
+    1.25 / 1.5, approved OT only), which differed from the payslip. Without an overtime component payroll pays no overtime – the
+    hours are shown for HR to decide."""
+    if not a or not b or b < a:
+        return
+    OT = M('calendars', 'EmployeeOvertime')
+    from django.db.models import Q as _Q
+    rows = OT.objects.filter(_Q(approved=True) | _Q(source='MANUAL'), employee=emp, date__range=(a, b))
+    hours = sum((Decimal(str(o.hours or 0)) for o in rows), Decimal('0'))
+    if not hours:
+        return
+    ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
+    comps = [s_.component for s_ in ESS.objects.filter(employee=emp, is_active=True, component__payroll_category='overtime')
+             .exclude(component__formula__isnull=True).exclude(component__formula='').select_related('component')]
+    if not comps:
+        info('overtime_hours', tr('Overtime after the last payroll: {0} h – no overtime component in the salary (payroll pays none)', q2(hours)),
+             '', 'overtime')
+        return
+    from PayrollManagement.signals import get_formula_variables
+    from PayrollManagement.utils import evaluate_formula
+    v = get_formula_variables(emp, a, b)
+    for c in comps:
+        amt = Decimal(str(evaluate_formula(c.formula, dict(v), emp, c) or 0))
+        add('overtime' if len(comps) == 1 else f'overtime_{c.pk}', tr('Overtime after the last payroll {0:%d/%m/%Y} – {1:%d/%m/%Y} ({2} h)', a, b, q2(hours)),
+            'earning', amt, tr('{0}: {1} (as in payroll)', c.name, c.formula), 'overtime')
+
+
 def compute(st, user=None):
     """(Re)calculate every component of the settlement from the current records. Draft only."""
     E = M('EmpManagement', 'emp_master')
@@ -508,12 +639,16 @@ def compute(st, user=None):
     eos = EOS.objects.select_related('resignation__employee').get(pk=st.eos_id)
     res = eos.resignation
     emp = res.employee
+    from . import eos_settings as _ES   # v1.62.11 (EOS settings): the company's end-of-service rules + HR's entries on the draft
+    _es = _ES.begin(st)
+    _eo = _ES.eos_opts(_es)
     try:   # the end of service figures (service, unpaid days, gratuity, notice, air ticket) from the current records
         from EmpManagement.utils import calculate_settlement
-        calculate_settlement(eos)
+        calculate_settlement(eos, _eo)   # v1.62.11 (EOS settings): service days, gratuity daily wage, unpaid types / override
         eos.refresh_from_db()
     except Exception:
         log.exception('end of service recalculation failed')
+    _ES.after_eos(_es, _eo)   # v1.62.11 (EOS settings)
     lwd = res.last_working_date
     basic, wage, wage_parts = _wage(emp)
     daily_wage, daily_basic = wage / 30, basic / 30
@@ -536,19 +671,29 @@ def compute(st, user=None):
     #    after the last payroll's attendance cut-off (those after the cut-off were not yet deducted)
     paid_to, inputs_to = _last_paid_to(emp)
     start = (paid_to + timedelta(days=1)) if paid_to else (max(emp.emp_joined_date, lwd.replace(day=1)) if emp.emp_joined_date else lwd.replace(day=1))
+    _derived = start
+    start = _ES.salary_start(_es, start)   # v1.62.11 (EOS settings): "Unpaid salary from" entered on the draft
     st.salary_from, st.salary_to = start, lwd
-    if start <= lwd:
+    _sal = _ES.final_salary(_es, emp, wage, start, lwd) if start <= lwd and _ES.salary_custom(_es) else None
+    if _sal is not None:   # v1.62.11 (EOS settings): month by month, payroll cycle, part month rule, components left out
+        add('salary', tr('Salary due {0:%d/%m/%Y} – {1:%d/%m/%Y}', start, lwd), 'earning', _sal['total'], _sal['basis'], 'salary', _sal['calc'],
+            breakup=_sal['rows'], excluded=_sal['excluded'], salary_wage=float(_sal['wage']))
+    elif start <= lwd:
         amount, days = _salary_for(wage, start, lwd)
         add('salary', tr('Salary due {0:%d/%m/%Y} – {1:%d/%m/%Y}', start, lwd), 'earning', amount,
-            tr('{0} days on the 30-day basis × wage {1:,.2f} ÷ 30 ({2})', days, wage, ', '.join(wage_parts)))
+            tr('{0} days on the 30-day basis × wage {1:,.2f} ÷ 30 ({2})', days, wage, ', '.join(wage_parts)),
+            breakup=_ES.salary_rows(wage, start, lwd)[1])   # v1.62.11 (EOS settings): one line per month (same amount)
     elif paid_to:
         add('salary', tr('Salary already paid by payroll to {0:%d/%m/%Y}', paid_to), 'earning', 0, '')
         info('salary_paid', tr('Salary to the last working day paid by payroll'), tr('payroll paid the salary to {0:%d/%m/%Y}', paid_to), 'salary')   # v1.62.0 EOS
     ua = (inputs_to + timedelta(days=1)) if inputs_to else start
+    if start < _derived and start < ua:   # v1.62.11 (EOS settings): salary paid from an earlier date – its unpaid days too
+        ua = start
     unpaid = _unpaid_between(emp, ua, lwd)
     if unpaid:
-        add('unpaid', tr('Unpaid leave / absence {0:%d/%m/%Y} – {1:%d/%m/%Y} ({2} days)', ua, lwd, q2(unpaid)), 'deduction', daily_wage * unpaid,
-            tr('wage {0:,.2f} ÷ 30 × days', wage))
+        _uw = _sal['wage'] if _sal is not None else wage   # v1.62.11 (EOS settings): the wage of the final salary (exclusions)
+        add('unpaid', tr('Unpaid leave / absence {0:%d/%m/%Y} – {1:%d/%m/%Y} ({2} days)', ua, lwd, q2(unpaid)), 'deduction', _uw / 30 * unpaid,
+            tr('wage {0:,.2f} ÷ 30 × days', _uw))
     # 2. notice period
     notice = int(res.notice_period or 0)
     served = (lwd - res.resigned_on).days if res.resigned_on else 0
@@ -564,27 +709,56 @@ def compute(st, user=None):
             add('notice_short', tr('Notice period not served ({0} days)', unserved), 'deduction', daily_wage * unserved,
                 tr('wage {0:,.2f} ÷ 30 × {1} days (Art. 43) – HR can waive it', wage, unserved))
     # 3. unused annual leave – basic ÷ 30 per day (termination settlement)
-    AL = _annual_type()
+    AL = _annual_type(emp)   # v1.62.4 (item 65): the employee's branch type
     leave_days = Decimal('0')
+    lb = None
     if AL is not None:
         try:
             from LeavePolicy import engine
-            leave_days = Decimal(str(engine.balance_row(emp.pk, AL.pk).balance or 0))
+            # v1.62.4 (items 71, 75): the balance on the last working day (accrual to that day, leave after it given back – also the
+            # part after it of leave crossing it); before: today's balance + leave starting after the last day, never below 0
+            lb = engine.balance_at_exit(emp, AL.pk, lwd)
+            leave_days = Decimal(str(lb['balance']))
         except Exception:
+            log.exception('leave balance on the last working day')
             B = M('calendars', 'emp_leave_balance')
             leave_days = Decimal(str(B.objects.filter(employee=emp, leave_type=AL).values_list('balance', flat=True).first() or 0))
-        LR = M('calendars', 'employee_leave_request')
-        future = sum(Decimal(str(r.approved_days or r.number_of_days or 0)) for r in LR.objects.filter(employee=emp, leave_type=AL, status='approved', start_date__gt=lwd))
-        leave_days = max(leave_days + future, Decimal('0'))   # leave booked after the last day is not taken
-    if leave_days:
+    calc = []
+    if lb is not None:   # v1.62.4 (items 71, 75): how the balance on the last day is made up
+        calc.append(tr('balance today {0} days', lb['today']))
+        if lb['after_last_day']:
+            calc.append(tr('{0} days earned / lapsed after the last working day left out', lb['after_last_day']))
+        if lb['given_back']:
+            calc.append(tr('+ {0} days of approved leave after the last working day given back ({1})', lb['given_back'],
+                           ', '.join(f'{d} {n:g}' for d, n in lb['given_back_rows'])))
+        if lb['accrual_due']:
+            calc.append(tr('+ {0} days earned to the last working day, not credited yet', lb['accrual_due']))
+        if lb.get('under_6m'):   # v1.65.0 (item 90): company setting for less than 6 months of service (to be confirmed)
+            calc.append(tr('+ {0} days: {1}', lb['under_6m'], lb.get('under_6m_note') or ''))
+        calc.append(tr('balance on {0:%d/%m/%Y}: {1} days', lwd, q2(leave_days)))
+    if _ES.leave_lines(_es, basic, wage, leave_days, calc, emp, AL, lwd, add):   # v1.62.11 (EOS settings): basic / gross, rate, HR's balance
+        pass
+    elif leave_days > 0:
         add('leave', tr('Unused annual leave {0} days', q2(leave_days)), 'earning', daily_basic * leave_days, tr('basic {0:,.2f} ÷ 30 × days', basic), 'leave',
-            [tr('{0:,.2f} ÷ 30 = {1:,.2f} a day', basic, q2(daily_basic)), tr('{0:,.2f} × {1} days = {2:,.2f}', q2(daily_basic), q2(leave_days), q2(daily_basic * leave_days))])   # v1.62.0 EOS
+            calc + [tr('{0:,.2f} ÷ 30 = {1:,.2f} a day', basic, q2(daily_basic)), tr('{0:,.2f} × {1} days = {2:,.2f}', q2(daily_basic), q2(leave_days), q2(daily_basic * leave_days))])   # v1.62.0 EOS
+    elif leave_days < 0:   # v1.62.4 (item 75): leave taken in advance (negative balance) is recovered – it was shown as 0
+        add('leave_negative', tr('Annual leave taken in advance {0} days', q2(-leave_days)), 'deduction', daily_basic * -leave_days,
+            tr('basic {0:,.2f} ÷ 30 × days', basic), 'leave',
+            calc + [tr('{0:,.2f} ÷ 30 = {1:,.2f} a day', basic, q2(daily_basic)), tr('{0:,.2f} × {1} days = {2:,.2f}', q2(daily_basic), q2(-leave_days), q2(daily_basic * -leave_days))])
     LE = M('PayrollManagement', 'LeaveEncashment')
     for e in LE.objects.filter(employee=emp, status='approved', payroll_run__isnull=True):
         add(f'encash_{e.pk}', tr('Leave encashment approved, not paid yet ({0} days)', e.encashment_days), 'earning', e.encashment_amount, tr('approved encashment'))
     # 4. end-of-service gratuity
-    if eos.gratuity_amount:
-        gb, gcalc = _gratuity_steps(eos, res, basic)   # v1.62.0 EOS: the calculation shown step by step
+    try:   # v1.62.11 (item 229): a DIFC DEWS branch – gratuity only for the service before DEWS; an ADPF national – no gratuity (ADPF)
+        from .branch_schemes import exit_gratuity as _v16211_eg
+        _v16211_done = _v16211_eg(emp, lwd, basic, start, add, info, lines)
+    except Exception:
+        log.exception('DEWS / ADPF gratuity of the final settlement')
+        _v16211_done = False
+    if _v16211_done:
+        pass
+    elif eos.gratuity_amount:
+        gb, gcalc = _gratuity_steps(eos, res, basic, _es['s'].get('gratuity_daily'))   # v1.62.0 EOS: the calculation shown step by step; v1.62.11 (EOS settings) daily wage
         add('gratuity', tr('End-of-service gratuity ({0} days)', q2(eos.gratuity_days)), 'earning', eos.gratuity_amount,
             gb or tr('basic {0:,.2f} ÷ 30; 21 days a year for the first 5 years, 30 after; capped at 2 years’ basic', basic), 'gratuity', gcalc)
     else:
@@ -596,28 +770,30 @@ def compute(st, user=None):
                 lines.append({'key': 'gratuity', 'label': tr('No gratuity – less than one year of service'), 'kind': 'info', 'amount': 0, 'basis': ''})
         except Exception:
             pass
+    _ES.gratuity_adjustment(_es, add)   # v1.62.11 (EOS settings): HR's gratuity adjustment – its own line
     # 5. outstanding earnings: overtime after the last payroll, expenses, air ticket
-    OT = M('calendars', 'EmployeeOvertime')
-    if inputs_to:
-        ot = OT.objects.filter(employee=emp, approved=True, date__gt=inputs_to, date__lte=lwd)
-        normal = sum((Decimal(str(o.hours)) for o in ot if o.ot_type == 'NORMAL'), Decimal('0'))
-        rest = sum((Decimal(str(o.hours)) for o in ot if o.ot_type != 'NORMAL'), Decimal('0'))
-        if normal or rest:
-            add('overtime', tr('Overtime after the last payroll ({0} h normal, {1} h rest day / holiday)', normal, rest), 'earning',
-                (normal * Decimal('1.25') + rest * Decimal('1.5')) * daily_basic / 8, tr('basic ÷ 30 ÷ 8 × 1.25 / 1.5'))
+    _overtime_due(emp, ua, lwd, add, info)   # v1.62.2 (item 56): the payroll's own overtime calculation
     try:
         ER = M('ExpenseManagement', 'ExpenseReport')
         for r in ER.objects.filter(employee_id=emp.pk, status='approved', payroll_run_id__isnull=True):
             add(f'expense_{r.pk}', tr('Expense report {0} to reimburse', r.number), 'earning', getattr(r, 'amount_to_reimburse', 0) or 0, '')
     except LookupError:
         pass
-    _air_tickets(emp, lwd, res, add, info)   # v1.62.0 EOS: open allocation + the ticket earned on exit by the policy (never both)
+    _air_tickets(emp, lwd, res, *_ES.air_sinks(_es, add, info))   # v1.62.0 EOS: open allocation + the ticket earned on exit by the policy (never both); v1.62.11 (EOS settings) shown only when HR enters it
+    _ES.air_ticket_hr(_es, add, info)   # v1.62.11 (EOS settings): the air ticket entered by HR (amount, sector, class, travellers)
+    try:   # v1.62.7 (item 18): accrued components (accrue now – pay later): the balance + the days after the last payroll
+        from .accruals import exit_lines as _v1627_exit
+        _v1627_exit(st, emp, start, lwd, add, info, ua)
+    except Exception:
+        log.exception('accrued components of the final settlement')
     # 6. deductions: loans, salary advances, approved asset recoveries (never the asset value without an approved decision)
     LA = M('PayrollManagement', 'LoanApplication')
     for l in LA.objects.filter(employee=emp, status__in=('Approved', 'Disbursed', 'In Progress', 'Paused')):
-        if l.remaining_balance:   # v1.62.0 EOS: each loan with its own basis
-            paid = q2(Decimal(str(l.amount_requested or 0)) - Decimal(str(l.remaining_balance or 0)))
-            add(f'loan_{l.pk}', tr('Loan {0} – outstanding balance', l.document_number or l.pk), 'deduction', l.remaining_balance,
+        from .loans import balance as _loan_balance   # v1.62.3 (item 107): amount − repaid, not the saved balance (wrong after an edit)
+        _bal = _loan_balance(l)
+        if _bal:   # v1.62.0 EOS: each loan with its own basis
+            paid = q2(Decimal(str(l.amount_requested or 0)) - _bal)
+            add(f'loan_{l.pk}', tr('Loan {0} – outstanding balance', l.document_number or l.pk), 'deduction', _bal,
                 tr('loan {0:,.2f}, repaid {1:,.2f}', q2(l.amount_requested), paid), 'loan')
     AS = M('PayrollManagement', 'AdvanceSalaryRequest')
     for a in AS.objects.filter(employee=emp, status__iexact='approved'):
@@ -625,6 +801,11 @@ def compute(st, user=None):
         if left:
             add(f'advance_{a.pk}', tr('Salary advance {0} – not yet deducted', a.document_number or a.pk), 'deduction', left,
                 tr('approved advance, not deducted by payroll'), 'advance')   # v1.62.0 EOS
+    try:   # v1.63.0 (item 28): the balance of each open recovery schedule (or an information line: written off at exit)
+        from .recoveries import exit_lines as _v1630_rec_exit
+        _v1630_rec_exit(emp, add, info)
+    except Exception:
+        log.exception('recovery schedules of the final settlement')
     try:
         from AssetPlus import services as AP
         c = AP.clearance(emp.pk)
@@ -643,7 +824,7 @@ def compute(st, user=None):
     for o in (st.other_lines or []):        # v1.62.0 EOS: HR's own lines are kept on every recalculation
         kind = 'deduction' if o.get('kind') == 'deduction' else 'earning'
         add(f"other_{o.get('id')}", o.get('label') or tr('Other'), kind, o.get('amount') or 0, o.get('note') or '', 'other',
-            by=o.get('by') or '', at=o.get('at'), manual=True)
+            by=o.get('by') or '', at=o.get('at'), manual=True, **({'account': o['account']} if o.get('account') else {}))   # v1.62.11 (EOS settings): own account
     earn = sum((Decimal(str(l['amount'])) for l in lines if l['kind'] == 'earning'), Decimal('0'))
     ded = sum((Decimal(str(l['amount'])) for l in lines if l['kind'] == 'deduction'), Decimal('0'))
     st.lines = lines
@@ -698,6 +879,9 @@ def act(st, action, user, codes, admin, data=None):
         action = 'return'
         if not data.get('note') and data.get('reason'):
             data = {**data, 'note': data.get('reason')}
+    if action == 'reset' or (action == 'cancel' and st.status != 'draft'):   # v1.62.11 (EOS settings): reset to draft, cancel with the journal
+        from . import eos_settings as _ES
+        return _ES.workflow(st, action, user, codes, admin, data)
     if action not in FLOW:
         raise Refused(tr('Unknown action.'))
     frm, to = FLOW[action]
@@ -747,6 +931,9 @@ def act(st, action, user, codes, admin, data=None):
         hn = data.get('note') or ''
         if action == 'pay':
             hn = (tr('Paid on {0:%d/%m/%Y}, reference {1}', st.paid_on, st.payment_ref) + (' – ' + hn if hn else ''))
+            _cn = closed_note(getattr(st, '_v1623_closed', None) or {})   # v1.62.3 (items 104, 125)
+            if _cn:
+                hn = hn + ' – ' + _cn
         log_step(st, action, user, hn)   # v1.62.0 EOS
         st.status = to
         st.save()
@@ -773,6 +960,115 @@ def _close_eos(st, user):
     for l in st.lines:
         if l['key'].startswith('encash_'):
             LE.objects.filter(pk=int(l['key'].split('_')[1])).update(status='processed', processed_at=timezone.now())
+    st._v1623_closed = close_recovered(st, user)        # v1.62.3 (item 104)
+    try:   # v1.62.7 (item 18): the accrued balance paid with the settlement goes to 0
+        from .accruals import exit_paid as _v1627_paid
+        _v1627_paid(st, user)
+    except Exception:
+        log.exception('accrued components of the paid settlement')
+    st._v1623_closed.update(make_leaver_inactive(st))   # v1.62.3 (item 125)
+
+
+# v1.62.3 (item 104): a paid final settlement closes what it recovered. Before, the loan deducted in the settlement stayed Approved with
+# its balance (GD-0010 loan GDI-LOA-0006: 3,000 deducted, still open – the next payroll or settlement could take it again), the salary
+# advances stayed Approved and the air ticket allocations stayed open. Now: each loan line is recorded as a repayment outside payroll
+# (LoanRepayment without payslip + loan event "Settled at exit"), balance 0, Closed; running loans already at 0 are closed too; each
+# advance line → Deducted; every open air ticket allocation of the employee is closed (is_active off, expiry = last working day –
+# the ticket amount itself is decided by the settlement's air ticket lines). A paid settlement cannot be undone (no action goes back
+# from Paid), so there is no reverse path.
+def close_recovered(st, user=None):
+    from . import loans as L
+    LA, LR = M('PayrollManagement', 'LoanApplication'), M('PayrollManagement', 'LoanRepayment')
+    AS, ALC = M('PayrollManagement', 'AdvanceSalaryRequest'), M('PayrollManagement', 'AirTicketAllocation')
+    when = st.paid_on or timezone.localdate()
+    note = tr('Final settlement {0}', st.number or st.pk)
+    out = {'loans': [], 'advances': [], 'allocations': []}
+
+    def _close(loan, amt):
+        bal = L.balance(loan)
+        amt = min(q2(amt), bal)
+        if amt > 0:
+            LR.objects.create(loan=loan, payslip=None, amount_paid=amt, remaining_balance=bal - amt)
+        left = bal - amt
+        loan.remaining_balance = left if left > 0 else Decimal('0')
+        fields = ['remaining_balance']
+        if left <= 0:
+            loan.status = 'Closed'
+            fields.append('status')
+        loan.save(update_fields=fields)
+        L._event(loan, 'exit', user, amount=amt, balance_after=loan.remaining_balance, note=note[:255], date=when)
+        out['loans'].append(loan.document_number or str(loan.pk))
+
+    seen = set()
+    for ln in (st.lines or []):
+        key = str(ln.get('key') or '')
+        if ln.get('kind') != 'deduction' or '_' not in key or not key.split('_', 1)[1].isdigit():
+            continue
+        pk = int(key.split('_', 1)[1])
+        if key.startswith('loan_'):
+            loan = LA.objects.filter(pk=pk, employee_id=st.employee_id, status__in=L.ACTIVE).first()
+            if loan is not None:
+                seen.add(loan.pk)
+                _close(loan, Decimal(str(ln.get('amount') or 0)))
+        elif key.startswith('advance_'):
+            a = AS.objects.filter(pk=pk, employee_id=st.employee_id, status__iexact='approved').first()
+            if a is not None:
+                a.status = 'Deducted'
+                a.save(update_fields=['status'])
+                out['advances'].append(a.document_number or str(a.pk))
+    for loan in LA.objects.filter(employee_id=st.employee_id, status__in=L.ACTIVE).exclude(pk__in=seen):
+        if L.balance(loan) <= 0:   # nothing left to pay – a running loan with no balance is closed with the exit
+            _close(loan, Decimal('0'))
+    try:   # v1.63.0 (item 28): recovery schedules – the balance deducted in the settlement, or written off at exit
+        from .recoveries import close_exit as _v1630_rec_close
+        out['recoveries'] = _v1630_rec_close(st, user)
+    except Exception:
+        log.exception('recovery schedules closed by settlement %s', st.pk)
+    lwd = st.last_working_date or when
+    for a in ALC.objects.filter(employee_id=st.employee_id, is_active=True):
+        a.is_active = False
+        fields = ['is_active']
+        if not a.expiry_date or a.expiry_date > lwd:
+            a.expiry_date = lwd
+            fields.append('expiry_date')
+        a.save(update_fields=fields)
+        out['allocations'].append(a.pk)
+    return out
+
+
+# v1.62.3 (item 125, user decision 1 Nov): a leaver whose final settlement is paid becomes inactive – out of payroll, attendance and
+# the default lists, the login switched off (a login also used in other companies only loses this company, as on "Make inactive");
+# the records and the history are kept. Before, GD-0010 and GD-0048 stayed active after their paid settlements.
+def make_leaver_inactive(st):
+    E = M('EmpManagement', 'emp_master')
+    emp = E.objects.filter(pk=st.employee_id).select_related('users').first()
+    out = {'inactive': False, 'login': ''}
+    if emp is None:
+        return out
+    if emp.is_active is not False or emp.emp_status is not False:
+        emp.is_active, emp.emp_status = False, False
+        emp.save(update_fields=['is_active', 'emp_status', 'updated_at'])
+        out['inactive'] = True
+    if emp.users_id and emp.users.is_active:
+        from ZeoCloud.sharedrows import deactivate_login_here
+        out['login'] = deactivate_login_here(emp.users) or ''
+    return out
+
+
+def closed_note(done):
+    """v1.62.3 (items 104, 125) – the line of the settlement history that says what the payment closed."""
+    parts = []
+    if done.get('loans'):
+        parts.append(tr('loans closed: {0}', ', '.join(done['loans'])))
+    if done.get('advances'):
+        parts.append(tr('advances deducted: {0}', ', '.join(done['advances'])))
+    if done.get('recoveries'):   # v1.63.0 (item 28)
+        parts.append(tr('recoveries closed: {0}', ', '.join(done['recoveries'])))
+    if done.get('allocations'):
+        parts.append(tr('air ticket allocations closed: {0}', len(done['allocations'])))
+    if done.get('inactive') or done.get('login'):
+        parts.append(tr('employee made inactive') + (' – ' + tr('login switched off') if done.get('login') else ''))
+    return '; '.join(parts)
 
 
 def _waive_decided(st, user):
@@ -829,6 +1125,8 @@ def settlement_row(st, full=False):
         row.update({'exit_reason': st.exit_reason, 'other_lines': st.other_lines or [], 'asset_decisions': st.asset_decisions or {},
                     'history': history_rows(st), 'blocked': any(l.get('kind') == 'block' for l in (st.lines or [])),
                     'net_words': amount_words(st.net), 'currency': 'AED'})
+        from . import eos_settings as _ES   # v1.62.11 (EOS settings): HR's entries, rules used, journal, accounting date, net recoverable
+        row.update(_ES.row_extra(st))
     return row
 
 
@@ -842,7 +1140,7 @@ def _patterns():
         import os
         import re
         here = os.path.dirname(os.path.abspath(__file__))
-        src = ''.join(open(os.path.join(here, f), encoding='utf-8').read() for f in ('services.py', 'leavers.py'))
+        src = ''.join(open(os.path.join(here, f), encoding='utf-8').read() for f in ('services.py', 'leavers.py', 'accruals.py', 'branch_schemes.py', 'eos_settings.py'))   # v1.62.7 (item 18): + accruals.py; v1.62.11 (item 229): + branch_schemes.py; v1.62.11 (EOS settings): + eos_settings.py
         out = []
         for m in re.finditer(r"tr\(\s*'((?:[^'\\]|\\.)*)'", src):
             t = m.group(1)
@@ -893,13 +1191,16 @@ def localize_lines(lines):
                 x[k] = localize(x[k])
         if x.get('calc'):
             x['calc'] = [localize(c) for c in x['calc']]
+        if x.get('breakup'):   # v1.62.11 (EOS settings): the salary breakup, one line per month
+            x['breakup'] = [{**r, 'label': localize(r.get('label') or '')} for r in x['breakup']]
         out.append(x)
     return out
 
 
 HISTORY_LABEL = {'calculated': 'End of service calculated', 'recalculated': 'Calculated again', 'submit': 'Submitted to Finance',
                  'validate': 'Checked by Finance', 'approve': 'Approved', 'pay': 'Paid', 'return': 'Sent back to HR', 'cancel': 'Cancelled',
-                 'line_added': 'Line added', 'line_removed': 'Line removed', 'asset': 'Asset decision', 'notice_waived': 'Notice waived'}
+                 'line_added': 'Line added', 'line_removed': 'Line removed', 'asset': 'Asset decision', 'notice_waived': 'Notice waived',
+                 'reset': 'Reset to draft', 'inputs': 'Entries changed', 'deleted': 'Draft deleted'}   # v1.62.11 (EOS settings)
 
 
 def history_rows(st):

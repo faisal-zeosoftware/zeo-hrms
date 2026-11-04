@@ -115,7 +115,7 @@ def asg_extra(o, r):
 
 
 app.reg(Reg('assignment', Assignment, 'Assignment', 'Assignments and secondments', 'Assignments',
-            cols=('number', 'employee', 'kind', 'host_branch', 'department', 'project', 'manager', 'percent', 'start_date', 'end_date', 'status'),
+            cols=('number', 'employee', 'kind', 'host_branch', 'manager', 'percent', 'start_date', 'end_date', 'status'),   # v1.62.0 talent-ops: fits the card (department / project on the record)
             form=('employee', 'kind', 'host_branch', 'department', 'designation', 'project', 'manager', 'percent', 'start_date', 'end_date',
                   'cost_split', 'manager_approves', 'reason', 'notes'),
             number=('assignment', 'ASG'), manage=MANAGE, view=VIEW, own=(('employee', 'emp'), ('manager', 'user')), scope_fn=asg_scope,

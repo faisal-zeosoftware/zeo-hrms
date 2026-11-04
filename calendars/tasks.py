@@ -210,6 +210,8 @@ def accrue_leaves():
                             )
 
                             leave_balance.balance = (leave_balance.balance or 0) + accrual_amount   # v1.10.0: empty balance
+                            leave_balance._lp_kind = 'accrual'   # v1.62.4 (item 79): ledger line by the balance guard (LeavePolicy/signals.py)
+                            leave_balance._lp_note = f'{today:%Y-%m} · leave entitlement accrual'
                             leave_balance.save()
 
                             leave_accrual_transaction.objects.create(
@@ -410,6 +412,8 @@ def reset_leave_balances():
 
                         # **Apply Leave Reset (Update Balance)**
                         leave_balance.balance = final_balance
+                        leave_balance._lp_kind = 'reset'   # v1.62.4 (item 79): ledger line by the balance guard (LeavePolicy/signals.py)
+                        leave_balance._lp_note = f'Yearly reset {today:%d/%m/%Y}: {float(initial_balance):g} → {final_balance:g}'
                         leave_balance.save()
 
                         # **Store Reset Transaction**
@@ -598,6 +602,12 @@ def deduct_expired_carry_forward_leaves():
                     lt_id = policy.leave_type_id or (policy.leave_entitlement.leave_type_id if policy.leave_entitlement_id else None)
                     if not lt_id:
                         continue
+                    try:   # v1.62.4 (item 79): leave types under a leave policy expire their carried days in LeavePolicy.engine
+                        from LeavePolicy.engine import managed_type_ids   # (expire_carry_forward) – both lapsed the same days
+                        if lt_id in managed_type_ids():
+                            continue
+                    except ImportError:
+                        pass
                     expired_transactions = LeaveCarryForwardTransaction.objects.filter(
                         leave_type_id=lt_id,
                         reset_date__lte=expiry_threshold,
@@ -605,20 +615,24 @@ def deduct_expired_carry_forward_leaves():
                     )
 
                     with transaction.atomic():
-                        for leave_transaction in expired_transactions:
-                            emp_balance = emp_leave_balance.objects.filter(
-                                employee=leave_transaction.employee, 
+                        # v1.62.4 (item 79): rows locked and read again, so two runs at the same time cannot lapse them twice
+                        for leave_transaction in expired_transactions.select_for_update():
+                            emp_balance = emp_leave_balance.objects.select_for_update().filter(
+                                employee=leave_transaction.employee,
                                 leave_type=leave_transaction.leave_type
                             ).first()
 
                             if emp_balance:
                                 # Convert both values to Decimal before subtraction
-                                emp_balance.balance = Decimal(str(emp_balance.balance))  
+                                emp_balance.balance = Decimal(str(emp_balance.balance or 0))
                                 leave_transaction.final_carry_forward = Decimal(str(leave_transaction.final_carry_forward))
 
                                 # Deduct expired carry-forward leave from employee leave balance
                                 deduction = min(emp_balance.balance, leave_transaction.final_carry_forward)
                                 emp_balance.balance = float(emp_balance.balance - max(deduction, 0))
+                                # v1.62.4 (item 79): with a 'lapsed' ledger line (balance guard, LeavePolicy/signals.py)
+                                emp_balance._lp_kind = 'lapsed'
+                                emp_balance._lp_note = f'Carried-forward days expired ({leave_transaction.reset_date:%d/%m/%Y})'
                                 emp_balance.save()
 
                                 # Set carry-forward amount to 0 since it has expired

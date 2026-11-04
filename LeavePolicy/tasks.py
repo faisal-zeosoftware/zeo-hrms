@@ -23,6 +23,13 @@ def daily_jobs(today=None, dry=False):
         if ids:
             out['year_end'] = len(engine.run_year_end(today - timedelta(days=1), preview=dry, policy_ids=ids)['lines'])
         out['accrual'] = engine.run_accrual(today - timedelta(days=1), preview=dry)['count']
+    try:   # v1.65.0 (item 93): months whose accrual did not run (server down on the 1st) are credited now – never twice
+        from .leave_rules import catch_up
+        cu = catch_up(today, dry=dry)
+        if cu['months']:
+            out['catch_up'] = cu
+    except Exception:
+        log.exception('leave accrual catch-up failed')
     out['comp_off_lapsed'] = len(compoff.expire(today, preview=dry))
     if not dry:   # v1.11.0: scheduled employee transfers whose date has come
         try:

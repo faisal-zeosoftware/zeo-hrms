@@ -716,8 +716,10 @@ def trip_approved(trip, user):
         Alloc = M('PayrollManagement', 'AirTicketAllocation')
         Req = M('PayrollManagement', 'AirTicketRequest')
         emp = employee(trip.employee_id)
-        al = Alloc.objects.filter(employee_id=trip.employee_id, remaining_amount__gt=0).exclude(status='REJECTED').order_by(
-            'expiry_date').first()
+        # v1.62.3 (items 101, 103): only an allocation a ticket may use (approved, active, not expired, no other request on it)
+        from PayrollPlus.air_rules import request_problem
+        al = next((x for x in Alloc.objects.filter(employee_id=trip.employee_id, remaining_amount__gt=0).exclude(status='REJECTED')
+                   .order_by('expiry_date', 'pk') if request_problem(trip.employee_id, x, date.today()) is None), None)
         if al is not None and emp is not None:
             r = Req.objects.create(document_number=f'{trip.number}-TKT', branch_id=emp.emp_branch_id_id, employee=emp, allocation=al,
                                    request_type='TICKET', request_date=date.today(), departure_date=trip.start_date, return_date=trip.end_date,

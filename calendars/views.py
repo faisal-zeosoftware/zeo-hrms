@@ -301,6 +301,19 @@ class leave_balance_viewset(viewsets.ModelViewSet):
     # ordered by employee code
     queryset = emp_leave_balance.objects.select_related('employee', 'leave_type').filter(employee__is_active=True).order_by('employee__emp_code', 'leave_type__name')
     serializer_class = EmployeeLeaveBalanceSerializer
+
+    def perform_destroy(self, instance):
+        # v1.62.10 (item 170): deleting a balance row is a balance change – the days still on the leave ledger are taken off
+        # with a ledger line first (engine.post), so the ledger and the balance (a new row starts at 0) stay equal
+        from django.db.models import Sum
+        from LeavePolicy import engine
+        Ledger = engine._models()[3]
+        with transaction.atomic():
+            left = round(float(Ledger.objects.filter(employee_id=instance.employee_id, leave_type_id=instance.leave_type_id).aggregate(s=Sum('days'))['s'] or 0), 2)
+            if abs(left) >= 0.005:
+                engine.post(instance.employee_id, instance.leave_type_id, date.today(), 'adjustment', -left,
+                            note='Balance row deleted', user_id=getattr(self.request.user, 'pk', None))
+            instance.delete()
     # permission_classes = [EmpLeaveBalancePermission] 
 
 class Acrualviewset(viewsets.ModelViewSet):
@@ -370,7 +383,15 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
                     tries += 1
 
             # v1.18.0: who entered the request (the employee, or HR on their behalf) – the notice-period rule uses it
-            serializer.save(document_number=document_number, created_by=self.request.user)
+            from LeavePolicy.paid_period import deciding
+            with deciding(self.request):   # v1.62.5 (item 19): HR's answer to "salary already paid" (confirm_paid_period)
+                serializer.save(document_number=document_number, created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        # v1.62.5 (item 19): a change of the dates onto days whose salary is already paid – the same question as a new request
+        from LeavePolicy.paid_period import deciding
+        with transaction.atomic(), deciding(self.request):
+            serializer.save()
             
 
 
@@ -1502,7 +1523,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         return Response(result, status=200)
 class AttendanceRecheckViewSet(viewsets.ModelViewSet):
-    queryset = AttendanceRecheck.objects.all()
+    queryset = AttendanceRecheck.objects.select_related('attendance__employee').all()   # v1.62.10 (item 171): names in the list
     serializer_class = AttendanceRecheckSerializer
     @staticmethod
     def parse_date(date_string):
@@ -1567,80 +1588,62 @@ class AttendanceRecheckViewSet(viewsets.ModelViewSet):
         )
     
     def send_recheckin_email(self, attendance):
-
+        """v1.62.1 (tester 30-10 item 198): sent through the company's own SMTP settings (Settings › E-mail); before, the
+        server's default mail settings were used with the company address as sender, the SMTP server refused it and the
+        screen got a Server Error (500). True when sent, False when the employee has no e-mail or no SMTP is set up."""
+        from django.core.mail import get_connection
         employee = attendance.employee
-        if not employee or not employee.emp_personal_email:
-            print("D")
+        to = employee and (employee.emp_personal_email or getattr(employee, 'emp_company_email', None))
+        if not to:
             return False
-
         config = EmailConfiguration.objects.filter(is_active=True).first()
-        if not config:
+        if not config or not config.email_host_user:
             return False
-
-        subject = "Attendance Check-in Confirmation"
-
-        body = f"""
-            Dear {employee.emp_first_name} {employee.emp_last_name},
-
-            This is to inform you that your attendance has been marked for recheck.
-
-            Regards,
-            HR Team
-            """
-
-        EmailMessage(
-            subject,
-            body,
-            config.email_host_user,
-            [employee.emp_personal_email],
-        ).send(fail_silently=False)
-
+        conn = get_connection(host=config.email_host, port=config.email_port, username=config.email_host_user,
+                              password=config.email_host_password, use_tls=config.email_use_tls, fail_silently=False, timeout=20)
+        name = ' '.join(x for x in [employee.emp_first_name, employee.emp_last_name] if x)
+        body = (f"Dear {name},\n\nHR asks you to confirm where you are now: open My attendance (or the mobile app) and press "
+                f"Recheck location.\n\nRegards,\nHR Team")
+        EmailMessage("Please confirm your location", body, config.email_host_user, [to], connection=conn).send(fail_silently=False)
         return True
+
     @action(detail=False, methods=['post'], url_path='email')
     def send_email(self, request):
+        """Recheck screen "Send": the employee is asked to confirm the location (in-app notification + e-mail when the
+        company's SMTP is set up). v1.62.1: never a 500 – a mail problem is said in the answer."""
+        import logging
+        from Translations.i18n import tr
         emp_code = request.data.get("emp_code")
-
         if not emp_code:
-            return Response(
-                {"error": "emp_code is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        attendance = (
-            Attendance.objects
-            .select_related("employee")
-            .filter(
-                employee__emp_code__iexact=emp_code,
-                check_in_time__isnull=False
-            )
-            .order_by("-date")
-            .first()
-        )
-
+            return Response({"emp_code": [tr("Choose the employee.")], "error": tr("Choose the employee."), "detail": tr("Choose the employee.")}, status=status.HTTP_400_BAD_REQUEST)   # v1.62.10 (item 171): next to the field
+        # v1.62.1 (tester 30-10 item 198): the Recheck screen sends the employee's ID (a number) as emp_code –
+        # emp_code__iexact=<number> is UPPER(integer) in PostgreSQL → Server Error (500). A code or an ID is accepted.
+        base = Attendance.objects.select_related("employee").filter(check_in_time__isnull=False)
+        attendance = base.filter(employee__emp_code__iexact=str(emp_code)).order_by("-date").first()
+        if attendance is None and str(emp_code).isdigit():
+            attendance = base.filter(employee_id=int(emp_code)).order_by("-date").first()
         if not attendance:
-            return Response(
-                {"error": "Employee has not checked in"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
+            m = tr("The employee has not clocked in.")
+            return Response({"emp_code": [m], "error": m, "detail": m}, status=status.HTTP_404_NOT_FOUND)   # v1.62.10 (item 171): next to the field
+        e = attendance.employee
         try:
-            email_sent = self.send_recheckin_email(attendance)
-        except Exception as e:
-            return Response(
-                {"error": f"Failed to send email: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            from zeo.module_helpers import notify
+            notify(employee=e, title=tr('Please confirm your location'),
+                   message=tr('HR asks you to confirm where you are now: open My attendance and press Recheck location ({0}).', attendance.date.strftime('%d/%m/%Y')),
+                   notification_type='attendance', template_type='attendance_recheck')
+        except Exception:
+            logging.getLogger(__name__).warning('recheck notification not sent', exc_info=True)
+        name = ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x)
+        try:
+            sent = self.send_recheckin_email(attendance)
+            note = tr('An e-mail was sent too.') if sent else tr('No e-mail was sent (no e-mail address or the company e-mail settings are not set up).')
+        except Exception as x:
+            logging.getLogger(__name__).warning('recheck e-mail not sent: %s', x)
+            sent, note = False, tr('The e-mail could not be sent – check Settings › E-mail settings.')
+        msg = tr('{0} was asked to confirm the location.', name) + ' ' + note
+        return Response({"message": msg, "detail": msg, "email_sent": sent}, status=status.HTTP_200_OK)
 
-        if not email_sent:
-            return Response(
-                {"error": "Employee email not available"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
-        return Response(
-            {"message": "Attendance Recheck email sent successfully"},
-            status=status.HTTP_200_OK
-        )
 class ImportAttendanceViewSet(viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class= ImportAttendanceSerializer
@@ -2169,7 +2172,9 @@ class LvApprovalViewset(viewsets.ModelViewSet):
             approved_days = None
 
         try:
-            approval.approve(note=note, approved_days=approved_days)
+            from LeavePolicy.paid_period import deciding
+            with deciding(request):   # v1.62.5 (item 19): last approval on days whose salary is already paid
+                approval.approve(note=note, approved_days=approved_days)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2307,7 +2312,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
                 message,
                 None,
                 [delegate_user.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
             created_notification = send_notification_email(
                 user=delegate_user,
@@ -2357,7 +2362,7 @@ class LvApprovalViewset(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------
@@ -3691,20 +3696,23 @@ class ImmediateRejectAPIView(APIView):
         if not has_code(request, 'add_lv_cancellation', 'delete_lv_cancellation'):
             return Response({'error': 'You may not cancel approved leave.'}, status=status.HTTP_403_FORBIDDEN)
 
-        # Perform rejection
-        if approval:
-            approval.status = LeaveApproval.REJECTED
-            approval.rejection_reason = rejection_reason
-            approval.note = note
-            approval.save()
+        # v1.62.5 (item 19): one step – a cancellation refused because the salary of its days is already paid changes nothing
+        from LeavePolicy.paid_period import deciding
+        with transaction.atomic(), deciding(request):
+            # Perform rejection
+            if approval:
+                approval.status = LeaveApproval.REJECTED
+                approval.rejection_reason = rejection_reason
+                approval.note = note
+                approval.save()
 
-        # Also change the employee_leave_request status to REJECTED
-        # leave_request.status = employee_leave_request.status='rejected'
-        leave_request.status = 'rejected'
-        leave_request.save()
+            # Also change the employee_leave_request status to REJECTED
+            # leave_request.status = employee_leave_request.status='rejected'
+            leave_request.status = 'cancelled'   # v1.65.0 (item 83): an approved leave cancelled has its own status (was 'rejected')
+            leave_request.save()
 
-        # Restore leave balance
-        leave_request.restore_leave_balance()
+            # Restore leave balance
+            leave_request.restore_leave_balance()
 
         return Response(
             {
@@ -4137,7 +4145,7 @@ class LateinEarlyoutApprovalViewset(viewsets.ModelViewSet):
                 message,
                 None,
                 [delegate_user.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
             created_notification = send_notification_email(
                 user=delegate_user,
@@ -4185,7 +4193,7 @@ class LateinEarlyoutApprovalViewset(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------
@@ -4639,8 +4647,9 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
                 end_date__gte=start_date
             ).select_related('leave_type')
 
-            weekend_days = get_employee_weekend_days(employee)
-            holiday_dates = get_employee_holidays(employee, start_date, end_date)
+            # v1.62.6 (item 22): roster > shift override > shift pattern > weekend calendar (calendars/workdays.py)
+            from .workdays import Plan as _WPlan
+            _wplan = _WPlan(start_date, end_date, [employee.pk])
 
             calendar_data = []
             current_date = start_date
@@ -4671,12 +4680,12 @@ class AttendanceCalendarViewSet(viewsets.ModelViewSet):
                         leave_name = current_leave.leave_type.name if current_leave.leave_type else None
                         is_half_day = current_leave.dis_half_day
                         remarks = f"Leave approved: {leave_name}"
-                    elif current_date in holiday_dates:
+                    elif _wplan.day(employee, current_date).holiday:   # v1.62.6 (item 22)
                         status = "Holiday"
                         leave_name = None
                         is_half_day = False
                         remarks = "Auto-determined"
-                    elif weekday in weekend_days:
+                    elif _wplan.day(employee, current_date).off:       # v1.62.6 (item 22)
                         status = "Weekend"
                         leave_name = None
                         is_half_day = False

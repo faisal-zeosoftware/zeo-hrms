@@ -446,8 +446,21 @@ def send_payslip_email(payslip):
             _tpl = _tpl_pdf(payslip)
         except ImportError:
             pass
+        _name = f'payslip_{payslip.employee.emp_code}_{payslip.payroll_run.year}{payslip.payroll_run.month:02d}.pdf'
+        try:   # v1.62.11 (item 230): password-protected payslip (company setting) – never sent unprotected when the password cannot be made
+            from PayrollPlus import payslip_lock as _lock
+            if _lock.for_email(payslip):
+                _raw = _tpl or open(payslip.payslip_pdf.path, 'rb').read()
+                try:
+                    _tpl = _lock.protect(payslip, _raw)
+                except _lock.NoPassword as _np:
+                    logger.warning(f"Skipping email: {_np}")
+                    return False
+                email.body = email.body + '\n\n' + _lock.email_note(payslip)
+        except ImportError:
+            pass
         if _tpl:
-            email.attach(f'payslip_{payslip.employee.emp_code}_{payslip.payroll_run.year}{payslip.payroll_run.month:02d}.pdf', _tpl, 'application/pdf')
+            email.attach(_name, _tpl, 'application/pdf')
         else:
             email.attach_file(payslip.payslip_pdf.path)
         email.send()
@@ -710,7 +723,11 @@ def get_employee_benefit_liability(employee, as_of_date):
         branch=employee.emp_branch_id
     ).first()
 
-    pay_structure = PayStructure.objects.filter(branch=employee.emp_branch_id).first()
+    try:   # v1.62.2 (item 59): the employee's own pay structure (most specific match), not the branch's first
+        from .signals import structure_for
+        pay_structure = structure_for(employee)
+    except Exception:
+        pay_structure = PayStructure.objects.filter(branch=employee.emp_branch_id).first()
     fixed_days = Decimal(str(pay_structure.fixed_working_days)) if pay_structure and pay_structure.fixed_working_days else Decimal("30")
     calendar_days = Decimal("30")  # Default to 30, could be updated based on calendar month
 

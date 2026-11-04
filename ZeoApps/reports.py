@@ -63,6 +63,16 @@ def _branch_pick(run, qs, path):
     b = getattr(run, 'branches', None)
     if b is None or not path:
         return qs
+    # v1.62.0 (pending item 11): a record with no branch of its own (People enrolments, claims, recognitions, 360°
+    # reviews …) belongs to its employee's branch – a branch user saw those of every branch
+    try:
+        emp = qs.model._meta.get_field('employee')
+        emp_ok = getattr(emp, 'related_model', None) is not None and emp.related_model._meta.label == 'EmpManagement.emp_master'
+    except Exception:
+        emp_ok = False
+    if path == 'branch' and emp_ok:
+        return qs.filter(Q(branch__in=b) | Q(branch__isnull=True, employee__emp_branch_id__in=b)
+                         | Q(branch__isnull=True, employee__isnull=True))
     return qs.filter(Q(**{f'{path}__in': b}) | Q(**{f'{path}__isnull': True}))
 
 

@@ -266,6 +266,11 @@ def last_working_day(employee):
             days.append(r.last_working_date)
     except Exception:
         pass
+    # v1.62.11 (item 228): a resignation of an earlier employment (last working day before the current joining date – re-hired) does
+    # not end this one (the same rule as the 1.62.4 leave accrual, LeavePolicy/engine.exit_date)
+    _j = getattr(employee, 'emp_joined_date', None)
+    if _j:
+        days = [d for d in days if d >= _j]
     try:
         EI = apps.get_model("EmployeeProfile", "EmploymentInfo")
         i = EI.objects.filter(employee_id=employee.pk).first()
@@ -284,7 +289,10 @@ def _settlement_pays_salary(employee, period_start):
         X = apps.get_model('PayrollPlus', 'ExitSettlement')
     except LookupError:
         return False
-    for st in X.objects.filter(employee_id=employee.pk).exclude(status='cancelled').only('salary_from', 'lines'):
+    _j = getattr(employee, 'emp_joined_date', None)   # v1.62.11 (item 228): the settlement of an earlier employment (re-hired) pays nothing now
+    for st in X.objects.filter(employee_id=employee.pk).exclude(status='cancelled').only('salary_from', 'lines', 'last_working_date'):
+        if _j and st.last_working_date and st.last_working_date < _j:
+            continue
         if st.salary_from and st.salary_from <= period_start and any(l.get('key') == 'salary' and l.get('amount') for l in (st.lines or [])):
             return True
     return False
@@ -319,7 +327,7 @@ def is_uae_national(employee):
         return 'EMIRAT' in n or n in ('UAE', 'UNITED ARAB EMIRATES')
 
 
-def pension_variables(employee, start_date=None, end_date=None):
+def pension_variables(employee, start_date=None, end_date=None, rows=None):
     """v1.18.0 – GPSSA figures for payroll formulas:
        is_national            1 for an Emirati employee of a UAE company, else 0
        pension_salary         contribution salary: basic + housing + transport of the active salary (min 3,000, max 70,000)
@@ -334,12 +342,35 @@ def pension_variables(employee, start_date=None, end_date=None):
     sal = sum((Decimal(str(r.amount or 0)) for r in ESS.objects.filter(employee=employee, is_active=True,
                                                                          component__payroll_category__in=PENSION_CATEGORIES,
                                                                          component__component_type='addition')), Decimal('0'))
+    if rows is not None:   # v1.62.2 (item 45): the payroll passes the rows with the salary valid in the pay period
+        sal = sum((Decimal(str(r.amount or 0)) for r in rows if r.component.payroll_category in PENSION_CATEGORIES
+                   and r.component.component_type == 'addition'), Decimal('0'))
     # v1.59.0: the rates and limits in force on the first day of the pay period (Payroll › Legal rates; built-in values otherwise)
     try:
         from PayrollPlus.legal import rate as _rate
     except ImportError:
         _rate = lambda k, on=None, default=None: Decimal(str(default))
     on = None       # the rule date: the 1st of the pay month in a payroll run
+    try:   # v1.62.11 (item 229): a branch on ADPF – the pension formulas get the ADPF figures (contract salary, 11 % / 5 % and 15 %)
+        from PayrollPlus import branch_schemes as _bsch
+        if _bsch.is_adpf(employee):
+            from PayrollPlus.legal import adpf_terms
+            _gross = (sum((Decimal(str(r.amount or 0)) for r in rows if r.component.component_type == 'addition'), Decimal('0')) if rows is not None else
+                      sum((Decimal(str(r.amount or 0)) for r in ESS.objects.filter(employee=employee, is_active=True, component__component_type='addition')), Decimal('0')))
+            t = adpf_terms(employee, _gross, on)
+            out['pension_salary'] = t['base'].quantize(Decimal('0.01'))
+            out['pension_employee_rate'], out['pension_employer_rate'] = t['emp'], t['er']
+            return out
+    except ImportError:
+        pass
+    try:   # v1.62.3: old / new law limits and the employer's 15 % from AED 20,000 (new law) – PayrollPlus.legal.gpssa_terms
+        from PayrollPlus.legal import gpssa_terms
+        t = gpssa_terms(employee, sal, on)
+        out['pension_salary'] = t['base'].quantize(Decimal('0.01'))
+        out['pension_employee_rate'], out['pension_employer_rate'] = t['emp'], t['er']
+        return out
+    except ImportError:
+        pass
     if sal:
         sal = min(max(sal, _rate('ae_gpssa_salary_min', on, '3000')), _rate('ae_gpssa_salary_max', on, '70000'))
     joined = getattr(employee, 'emp_joined_date', None)
@@ -650,6 +681,13 @@ def update_employee_salary_structure(sender, instance, created, **kwargs):
         
         # v1.16.0 (D15): branch / department / designation / category read with the employees (used by every lookup)
         employees = EmpMaster.objects.all().select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id')
+        # v1.62.1: a component of one branch is worked out for that branch's employees (and anyone it was given to by hand) –
+        # it was added to every employee of the company, so each new branch (whose components are copied) gave all
+        # employees a second set of rows, and the new branch could then not be deleted
+        if getattr(instance, 'branch_id', None):
+            from django.db.models import Q
+            employees = employees.filter(Q(emp_branch_id_id=instance.branch_id) |
+                                         Q(pk__in=EmployeeSalaryStructure.objects.filter(component=instance).values('employee_id'))).distinct()
 
         from .perf import payroll_cache   # v1.16.0 (D15): one shift plan / rule / calendar read for all employees
         from django.db import transaction
@@ -746,11 +784,10 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
 
     # v1.16.0 (D15): the branch's payroll settings once per run (PayrollManagement.perf)
     from .perf import memo as _memo
-    pay_structure = _memo(('pay_structure', employee.emp_branch_id_id), lambda: (
-        PayStructure.objects
-        .filter(branch=employee.emp_branch_id)
-        .first()
-    ))
+    # v1.62.2 (item 59): the employee's own pay structure (most specific match: designation / category / department / branch –
+    # the one the payroll run uses for the employee's days), not the first structure of the branch – with two pay structures in
+    # a branch the formulas got the fixed days / overtime source of the other group
+    pay_structure = _memo(('pay_structure_for', employee.pk), lambda: structure_for(employee))
 
     fixed_days = (
         pay_structure.fixed_working_days
@@ -829,18 +866,22 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
     # AIR TICKET ENCASHMENT
     # ========================================================
 
-    variables["air_ticket_encashment"] = (
-        AirTicketRequest.objects
-        .filter(
+    # v1.62.3 (items 101, 102, 103): only cash payouts payroll may pay (own, approved, not expired allocation whose ticket was not
+    # taken) – the same rule as the payout below, so a formula component air_ticket_encashment never pays a refused payout
+    try:
+        from PayrollPlus.air_rules import payout_problem as _v1623_payout_problem
+    except ImportError:
+        _v1623_payout_problem = lambda _t: None
+    variables["air_ticket_encashment"] = sum(
+        (Decimal(str(_t.allocation.amount or "0.00")) for _t in AirTicketRequest.objects
+         .filter(
             employee=employee,
             request_type="ENCASHMENT",
             status="APPROVED",
             request_date__range=(start_date, end_date),
-        )
-        .aggregate(
-            total_encashment=Sum("allocation__amount")
-        )["total_encashment"]
-        or Decimal("0.00")
+         ).select_related("allocation")
+         if _v1623_payout_problem(_t) is None),
+        Decimal("0.00")
     )
 
     # ========================================================
@@ -867,18 +908,26 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
 
     # v1.18.0: employees on a published roster (hospital shifts) have their rest days in the roster, not on Saturday / Sunday –
     # a rostered weekend shift is a working day and a rostered day off is their rest day
-    planned = _memo(('roster_days', employee.pk, start_date, end_date), lambda: _roster_days(employee, start_date, end_date))
+    # v1.62.6 (item 22): the roster days are part of the working-day plan below (_roster_days no longer read here)
+
+    # v1.62.6 (item 22): one answer per day (calendars/workdays.py): roster > shift override > shift pattern > weekend calendar
+    # (most specific weekend assignment wins, category counted). Before: roster / override, else the weekend calendar of the
+    # first assignment by id (category ignored, a shift pattern's days off not seen).
+    from .perf import working_day_plan as _wd_plan
+    _plan = _wd_plan(employee, start_date, end_date)
 
     def _rest_day(d):
         d0 = d.date() if isinstance(d, datetime) else d
-        if d0 in planned:
-            return planned[d0]
-        return d.strftime("%A") in weekend_days
+        return _plan.day(employee, d0).off
+
+    def _holiday(d):
+        d0 = d.date() if isinstance(d, datetime) else d
+        return _plan.day(employee, d0).holiday
 
     for single_date in daterange(start_date, end_date):
 
         is_weekend = _rest_day(single_date)
-        is_holiday = single_date in holiday_dates
+        is_holiday = _holiday(single_date)   # v1.62.6 (item 22)
 
         attended = (single_date.date() if isinstance(single_date, datetime) else single_date) in _att_dates
 
@@ -922,7 +971,8 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
     try:
         _wk = set(weekend_days)    # v1.16.0 (D15): same calendars as above (were read again)
         _hol = set(holiday_dates)
-        variables["scheduled_working_days"] = Decimal(sum(1 for d in daterange(start_date, end_date) if not _rest_day(d) and d not in _hol))
+        variables["scheduled_working_days"] = Decimal(sum(1 for d in daterange(start_date, end_date)
+                                                         if _plan.day(employee, d.date() if isinstance(d, datetime) else d).working))   # v1.62.6 (item 22)
     except Exception:
         variables["scheduled_working_days"] = Decimal("0")
     variables["present_days"] = Decimal(str(working_days))
@@ -1113,6 +1163,15 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
         )
         .select_related("component")
     )
+    # v1.62.2 (item 45): the amounts valid in the pay period (valid_from / valid_until and dated salary changes, shared by days
+    # when a change starts inside the period) – the current amount was used for every month, so an increase effective March
+    # 2027 was already paid in November 2026. Rows are copies (never saved).
+    try:
+        from .salary_dates import period_rows as _v1622_period_rows
+        salary_structs = _v1622_period_rows(employee, start_date, end_date, list(salary_structs))
+    except Exception:
+        logger.exception("salary valid in the period failed for %s – current amounts used", employee.pk)
+        salary_structs = list(salary_structs)
 
     # ========================================================
     # FIXED COMPONENTS
@@ -1274,13 +1333,13 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
     # v1.31.0: statutory schemes of the company country (GOSI, PASI, EPF, ESI, TDS …)
     try:
         from PayrollPlus.statutory import variables as _stat_vars
-        variables.update(_stat_vars(employee))
+        variables.update(_stat_vars(employee, rows=salary_structs))   # v1.62.2 (item 45): salary valid in the period
     except Exception:
         logger.exception("statutory variables failed for %s", employee.pk)
 
     # v1.18.0: UAE nationals – GPSSA pension instead of the Labour Law gratuity
     try:
-        variables.update(pension_variables(employee, start_date, end_date))
+        variables.update(pension_variables(employee, start_date, end_date, rows=salary_structs))   # v1.62.2 (item 45)
         if variables.get('is_national') == Decimal('1'):
             for _k in ('gratuity_days', 'monthly_gratuity_accrual', 'total_gratuity_liability'):
                 if _k in variables:
@@ -1805,6 +1864,108 @@ def _ensure_deduction_component(SalaryComponent, category, name, code, branch):
                                           description=f'Default {name} component', show_in_payslip=True)
 
 
+# v1.62.2 (items 42, 43, 53): a payslip line that several items share (two loans, two advances …) is added up – it was
+# written with update_or_create, so each item replaced the one before and only the last was deducted / paid.
+def _v1622_put_line(PayslipComponent, payslip, comp, amount, add):
+    """Set the line of `comp` to `amount`, or add `amount` to it when `add` (an earlier item of the same kind is on it)."""
+    pc, made = PayslipComponent.objects.get_or_create(payslip=payslip, component=comp, defaults={"amount": amount})
+    if not made:
+        pc.amount = (Decimal(str(pc.amount or "0.00")) + amount) if add else amount
+        pc.save(update_fields=["amount"])
+    return pc
+
+
+# v1.62.2 (item 47): the instalment of a loan is never more than what is still owed, and a rounding leftover (less than 1.00,
+# e.g. 0.01 of 3 × 333.33 on 1,000) is taken with the instalment that leaves it, so the loan closes. Before, the full EMI was
+# taken every month (400 × 3 = 1,200 on a 1,000 loan) and 0.01 stayed open for ever (all instalments counted).
+LOAN_LEFTOVER = Decimal("1.00")
+# v1.62.3 (item 108): the statuses of a running loan that payroll deducts – a loan marked Disbursed or In Progress was skipped (only
+# Approved was deducted). Paused stays out (no instalment while paused); Pending / Rejected / Closed are not running.
+LOAN_DEDUCTED = ("Approved", "Disbursed", "In Progress")
+
+
+def _v1622_loan_instalment(loan, repayment_count, balance):
+    emi = Decimal(str(loan.emi_amount or "0.00"))
+    balance = Decimal(str(balance or "0.00"))
+    if balance <= 0 or emi <= 0:
+        return Decimal("0.00")
+    # v1.62.11 (item 259): after the last planned instalment a leftover above 1.00 (rounding, a skipped / reduced month) is no longer
+    # left open for ever: it is deducted at the instalment amount, the last time only the remainder, until the loan is cleared
+    # (the payslip notes "Loan balance carried on", HR is told – _v16211_loan_carried). A leftover of 1.00 or less is taken with
+    # the instalment that leaves it (before: only less than 1.00 – 3 × 333.00 on 1,000 left 1.00 open for ever).
+    amount = min(emi, balance)
+    if Decimal("0.00") < balance - amount <= LOAN_LEFTOVER:
+        amount = balance
+    return amount
+
+
+def _v16211_loan_carried(loan, payslip, run, amount, left_before, left_after):
+    """v1.62.11 (item 259): an instalment taken after the planned instalments – payslip note, loan history line, HR notice (once a
+    loan and month)."""
+    from Translations.i18n import tr
+    ref = loan.document_number or f"#{loan.pk}"
+    try:
+        from . import payroll_guards as _g
+        _g._add_note(payslip.pk, "loan_carry", {"loan": ref, "loan_id": loan.pk, "left": str(left_before), "deducted": str(amount),
+                                              "after": str(left_after)})
+    except Exception:
+        logger.exception("loan carry note of payslip %s", payslip.pk)
+    try:
+        from PayrollPlus.models import LoanEvent
+    except ImportError:
+        return
+    month = f"{int(run.month):02d}/{run.year}"
+    tag = f"[carry {month}]"
+    if LoanEvent.objects.filter(loan_id=loan.pk, kind="carry", note__startswith=tag).exists():
+        return   # the run calculated again: noted and told once
+    LoanEvent.objects.create(loan_id=loan.pk, kind="carry", date=run.payment_date or date.today(), amount=amount,
+                             balance_after=left_after, old_period=loan.repayment_period, user_name="Payroll",
+                             note=(f"{tag} " + tr("Balance left after the last planned instalment: {0} – {1} deducted in the {2} payroll, {3} still owed.",
+                                                  f"{left_before:,.2f}", f"{amount:,.2f}", month, f"{left_after:,.2f}"))[:255])
+    try:
+        from SelfService.services import users_with, notify
+        emp = loan.employee
+        name = " ".join(x for x in (emp.emp_first_name, emp.emp_last_name) if x)
+        for u in users_with(emp.emp_branch_id_id, {"change_loanapplication", "add_loanapplication", "change_payrollrun"}):
+            notify(user=u, title=tr("Loan balance carried on"),
+                   message=tr("Loan {0} of {1}: {2} was still owed after the last planned instalment; {3} deducted in the {4} payroll, {5} left.",
+                              ref, name, f"{left_before:,.2f}", f"{amount:,.2f}", month, f"{left_after:,.2f}"))
+    except Exception:
+        logger.exception("HR notice of the loan carried on (%s)", loan.pk)
+
+
+# v1.62.2 (item 44): what a payslip used up besides loan instalments – advances (Deducted), air-ticket encashments (PROCESSED,
+# allocation used up), general requests (is_processed), monthly inputs (set back to 0) – is noted per payslip in the company's
+# CompanyOption store (JSON, no new column). When the payslip is deleted (run deleted / recalculated) all of it is put back, so
+# the re-run pays / deducts it again, exactly once. Leave encashments are linked by their payroll_run and put back too.
+def _v1622_ticket_cash_component(SalaryComponent, branch):
+    """v1.62.2 (item 53): the payslip line of an air-ticket cash payout (made once per branch, like Loan / Advance Deduction)."""
+    comp = (SalaryComponent.objects.filter(code="ATENC", branch=branch).first()
+            or SalaryComponent.objects.filter(code="ATENC", branch__isnull=True).first()
+            or SalaryComponent.objects.filter(name="Air Ticket Encashment", branch=branch).first())
+    if comp:
+        return comp if comp.payroll_category == "air_ticket" else None   # the code is used for something else: leave it to HR
+    return SalaryComponent.objects.create(name="Air Ticket Encashment", code="ATENC", branch=branch, component_type="addition",
+                                          payroll_category="air_ticket", component_value_type="variable", show_in_payslip=True,
+                                          description="Default Air Ticket Encashment component (cash payout of an air ticket)")
+
+
+def _v1622_consumed_key(payslip_id):
+    return f"v1622_payslip_consumed:{payslip_id}"
+
+
+def _v1622_save_consumed(payslip, consumed):
+    if not any(consumed.values()):
+        return
+    try:
+        from django.db import transaction as _tx
+        CO = apps.get_model("ZeoApps", "CompanyOption")
+        with _tx.atomic():   # own savepoint: a failure here never breaks the payroll run's transaction
+            CO.objects.update_or_create(key=_v1622_consumed_key(payslip.pk), defaults={"value": consumed})
+    except Exception:
+        logger.exception("could not note what payslip %s used up", payslip.pk)
+
+
 def process_payroll(instance, employees_qs, start_date, end_date, total_days):
     """v1.59.0: the legal rules in force on the 1st of the run's month (a payroll period from the 26th of the month before
     still takes the rules of the pay month), so a re-run of a past month keeps that month's rates."""
@@ -1987,6 +2148,9 @@ def _process_payroll(
 
             variables = {}
 
+        if _pp_skip_events and variables:   # v1.62.3 (item 109): cash payouts are paid once a month, like loans / advances
+            variables["air_ticket_encashment"] = Decimal("0.00")
+
         # ====================================================
         # UNPAID LEAVE
         # ====================================================
@@ -2141,6 +2305,12 @@ def _process_payroll(
             )
             .select_related("component")
         )
+        # v1.62.2 (item 45): amounts valid in the pay period (valid_from / valid_until, dated salary changes shared by days)
+        try:
+            from .salary_dates import period_rows as _v1622_period_rows
+            salary_structs = _v1622_period_rows(employee, start_date, end_date, list(salary_structs))
+        except Exception:
+            logger.exception("salary valid in the period failed for %s – current amounts used", employee.pk)
         # v1.62.0: a company with one component set per branch (BAS, GTY, GPSSA … in each branch) gave every employee the formula
         # components of every branch – each was paid / deducted once per branch. When the employee has the same component code
         # more than once, only one counts: the one of the employee's branch, else the company-wide one, else the first. A component
@@ -2153,11 +2323,35 @@ def _process_payroll(
                 _by_code[_k] = (_rank, _s)
         salary_structs = [v[1] for v in _by_code.values()]
 
+        # v1.62.2 (item 50): formula components in dependency order; one that uses another formula component gets that
+        # component's amount on this payslip (pro-rated), unless it is pro-rated itself (Deduct leave) – then the full-month
+        # values, so it is pro-rated once. (A joiner's B = A × 0.1 was 1,890 – A's first-pass full-month value – not 945.)
+        # v1.62.2 (item 41): a pension formula component (pension_employee_rate …) is not deducted when the employee has the
+        # statutory scheme component for the same contribution (ST_GPSSA) – the CountryPack statutory scheme wins.
+        from . import payroll_guards as _v1622_guards
+        try:
+            salary_structs = _v1622_guards.payroll_order(salary_structs)
+            _v1622_replaced = _v1622_guards.pension_duplicates(salary_structs)
+        except Exception:
+            logger.exception("formula order / statutory duplicates failed for %s", employee.pk)
+            _v1622_replaced = {}
+        _v1622_on_slip = {}
+
         for salary_structure in salary_structs:
 
             comp = salary_structure.component
 
             amount = Decimal("0.00")
+
+            if comp.pk in _v1622_replaced:   # v1.62.2 (item 41): replaced by the statutory scheme – not deducted twice
+                for _n in _v1622_guards.names_of(comp):
+                    _v1622_on_slip[_n] = Decimal("0.00")
+                try:
+                    _v1622_guards.note_replaced(payslip, comp, _v1622_replaced[comp.pk])
+                except Exception:
+                    logger.exception("note of replaced component failed")
+                logger.info(f"{employee.emp_code}: {comp.name} replaced by {_v1622_replaced[comp.pk].name} (statutory scheme)")
+                continue
 
             # -----------------------------------------------
             # Calculate component
@@ -2191,12 +2385,18 @@ def _process_payroll(
                         str(
                             evaluate_formula(
                                 comp.formula,
-                                variables,
+                                # v1.62.2 (item 50): pro-rated amounts of the formula components before it
+                                variables if (getattr(comp, "deduct_leave", False) or not _v1622_on_slip)
+                                else {**variables, **_v1622_on_slip},
                                 employee,
                                 comp
                             )
                         )
                     )
+                    # v1.62.2 (item 45): a formula component valid only part of the period (valid_from / valid_until)
+                    _share = getattr(salary_structure, "v1622_share", None)
+                    if _share is not None and _share < 1:
+                        amount = (amount * _share).quantize(Decimal("0.01"))
 
                 # ============================================
                 # VARIABLE WITHOUT FORMULA
@@ -2260,6 +2460,9 @@ def _process_payroll(
                     "amount": amount
                 }
             )
+            if comp.component_value_type != "fixed" and comp.formula:   # v1.62.2 (item 50)
+                for _n in _v1622_guards.names_of(comp):
+                    _v1622_on_slip[_n] = amount
 
             logger.debug(
                 f"Component calculated: "
@@ -2274,7 +2477,10 @@ def _process_payroll(
         # ====================================================
         # GENERAL REQUESTS
         # ====================================================
-        
+
+        # v1.62.2 (item 44): what this payslip uses up – put back when the payslip is deleted (_payslip_deleted_items)
+        _used = {"advances": [], "tickets": [], "requests": [], "inputs": []}
+
         approved_requests = (
             GeneralRequest.objects
             .filter(
@@ -2288,7 +2494,8 @@ def _process_payroll(
             )
         )
 
-        for request in approved_requests:
+        _v16211_req_lines = {}   # v1.62.11 (item 257): {component id: [request numbers]} paid on this payslip
+        for request in approved_requests.order_by("pk"):
 
             comp = (
                 request.request_type.salary_component
@@ -2308,13 +2515,11 @@ def _process_payroll(
             # Store component
             # -----------------------------------------------
 
-            PayslipComponent.objects.update_or_create(
-                payslip=payslip,
-                component=comp,
-                defaults={
-                    "amount": amount
-                }
-            )
+            # v1.62.11 (item 257): two approved requests of the same type (two expense claims) are both paid – one line with the
+            # sum and both references (payslip note); before, the second request replaced the first (400 + 600 → 600) while both
+            # were marked processed
+            _v1622_put_line(PayslipComponent, payslip, comp, amount, add=comp.pk in _v16211_req_lines)
+            _v16211_req_lines.setdefault(comp.pk, []).append(request.document_number or str(request.pk))
 
             # -----------------------------------------------
             # Mark request processed
@@ -2327,6 +2532,15 @@ def _process_payroll(
                     "is_processed"
                 ]
             )
+            _used["requests"].append(request.pk)   # v1.62.2 (item 44)
+        for _cid, _refs in _v16211_req_lines.items():   # v1.62.11 (item 257): the references of a line that pays several requests
+            if len(_refs) > 1:
+                try:
+                    _v16211_c = SalaryComponent.objects.filter(pk=_cid).values_list("name", flat=True).first() or ""
+                    from . import payroll_guards as _v16211_g
+                    _v16211_g._add_note(payslip.pk, "requests", {"component_id": _cid, "name": _v16211_c, "refs": _refs})
+                except Exception:
+                    logger.exception("note of the requests paid on payslip %s", payslip.pk)
 
         # ====================================================
         # LOANS
@@ -2336,13 +2550,15 @@ def _process_payroll(
             LoanRequest.objects
             .filter(
                 employee=employee,
-                status="Approved"
+                status__in=LOAN_DEDUCTED   # v1.62.3 (item 108): Disbursed / In Progress loans too (only Approved before)
             )
         )
         if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
             active_loans = LoanRequest.objects.none()
 
-        for loan in active_loans:
+        _loan_lines = set()   # v1.62.2 (item 42): loan lines already on this payslip – the next loan's instalment is added
+
+        for loan in active_loans.order_by("pk"):
 
             repayment_count = (
                 LoanRepayment.objects
@@ -2352,16 +2568,19 @@ def _process_payroll(
                 .count()
             )
 
-            if repayment_count >= loan.repayment_period:
+            # v1.62.2 (item 47): the instalment is capped at the balance still owed; a rounding leftover closes the loan
+            # (after the last instalment only a leftover below 1.00 is still taken)
+            _paid_so_far = (
+                LoanRepayment.objects.filter(loan=loan).aggregate(total=Sum("amount_paid"))["total"] or Decimal("0.00")
+            )
+            emi_amount = _v1622_loan_instalment(
+                loan, repayment_count,
+                Decimal(str(loan.amount_requested or "0.00")) - Decimal(str(_paid_so_far))
+            )
+
+            if emi_amount <= 0:
 
                 continue
-
-            emi_amount = Decimal(
-                str(
-                    loan.emi_amount
-                    or "0.00"
-                )
-            )
 
             # -----------------------------------------------
             # Find loan component using payroll_category
@@ -2395,13 +2614,11 @@ def _process_payroll(
 
             if loan_component:
 
-                PayslipComponent.objects.update_or_create(
-                    payslip=payslip,
-                    component=loan_component,
-                    defaults={
-                        "amount": emi_amount
-                    }
-                )
+                # v1.62.2 (item 42): each running loan deducts its own instalment – the line is the sum of them (it was
+                # replaced by every loan, so only the last instalment was deducted while all were recorded as repaid)
+                _v1622_put_line(PayslipComponent, payslip, loan_component, emi_amount,
+                                add=loan_component.pk in _loan_lines)
+                _loan_lines.add(loan_component.pk)
 
                 # -------------------------------------------
                 # Calculate remaining balance
@@ -2461,6 +2678,11 @@ def _process_payroll(
                         ]
                     )
 
+                # v1.62.11 (item 259): an instalment after the planned ones – note, loan history, HR told
+                if repayment_count >= (loan.repayment_period or 0):
+                    _v16211_loan_carried(loan, payslip, instance, emi_amount, remaining_balance + emi_amount,
+                                         max(remaining_balance, Decimal("0.00")))
+
         # ====================================================
         # ADVANCE SALARY
         # ====================================================
@@ -2499,7 +2721,9 @@ def _process_payroll(
         if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
             approved_advances = AdvanceSalaryRequest.objects.none()
 
-        for advance in approved_advances:
+        _adv_line = False   # v1.62.2 (item 43): the first advance sets the line, the next ones are added to it
+
+        for advance in approved_advances.order_by("pk"):
 
             requested_amount = Decimal(
                 str(
@@ -2515,13 +2739,10 @@ def _process_payroll(
 
                 continue
 
-            PayslipComponent.objects.update_or_create(
-                payslip=payslip,
-                component=advance_component,
-                defaults={
-                    "amount": requested_amount
-                }
-            )
+            # v1.62.2 (item 43): every approved advance is deducted – the line was replaced by each advance, so only the
+            # last one was deducted while all were marked Deducted (700 + 300 → 300)
+            _v1622_put_line(PayslipComponent, payslip, advance_component, requested_amount, add=_adv_line)
+            _adv_line = True
 
             advance.status = "Deducted"
 
@@ -2530,6 +2751,7 @@ def _process_payroll(
                     "status"
                 ]
             )
+            _used["advances"].append(advance.pk)   # v1.62.2 (item 44): put back to Approved if the payslip is deleted
 
         # ====================================================
         # AIR TICKET ENCASHMENT
@@ -2562,8 +2784,44 @@ def _process_payroll(
                 request_type="ENCASHMENT"
             )
         )
+        # v1.62.3 (item 109): a cash payout requested after the end of the period is paid in the period it belongs to, and a pay
+        # calendar run that does not close the month pays none (once a month in the last period, like loans and advances)
+        _v1623_end = end_date.date() if isinstance(end_date, datetime) else end_date
+        if _v1623_end:
+            approved_tickets = approved_tickets.filter(request_date__lte=_v1623_end)
+        if _pp_skip_events:
+            approved_tickets = AirTicketRequest.objects.none()
+        # v1.62.3 (items 101, 102, 103): only the employee's own approved, active allocation, not expired on the request date and
+        # whose ticket was not taken (2,200 / 1,800 / 1,800 were paid in the audit) – the others stay approved and are not paid
+        try:
+            from PayrollPlus.air_rules import payout_problem as _v1623_payout_problem
+        except ImportError:
+            _v1623_payout_problem = lambda _t: None
+        _v1623_refused = []
+        for _t in approved_tickets.select_related("allocation"):
+            _why = _v1623_payout_problem(_t)
+            if _why:
+                _v1623_refused.append(_t.pk)
+                logger.warning(f"Air ticket cash payout {_t.document_number or _t.pk} of {employee.emp_code} not paid: {_why}")
+        if _v1623_refused:
+            approved_tickets = approved_tickets.exclude(pk__in=_v1623_refused)
 
-        for ticket in approved_tickets:
+        # v1.62.2 (item 53): the cash payout of an air ticket must not replace the monthly air-ticket allowance of the salary
+        # (250 + 2,000 was paid as 2,000). When the allowance component is already on the payslip (and is not itself the
+        # encashment formula air_ticket_encashment), or it is not shown on the payslip (not paid), the payout goes on its own
+        # line "Air Ticket Encashment" (code ATENC, made once per branch); payouts of several tickets are added up.
+        _ticket_comp, _ticket_line = air_ticket_component, False
+        if air_ticket_component and approved_tickets.exists():
+            _on_slip = PayslipComponent.objects.filter(payslip=payslip, component=air_ticket_component).exists()
+            if ((_on_slip and "air_ticket_encashment" not in (air_ticket_component.formula or ""))
+                    or not air_ticket_component.show_in_payslip):
+                _cash = _v1622_ticket_cash_component(SalaryComponent, employee.emp_branch_id)
+                if _cash is not None:
+                    _ticket_comp = _cash
+                else:
+                    _ticket_line = _on_slip   # no own line possible: add the payout to the allowance line
+
+        for ticket in approved_tickets.order_by("pk"):
 
             allocation = getattr(
                 ticket,
@@ -2577,6 +2835,9 @@ def _process_payroll(
             ):
 
                 continue
+
+            _used["tickets"].append({"id": ticket.pk, "allocation": allocation.pk,   # v1.62.2 (item 44)
+                                     "remaining": str(allocation.remaining_amount)})
 
             # pay what is left on the allocation (not the full allocation every time) and use it up,
             # otherwise the same allocation could be encashed again in the next payroll
@@ -2593,13 +2854,8 @@ def _process_payroll(
                 ticket.save(update_fields=["status"])
                 continue
 
-            PayslipComponent.objects.update_or_create(
-                payslip=payslip,
-                component=air_ticket_component,
-                defaults={
-                    "amount": amount
-                }
-            )
+            _v1622_put_line(PayslipComponent, payslip, _ticket_comp, amount, add=_ticket_line)   # v1.62.2 (item 53)
+            _ticket_line = True
 
             allocation.remaining_amount = Decimal("0.00")
             allocation.save(update_fields=["remaining_amount"])
@@ -2616,7 +2872,7 @@ def _process_payroll(
         # RESET MANUAL VARIABLE COMPONENTS
         # ====================================================
 
-        (
+        _inputs = (   # v1.62.2 (item 44): the month's inputs are noted before they are set back to 0
             EmployeeSalaryStructure.objects
             .filter(
                 employee=employee,
@@ -2632,10 +2888,13 @@ def _process_payroll(
                     component__formula__exact=""
                 )
             )
-            .update(
-                amount=Decimal("0.00")
-            )
         )
+        _used["inputs"] = [{"id": _pk, "amount": str(_amt)} for _pk, _amt in _inputs.exclude(amount=0).exclude(amount__isnull=True)
+                           .values_list("pk", "amount")]
+        _inputs.update(
+            amount=Decimal("0.00")
+        )
+        _v1622_save_consumed(payslip, _used)   # v1.62.2 (item 44)
 
         # ====================================================
         # FINALIZE PAYSLIP TOTALS
@@ -2664,9 +2923,55 @@ def _process_payroll(
             except Exception:
                 logger.exception('pay calendar / arrears adjustment failed for payslip %s', payslip.pk)
 
+        # v1.63.0 (item 28): the month's recovery instalments (Payroll › Recoveries) – each its own line, within the recovery's cap and
+        # the net-pay controls (what does not fit carries to the next month inside the recovery); once a month, like loans
+        try:
+            from PayrollPlus import recoveries as _v1630_rec
+            from django.db import transaction as _v1630_tx
+            with _v1630_tx.atomic():
+                _v1630_rec.on_payslip(instance, payslip, employee, _pp_skip_events)
+        except ImportError:
+            pass
+        except Exception:
+            logger.exception('recovery instalments failed for payslip %s', payslip.pk)
+
+        # v1.62.2 (item 51): deductions carried from an earlier payslip, and – when Payroll controls › "Keep net pay at or above
+        # 0" is on – deductions that do not fit are carried to the next payslip (statutory → loans → advances → others)
+        try:
+            _v1622_guards.apply(payslip, employee)
+        except Exception:
+            logger.exception('net pay controls failed for payslip %s', payslip.pk)
+
+        # v1.62.7 (item 18): "Accrue now – pay later" components – the month's amount (type Others, not in gross / net) is added to the
+        # employee's accrued balance; in the payout month (the run's own month) the balance is put on the payslip as the payout line
+        try:
+            from PayrollPlus import accruals as _v1627_acc
+            from django.db import transaction as _v1627_tx
+            with _v1627_tx.atomic():   # own savepoint: a failure here never breaks the run
+                _v1627_acc.on_payslip(instance, payslip, employee, _pp_skip_events)
+        except ImportError:
+            pass
+        except Exception:
+            logger.exception('accrue now – pay later failed for payslip %s', payslip.pk)
+
         totals = calculate_payslip_totals(
             payslip
         )
+
+        # v1.62.11 (item 228): held salary released in this run ("Held salary released" line, totals again) and this month's holds
+        # worked out on the net pay (the payslip keeps the net pay; PayrollPlus.payctl.payable_amount is what the WPS file pays)
+        try:
+            from PayrollPlus import payctl as _v16211_pc
+            from django.db import transaction as _v16211_tx
+            with _v16211_tx.atomic():
+                if _v16211_pc.on_payslip(instance, payslip, employee, _pp_skip_events)['released']:
+                    payslip.refresh_from_db()
+                    totals = {'total_additions': payslip.total_additions, 'total_deductions': payslip.total_deductions,
+                              'gross_salary': payslip.gross_salary, 'net_salary': payslip.net_salary}
+        except ImportError:
+            pass
+        except Exception:
+            logger.exception('salary hold / release failed for payslip %s', payslip.pk)
 
         logger.info(
             f"Payroll completed for "
@@ -2820,6 +3125,24 @@ def _payslip_status_before(sender, instance, update_fields=None, **kwargs):
     if _run_active():          # payroll processing never rejects / re-approves a payslip – no extra read per save
         return
     instance._v116_old_status = sender.objects.filter(pk=instance.pk).values_list('status', flat=True).first()
+    # v1.62.11 (item 256): rejecting (it gives back what the payslip used up) or approving a rejected payslip again (it takes them
+    # back) changes the month: refused in a locked period (payctl); approving again is refused when something it gave back was taken
+    # since by another payslip (it would be paid twice)
+    was, now = str(instance._v116_old_status or '').lower(), str(instance.status or '').lower()
+    if was != now and (now in _REJECTED) != (was in _REJECTED) and (now in _REJECTED or now in _PAID_AGAIN):
+        try:
+            from PayrollPlus import payctl as _v16211_pc
+            _v16211_pc.guard_payslip(instance, 'change')
+            if was in _REJECTED:
+                from PayrollPlus.payslip_reject import problems as _v16211_problems
+                _taken = _v16211_problems(instance)
+                if _taken:
+                    from django.core.exceptions import ValidationError as _VE
+                    from Translations.i18n import tr as _tr
+                    raise _VE(_tr('This rejected payslip cannot be approved again: what it gave back ({0}) has been paid / deducted by '
+                                  'another payslip since. Delete it, or reverse that payslip first.', ', '.join(_taken)))
+        except ImportError:
+            pass
 
 
 @receiver(post_save, sender="PayrollManagement.Payslip")
@@ -2837,6 +3160,21 @@ def _payslip_status_loans(sender, instance, created, update_fields=None, **kwarg
             reapply_loan_repayments(instance)
     except Exception:
         logger.exception("loan repayment update failed for payslip %s", instance.pk)
+    # v1.62.11 (item 256): the rest of what the payslip used up – advances, air-ticket / leave encashments, general requests,
+    # monthly inputs, arrear and leave-pay recovery lines, holds / releases, asset recovery – given back as a delete does (and
+    # taken back when a rejected payslip is approved again). Accrual entries of a rejected payslip do not count (accruals.entries).
+    try:
+        from PayrollPlus import payslip_reject as _v16211_rj
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            if now in _REJECTED and was not in _REJECTED:
+                _v16211_rj.give_back(instance)
+            elif was in _REJECTED and now in _PAID_AGAIN:
+                _v16211_rj.retake(instance)
+    except ImportError:
+        pass
+    except Exception:
+        logger.exception("v1.62.11 give back / take back of payslip %s failed", instance.pk)
 
 
 # v1.62.0 payroll: a payslip that is deleted (its payroll run deleted or recalculated) paid nothing – its loan instalments are
@@ -2848,6 +3186,73 @@ def _payslip_deleted_loans(sender, instance, **kwargs):
         reverse_loan_repayments(instance)
     except Exception:
         logger.exception("loan repayment reversal failed for deleted payslip %s", instance.pk)
+
+
+# v1.62.2 (item 44): a deleted payslip (run deleted / recalculated) also gives back everything else it used up – before only loan
+# instalments came back, and the advances, air-ticket encashments, leave encashments, monthly inputs and general requests of the
+# deleted payslip were never paid / deducted by the re-run (5,650 lost in the audit).
+@receiver(pre_delete, sender="PayrollManagement.Payslip")
+def _payslip_deleted_items(sender, instance, **kwargs):
+    try:
+        from django.db import transaction as _tx
+        with _tx.atomic():   # own savepoint: a failure here never breaks the delete
+            restore_consumed_items(instance)
+    except Exception:
+        logger.exception("putting back what deleted payslip %s used up failed", instance.pk)
+
+
+# v1.62.7 (item 18): a deleted payslip (run deleted / recalculated) accrued and paid nothing – its accrual / payout rows go with it
+@receiver(pre_delete, sender="PayrollManagement.Payslip")
+def _payslip_deleted_accruals(sender, instance, **kwargs):
+    try:
+        from PayrollPlus.accruals import payslip_deleted as _v1627_deleted
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            _v1627_deleted(instance)
+    except ImportError:
+        pass
+    except Exception:
+        logger.exception("accrual rows of deleted payslip %s were not taken back", instance.pk)
+
+
+def restore_consumed_items(payslip):
+    """v1.62.2 (item 44): put back what the payslip used up (noted by _process_payroll); returns the counts."""
+    out = {"advances": 0, "tickets": 0, "requests": 0, "inputs": 0, "encashments": 0}
+    row, used = None, {}
+    try:
+        CO = apps.get_model("ZeoApps", "CompanyOption")
+        row = CO.objects.filter(key=_v1622_consumed_key(payslip.pk)).first()
+        used = (row.value if row else None) or {}
+    except LookupError:
+        pass
+    if used.get("given_back"):   # v1.62.11 (item 256): the payslip was rejected and gave everything back then – never twice
+        row.delete()
+        return out
+    if used.get("advances"):
+        out["advances"] = apps.get_model("PayrollManagement", "AdvanceSalaryRequest").objects.filter(
+            pk__in=used["advances"], status="Deducted").update(status="Approved")
+    ATR = apps.get_model("PayrollManagement", "AirTicketRequest")
+    ALL = apps.get_model("PayrollManagement", "AirTicketAllocation")
+    for t in reversed(used.get("tickets") or []):   # newest first: an allocation ends with the amount it had before the run
+        if ATR.objects.filter(pk=t.get("id"), status="PROCESSED").update(status="APPROVED"):
+            out["tickets"] += 1
+            if t.get("remaining") not in (None, "", "None"):
+                ALL.objects.filter(pk=t.get("allocation")).update(remaining_amount=Decimal(str(t["remaining"])))
+    if used.get("requests"):
+        out["requests"] = apps.get_model("EmpManagement", "GeneralRequest").objects.filter(
+            pk__in=used["requests"], is_processed=True).update(is_processed=False)
+    ESS = apps.get_model("PayrollManagement", "EmployeeSalaryStructure")
+    for i in used.get("inputs") or []:   # an input entered again since the run is kept as it is now
+        out["inputs"] += ESS.objects.filter(pk=i.get("id"), amount=0).update(amount=Decimal(str(i.get("amount") or "0")))
+    if payslip.payroll_run_id:   # leave encashments paid by this run for the employee (LeavePolicy._mark_encashments_paid)
+        out["encashments"] = apps.get_model("PayrollManagement", "LeaveEncashment").objects.filter(
+            payroll_run_id=payslip.payroll_run_id, employee_id=payslip.employee_id, status="processed"
+        ).update(status="approved", payroll_run=None, processed_at=None)
+    if row is not None:
+        row.delete()
+    if any(out.values()):
+        logger.info("Payslip %s deleted: put back %s", payslip.pk, out)
+    return out
 
 
 def _loan_balance(loan):
@@ -2881,16 +3286,17 @@ def reapply_loan_repayments(payslip):
     PayslipComponent = apps.get_model("PayrollManagement", "PayslipComponent")
     if not PayslipComponent.objects.filter(payslip=payslip, component__payroll_category="loan").exists():
         return 0
-    loans = LoanApplication.objects.filter(employee_id=payslip.employee_id, status="Approved")
+    loans = LoanApplication.objects.filter(employee_id=payslip.employee_id, status__in=LOAN_DEDUCTED)   # v1.62.3 (item 108)
     if payslip.created_at:
         loans = loans.filter(Q(approved_on__isnull=True) | Q(approved_on__lte=payslip.created_at))
     n = 0
     for loan in loans.order_by("pk"):
         if LoanRepayment.objects.filter(loan=loan, payslip=payslip).exists():
             continue
-        if LoanRepayment.objects.filter(loan=loan).count() >= loan.repayment_period:
+        # v1.62.2 (item 47): same cap as processing – never more than the balance, a rounding leftover closes the loan
+        emi = _v1622_loan_instalment(loan, LoanRepayment.objects.filter(loan=loan).count(), _loan_balance(loan))
+        if emi <= 0:
             continue
-        emi = Decimal(str(loan.emi_amount or "0.00"))
         remaining = _loan_balance(loan) - emi
         LoanRepayment.objects.create(loan=loan, payslip=payslip, repayment_date=payslip.payroll_run.payment_date,
                                      amount_paid=emi, remaining_balance=remaining)

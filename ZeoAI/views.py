@@ -110,7 +110,7 @@ class SettingsView(Base):
 # ---------------------------------------------------------------- payroll auditor
 def _audit_json(a, with_findings=True):
     out = {'id': a.id, 'payroll_run_id': a.payroll_run_id, 'previous_run_id': a.previous_run_id, 'run_label': a.run_label, 'by': getattr(a.by, 'username', ''), 'at': a.at,
-           'payslips': a.payslips, 'totals': a.totals, 'counts': a.counts, 'summary': a.summary}
+           'payslips': a.payslips, 'totals': a.totals, 'counts': a.counts, 'summary': PA.summary_display(a)}   # v1.62.0 ui
     if with_findings:
         rank = {'critical': 0, 'warning': 1, 'info': 2}
         out['findings'] = [_finding_json(f) for f in sorted(a.findings.select_related('employee'), key=lambda f: (rank.get(f.severity, 3), f.status != 'open', f.rule, f.id))]
@@ -357,6 +357,14 @@ class TemplateView(Base):
         return Response(PF.appraisal_template(self.i('designation'), self.i('department')))
 
 
+class AttentionView(Base):
+    """v1.62.0 talent-ops: employees who need attention (the landing list of AI › Performance & development)."""
+    need = PERF
+
+    def get(self, request):
+        return Response(PF.attention(self.c.branches, self.i('within', 90)))
+
+
 class TrainingView(Base):
     need = PERF
 
@@ -428,7 +436,16 @@ class AskView(Base):
 class LogView(Base):
     def get(self, request):
         rows = AILog.objects.select_related('by')[:100]
-        return Response([{'id': r.id, 'kind': r.kind, 'ref': r.ref, 'by': getattr(r.by, 'username', ''), 'at': r.at, 'summary': r.summary} for r in rows])
+        try:   # v1.62.0 talent-ops: the person's name, not the login name
+            from HRActions.names import user_obj_name
+        except Exception:
+            user_obj_name = None
+
+        def who(u):
+            if u is None:
+                return ''
+            return (user_obj_name(u) if user_obj_name else '') or getattr(u, 'username', '')
+        return Response([{'id': r.id, 'kind': r.kind, 'ref': r.ref, 'by': who(r.by), 'at': r.at, 'summary': r.summary} for r in rows])
 
 
 class LookupsView(Base):

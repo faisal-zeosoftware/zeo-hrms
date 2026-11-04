@@ -70,22 +70,29 @@ def team_conflicts(emp, a, b, exclude_id=None):
     for r in reqs:
         for d in _days(max(r.start_date, a), min(r.end_date, b)):
             away.setdefault(d, set()).add(r.employee_id)
-    wk, hol = E._weekend_days(emp), E._holidays(emp)
+    _work = set(E._shift_days(emp, a, b))   # v1.62.6 (item 22): the employee's working days by the one resolver
     total = len(dept) + 1
     presence = []
     for d in _days(a, b):
-        if d.strftime('%A').lower() in wk or d in hol:
+        if d not in _work:
             continue
         present = total - 1 - len(away.get(d, ()))   # the employee asking is away too
         presence.append({'date': d, 'present': present, 'total': total, 'pct': round(present * 100 / total)})
     return same_rows, presence
 
 
-def check(emp, lt, start, end, half=False, exclude_id=None, created_by_id=None, document=False):
-    """{days, errors, warnings: [{code, level, text, people?}]} for a leave the employee would ask for."""
+def check(emp, lt, start, end, half=False, exclude_id=None, created_by_id=None, document=False, hours=None):
+    """{days, errors, warnings: [{code, level, text, people?}]} for a leave the employee would ask for.
+    v1.62.4 (item 81): `hours` = the hours of a short leave (leave type counted in hours); `days` is then the hours."""
     LR = M('calendars', 'employee_leave_request')
     req = LR(employee=emp, leave_type=lt, start_date=start, end_date=end, dis_half_day=bool(half), status='pending',
              created_by_id=created_by_id if created_by_id is not None else emp.users_id)
+    if E.is_hourly(lt):
+        req.dis_half_day = False
+        try:
+            req.applied_days = float(hours or 0)
+        except (TypeError, ValueError):
+            req.applied_days = 0
     if exclude_id:
         req.pk = exclude_id
     if document:
@@ -99,10 +106,27 @@ def check(emp, lt, start, end, half=False, exclude_id=None, created_by_id=None, 
     line = E.line_for(emp, lt.pk)
     mode = line.count_days if line else ('calendar' if getattr(lt, 'include_weekend', False) else 'working')
     try:
-        days = E.leave_days(emp, start, end, mode, bool(half))
+        days = float(req.applied_days or 0) if E.is_hourly(lt) else E.leave_days(emp, start, end, mode, bool(half))   # v1.62.4 (item 81)
+        if not E.is_hourly(lt):   # v1.65.0 (items 86, 87): the sandwich rule / calendar days except public holidays
+            from .leave_rules import special_days
+            _sp = special_days(emp, lt, line, start, end, bool(half))
+            if _sp is not None:
+                days = float(len(_sp))
     except Exception:
         days = (end - start).days + 1
     warnings = []
+    try:   # v1.65.0 (items 88, 97): the balance projected to the leave start, leave in the notice period
+        from . import leave_rules as LRL
+        for t in LRL.notice_period(req)[1]:
+            warnings.append({'code': 'notice_period', 'level': 'warn', 'text': t})
+        if LRL.allow_projected(lt) and line is not None and line.accrual == 'monthly':
+            ex = LRL.projected_extra(emp, line, start)
+            if ex:
+                bal = float(E.balance_row(emp.pk, lt.pk).balance or 0)
+                warnings.append({'code': 'projected', 'level': 'info', 'projected': round(bal + ex, 2), 'earned': ex,
+                                 'text': tr('Balance on {0:%d/%m/%Y}: {1:g} days ({2:g} now + {3:g} earned before the leave starts).', start, round(bal + ex, 2), bal, ex)})
+    except Exception:
+        pass
     st = ConflictSettings.get()
     same, presence = team_conflicts(emp, start, end, exclude_id)
     if same and len({x['employee_id'] for x in same}) >= max(st.same_role_max, 1):
@@ -124,6 +148,14 @@ def check(emp, lt, start, end, half=False, exclude_id=None, created_by_id=None, 
         rc = leave_roster_conflicts(req)
         if rc:
             warnings.append({'code': 'roster', 'level': 'warn' if rc.get('short_days') else 'info', 'text': rc['text']})
+    except Exception:
+        pass
+    try:   # v1.62.5 (item 19): days whose salary is already paid / processed – said before the request is sent
+        from .paid_period import plan, info_of
+        pl = plan(req, 'apply')
+        if pl:
+            i = info_of(req, pl)
+            warnings.append({'code': 'period_paid', 'level': 'warn', 'text': i['detail'], 'month': i['month'], 'next_month': i['next_month']})
     except Exception:
         pass
     hol = E._holidays(emp)

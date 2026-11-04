@@ -77,6 +77,7 @@ def schedule(loan, today=None):
 def summary(loan):
     rows = schedule(loan)
     planned = [r for r in rows if r['state'] in ('planned', 'paused')]
+    # v1.62.11 (item 259): a 'carry' event (loan balance carried on after the last planned instalment) is labelled
     return {'id': loan.pk, 'number': loan.document_number or str(loan.pk), 'employee_id': loan.employee_id,
             'employee': ' '.join(x for x in (loan.employee.emp_first_name, loan.employee.emp_last_name) if x), 'code': loan.employee.emp_code,
             'type': str(loan.loan_type), 'status': loan.status, 'amount': str(Decimal(str(loan.amount_requested or 0)).quantize(Q2)),
@@ -84,7 +85,7 @@ def summary(loan):
             'period': loan.repayment_period, 'months_paid': len(rows) - len(planned), 'months_left': len(planned),
             'last_month': planned[-1]['month'] if planned else None, 'pause_start': loan.pause_start_date, 'resume_date': loan.resume_date,
             'schedule': rows,
-            'events': [{'kind': e.get_kind_display(), 'date': e.date, 'amount': str(e.amount), 'new_emi': str(e.new_emi) if e.new_emi is not None else '',
+            'events': [{'kind': ('Balance carried on' if e.kind == 'carry' else e.get_kind_display()), 'date': e.date, 'amount': str(e.amount), 'new_emi': str(e.new_emi) if e.new_emi is not None else '',
                         'balance_after': str(e.balance_after) if e.balance_after is not None else '', 'note': e.note, 'by': e.user_name}
                        for e in LoanEvent.objects.filter(loan_id=loan.pk)]}
 

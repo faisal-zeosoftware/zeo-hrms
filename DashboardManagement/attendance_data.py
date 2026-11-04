@@ -110,11 +110,21 @@ class _CalendarLookup:
         return None
 
     def weekend_days(self, e):
-        m = self._first(self.wk, e)
-        wk = set(m.get_weekend_days()) if m is not None else set()
+        # v1.62.6 (item 22): the one weekend rule (calendars/workdays.py – most specific assignment wins, category counted)
+        if getattr(self, '_wd_rules', None) is None:
+            from calendars.workdays import WeekendRules, HolidayRules
+            self._wd_rules, self._wd_hol = WeekendRules(), HolidayRules()
+        from calendars.workdays import model_days
+        wk = model_days(self._wd_rules.pick(e, self.d_from)[0], None)
         return wk or {'Saturday', 'Sunday'}
 
     def holidays(self, e):
+        # v1.62.6 (item 22): the employee's holiday calendar by get_employee_holiday_calendar's order
+        if getattr(self, '_wd_rules', None) is None:
+            self.weekend_days(e)
+        return {d for d in self._wd_hol.dates(e) if self.d_from <= d <= self.d_to}
+
+    def _holidays_before_v1626(self, e):
         m = self._first(self.ho, e)
         if m is None:
             return set()

@@ -644,5 +644,22 @@ class InsurerPlansView(Base):
         from .models import BenefitPlan
         if not app.any(request, 'ppl_manager', 'ppl_benefits'):
             raise AppError('Only the benefits administrator and the People manager can make the insurer file.', status=403)
-        return Response({'plans': [{'id': p.pk, 'name': p.name, 'provider': p.provider, 'policy_no': p.policy_no, 'covers_dependants': p.covers_dependants}
-                                   for p in BenefitPlan.objects.filter(kind='medical', is_active=True).order_by('name')]})
+        # v1.62.0 talent-ops: members and family members on today per plan, and the changes this month (the plan list the page opens on)
+        from . import insurer as INS
+        only = set(app.regs['enrolment'].scope(request).values_list('pk', flat=True))
+        on = today()
+        first = on.replace(day=1)
+        out = []
+        for p in BenefitPlan.objects.filter(kind='medical', is_active=True).order_by('name'):
+            row = {'id': p.pk, 'name': p.name, 'provider': p.provider, 'policy_no': p.policy_no, 'covers_dependants': p.covers_dependants}
+            try:
+                now = INS.rows(p, on, None, only)
+                ch = INS.rows(p, on, first, only)
+                row.update({'members': len([r for r in now if r.get('member_type') == 'Principal']),
+                            'dependants': len([r for r in now if r.get('member_type') != 'Principal']),
+                            'added': len([r for r in ch if r.get('change') == 'Addition']), 'removed': len([r for r in ch if r.get('change') == 'Deletion']),
+                            'since': first})
+            except Exception:
+                pass
+            out.append(row)
+        return Response({'plans': out, 'on': on})

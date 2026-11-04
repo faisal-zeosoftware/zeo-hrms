@@ -149,8 +149,8 @@ def report_url(key, params, where):
 def record_url(m, i):
     if m == 'EmpManagement.emp_master':
         return f'{M_}sub-sidebar/employee-details/{i}/details'
-    if m == 'PayrollManagement.PayrollRun':
-        return f'{M_}salary-options/payroll-details/{i}'
+    if m == 'PayrollManagement.PayrollRun':   # v1.62.1 (item 191): the run page (payroll-details is a payslip)
+        return f'{M_}salary-options/payroll-run/{i}'
     return f'{M_}report-options/rec/{m}/{i}'
 
 

@@ -70,7 +70,7 @@ SCREENS = {
     'RecruitmentManagement.Offer': ('Offer letters', 'recruitment-options/offers'),
     'RecruitmentManagement.ManpowerRequisition': ('Manpower requisition', 'recruitment-options/requisitions'),
     'PerformanceManagement.KPI': ('KPI & competency', 'performance-options/kpi-library'),
-    'calendars.ShiftOverride': ('Shift override', 'shift-options/shift-override'),
+    'calendars.ShiftOverride': ('Shift override', 'shift-planner/override'),
     'OrganisationManager.Announcement': ('Announcements', 'general-sidebar/announcement-master'),
     'LearningManagement.Nomination': ('Nominations', 'learning-options/nominations'),
     'LearningManagement.TrainingSession': ('Training calendar', 'learning-options/calendar'),
@@ -83,10 +83,12 @@ SCREENS = {
 def own_page(label, obj):
     if label == 'EmpManagement.emp_master':
         return f'{M_}sub-sidebar/employee-details/{obj.pk}/details'
+    # v1.62.1 (tester 30-10 item 191): payroll-details/<id> is the PAYSLIP page – a payroll run opened it with the run's id
+    # and showed an empty payslip; a run opens the 1.62 run page, a payslip its own payslip page
     if label == 'PayrollManagement.PayrollRun':
+        return f'{M_}salary-options/payroll-run/{obj.pk}'
+    if label == 'PayrollManagement.Payslip':
         return f'{M_}salary-options/payroll-details/{obj.pk}'
-    if label == 'PayrollManagement.Payslip' and obj.payroll_run_id:   # v1.16.0: the run page lists the payslip
-        return f'{M_}salary-options/payroll-details/{obj.payroll_run_id}'
     if label == 'OrganisationManager.Asset':   # v1.15.1: the asset's own page in the Assets app
         return f'{M_}asset-plus/register/{obj.pk}'
     return None

@@ -75,6 +75,9 @@ class DepartmentPermission(permissions.BasePermission):
             'update': 'change_dept_master',
             'partial_update': 'change_dept_master',
             'destroy': 'delete_dept_master',
+            # v1.62.11 (regression): OPTIONS (DRF action "metadata") was refused (403) for every non-superuser, so the shared
+            # department form of an HR manager could not read which fields the server requires – the view right is enough
+            'metadata': 'view_dept_master',
         }
 
         required_perm = action_permissions.get(view.action)

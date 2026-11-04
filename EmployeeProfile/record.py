@@ -545,8 +545,7 @@ def directory_rows(request, emps, today=None):
         i, f = idn.get(e.pk), infos.get(e.pk)
         badges = []
         for key, label, nums, issue, exp, extra in DOCS:
-            if key in ('driving_licence',):
-                continue
+            # v1.62.0 people: the driving licence counts too (Expiring documents lists it; the tile said 0 while it showed it)
             b = expiry(getattr(i, exp, None) if i else None, today)
             if b:
                 badges.append((label, b))

@@ -284,7 +284,7 @@ class Loader:
 
     def _ph(self, kind, arg):
         if kind == 'today':   # v1.62.0 {today:+3} / {today:-1}: days from the load day (requests that must be for today or later)
-            return (datetime.date.today() + datetime.timedelta(days=int(arg or 0))).isoformat()
+            return (_company_today() + datetime.timedelta(days=int(arg or 0))).isoformat()
         if kind == 'company':   # v1.62.0 workbook: the company being loaded (company details sheet)
             if self._company_id is None:
                 from UserManagement.models import company
@@ -749,7 +749,7 @@ class Loader:
                         self.note(sheet, rn, 'skipped')
                         continue
                 until = str(row.get('@until') or '').strip()[:10]
-                if until and datetime.date.today().isoformat() > until:   # v1.62.0 a row for a future day (shift request …) after that day has passed
+                if until and _company_today().isoformat() > until:   # v1.62.0 a row for a future day (shift request …) after that day has passed
                     s_ = self.stats.setdefault(sheet, {'ok': 0, 'failed': 0, 'skipped': 0})
                     s_['past'] = s_.get('past', 0) + 1
                     if self.on_row:
@@ -1038,6 +1038,25 @@ def totals(L):
     tot['problems'] = sum(1 for e in L.log if e.get('kind') == 'sheet')
     return tot
 
+
+
+def _company_today():
+    """v1.62.0: "today" of the company being loaded (its country's time zone, else Asia/Dubai) – the server runs on UTC,
+    so between 00:00 and 04:00 Gulf time {today} was still the day before."""
+    import zoneinfo
+    from django.db import connection
+    tzname = 'Asia/Dubai'
+    try:
+        from django_tenants.utils import get_tenant_model
+        t = get_tenant_model().objects.filter(schema_name=connection.schema_name).select_related('country').first()
+        if t is not None and getattr(t, 'country', None) is not None and getattr(t.country, 'timezone', ''):
+            tzname = t.country.timezone
+    except Exception:
+        pass
+    try:
+        return datetime.datetime.now(zoneinfo.ZoneInfo(tzname)).date()
+    except Exception:
+        return datetime.datetime.now(zoneinfo.ZoneInfo('Asia/Dubai')).date()
 
 class Command(BaseCommand):
     help = 'Load a data workbook (Index sheet + one sheet per screen) into a company through the screens\' own API.'

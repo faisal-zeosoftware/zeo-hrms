@@ -120,7 +120,16 @@ class Accounts:
     def find(self, kind, key, side, emp=None, dept=None, branch=None, default=''):
         """(account, level) – level is 'employee' / 'department' / 'branch' when a specific row gave it."""
         rows = self.rows.get((kind, str(key)), [])
-        field = 'debit_account' if side == 'debit' else 'credit_account'
+        if not rows and kind == 'settlement':
+            # v1.62.11 (EOS gap check): settlement lines are keyed per record (loan_12, advance_3, other_5, air_ticket_due) –
+            # use the mapping of their kind (loan, advance, other, air_ticket); before, these always fell to the default account
+            import re
+            base = 'other' if str(key).startswith('other_') else re.sub(r'_(\d+|due|hr)$', '', str(key))   # v1.62.11 (EOS settings): + air_ticket_hr
+            if str(key).startswith('asset_'):
+                base = 'assets'   # v1.67.0 (regression): asset recovery lines (asset_om_<id>, asset_<id>) use the "Asset recovery" mapping
+            if base != str(key):
+                rows = self.rows.get((kind, base), [])
+        field ='debit_account' if side == 'debit' else 'credit_account'
         for level, test in (('employee', lambda r: emp and r.employee_id == emp),
                             ('department', lambda r: dept and r.department_id == dept and not r.employee_id),
                             ('branch', lambda r: branch and r.branch_id == branch and not r.employee_id and not r.department_id),
@@ -307,12 +316,26 @@ def build_payroll(run_id, user=None):
     label = f'Payroll {run.get_month_display()} {run.year}' + (f' – {run.name}' if run.name else '')
     b = Builder('payroll', run.pk, label, jdate, f'Payroll {run.year}-{run.month:02d}')
     slips = run.payslips.exclude(status='rejected').select_related('employee').prefetch_related('components__component')
+    acc_of, payout_of = _accrual_accounts()   # v1.62.7 (item 18)
+    try:   # v1.62.11 (item 228)
+        from PayrollPlus.payctl import release_component_ids as _v16211_rel
+        held_rel = _v16211_rel()
+    except ImportError:
+        held_rel = set()
     n = 0
+    # v1.66.0 (item 118): an air ticket cash payout paid on the payslip is taken from the posted air ticket provision first (Dr provision),
+    # the rest is expense – only with Air ticket rules › "Post the air ticket provision" on
+    _air_on = _v1660_air_posting()
+    _air_prov = {pb.employee_id: pb.amount for pb in ProvisionBalance.objects.filter(kind='air_ticket')} if _air_on else {}
+    _air_used = {}
+    if _air_on:
+        from PayrollPlus.air_policy import payslip_ticket_cash as _air_cash
     for p in slips:
         e = p.employee
         dept, branch = e.emp_dept_id_id, e.emp_branch_id_id
         b.dims.emps[e.pk] = e
         adds = deds = ZERO
+        _air_left = min(_air_cash(p), q2(_air_prov.get(e.pk, 0))) if _air_on and q2(_air_prov.get(e.pk, 0)) > 0 else ZERO
         for pc in p.components.all():
             c = pc.component
             amt = q2(pc.amount)
@@ -321,6 +344,26 @@ def build_payroll(run_id, user=None):
             if c.component_type == 'addition':
                 if not c.show_in_payslip:
                     continue
+                if c.pk in payout_of:   # v1.62.7 (item 18): payout of an accrued balance – Dr the accrual liability, not the expense
+                    acct, lvl = b.accts.find('component', c.pk, 'debit', e.pk, dept, branch, '')
+                    b.add(acct or payout_of[c.pk], c.name, amt, 'debit', e.pk, dept, branch, cost=False, level=lvl, group=f'c{c.pk}')
+                    adds += amt
+                    continue
+                if c.pk in held_rel:   # v1.62.11 (item 228): held salary released – the cost was booked in the held month: Dr salaries payable
+                    acct, lvl = b.accts.find('payable', 'net', 'debit', e.pk, dept, branch, st.payable_account)
+                    b.add(acct, c.name, amt, 'debit', e.pk, dept, branch, cost=False, level=lvl, group=f'c{c.pk}')
+                    adds += amt
+                    continue
+                if _air_left > 0 and getattr(c, 'payroll_category', '') == 'air_ticket':   # v1.66.0 (item 118)
+                    have = min(_air_left, amt)
+                    pa, pl = b.accts.find('provision', 'air_ticket', 'credit', e.pk, dept, branch, _v1660_air_accounts()[1])
+                    b.add(pa, f'{c.name} (from provision)', have, 'debit', e.pk, dept, branch, cost=False, level=pl, group=f'c{c.pk}p')
+                    _air_left -= have
+                    _air_used[str(e.pk)] = str(q2(Decimal(str(_air_used.get(str(e.pk), 0))) + have))
+                    adds += have
+                    amt -= have
+                    if not amt:
+                        continue
                 acct, lvl = b.accts.find('component', c.pk, 'debit', e.pk, dept, branch, st.default_expense_account)
                 b.add(acct, c.name, amt, 'debit', e.pk, dept, branch, cost=True, level=lvl, group=f'c{c.pk}')
                 adds += amt
@@ -330,6 +373,11 @@ def build_payroll(run_id, user=None):
                 acct, lvl = b.accts.find('component', c.pk, 'credit', e.pk, dept, branch, st.default_deduction_account)
                 b.add(acct, c.name, amt, 'credit', e.pk, dept, branch, cost=False, level=lvl, group=f'c{c.pk}')
                 deds += amt
+            elif c.pk in acc_of:   # v1.62.7 (item 18): accrued this month (accrue now – pay later): Dr expense, Cr the accrual account
+                acct, lvl = b.accts.find('component', c.pk, 'debit', e.pk, dept, branch, st.default_expense_account)
+                b.add(acct, f'{c.name} (accrued)', amt, 'debit', e.pk, dept, branch, cost=True, level=lvl, group=f'c{c.pk}e')
+                acct, lvl = b.accts.find('component', c.pk, 'credit', e.pk, dept, branch, '')
+                b.add(acct or acc_of[c.pk], f'{c.name} (accrued)', amt, 'credit', e.pk, dept, branch, cost=False, level=lvl, group=f'c{c.pk}l')
             else:   # others – employer contribution / cost: Dr expense, Cr liability; does not change the net pay
                 acct, lvl = b.accts.find('component', c.pk, 'debit', e.pk, dept, branch, st.default_expense_account)
                 lbl = c.name if 'employer' in c.name.lower() else f'{c.name} (employer)'
@@ -343,7 +391,26 @@ def build_payroll(run_id, user=None):
     if not n:
         raise Refused('The payroll run has no payslips.')
     b.extra = {'payslips': n}
+    if _air_used:   # v1.66.0 (item 118): taken off ProvisionBalance when the journal is posted / exported
+        b.extra['air_provision_used'] = _air_used
     return b.save(user)
+
+
+def _accrual_accounts():
+    """v1.62.7 (item 18): ({accrued component id: accrual account}, {payout component id: accrual account}) of the "Accrue now – pay
+    later" components (PayrollPlus); an AccountMap row of the component still wins."""
+    try:
+        S = M('PayrollPlus', 'AccrualSetting')
+    except LookupError:
+        return {}, {}
+    acc, pay = {}, {}
+    for s in S.objects.all():
+        a = (s.accrual_account or '').strip() or '224005'
+        if s.enabled:
+            acc[s.component_id] = a
+        if s.payout_component_id:
+            pay[s.payout_component_id] = a
+    return acc, pay
 
 
 def _report_rows(fn, as_of):
@@ -370,7 +437,30 @@ def provision_amounts(as_of):
     for r in _report_rows('r_leave_liability', as_of):
         if r.get('_emp'):
             out['leave'][r['_emp']] = q2(r.get('liability') or 0)
+    try:   # v1.66.0 (item 118): the air ticket provision when Air ticket rules › "Post the air ticket provision" is on
+        from PayrollPlus import air_policy as _AP
+        if _AP.settings()['post_provision']:
+            out['air_ticket'] = {k: q2(v[0]) for k, v in _AP.liabilities(as_of).items()}
+    except ImportError:
+        pass
     return out
+
+
+def _v1660_air_accounts():
+    """v1.66.0 (item 118): (expense, provision) accounts of the air ticket provision (Air ticket rules; a mapping 'provision / air_ticket' wins)."""
+    try:
+        from PayrollPlus import air_policy as _AP
+        return _AP.accounts()
+    except ImportError:
+        return '6160', '2330'
+
+
+def _v1660_air_posting():
+    try:
+        from PayrollPlus import air_policy as _AP
+        return bool(_AP.settings()['post_provision'])
+    except ImportError:
+        return False
 
 
 def build_provisions(as_of=None, user=None, amounts=None):
@@ -380,13 +470,17 @@ def build_provisions(as_of=None, user=None, amounts=None):
     as_of = month_end(as_of or date.today())
     amounts = amounts if amounts is not None else provision_amounts(as_of)
     prev = {(p.kind, p.employee_id): p.amount for p in ProvisionBalance.objects.all()}
-    b = Builder('provision', as_of.strftime('%Y-%m'), f'Gratuity and leave salary provisions {as_of:%B %Y}', as_of, f'Provisions {as_of:%Y-%m}')
+    b = Builder('provision', as_of.strftime('%Y-%m'), (f'Gratuity, leave salary and air ticket provisions {as_of:%B %Y}' if 'air_ticket' in amounts
+                else f'Gratuity and leave salary provisions {as_of:%B %Y}'), as_of, f'Provisions {as_of:%Y-%m}')   # v1.66.0 (item 118)
     Emp = M('EmpManagement', 'emp_master')
     emps = {e.pk: e for e in Emp.objects.filter(pk__in={k for v in amounts.values() for k in v})}
     b.dims.emps.update(emps)
     new = {'gratuity': {}, 'leave': {}}
     acc = {'gratuity': (st.gratuity_expense_account, st.gratuity_provision_account, 'Gratuity provision'),
            'leave': (st.leave_expense_account, st.leave_provision_account, 'Leave salary provision')}
+    if 'air_ticket' in amounts:   # v1.66.0 (item 118): Dr air ticket expense, Cr air ticket provision (the change per employee)
+        new['air_ticket'] = {}
+        acc['air_ticket'] = (*_v1660_air_accounts(), 'Air ticket provision')
     for kind, rows in amounts.items():
         exp_a, prov_a, label = acc[kind]
         for emp_id, amt in rows.items():
@@ -443,7 +537,8 @@ def build_settlement(settlement_id, user=None):
     st = settings()
     e = M('EmpManagement', 'emp_master').objects.filter(pk=s.employee_id).first()
     dept, branch = (e.emp_dept_id_id, e.emp_branch_id_id) if e else (None, None)
-    b = Builder('settlement', s.pk, f'Final settlement {s.number or s.pk} – {emp_name(e)}', s.paid_on or s.last_working_date, s.number or f'Settlement {s.pk}')
+    b = Builder('settlement', s.pk, f'Final settlement {s.number or s.pk} – {emp_name(e)}', getattr(s, 'accounting_date', None) or s.paid_on or s.last_working_date,
+                s.number or f'Settlement {s.pk}')   # v1.62.11 (EOS settings): the accounting date of the settlement first
     if e:
         b.dims.emps[e.pk] = e
     prov = {p.kind: p.amount for p in ProvisionBalance.objects.filter(employee_id=s.employee_id)}
@@ -453,17 +548,45 @@ def build_settlement(settlement_id, user=None):
         if not amt or ln.get('kind') not in ('earning', 'deduction'):
             continue
         key, label = ln.get('key') or 'other', ln.get('label') or ln.get('key')
+        if str(key).startswith('other_') and ln.get('account'):   # v1.62.11 (EOS settings): the account entered on the other line
+            b.add(ln['account'], label, amt, 'debit' if ln['kind'] == 'earning' else 'credit', e and e.pk, dept, branch,
+                  cost=ln['kind'] == 'earning', level='employee', group=key)
+            continue
+        if str(key).startswith('recovery_') and ln.get('component_id') and ln['kind'] == 'deduction':   # v1.63.0 (item 28): a recovery's balance – the component's account
+            acct, lvl = b.accts.find('settlement', key, 'credit', e and e.pk, dept, branch, '')
+            if not acct:
+                acct, lvl = b.accts.find('component', ln['component_id'], 'credit', e and e.pk, dept, branch, st.default_deduction_account)
+            b.add(acct, label, amt, 'credit', e and e.pk, dept, branch, cost=False, level=lvl, group=key)
+            continue
+        if key == 'gratuity_adjustment':   # v1.62.11 (EOS settings): HR's gratuity adjustment – the gratuity expense (mapping first)
+            acct, lvl = b.accts.find('settlement', key, 'debit' if ln['kind'] == 'earning' else 'credit', e and e.pk, dept, branch, '')
+            if not acct:
+                acct, lvl = b.accts.find('settlement', 'gratuity', 'debit', e and e.pk, dept, branch, st.gratuity_expense_account)
+            b.add(acct, label, amt, 'debit' if ln['kind'] == 'earning' else 'credit', e and e.pk, dept, branch, cost=True, level=lvl, group=key)
+            continue
+        if ln['kind'] == 'earning' and str(key).startswith('accrual_'):   # v1.62.7 (item 18): accrued balance paid at exit
+            have = min(q2(ln.get('from_balance')), amt) if q2(ln.get('from_balance')) > 0 else ZERO
+            if have:   # Dr the accrual liability for the balance, Dr expense for the days after the last payroll
+                acct, lvl = b.accts.find('settlement', key, 'debit', e and e.pk, dept, branch, '')
+                b.add(acct or ln.get('account') or '224005', f'{label} (accrued balance)', have, 'debit', e and e.pk, dept, branch, cost=False,
+                      level=lvl, group=f'{key}-a')
+            if amt - have:
+                acct, lvl = b.accts.find('settlement', key, 'debit', e and e.pk, dept, branch, st.default_expense_account)
+                b.add(acct, label, amt - have, 'debit', e and e.pk, dept, branch, cost=True, level=lvl, group=key)
+            continue
         if ln['kind'] == 'earning':
             pk = SETTLEMENT_PROVISION.get(key)
+            if pk is None and _v1660_air_posting() and (str(key) == 'air_ticket' or str(key).startswith('air_ticket_')):
+                pk = 'air_ticket'   # v1.66.0 (item 118): air ticket lines of the settlement – from the air ticket provision first
             if pk:   # paid from the provision first, the rest is this month's expense
-                have = min(q2(prov.get(pk, 0)), amt) if prov.get(pk, 0) > 0 else ZERO
+                have = min(q2(prov.get(pk, 0)) - q2(used.get(pk, 0)), amt) if q2(prov.get(pk, 0)) - q2(used.get(pk, 0)) > 0 else ZERO
                 if have:
-                    pa = st.gratuity_provision_account if pk == 'gratuity' else st.leave_provision_account
+                    pa = {'gratuity': st.gratuity_provision_account, 'leave': st.leave_provision_account}.get(pk) or _v1660_air_accounts()[1]
                     acct, lvl = b.accts.find('provision', pk, 'credit', e and e.pk, dept, branch, pa)
                     b.add(acct, f'{label} (from provision)', have, 'debit', e and e.pk, dept, branch, cost=False, level=lvl, group=f'{key}-p')
-                    used[pk] = str(have)
+                    used[pk] = str(q2(used.get(pk, 0)) + have)
                 rest = amt - have
-                default = st.gratuity_expense_account if pk == 'gratuity' else st.leave_expense_account
+                default = {'gratuity': st.gratuity_expense_account, 'leave': st.leave_expense_account}.get(pk) or _v1660_air_accounts()[0]
             else:
                 rest, default = amt, st.default_expense_account
             if rest:
@@ -475,6 +598,13 @@ def build_settlement(settlement_id, user=None):
     acct, lvl = b.accts.find('payable', 'settlement', 'credit', e and e.pk, dept, branch, st.settlement_payable_account)
     b.add(acct, 'Final settlement payable', q2(s.net), 'credit', e and e.pk, dept, branch, cost=False, level=lvl, group='net')
     b.extra = {'settlement_provision_used': used, 'employee_id': s.employee_id}
+    try:   # v1.62.11 (EOS settings): the journal of the settlement journals (empty = the journal of Accounting › Settings)
+        from PayrollPlus.eos_settings import settings as _eos_settings
+        _jc = (_eos_settings().get('journal_code') or '').strip()
+        if _jc:
+            b.extra['journal_code'] = _jc
+    except ImportError:
+        pass
     return b.save(user)
 
 
@@ -813,6 +943,12 @@ def _apply_provisions(batch, undo=False):
             for kind, rows in (r.get('provision_before') or {}).items():
                 for emp, amt in rows.items():
                     ProvisionBalance.objects.filter(kind=kind, employee_id=int(emp)).update(amount=Decimal(amt))
+    elif batch.source == 'payroll' and r.get('air_provision_used'):   # v1.66.0 (item 118): cash payouts paid from the air ticket provision
+        for emp, amt in r['air_provision_used'].items():
+            p = ProvisionBalance.objects.filter(kind='air_ticket', employee_id=int(emp)).first()
+            if p:
+                p.amount = p.amount + Decimal(amt) if undo else max(ZERO, p.amount - Decimal(amt))
+                p.save(update_fields=['amount'])
     elif batch.source == 'settlement':
         emp = r.get('employee_id')
         for kind, amt in (r.get('settlement_provision_used') or {}).items():

@@ -151,6 +151,9 @@ class Run:
         if default and not (self.date_from and self.date_to):
             if default == 'month':
                 self.date_from, self.date_to = today.replace(day=1), month_end(today)
+                if today.day <= 7:   # v1.62.0 ui: early in a month "this month" is still empty – the last complete month (the period bar says so)
+                    prev = today.replace(day=1) - timedelta(days=1)
+                    self.date_from, self.date_to = prev.replace(day=1), prev
             elif default == 'year':
                 self.date_from, self.date_to = today.replace(month=1, day=1), today.replace(month=12, day=31)
             elif default == 'next90':
@@ -560,6 +563,18 @@ def r_leave_liability(run):
     bal = defaultdict(float)
     for b in M('calendars', 'emp_leave_balance').objects.filter(employee__in=[e.id for e in emps], leave_type__leave_category='annual').values('employee_id', 'balance'):
         bal[b['employee_id']] += float(b['balance'] or 0)
+    # v1.62.4 (item 78): for a past date (month-end provisions, a report to an earlier month end) the balance on that date –
+    # today's balance less the ledger movements dated after it, as LeavePolicy.engine.balance_on; before, today's balance
+    as_of = getattr(run, 'today', None) or getattr(run, 'date_to', None)   # ?as_of= (provisions: the month end)
+    if as_of and as_of < date.today():
+        try:
+            from django.db.models import Sum as _Sum
+            ann = list(M('calendars', 'leave_type').objects.filter(leave_category='annual').values_list('id', flat=True))
+            for x in M('LeavePolicy', 'LeaveLedger').objects.filter(employee_id__in=[e.id for e in emps], leave_type_id__in=ann, date__gt=as_of) \
+                    .values('employee_id').annotate(s=_Sum('days')):
+                bal[x['employee_id']] -= float(x['s'] or 0)
+        except LookupError:   # leave policies not installed
+            pass
     rows = []
     for e in emps:
         # v1.18.0: basic ÷ 30 a day – the basis of the leave pay in the final settlement and of leave encashment (was × 12 ÷ 365)
@@ -882,8 +897,19 @@ def _r_gratuity(run):
             yrs = years_between(e.emp_joined_date, run.today) or 0
         nat = is_uae_national(e)
         days, amount = (0, 0) if nat else gratuity_for(e, yrs, basic.get(e.id, 0), wage.get(e.id))
+        _basis = 'UAE national – GPSSA pension' if nat else ('Under 1 year' if yrs < 1 else 'Labour law')
+        try:   # v1.62.11 (item 229): DIFC DEWS branch – only the gratuity for the service before DEWS; ADPF branch national – ADPF pension
+            from PayrollPlus import branch_schemes as _bsch
+            if nat and _bsch.is_adpf(e):
+                _basis = 'UAE national – ADPF pension'
+            elif _bsch.is_dews(e) and not _bsch.is_gcc_national(e):
+                _g = _bsch.pre_dews_gratuity(e, basic.get(e.id, 0), end)
+                days, amount = float(_g['days']), float(_g['amount'])
+                _basis = 'DIFC DEWS – gratuity for the service before DEWS only'
+        except ImportError:
+            pass
         rows.append({**emp_cols(e), 'joined': e.emp_joined_date, 'years': yrs, 'unpaid': unpaid.get(e.id, 0), 'basic': money(basic.get(e.id, 0)), 'days': days,
-                     'amount': amount, 'basis': 'UAE national – GPSSA pension' if nat else ('Under 1 year' if yrs < 1 else 'Labour law'), **src(e),
+                     'amount': amount, 'basis': _basis, **src(e),
                      '_cell': {'basic': drill('salary', {'employee': full_name(e)})}})
     return EMP_COLS + [('joined', 'Joining date', 'date'), ('years', 'Eligible service (years)', 'number'), ('unpaid', 'Unpaid days', 'number'),
                        ('basic', 'Monthly basic (AED)', 'number'), ('days', 'Gratuity days', 'number'), ('amount', 'Gratuity accrued (AED)', 'number'),
@@ -1370,7 +1396,7 @@ def r_department_leave(run):
     for l in M('calendars', 'employee_leave_request').objects.filter(run.emp_q(), run.in_period('start_date')).select_related('leave_type', 'employee__emp_dept_id', 'employee__emp_branch_id'):
         dept = l.employee.emp_dept_id.dept_name if l.employee.emp_dept_id_id else '(no department)'
         k = (dept, str(l.leave_type or ''))
-        r = g.setdefault(k, {'department': k[0], 'type': k[1], 'requests': 0, 'emps': set(), 'approved': 0.0, 'pending': 0.0, 'rejected': 0})
+        r = g.setdefault(k, {'department': k[0], 'type': k[1], 'requests': 0, 'emps': set(), 'approved': 0.0, 'pending': 0.0, 'rejected': 0, 'cancelled': 0})
         r['requests'] += 1
         r['emps'].add(l.employee_id)
         days = float(l.approved_days or l.applied_days or l.number_of_days or 0)
@@ -1378,6 +1404,8 @@ def r_department_leave(run):
             r['approved'] += days
         elif l.status == 'pending':
             r['pending'] += float(l.applied_days or l.number_of_days or 0)
+        elif l.status == 'cancelled':   # v1.65.0 (item 83): approved leave cancelled – its own column (was counted as rejected)
+            r['cancelled'] += 1
         else:
             r['rejected'] += 1
     heads = defaultdict(int)
@@ -1395,7 +1423,7 @@ def r_department_leave(run):
                                'pending': drill('leave', {'department': k[0], 'type': k[1], 'status': 'Pending'}, **per)}})
     return [('department', 'Department', 'text'), ('type', 'Leave type', 'text'), ('requests', 'Requests', 'number'), ('employees', 'Employees on leave', 'number'),
             ('approved', 'Days approved', 'number'), ('pending', 'Days pending', 'number'), ('rejected', 'Rejected requests', 'number'),
-            ('headcount', 'Department headcount', 'number'), ('per_head', 'Approved days per head', 'number')], rows, {'no_totals': ['headcount', 'per_head', 'employees']}
+            ('cancelled', 'Cancelled leave', 'number'), ('headcount', 'Department headcount', 'number'), ('per_head', 'Approved days per head', 'number')], rows, {'no_totals': ['headcount', 'per_head', 'employees']}
 
 
 def _register(run, kind):

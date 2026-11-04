@@ -221,7 +221,9 @@ def is_off_day(employee, day, shift=None):
         return 'weekly_off', 'Off day (shift plan)'
     # v1.18.0: a shift planned on the day in a published roster / a day change is a working day, also on a Saturday or Sunday
     # (hospital rosters rotate the rest days) – the weekend calendar made every rostered weekend shift "weekend overtime"
-    if shift and not shift.get('off') and shift.get('source') in ('roster', 'override'):
+    # v1.62.6 (item 22): a shift of the employee's shift pattern is a working day too (order roster > override > pattern > weekend
+    # calendar, as leave and payroll count it) – before, the weekend calendar won over a pattern shift
+    if shift and not shift.get('off') and shift.get('source') in ('roster', 'override', 'schedule'):
         return None, ''
     res = _resolver()
     if res is not None and shift is None:
@@ -231,7 +233,9 @@ def is_off_day(employee, day, shift=None):
         except Exception:
             pass
     try:
-        if day.strftime('%A') in get_employee_weekend_days(employee):
+        # v1.62.6 (item 22): the weekend of the day by the one rule (calendars/workdays.py: employee > designation > category >
+        # department > branch). Before: the first assignment naming the employee / branch / department – category ignored.
+        if day.strftime('%A') in get_employee_weekend_days(employee, day):
             return 'weekly_off', 'Weekend'
     except Exception:
         pass
@@ -240,11 +244,41 @@ def is_off_day(employee, day, shift=None):
 
 def leave_on(employee, day):
     from calendars.models import employee_leave_request
+    # v1.62.4 (item 81): short leave in hours is not a day of leave (it covers late / early minutes – short_leave_minutes)
     return employee_leave_request.objects.filter(employee=employee, status='approved', start_date__lte=day,
-                                                 end_date__gte=day).select_related('leave_type').first()
+                                                 end_date__gte=day).exclude(leave_type__unit='hours').select_related('leave_type').first()
+
+
+def short_leave_minutes(employee, day):
+    """v1.62.4 (item 81): {'any' | 'first_half' | 'second_half': minutes} of approved paid short leave (leave type counted in hours)
+    on the day. First half = arriving late, second half = leaving early, none given = either. Unpaid hourly types cover nothing
+    (the time is not worked: the late / early rules apply as usual)."""
+    from calendars.models import employee_leave_request
+    out = {}
+    for r in employee_leave_request.objects.filter(employee=employee, status='approved', start_date__lte=day, end_date__gte=day,
+                                                   leave_type__unit='hours').exclude(leave_type__type='unpaid'):
+        k = r.half_day_period if r.half_day_period in ('first_half', 'second_half') else 'any'
+        out[k] = out.get(k, 0) + int(round(float(r.approved_days or r.applied_days or r.number_of_days or 0) * 60))
+    try:   # v1.65.0 (item 94): the paid nursing break after maternity leave (law: at most 1 hour a day for 6 months) covers late / early
+        from LeavePolicy.leave_rules import nursing_minutes
+        _nm = nursing_minutes(employee, day)
+        if _nm:
+            out['any'] = out.get('any', 0) + _nm
+    except Exception:
+        pass
+    adj = getattr(SHORT_LEAVE_ADJUST, 'fn', None)   # v1.62.11 (item 260): the day as it would be with a short leave saved / cancelled
+    if adj is not None:
+        out = adj(employee, day, out)
+    return out
+
+
+SHORT_LEAVE_ADJUST = threading.local()   # v1.62.11 (item 260): LeavePolicy/paid_period sets .fn while it works out a pay difference
 
 
 # ----------------------------------------------------------------------------- punch → day
+MAX_SHIFT_HOURS = 12   # v1.62.6 (item 24): the longest shift without a shift plan when the rule sets no maximum hours
+
+
 def work_date_for(employee, ts, rule=None):
     rule = rule or rule_for(employee)
     lt = local(ts)
@@ -256,14 +290,40 @@ def work_date_for(employee, ts, rule=None):
     if sp and not sp.get('off') and sp.get('end') and sp['end'].date() > prev:
         # yesterday's shift runs past midnight: punches until 6 h after its end belong to it,
         # unless today's own shift has (nearly) started
+        # v1.67.0 (item 25b): the 6 h after the shift end and the 2 h before today's own shift are settings of the rule
+        # (Attendance rules › Night and cross-midnight; defaults 6 and 2 = today's behaviour)
+        from . import v167 as _V167
+        _x = _V167.rule_extras(rule)
+        _after = timedelta(hours=float(_x['after_night_hours']))
+        _before = timedelta(hours=float(_x['before_next_hours']))
         st = shift_info(employee, d, rule)
         today_start = st.get('start') if st and not st.get('off') else None
-        if ts <= sp['end'] + timedelta(hours=6) and (today_start is None or ts < today_start - timedelta(hours=2)):
+        if ts <= sp['end'] + _after and (today_start is None or ts < today_start - _before):
             return prev
+        # v1.67.0 (item 25c): back-to-back shifts (e.g. 24-hour 08:00–08:00 every day) – with the rule's "match the out punch to the
+        # open shift first", a punch near the end of yesterday's shift closes yesterday's open 'in' even when today's shift starts at
+        # the same time (before: it became today's 'in' → yesterday a missing punch). The next punch is today's 'in'.
+        if _x['back_to_back'] and today_start is not None and ts <= sp['end'] + _after:
+            last = M.Punch.objects.filter(employee_id=employee.id, is_void=False, work_date=prev).order_by('-ts').first()
+            if last and last.resolved_kind in ('in', 'break_in', 'lunch_in') and last.ts < ts \
+                    and ts - last.ts <= (sp['end'] - sp['start']) + _after and ts >= sp['end'] - _before:
+                return prev
     elif lt.hour < (rule.day_change_hour or 0):
         last = M.Punch.objects.filter(employee_id=employee.id, is_void=False, work_date=prev).order_by('-ts').first()
         if last and last.resolved_kind in ('in', 'break_in', 'lunch_in') and ts - last.ts < timedelta(hours=16):
             return prev
+    else:
+        # v1.62.6 (item 24): without a shift past midnight, a punch after the day-change hour (22:00 in, 06:00 out) made two missing
+        # punches. Now it closes yesterday's open 'in' when it is within the maximum shift length (the rule's maximum hours, else
+        # MAX_SHIFT_HOURS) – unless today's own shift has (nearly) started. A next-morning 'in' after a forgotten 'out' is longer.
+        last = M.Punch.objects.filter(employee_id=employee.id, is_void=False, work_date=prev).order_by('-ts').first()
+        if last and last.resolved_kind in ('in', 'break_in', 'lunch_in') and last.ts < ts:
+            max_len = timedelta(hours=float(rule.max_hours or 0) or MAX_SHIFT_HOURS)
+            if ts - last.ts <= max_len:
+                st = shift_info(employee, d, rule)
+                today_start = st.get('start') if st and not st.get('off') else None
+                if today_start is None or ts < today_start - timedelta(hours=2):
+                    return prev
     return d
 
 
@@ -311,14 +371,52 @@ def _round(dt, rule, is_in):
     return base.replace(hour=0, minute=0) + timedelta(minutes=target)
 
 
+def _night_settings():
+    """v1.62.6 (item 24): the company's night rules (AttendancePlus.v149.night_settings), read once per payroll run."""
+    try:
+        from . import v149
+        try:
+            from PayrollManagement.perf import memo
+        except Exception:
+            def memo(key, factory):
+                return factory()
+        return memo(('attendance_night_rules',), v149.night_settings)
+    except Exception:
+        return {'window_from_law': False, 'non_shift_only': False, 'law_window': ''}
+
+
+def night_window(rule):
+    """v1.62.6 (item 24): (start, end) counted as night. A rule that still has the old standard window 22:00–06:00 counts the law's
+    window of the company country when the company setting says so (UAE: 22:00–04:00, Decree-Law 33/2021 Art. 19(3) – sources
+    in v149.NIGHT_LAW); a window the company changed is always kept."""
+    ns, ne = rule.night_start or time(22, 0), rule.night_end or time(6, 0)
+    st = _night_settings()
+    if st.get('window_from_law') and st.get('law_window') and (ns.strftime('%H:%M'), ne.strftime('%H:%M')) == ('22:00', '06:00'):
+        a, b = st['law_window'].split('–')
+        return time(*map(int, a.split(':'))), time(*map(int, b.split(':')))
+    return ns, ne
+
+
+def shift_worker_on(working_shift):
+    """v1.62.6 (item 24): works on shifts that day – the planned shift is a night shift or runs past midnight. A day shift (also one
+    from a roster – many companies roster their office day shift) or the rule's default hours is not shift work here (legal adviser
+    to confirm this reading of Art. 19(3) "workers working based on shifts")."""
+    ws = working_shift or {}
+    if not ws or ws.get('source') == 'rule':
+        return False
+    return bool(ws.get('night_shift')) or bool(
+        ws.get('start') and ws.get('end') and local(ws['end']).date() > local(ws['start']).date())
+
+
 def _night_minutes(intervals, rule):
     total = 0
+    n_start, n_end = night_window(rule)   # v1.62.6 (item 24): the law's window where it applies
     for a, b in intervals:
         la, lb = local(a), local(b)
         d = la.date() - timedelta(days=1)
         while d <= lb.date():
-            ns = aware(d, rule.night_start)
-            ne = aware(d, rule.night_end)
+            ns = aware(d, n_start)
+            ne = aware(d, n_end)
             if ne <= ns:
                 ne += timedelta(days=1)
             lo, hi = max(la, ns), min(lb, ne)
@@ -369,6 +467,11 @@ def compute(employee, day, rule=None, at=None):
     at = at or now()
     sh = shift_info(employee, day, rule)
     off_kind, off_label = is_off_day(employee, day, sh)
+    # v1.67.0 (item 25a): on a day of a Ramadan period the shift has its Ramadan times or ends earlier by the reduction (UAE private
+    # sector: 2 h a day, Decree-Law 33/2021 Art. 17(4) / Cabinet Resolution 1/2022 Art. 15(2) – sources in v167.RAMADAN_LAW); the rule's
+    # minimum hours and daily overtime threshold are lowered by the same hours (a copy of the rule – the rule object is shared)
+    from . import v167 as _V167
+    sh, rule, _ramadan = _V167.apply_ramadan(employee, day, sh, rule, aware, minutes)
     lv = leave_on(employee, day)
     punches = list(M.Punch.objects.filter(employee_id=employee.id, work_date=day, is_void=False).order_by('ts'))
     resolve_kinds(punches)
@@ -389,6 +492,8 @@ def compute(employee, day, rule=None, at=None):
         'sources': sorted({p.source for p in punches}), 'flags': {},
     }
     flags = r['flags']
+    if _ramadan:
+        flags['ramadan'] = _ramadan   # v1.67.0 (item 25a)
     if legacy:
         flags['from_attendance_row'] = True
     if employee.emp_joined_date and day < employee.emp_joined_date:
@@ -475,6 +580,12 @@ def compute(employee, day, rule=None, at=None):
     r['night_minutes'] = _night_minutes(intervals, rule)
     r['is_night_shift'] = bool((working_shift or {}).get('night_shift')) or (
         r['night_minutes'] >= (rule.night_min_minutes or 0) and r['night_minutes'] > 0)
+    # v1.62.6 (item 24): the night overtime rate only for workers not on shifts when the company setting says so (UAE default,
+    # Art. 19(3): "The workers working based on shifts shall be excluded from this clause.")
+    night_rate = r['is_night_shift']
+    if night_rate and _night_settings().get('non_shift_only') and shift_worker_on(working_shift):
+        night_rate = False
+        flags['night_rate_not_for_shift'] = True
 
     # ---- base status
     if lv and not lv.dis_half_day:
@@ -550,6 +661,14 @@ def compute(employee, day, rule=None, at=None):
                     missed += 1
             if missed:
                 flags['missed_parts'] = missed
+        _sl = short_leave_minutes(employee, day)   # v1.62.4 (item 81): approved short leave covers the late / early minutes
+        if _sl:
+            late_cover = min(r['late_minutes'], _sl.get('first_half', 0) + _sl.get('any', 0))
+            r['late_minutes'] -= late_cover
+            left_any = max(_sl.get('any', 0) - max(late_cover - _sl.get('first_half', 0), 0), 0)
+            r['early_minutes'] -= min(r['early_minutes'], _sl.get('second_half', 0) + left_any)
+            r['is_late'], r['is_early'] = r['late_minutes'] > 0, r['early_minutes'] > 0
+            flags['short_leave_minutes'] = sum(_sl.values())
         if r['status'] == 'present':
             worst = None
             if rule.late_tolerance_minutes and r['late_minutes'] > rule.late_tolerance_minutes and rule.late_beyond_action != 'none':
@@ -566,8 +685,9 @@ def compute(employee, day, rule=None, at=None):
     if is_workday and r['status'] == 'present' and first_in and last_out and not half_leave:
         full = _dec((working_shift or {}).get('min_hours') or rule.min_hours_full_day)
         half = _dec((working_shift or {}).get('half_day_hours') or rule.min_hours_half_day)
-        if full > 0 and worked < full * 60:
-            if half > 0 and worked < half * 60:
+        paid = worked + int(flags.get('short_leave_minutes') or 0)   # v1.62.4 (item 81): short leave hours count as paid time
+        if full > 0 and paid < full * 60:
+            if half > 0 and paid < half * 60:
                 r['status'] = 'absent'
             else:
                 r['status'] = 'half_day'
@@ -575,8 +695,29 @@ def compute(employee, day, rule=None, at=None):
     elif is_workday and half_leave and r['status'] == 'present':
         r['status'] = 'half_day'
 
+    # v1.67.0 (item 25d): a shift from a rest day / public holiday into a working day (or back) – with the rule's "Rest-day and
+    # holiday hours by the calendar date" the hours count on the calendar date they fall on: only the hours on the rest day / holiday
+    # are rest-day / holiday overtime (before, and with "by the shift start date": the whole shift took the start date's kind)
+    _split = None
+    if _V167.rule_extras(rule)['rest_day_hours_by'] == 'calendar' and intervals and worked and r['status'] != 'leave':
+        by = _V167.minutes_by_date(intervals, local, minutes)
+        if len(by) > 1:
+            kinds = {}
+            for dd in by:
+                if dd == day:
+                    kinds[dd] = r['status'] if r['status'] in ('holiday', 'weekly_off') else None
+                else:
+                    kinds[dd] = is_off_day(employee, dd, shift_info(employee, dd, rule))[0]
+            if len({bool(k) for k in kinds.values()}) > 1:
+                off_m = sum(m for dd, m in by.items() if kinds[dd])
+                _split = {'by_date': {dd.isoformat(): m for dd, m in sorted(by.items())}, 'off_minutes': off_m,
+                          'work_minutes': sum(by.values()) - off_m,
+                          'kinds': {dd.isoformat(): (k or 'working') for dd, k in sorted(kinds.items())},
+                          'off_type': 'HOLIDAY' if 'holiday' in kinds.values() else 'WEEKEND'}
+                flags['hours_by_calendar'] = _split
+
     # ---- overtime
-    r.update(_overtime(employee, rule, r, working_shift, worked, is_workday, half_leave))
+    r.update(_overtime(employee, rule, r, working_shift, worked, is_workday, half_leave, night_rate, _split))   # v1.62.6 (item 24)
     return r
 
 
@@ -600,13 +741,16 @@ def _ot_rate(employee, rule, ot_type, night=False):
         return {'NORMAL': Decimal('1.25'), 'WEEKEND': Decimal('1.50'), 'HOLIDAY': Decimal('1.50')}[ot_type]
 
 
-def _overtime(employee, rule, r, working_shift, worked, is_workday, half_leave):
+def _overtime(employee, rule, r, working_shift, worked, is_workday, half_leave, night_rate=None, split=None):
     out = {'ot_minutes': 0, 'ot_type': '', 'ot_rate': Decimal('1')}
+    r['flags'].pop('rest_day_ot', None)   # v1.67.0 (item 25d)
     if not (employee.emp_ot_applicable and rule.ot_enabled) or not worked or r['status'] in ('leave',):
         return out
     if r['status'] in ('holiday', 'weekly_off'):
         ot_type = 'HOLIDAY' if r['status'] == 'holiday' else 'WEEKEND'
         extra = worked
+        if split:   # v1.67.0 (item 25d): only the hours on the rest day / holiday – the hours on the working day are not overtime
+            extra = max(0, worked - int(split['work_minutes']))
     else:
         if not r['last_out'] or r['status'] in ('missing_punch', 'absent') or half_leave:
             return out
@@ -629,9 +773,47 @@ def _overtime(employee, rule, r, working_shift, worked, is_workday, half_leave):
     if cap > 0:
         extra = min(extra, int(cap * 60))
     extra = max(0, int(extra))
+    night = r.get('is_night_shift') if night_rate is None else night_rate
     out.update(ot_minutes=extra, ot_type=ot_type if extra else '',
-               ot_rate=_ot_rate(employee, rule, ot_type, r.get('is_night_shift')) if extra else Decimal('1'))
+               ot_rate=_ot_rate(employee, rule, ot_type, night)   # v1.62.6 (item 24)
+               if extra else Decimal('1'))
+    # v1.62.11 (item 255): the night rate only for the overtime hours inside the night window (UAE 22:00–04:00), the normal overtime
+    # rate for the rest – 20:00–06:00 all overtime: 6 h × night rate + 4 h × normal rate (before: 10 h × night rate). The overtime
+    # hours count as night hours first, up to the night minutes worked that day (22:00–08:00 with 2 h overtime: 2 h at the night rate,
+    # as 1.62.6). Kept in the day's flags (night_ot_minutes / night_ot_rate / day_ot_rate); ot_rate is the blended rate (2 decimals,
+    # shown on screens) and weighted_ot() gives the exact weighted hours.
+    r['flags'].pop('night_ot_minutes', None)
+    r['flags'].pop('night_ot_rate', None)
+    r['flags'].pop('day_ot_rate', None)
+    if extra and night and ot_type == 'NORMAL':
+        night_ot = min(extra, int(r.get('night_minutes') or 0))
+        day_rate = _ot_rate(employee, rule, ot_type, False)
+        if 0 < night_ot < extra and day_rate != out['ot_rate']:
+            nr = out['ot_rate']
+            r['flags'].update(night_ot_minutes=night_ot, night_ot_rate=str(nr), day_ot_rate=str(day_rate))
+            out['ot_rate'] = ((nr * night_ot + day_rate * (extra - night_ot)) / extra).quantize(Decimal('0.01'))
+    # v1.67.0 (item 25d): a working day's shift running into a rest day / holiday – the hours on that calendar date are rest-day /
+    # holiday overtime (a second overtime row of the day, flags rest_day_ot); the normal overtime of the day is what is left above them
+    if split and ot_type == 'NORMAL' and split.get('off_minutes'):
+        rd = int(split['off_minutes'])
+        if rd >= (rule.ot_min_minutes or 0):
+            t2 = split.get('off_type') or 'WEEKEND'
+            r['flags']['rest_day_ot'] = {'type': t2, 'minutes': rd, 'rate': str(_ot_rate(employee, rule, t2, False))}
+            if out['ot_minutes']:
+                left = max(0, out['ot_minutes'] - rd)
+                out.update(ot_minutes=left, ot_type=ot_type if left else '', ot_rate=out['ot_rate'] if left else Decimal('1'))
     return out
+
+
+def weighted_ot(hours, day_rate, flags=None):
+    """v1.62.11 (item 255): overtime hours × their rate for one day – a day whose overtime is partly in the night window
+    (flags night_ot_minutes) pays the night part at the night rate and the rest at the normal overtime rate."""
+    h = Decimal(str(hours or 0))
+    f = flags or {}
+    if f.get('night_ot_minutes') and f.get('night_ot_rate') and f.get('day_ot_rate'):
+        nh = min(h, Decimal(int(f['night_ot_minutes'])) / Decimal(60))
+        return nh * Decimal(str(f['night_ot_rate'])) + (h - nh) * Decimal(str(f['day_ot_rate']))
+    return h * Decimal(str(day_rate or 1))
 
 
 # ----------------------------------------------------------------------------- persist
@@ -746,17 +928,33 @@ def _write_overtime(employee, rec, rule):
     total = (rec.ot_minutes or 0) + (rec.period_ot_minutes or 0)
     ot_type = rec.ot_type or ('NORMAL' if total else '')
     rows = EmployeeOvertime.objects.filter(employee=employee, date=rec.date).exclude(source='MANUAL')
+    # v1.67.0 (item 25d): the rest-day / holiday hours of a shift running into a rest day are a second row of the day
+    extra = (rec.flags or {}).get('rest_day_ot') if isinstance(rec.flags, dict) else None
+    if extra and extra.get('minutes') and extra.get('type') and extra['type'] != ot_type:
+        rows.exclude(ot_type__in=[ot_type, extra['type']] if total else [extra['type']]).delete()
+        _write_ot_row(employee, rec.date, extra['type'], int(extra['minutes']), rule)
+        if not total:
+            return
+    else:
+        extra = None
     if not total:
         rows.delete()
         return
-    rows.exclude(ot_type=ot_type).delete()
+    if extra is None:
+        rows.exclude(ot_type=ot_type).delete()
+    _write_ot_row(employee, rec.date, ot_type, total, rule)
+
+
+def _write_ot_row(employee, day, ot_type, total, rule):
+    """One attendance overtime row (employee / day / type) – the body of _write_overtime before v1.67.0, unchanged."""
+    from calendars.models import EmployeeOvertime
     hours = (Decimal(total) / Decimal(60)).quantize(Decimal('0.01'))
-    row = EmployeeOvertime.objects.filter(employee=employee, date=rec.date, ot_type=ot_type).first()
+    row = EmployeeOvertime.objects.filter(employee=employee, date=day, ot_type=ot_type).first()
     if row and row.source == 'MANUAL':
         return
     auto_ok = not rule.ot_needs_approval
     if row is None:
-        EmployeeOvertime.objects.create(employee=employee, date=rec.date, ot_type=ot_type, slab='OT', hours=hours,
+        EmployeeOvertime.objects.create(employee=employee, date=day, ot_type=ot_type, slab='OT', hours=hours,
                                         approved=auto_ok, source='ATTENDANCE')
         return
     changed = []

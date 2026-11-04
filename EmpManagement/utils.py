@@ -389,18 +389,19 @@ def get_final_salary(employee, last_working_date):
     ).order_by('-payroll_run').first()
     print("pa",s)
     return payslip.net_salary if payslip else Decimal('0.00')
-def calculate_settlement(eos):
-    """v1.59.0: the gratuity rules in force on the last working day (dated country-policy versions)."""
+def calculate_settlement(eos, opts=None):
+    """v1.59.0: the gratuity rules in force on the last working day (dated country-policy versions).
+    v1.62.11 (EOS settings): opts – the company's end-of-service rules (PayrollPlus.eos_settings.eos_opts); None = as before."""
     try:
         from CountryPack.services import rules_on
         lwd = getattr(getattr(eos, 'resignation', None), 'last_working_date', None)
     except ImportError:
-        return _calculate_settlement(eos)
+        return _calculate_settlement(eos, opts)
     with rules_on(lwd):
-        return _calculate_settlement(eos)
+        return _calculate_settlement(eos, opts)
 
 
-def _calculate_settlement(eos):
+def _calculate_settlement(eos, opts=None):
     from PayrollManagement.models import EmployeeSalaryStructure
     from OrganisationManager.models import GratuityTable
     from PayrollManagement.models import AirTicketAllocation
@@ -425,11 +426,17 @@ def _calculate_settlement(eos):
         # v1.15.1: service counts the joining and the last day; days of unpaid leave are not service
         # (UAE Decree-Law 33/2021 Art. 51) – they were never taken off before
         total_days = (end_date - start_date).days + 1
+        opts = opts or {}   # v1.62.11 (EOS settings)
+        if opts.get('service_days') == 'difference':   # last working day − joining date (the joining day not counted twice)
+            total_days -= 1
         try:
             from django.apps import apps as _apps
             _LR = _apps.get_model('calendars', 'employee_leave_request')
             _unpaid = 0.0
-            for _r in _LR.objects.filter(employee=employee, status='approved', leave_type__type='unpaid', start_date__lte=end_date, end_date__gte=start_date):
+            _lq = _LR.objects.filter(employee=employee, status='approved', start_date__lte=end_date, end_date__gte=start_date)
+            # v1.62.11 (EOS settings): the leave types the company counts as unpaid (default: the types of type 'unpaid')
+            _lq = _lq.filter(leave_type_id__in=opts['unpaid_types']) if opts.get('unpaid_types') else _lq.filter(leave_type__type='unpaid')
+            for _r in _lq:
                 _days = float(_r.approved_days or _r.number_of_days or 0)
                 _span = (_r.end_date - _r.start_date).days + 1
                 _inside = (min(_r.end_date, end_date) - max(_r.start_date, start_date)).days + 1
@@ -443,6 +450,9 @@ def _calculate_settlement(eos):
             eos.leave_days_without_pay = round(_unpaid + _golive_unpaid, 2)
         except Exception:
             logger.exception('unpaid leave days for EOS failed')
+        opts['computed_unpaid'] = eos.leave_days_without_pay   # v1.62.11 (EOS settings): shown next to HR's override
+        if opts.get('unpaid_days') is not None:   # v1.62.11 (EOS settings): HR's override on the draft settlement
+            eos.leave_days_without_pay = round(float(opts['unpaid_days']), 2)
         eos.total_service_days = total_days
         eos.years_of_service = total_days / 365
         eos.net_number_of_days_worked = total_days - eos.leave_days_without_pay
@@ -475,6 +485,9 @@ def _calculate_settlement(eos):
 
         eos.last_month_salary = basic_salary
         daily_wage = basic_salary / Decimal('30')
+        notice_daily = daily_wage   # v1.62.11 (EOS settings): notice pay stays basic ÷ 30
+        if opts.get('gratuity_daily') == 'basic_365':   # v1.62.11 (EOS settings): gratuity daily wage basic × 12 ÷ 365
+            daily_wage = basic_salary * 12 / Decimal('365')
 
         # -------------------------------
         # GRATUITY RULE
@@ -487,6 +500,8 @@ def _calculate_settlement(eos):
             years = gratuity_service_years(start_date, end_date, eos.leave_days_without_pay or 0, employee.emp_branch_id_id)
         except ImportError:
             pass
+        if opts.get('service_days') == 'difference':   # v1.62.11 (EOS settings)
+            years -= Decimal('1') / Decimal('365')
         if years < 0:
             years = Decimal('0')
         eos.years_of_service = float(round(years, 4))
@@ -532,20 +547,26 @@ def _calculate_settlement(eos):
         served = (end_date - resignation.resigned_on).days if resignation.resigned_on else 0
         unserved = max(int(eos.notice_period_days or 0) - max(served, 0), 0)
         if unserved:
-            eos.notice_pay = (daily_wage * Decimal(unserved)).quantize(Decimal('0.01'))
+            eos.notice_pay = (notice_daily * Decimal(unserved)).quantize(Decimal('0.01'))
         else:
             eos.notice_pay = Decimal('0.00')
 
         # -------------------------------
         # AIR TICKET
         # -------------------------------
+        # v1.62.3 (item 106): the newest open allocation only – not one whose ticket / cash payout was already taken, used up or
+        # expired by the last working day (that one was paid again here); one entitlement, never one per allocation
+        from django.db.models import Q as _Q
         ticket = AirTicketAllocation.objects.filter(
             employee=employee,
             status='APPROVED',
             is_active=True
-        ).order_by('-allocated_date').first()
+        ).exclude(airticketrequest__status__in=('APPROVED', 'PROCESSED')).filter(
+            _Q(expiry_date__isnull=True) | _Q(expiry_date__gte=end_date)
+        ).order_by('-allocated_date', '-pk').first()
+        _left = (ticket.remaining_amount if ticket.remaining_amount is not None else ticket.amount) if ticket else Decimal('0.00')
 
-        eos.air_ticket = ticket.amount if ticket else Decimal('0.00')
+        eos.air_ticket = _left if _left and _left > 0 else Decimal('0.00')
 
         eos.save()
         eos.refresh_from_db()

@@ -77,6 +77,69 @@ OT_LAW = {
 }
 
 
+# v1.62.6 (item 24): the night window of the overtime law and who gets the night rate. Only the UAE is filled in – it was checked
+# against these sources on 3 Nov 2026 (all four say the same):
+#   1. the law text, Federal Decree-Law No. 33 of 2021, Art. 19(3) (MOHRE PDF "Federal Decree-Law No. 33 of 2021 Regarding the
+#      Regulation of Employment Relationship and its amendments", mohre.gov.ae): "If the work conditions require that the worker works
+#      overtime between 10 pm and 4 am, the worker shall be entitled ... basic wage plus an increase of not less than (50 %) ...
+#      The workers working based on shifts shall be excluded from this clause."
+#   2. u.ae – Working hours in the private sector: "It could increase to 50 per cent if overtime is done between 10 pm and 4 am.
+#      This rule does not apply on workers who work on basis of shifts."
+#   3. MOHRE – Workers' rights, Working hours (mohre.gov.ae/en/media-center/awareness-and-guidance/workers-rights.aspx): 10.00 pm to
+#      4.00 am, at least 50 %, "this provision does not apply to shift workers".
+#   4. Ashish Mehta (Ashish Mehta & Associates, legal consultants) in Khaleej Times, "Overtime pay explained": quotes Art. 19(3) the same.
+# Other countries: not checked in this release – their rules keep their own night window and the night rate for everybody.
+NIGHT_LAW = {
+    'AE': {'start': '22:00', 'end': '04:00', 'shift_workers_excluded': True,
+           'law': 'UAE Decree-Law 33/2021 Art. 19(3): overtime between 10 pm and 4 am – basic wage + at least 50%; '
+                  'workers working on shifts are excluded.',
+           'sources': ['Federal Decree-Law No. 33 of 2021, Art. 19(3) (law text, mohre.gov.ae)',
+                       'u.ae – Working hours in the private sector',
+                       'MOHRE – Workers\' rights: Working hours',
+                       'Ashish Mehta & Associates (Khaleej Times, "Overtime pay explained")']},
+}
+NIGHT_KEY = 'attendance_night_rules'
+OLD_DEFAULT_WINDOW = ('22:00', '06:00')   # the standard window of every attendance rule before v1.62.6
+
+
+def night_law(code=None):
+    """v1.62.6 (item 24): the verified night rule of the country, or None."""
+    return NIGHT_LAW.get((code or country()).upper())
+
+
+def night_settings():
+    """v1.62.6 (item 24) company setting (ZeoApps CompanyOption, JSON – no new column):
+    window_from_law  – rules that still have the old standard window 22:00–06:00 count the law's window (UAE 22:00–04:00);
+    non_shift_only   – the night overtime rate only for workers not on shifts (Art. 19(3)).
+    Both default to what the law says for a country in NIGHT_LAW; elsewhere off (today's behaviour)."""
+    nl = night_law()
+    v = {}
+    try:
+        o = apps.get_model('ZeoApps', 'CompanyOption').objects.filter(key=NIGHT_KEY).first()
+        v = (o.value or {}) if o is not None else {}
+    except Exception:
+        v = {}
+    dflt = bool(nl)
+    return {'window_from_law': bool(v.get('window_from_law', dflt)) and bool(nl),
+            'non_shift_only': bool(v.get('non_shift_only', dflt and bool(nl and nl.get('shift_workers_excluded')))),
+            'law_window': f"{nl['start']}–{nl['end']}" if nl else '', 'law': nl['law'] if nl else '',
+            'sources': list(nl['sources']) if nl else [], 'saved': bool(v)}
+
+
+def save_night_settings(data):
+    cur = {}
+    try:
+        o = apps.get_model('ZeoApps', 'CompanyOption').objects.filter(key=NIGHT_KEY).first()
+        cur = dict(o.value or {}) if o is not None else {}
+    except Exception:
+        cur = {}
+    for k in ('window_from_law', 'non_shift_only'):
+        if k in data:
+            cur[k] = bool(data[k]) if not isinstance(data[k], str) else data[k].lower() in ('1', 'true', 'yes', 'on')
+    apps.get_model('ZeoApps', 'CompanyOption').objects.update_or_create(key=NIGHT_KEY, defaults={'value': cur})
+    return night_settings()
+
+
 def country():
     try:
         from CountryPack.services import pack_code
@@ -141,17 +204,27 @@ def breakdown(employee, year, month):
     start, end = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
     rule = E.rule_for(employee)
     rates = {d: r for d, r in M.AttendanceDay.objects.filter(employee_id=employee.id, date__range=(start, end)).values_list('date', 'ot_rate')}
+    splits = {d: fl for d, fl in M.AttendanceDay.objects.filter(employee_id=employee.id, date__range=(start, end),   # v1.62.11 (item 255)
+                                                                  flags__has_key='night_ot_minutes').values_list('date', 'flags')}
     nights = set(M.AttendanceDay.objects.filter(employee_id=employee.id, date__range=(start, end), night_minutes__gt=0).values_list('date', flat=True))
+    # v1.62.6 (item 24): a day the night rate was not given (worker on shifts, Art. 19(3)) is not a night-rate day here either
+    nights -= set(M.AttendanceDay.objects.filter(employee_id=employee.id, date__range=(start, end),
+                                                 flags__has_key='night_rate_not_for_shift').values_list('date', flat=True))
     rows, tot = [], defaultdict(lambda: {'hours': Decimal(0), 'weighted': Decimal(0)})
     labels = {'NORMAL': 'Normal day', 'WEEKEND': 'Rest day / weekend', 'HOLIDAY': 'Public holiday'}
+    rdx = {d: fl.get('rest_day_ot') or {} for d, fl in M.AttendanceDay.objects.filter(   # v1.67.0 (item 25d)
+        employee_id=employee.id, date__range=(start, end), flags__has_key='rest_day_ot').values_list('date', 'flags')}
     for o in EmployeeOvertime.objects.filter(employee=employee, date__range=(start, end)).order_by('date'):
         t = o.ot_type or 'NORMAL'
         approved = bool(o.approved or o.source == 'MANUAL')
         rate = rates.get(o.date)
+        if o.date in rdx and t == rdx[o.date].get('type') and o.source != 'MANUAL' and rdx[o.date].get('rate'):
+            rate = Decimal(str(rdx[o.date]['rate']))   # v1.67.0 (item 25d): the rest-day row of a working day
         if not rate or rate == 1:
             rate = E._ot_rate(employee, rule, t, night=o.date in nights)
         h = Decimal(str(o.hours or 0))
-        w = (h * Decimal(str(rate))).quantize(Decimal('0.01'))
+        w = ((E.weighted_ot(h, rate, splits[o.date]) if o.date in splits and o.source != 'MANUAL' and t == 'NORMAL'   # v1.62.11 (item 255)
+              else h * Decimal(str(rate)))).quantize(Decimal('0.01'))
         rows.append({'date': o.date, 'type': labels.get(t, t), 'hours': str(h), 'rate': str(rate), 'weighted': str(w), 'approved': approved,
                      'night': o.date in nights})
         if approved:

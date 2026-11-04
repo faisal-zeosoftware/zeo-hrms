@@ -53,6 +53,10 @@ def trainer_stats(trainer):
     ids = set(SessionExtra.objects.filter(trainer=trainer).values_list('session_id', flat=True))
     if trainer.employee_id:
         ids |= set(m.TrainingSession.objects.filter(trainer_employee_id=trainer.employee_id).values_list('id', flat=True))
+    # v1.62.0 talent-ops: an external trainer is named on the session (trainer_external) – those sessions count too
+    nm = (getattr(trainer, 'name', '') or '').strip()
+    if nm:
+        ids |= set(m.TrainingSession.objects.filter(trainer_external__iexact=nm).exclude(status='cancelled').values_list('id', flat=True))
     agg = m.ParticipantResult.objects.filter(nomination__session_id__in=ids, trainer_rating__isnull=False).aggregate(
         avg=Avg('trainer_rating'), n=Count('id'))
     return {'sessions': len(ids), 'avg_rating': round(float(agg['avg']), 2) if agg['avg'] is not None else None, 'ratings': agg['n']}

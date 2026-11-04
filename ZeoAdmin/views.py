@@ -1,9 +1,10 @@
 """v1.52.0 – ZEO administration API (/zeo-admin/api/…)."""
 import json
-from datetime import date
+from datetime import date, timedelta   # v1.62.11 (item 95) timedelta
 
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.db.models import Q   # v1.62.11 (item 95)
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework.permissions import IsAuthenticated
@@ -11,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import models as M
+from Translations.i18n import tr   # v1.62.11 (item 95)
 
 U = get_user_model()
 
@@ -325,27 +327,81 @@ class ImportUndoView(Base):
 
 
 # ------------------------------------------------------------------ out of office (64)
-def ooo_json(o):
+def ooo_json(o, names=None):
     t = date.today()
+    names = names or {}
+    state = 'cancelled' if o.cancelled else ('ended' if (not o.active or o.end_date < t) else ('now' if o.start_date <= t else 'planned'))
     return {'id': o.pk, 'user': uname(o.user), 'user_id': o.user_id, 'delegate': uname(o.delegate), 'delegate_id': o.delegate_id,
             'start_date': o.start_date, 'end_date': o.end_date, 'note': o.note, 'include_pending': o.include_pending, 'active': o.active,
-            'moved': o.moved, 'state': 'ended' if (not o.active or o.end_date < t) else ('now' if o.start_date <= t else 'planned')}
+            'moved': o.moved, 'state': state,
+            # v1.62.11 (item 95)
+            'source': o.source, 'automatic': o.source == 'leave', 'leave_request_id': o.leave_request_id, 'leave_number': o.leave_number,
+            'give_back': o.give_back, 'returned': o.returned, 'returned_at': o.returned_at,
+            'back_on': (o.end_date + timedelta(days=1)) if o.give_back and state in ('now', 'planned') else None,
+            'rules': [dict(r, delegate=names.get(r.get('delegate_id'), '')) for r in (o.rules or [])]}
+
+
+def _people(qs):
+    """v1.62.11 (item 95): the users to choose a colleague from, by the employee's name (user name when there is no employee)."""
+    from django.apps import apps
+    E = apps.get_model('EmpManagement', 'emp_master')
+    users = list(qs)
+    emp = {e.users_id: e for e in E.objects.filter(users_id__in=[u.pk for u in users]).only('users_id', 'emp_first_name', 'emp_last_name', 'emp_code')}
+    out = []
+    for u in users:
+        e = emp.get(u.pk)
+        n = ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x) if e else ''
+        out.append({'id': u.pk, 'name': f'{n} ({e.emp_code})' if n else uname(u), 'employee': bool(n)})
+    out.sort(key=lambda x: (not x['employee'], x['name'].lower()))
+    return out
+
+
+def _ooo_names(rows):
+    ids = set()
+    for o in rows:
+        ids |= {r.get('delegate_id') for r in (o.rules or [])}
+    return {u.pk: uname(u) for u in U.objects.filter(pk__in=[i for i in ids if i])}
+
+
+def _leave_types():
+    from django.apps import apps
+    try:
+        LT = apps.get_model('calendars', 'leave_type')
+        return [{'id': x.pk, 'name': x.name, 'unit': getattr(x, 'unit', 'days')} for x in LT.objects.all().order_by('name')]
+    except Exception:
+        return []
+
+
+def _bool(v, default=True):
+    if v is None:
+        return default
+    return str(v).lower() not in ('0', 'false', 'no', '')
 
 
 class OutOfOfficeView(Base):
     def get(self, request):
-        from .delegation import approval_models
-        mine = M.OutOfOffice.objects.filter(user=request.user).select_related('user', 'delegate')[:20]
-        for_me = M.OutOfOffice.objects.filter(delegate=request.user, active=True, end_date__gte=date.today()).select_related('user', 'delegate')
-        out = {'mine': [ooo_json(o) for o in mine], 'for_me': [ooo_json(o) for o in for_me],
-               'users': [{'id': u.pk, 'name': uname(u)} for u in company_users().exclude(pk=request.user.pk).filter(is_active=True).order_by('username', 'email')[:1000]],
-               'kinds': [label for key, label, _ in approval_models()] + ['Automation approvals']}
+        from .delegation import is_approver, kinds, my_standins, settings_get
+        mine = list(M.OutOfOffice.objects.filter(user=request.user, waiting_leave=False).select_related('user', 'delegate')[:20])
+        for_me = list(M.OutOfOffice.objects.filter(Q(delegate=request.user) | Q(rules__contains=[{'delegate_id': request.user.pk}]), active=True,
+                                                   waiting_leave=False, end_date__gte=date.today()).select_related('user', 'delegate'))
+        names = _ooo_names(mine + for_me)
+        s = settings_get()
+        d, rules = my_standins(request.user.pk)
+        sn = {u.pk: uname(u) for u in U.objects.filter(pk__in=[x for x in [d] + [r['delegate_id'] for r in rules] if x])}
+        out = {'mine': [ooo_json(o, names) for o in mine], 'for_me': [ooo_json(o, names) for o in for_me],
+               'users': _people(company_users().exclude(pk=request.user.pk).filter(is_active=True).order_by('username', 'email')[:1000]),
+               'kinds': [label for key, label, *_ in kinds()],
+               # v1.62.11 (item 95)
+               'kind_list': [{'key': key, 'label': label} for key, label, *_ in kinds()], 'leave_types': _leave_types(),
+               'auto': {'on': s['on'], 'give_back': s['give_back'], 'types': s['types']}, 'approver': is_approver(request.user),
+               'standins': {'delegate_id': d, 'delegate': sn.get(d, ''), 'rules': [dict(r, delegate=sn.get(r['delegate_id'], '')) for r in rules]}}
         if self.admin and request.query_params.get('all'):
-            out['all'] = [ooo_json(o) for o in M.OutOfOffice.objects.filter(end_date__gte=date.today(), active=True).select_related('user', 'delegate')]
+            rows = list(M.OutOfOffice.objects.filter(end_date__gte=date.today(), active=True, waiting_leave=False).select_related('user', 'delegate'))
+            out['all'] = [ooo_json(o, _ooo_names(rows)) for o in rows]
         return Response(out)
 
     def post(self, request):
-        from .delegation import check, start
+        from .delegation import check, clean_rules, save_my_standins, settings_get, start, warnings
         d = request.data
         user = request.user
         if d.get('user_id') and str(d.get('user_id')) != str(request.user.pk):   # an administrator sets it for someone who is away
@@ -355,24 +411,132 @@ class OutOfOfficeView(Base):
                 return bad('User not found.', 404)
         delegate = company_users().filter(pk=d.get('delegate_id')).first()
         a, b = parse_date(str(d.get('start_date') or '')), parse_date(str(d.get('end_date') or ''))
-        p = check(user, delegate, a, b)
+        rules = clean_rules(d.get('rules'))   # v1.62.11 (item 95) a different colleague per approval type / leave type
+        p = check(user, delegate, a, b, rules=rules)
         if p:
-            return bad(p)
+            from Translations.i18n import current_lang, for_lang
+            return bad(for_lang(p, current_lang()))
         o = M.OutOfOffice.objects.create(user=user, delegate=delegate, start_date=a, end_date=b, note=(d.get('note') or '')[:255],
-                                         include_pending=str(d.get('include_pending', True)).lower() not in ('0', 'false'), created_by=request.user)
+                                         include_pending=_bool(d.get('include_pending')), created_by=request.user, rules=rules,
+                                         give_back=_bool(d.get('give_back'), settings_get()['give_back']))
+        if _bool(d.get('keep'), False):   # "Keep these colleagues for next time" (My stand-ins)
+            save_my_standins(user, delegate.pk, rules, request.user)
         n = start(o)
-        return Response({**ooo_json(o), 'moved_now': n}, status=201)
+        o.refresh_from_db()
+        return Response({**ooo_json(o, _ooo_names([o])), 'moved_now': n, 'warnings': warnings(rules, delegate.pk)}, status=201)
 
     def delete(self, request, pk=None):
-        o = M.OutOfOffice.objects.filter(pk=pk).first()
+        from .delegation import end
+        o = M.OutOfOffice.objects.filter(pk=pk).select_related('user', 'delegate').first()
         if o is None or (o.user_id != request.user.pk and not self.admin):
             return bad('Not found.', 404)
         if o.start_date > date.today():
             o.delete()
-        else:
-            o.active, o.end_date = False, min(o.end_date, date.today())
-            o.save(update_fields=['active', 'end_date'])
-        return Response(status=204)
+            return Response(status=204)
+        n = end(o)   # v1.62.11 (item 95): "I am back" – the waiting approvals come back at once (when give back is on)
+        return Response({'returned': n})
+
+
+class OooSettingsView(Base):
+    """v1.62.11 (item 95) Settings › Out of office rules (CompanyOption 'ooo_auto')."""
+    def get(self, request):
+        from .delegation import settings_get
+        return Response({**settings_get(), 'leave_types': _leave_types(), 'can_edit': self._can()})
+
+    def _can(self):
+        return self.admin or bool(self.c and self.c.codes & {'change_leavepolicy', 'change_lvapprovalworkflow'})
+
+    def put(self, request):
+        from .delegation import settings_set
+        if not self._can():
+            return bad(tr('You do not have permission to do this.'), 403)
+        d = request.data
+        if d.get('types') == 'some' and not d.get('type_ids'):
+            return Response({'type_ids': [tr('Choose at least one leave type.')]}, status=400)
+        return Response(settings_set(d))
+
+
+class OooLeaveChoiceView(Base):
+    """v1.62.11 (item 95) "Approvals go to" on a leave request of an approver (kept on a waiting out-of-office row)."""
+    def get(self, request):
+        from .delegation import is_approver, my_standins, settings_get
+        s = settings_get()
+        out = {'auto': s['on'], 'types': s['types'], 'type_ids': s['type_ids'], 'approver': is_approver(request.user), 'chosen': None,
+               'default_id': my_standins(request.user.pk)[0],
+               'users': _people(company_users().exclude(pk=request.user.pk).filter(is_active=True).order_by('username', 'email')[:1000])}
+        lr = request.query_params.get('leave_request')
+        if lr:
+            o = M.OutOfOffice.objects.filter(leave_request_id=lr, cancelled=False).first()
+            out['chosen'] = o.delegate_id if o else None
+        return Response(out)
+
+    def post(self, request):
+        from django.apps import apps
+        from .delegation import choose_for_leave, clean_rules
+        LR = apps.get_model('calendars', 'employee_leave_request')
+        req = LR.objects.filter(pk=request.data.get('leave_request')).select_related('employee').first()
+        if req is None:
+            return bad(tr('Not found.'), 404)
+        owner = getattr(req.employee, 'users', None)
+        if owner is None or (owner.pk != request.user.pk and not self.admin):
+            return bad(tr('Not found.'), 404)
+        delegate = company_users().filter(pk=request.data.get('delegate_id')).first()
+        if delegate is None or delegate.pk == owner.pk:
+            return Response({'delegate_id': [tr('Choose the colleague who approves for you.')]}, status=400)
+        o = choose_for_leave(req, owner, delegate.pk, clean_rules(request.data.get('rules')) if 'rules' in request.data else None)
+        return Response({'ok': True, 'ooo_id': o.pk if o else None})
+
+
+class OooHandedView(Base):
+    """v1.62.11 (item 95) the approvals handed over by out of office to me / by me (inbox and review window line)."""
+    def get(self, request):
+        from .delegation import handed_info
+        return Response(handed_info(request.user, request.query_params.get('kind') or None))
+
+
+class StandInLevelsView(Base):
+    """v1.62.11 (item 95) HR's stand-in of each level of an approval workflow (Approval levels editor)."""
+    def get(self, request):
+        k = request.query_params.get('kind') or ''
+        qs = M.StandIn.objects.filter(scope='level', kind=k).select_related('delegate')
+        return Response([{'workflow_id': s.workflow_id, 'level_no': s.level_no, 'delegate_id': s.delegate_id, 'delegate': uname(s.delegate)} for s in qs])
+
+    def put(self, request):
+        from .delegation import LEVELS
+        if not (self.admin or (self.c and self.c.codes and any(c.startswith(('add_', 'change_')) and ('level' in c or 'workflow' in c) for c in self.c.codes))):
+            return bad(tr('You do not have permission to do this.'), 403)
+        d = request.data
+        k, wf = str(d.get('kind') or ''), d.get('workflow_id')
+        if k not in LEVELS or not str(wf or '').isdigit():
+            return bad(tr('Not found.'), 404)
+        M.StandIn.objects.filter(scope='level', kind=k, workflow_id=int(wf)).delete()
+        users = {u.pk for u in company_users().filter(pk__in=[x.get('delegate_id') for x in d.get('levels') or [] if x.get('delegate_id')])}
+        n = 0
+        for x in d.get('levels') or []:
+            uid = x.get('delegate_id')
+            if uid and int(uid) in users and str(x.get('level_no') or '').isdigit():
+                M.StandIn.objects.create(scope='level', kind=k, workflow_id=int(wf), level_no=int(x['level_no']), delegate_id=int(uid), updated_by=request.user)
+                n += 1
+        return Response({'saved': n})
+
+
+class StandInMineView(Base):
+    """v1.62.11 (item 95) "My stand-ins": the colleagues for my next out of office (used by the automatic one too)."""
+    def get(self, request):
+        from .delegation import my_standins
+        d, rules = my_standins(request.user.pk)
+        return Response({'delegate_id': d, 'rules': rules})
+
+    def put(self, request):
+        from .delegation import clean_rules, save_my_standins
+        rules = clean_rules(request.data.get('rules'))
+        ids = [request.data.get('delegate_id')] + [r['delegate_id'] for r in rules]
+        if request.user.pk in [int(x) for x in ids if str(x or '').isdigit()]:
+            return bad(tr('Choose someone else.'))
+        if any(not r['delegate_id'] for r in rules):
+            return bad(tr('Choose the colleague for each approval type you added.'))
+        save_my_standins(request.user, request.data.get('delegate_id') or None, rules, request.user)
+        return Response({'ok': True})
 
 
 # ------------------------------------------------------------------ health (69)
@@ -636,16 +800,39 @@ class SetupGuideHomeView(Base):
     """The Home checklist after go-live (company administrators)."""
     def get(self, request):
         from . import setup_guide as SG
-        if not self.admin:
-            return Response({'items': [], 'live': False})
+        if not self.admin:   # v1.62.1 employees see the "still being set up" notice (setup-gate/), never the checklist
+            return Response({'items': [], 'live': False, 'admin': False})
         g = M.SetupGuide.get()
         ov = SG.overview()
         from django.apps import apps as _apps
         new_company = not _apps.get_model('EmpManagement', 'emp_master').objects.exists()
+        from . import setup_gate as GATE
+        gate = GATE.info(admin=True)
         return Response({'items': SG.home_items(), 'live': bool(g.live_at), 'done': ov['done'], 'total': ov['total'],
                          'auto_open': not g.live_at and not g.opened_at and new_company,
                          # an existing company that never opened the guide is not reminded of it on Home
-                         'show': bool(g.live_at or g.opened_at or new_company)})
+                         'show': bool(g.live_at or g.opened_at or new_company or gate['blocked']),
+                         'gate': gate, 'admin': True})   # v1.62.1 required setup before HR transactions
+
+
+class SetupGateView(Base):
+    """v1.62.1 – GET: is the company still waiting for the required setup steps (every signed-in user: the self-service
+    notice); POST {allow: true | false} (company administrators): "Allow transactions before the setup is finished"."""
+    def get(self, request):
+        from . import setup_gate as GATE
+        return Response(GATE.info(admin=self.admin))
+
+    def post(self, request):
+        from . import setup_gate as GATE
+        self.need_admin()
+        v = request.data.get('allow')
+        if not isinstance(v, bool):
+            v = str(v).lower() in ('1', 'true', 'yes', 'on')
+        GATE.set_allow(v, request.user)
+        out = GATE.info(admin=True)
+        out['message_saved'] = tr_('Transactions are allowed before the setup is finished.') if v else \
+            tr_('Transactions wait until every setup step is done.')
+        return Response(out)
 
 
 class SetupGuideMatrixView(Base):

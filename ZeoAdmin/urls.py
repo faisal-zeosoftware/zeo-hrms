@@ -16,6 +16,11 @@ urlpatterns = [
     path('api/imports/<int:pk>/undo/', V.ImportUndoView.as_view()),
     path('api/out-of-office/', V.OutOfOfficeView.as_view()),             # out of office
     path('api/out-of-office/<int:pk>/', V.OutOfOfficeView.as_view()),
+    path('api/out-of-office/settings/', V.OooSettingsView.as_view()),        # v1.62.11 (item 95)
+    path('api/out-of-office/leave-choice/', V.OooLeaveChoiceView.as_view()),
+    path('api/out-of-office/handed/', V.OooHandedView.as_view()),
+    path('api/stand-ins/levels/', V.StandInLevelsView.as_view()),
+    path('api/stand-ins/mine/', V.StandInMineView.as_view()),
     path('api/health/', V.HealthView.as_view()),                         # health checks
     path('api/retention/', V.RetentionView.as_view()),                    # v1.53.0 data retention and privacy
     path('api/retention/anonymise/', V.AnonymiseView.as_view()),
@@ -25,6 +30,7 @@ urlpatterns = [
     path('api/test-company/', V.TestCompanyView.as_view()),              # v1.53.0 test company with the setup
     path('api/test-company/<int:pk>/', V.TestCompanyView.as_view()),
     path('api/setup-guide/', V.SetupGuideView.as_view()),               # v1.56.0 setup guide
+    path('api/setup-gate/', V.SetupGateView.as_view()),                 # v1.62.1 required setup before HR transactions
     path('api/setup-guide/home/', V.SetupGuideHomeView.as_view()),
     path('api/setup-guide/matrix/', V.SetupGuideMatrixView.as_view()),
     path('api/setup-guide/template/<str:kind>/', V.SetupGuideTemplateView.as_view()),

@@ -376,7 +376,7 @@ def exit_extra(o, r):
 
 
 app.reg(Reg('exit_interview', ExitInterview, 'Exit interview', 'Exit interviews', 'Exit interviews',
-            cols=('number', 'employee', 'last_working_date', 'reason', 'rehire', 'recommend', 'interviewer', 'status'),
+            cols=('number', 'employee', 'last_working_date', 'reason', 'rehire', 'interviewer', 'status'),   # v1.62.0 talent-ops: fits the card
             form=('employee', 'resignation', 'last_working_date', 'interviewer', 'interview_at'),
             number=('exit_interview', 'EXI'), manage=MANAGE, view=VIEW, own=(('employee', 'emp'),),
             search=('number', 'employee__emp_first_name', 'employee__emp_last_name', 'employee__emp_code'), filters=('status', 'reason', 'rehire'),
@@ -589,7 +589,7 @@ def pro_extra(o, r):
 
 
 app.reg(Reg('pro', ProService, 'PRO service', 'PRO services', 'PRO services',
-            cols=('number', 'service', 'employee', 'authority', 'application_no', 'expected_date', 'total', 'assigned_to', 'status'),
+            cols=('number', 'service', 'employee', 'application_no', 'expected_date', 'total', 'assigned_to', 'status'),   # v1.62.0 talent-ops: fits the card (the government body is on the record)
             form=('service', 'employee', 'for_company', 'dependant', 'title', 'authority', 'priority', 'application_no', 'requested_date', 'expected_date',
                   'gov_fee', 'service_fee', 'other_fee', 'paid_by', 'assigned_to', 'steps', 'notes'),
             number=('pro', 'PRO'), manage=PRO, view=VIEW, own=(('employee', 'emp'),), public=lambda r: Q(assigned_to=r.user),
@@ -675,7 +675,18 @@ def a_ho_send(o, request, f):
 
 
 def finish_handover(o):
-    """A signed return closes the employee's allocations of the returned items."""
+    """A signed return closes the employee's allocations of the returned items; v1.62.0 talent-ops: a signed issue form is the
+    employee's acknowledgement of those allocations in Assets (one issue / return process, Assets being the master)."""
+    if o.kind == 'issue':
+        try:
+            from AssetPlus.models import AllocationExtra
+            ids = [int(it['allocation_id']) for it in (o.items or []) if it.get('allocation_id')]
+            if ids:
+                AllocationExtra.objects.filter(allocation_id__in=ids, ack_status='pending').update(
+                    ack_status='accepted', ack_at=o.signed_at or now(), ack_condition_notes=f'Signed hand-over form {o.number}')
+        except Exception:
+            pass
+        return
     if o.kind != 'return':
         return
     try:

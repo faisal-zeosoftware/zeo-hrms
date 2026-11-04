@@ -5,6 +5,7 @@ Every way ZEO sends mail – Django's send_mail, EmailMessage, get_connection(ho
 settings – goes through EMAIL_BACKEND, so the check here covers all of them.
 """
 import contextlib
+import os
 import logging
 import threading
 import time
@@ -64,6 +65,12 @@ class GuardedBackend(BaseEmailBackend):
     def __init__(self, fail_silently=False, **kwargs):
         super().__init__(fail_silently=fail_silently)
         real = getattr(settings, 'ZEO_REAL_EMAIL_BACKEND', None) or 'django.core.mail.backends.smtp.EmailBackend'
+        # v1.62.1 (user report 2 Nov: "Send message – nothing received"): a server without ZEO_EMAIL_USER falls back to the
+        # console backend, which also swallowed the mail of a company that has its own SMTP in Settings › E-mail
+        # configuration (get_connection(host=…)) – printed in the server log, reported as sent, never delivered.
+        # The company's own server is now always used through SMTP; an explicit ZEO_EMAIL_BACKEND is still obeyed.
+        if kwargs.get('host') and real.endswith('console.EmailBackend') and not os.environ.get('ZEO_EMAIL_BACKEND'):
+            real = 'django.core.mail.backends.smtp.EmailBackend'
         self.real = get_connection(backend=real, fail_silently=fail_silently, **kwargs)
 
     def open(self):

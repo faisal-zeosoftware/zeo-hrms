@@ -107,12 +107,16 @@ def statement_context(case):
                      'department': case.get('department', ''), 'branch': case.get('branch', ''), 'joined': case.get('joined'),
                      'last_working_date': case.get('last_working_date'), 'notice_date': case.get('notice_date'), 'notice_days': case.get('notice_days'),
                      'exit_type': case.get('exit_type'), 'exit_type_label': case.get('exit_type_label', ''), 'reason': case.get('reason', ''),
-                     'photo': case.get('photo', ''), 'basic': case.get('basic'), 'wage': case.get('wage'), 'unpaid_days': case.get('unpaid_days')},
+                     'photo': case.get('photo', ''), 'basic': case.get('basic'), 'wage': case.get('wage'), 'unpaid_days': case.get('unpaid_days'),
+                     # v1.62.11 (EOS settings)
+                     'emirates_id': case.get('emirates_id', ''), 'contract_type': case.get('contract_type', '')},
+        'journal': st.get('journal'), 'accounting_date': st.get('accounting_date'),
         'service': {**(case.get('service') or {}), 'text': ymd(case.get('service') or {})},
         'earnings': [l for l in lines if l.get('kind') == 'earning'],
         'deductions': [l for l in lines if l.get('kind') == 'deduction'],
         'notes': [l for l in lines if l.get('kind') in ('info', 'block')],
-        'totals': {'earnings': st.get('total_earnings'), 'deductions': st.get('total_deductions'), 'net': st.get('net'), 'net_words': st.get('net_words', '')},
+        'totals': {'earnings': st.get('total_earnings'), 'deductions': st.get('total_deductions'), 'net': st.get('net'), 'net_words': st.get('net_words', ''),
+                   'recoverable': bool(st.get('recoverable')), 'net_label': st.get('net_label') or tr('Net payable')},   # v1.62.11 (EOS settings)
         'approvals': {'prepared': pick('submit', 'calculated'), 'checked': pick('validate'), 'approved': pick('approve'), 'paid': pick('pay')},
         'history': st.get('history') or [],
         'case': case,
@@ -190,6 +194,13 @@ def render_pdf(ctx):
              (tr('Exit type'), case.get('exit_type_label', '')), (tr('Total service'), ymd(svc)),
              (tr('Unpaid days'), f"{float(case.get('unpaid_days') or 0):g}"), (tr('Basic salary'), 'AED ' + money(case.get('basic'))),
              (tr('Monthly wage'), 'AED ' + money(case.get('wage'))), (tr('Payment due by'), _d(case.get('due_date')))]
+    # v1.62.11 (EOS settings): Emirates ID, contract type, reason for leaving, the journal once there is one
+    facts += [(tr('Emirates ID'), case.get('emirates_id') or '–'), (tr('Contract type'), case.get('contract_type') or '–'),
+              (tr('Reason for leaving'), case.get('reason') or '–')]
+    if st.get('journal'):
+        facts.append((tr('Journal'), f"{st['journal'].get('number')} ({tr(st['journal'].get('status_label') or '')})"))
+    if len(facts) % 2:
+        facts.append(('', ''))
     cells = []
     for i in range(0, len(facts), 2):
         r = []
@@ -211,6 +222,8 @@ def render_pdf(ctx):
             basis = l.get('basis') or ''
             if l.get('calc'):
                 basis = (basis + '\n' if basis else '') + '\n'.join('· ' + str(c) for c in l['calc'])
+            if l.get('breakup') and len(l['breakup']) > 0 and not any(r.get('label') in (l.get('calc') or []) for r in l['breakup']):   # v1.62.11 (EOS settings)
+                basis = (basis + '\n' if basis else '') + '\n'.join('· ' + str(r.get('label') or '') for r in l['breakup'])
             if l.get('manual') and l.get('by'):
                 basis = (basis + '\n' if basis else '') + tr('Added by {0}', l['by'])
             rows.append(row_([P(l.get('label', ''), 8.5), P(basis, 7.5, color=MUTED), P(money(l.get('amount')), 9, align=A_END)]))
@@ -233,8 +246,9 @@ def render_pdf(ctx):
             story.append(P('· ' + l.get('label', '') + (f" – {l['basis']}" if l.get('basis') else ''), 7.5, color=MUTED))
         story.append(Spacer(1, 3 * mm))
     # ---- net payable
-    net = Table([row_([[P(tr('Net payable'), 10, True, '#ffffff'), P(st.get('net_words') or '', 8.5, color='#e8e6fb')],
-                       P('AED ' + money(st.get('net')), 16, True, '#ffffff', A_END)])], colWidths=widths([128 * mm, 50 * mm]))
+    _rec = float(st.get('net') or 0) < 0   # v1.62.11 (EOS settings): a negative net is recovered from the employee
+    net = Table([row_([[P(tr('Net recoverable from the employee') if _rec else tr('Net payable'), 10, True, '#ffffff'), P(st.get('net_words') or '', 8.5, color='#e8e6fb')],
+                       P('AED ' + money(abs(float(st.get('net') or 0)) if _rec else st.get('net')), 16, True, '#ffffff', A_END)])], colWidths=widths([128 * mm, 50 * mm]))
     net.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(NAVY)), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                              ('TOPPADDING', (0, 0), (-1, -1), 7), ('BOTTOMPADDING', (0, 0), (-1, -1), 7), ('LEFTPADDING', (0, 0), (-1, -1), 8),
                              ('RIGHTPADDING', (0, 0), (-1, -1), 8)]))

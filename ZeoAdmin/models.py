@@ -140,9 +140,39 @@ class OutOfOffice(models.Model):
     moved = models.PositiveIntegerField(default=0)
     created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
+    # v1.62.11 (item 95) automatic out of office from an approved leave, and the approvals given back when the approver is back
+    source = models.CharField(max_length=10, default='manual', help_text='manual | leave (made when the leave was approved)')
+    leave_request_id = models.IntegerField(null=True, blank=True, db_index=True, help_text='the leave request (calendars) of an automatic row')
+    leave_number = models.CharField(max_length=50, blank=True, default='')
+    waiting_leave = models.BooleanField(default=False, help_text='"Approvals go to" of a leave not approved yet – not in force')
+    give_back = models.BooleanField(default=True, help_text='the approvals still waiting go back to the approver when the period ends')
+    handed = models.JSONField(default=dict, blank=True, help_text='{approval kind: [ids]} handed over by this row (only these come back)')
+    returned = models.PositiveIntegerField(default=0)
+    returned_at = models.DateTimeField(null=True, blank=True)
+    cancelled = models.BooleanField(default=False, help_text='the leave was cancelled / rejected (automatic row)')
+    rules = models.JSONField(default=list, blank=True, help_text='[{kind, leave_type_id, delegate_id}] – a different colleague per approval type')
 
     class Meta:
         ordering = ['-start_date']
+
+
+class StandIn(models.Model):
+    """v1.62.11 (item 95) – who approves for someone who is away, set in advance.
+    scope 'mine':  an approver's own stand-ins ("My stand-ins", kept for the next out of office): kind '' = the default colleague,
+                   else an approval kind (leave, loan …), for leave optionally per leave type.
+    scope 'level': HR's stand-in of one level of an approval workflow (kind = the workflow kind, workflow_id + level_no)."""
+    scope = models.CharField(max_length=6, default='mine')
+    user = models.ForeignKey(USER, null=True, blank=True, on_delete=models.CASCADE, related_name='+')
+    kind = models.CharField(max_length=20, blank=True, default='')
+    leave_type_id = models.IntegerField(null=True, blank=True)
+    workflow_id = models.IntegerField(null=True, blank=True)
+    level_no = models.PositiveSmallIntegerField(null=True, blank=True)
+    delegate = models.ForeignKey(USER, on_delete=models.CASCADE, related_name='+')
+    updated_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['scope', 'kind', 'id']
 
 
 # ------------------------------------------------------------------ v1.53.0 data retention and privacy (68)
@@ -217,6 +247,12 @@ class SetupGuide(models.Model):
     live_by_id = models.IntegerField(null=True, blank=True)
     opened_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # v1.62.1 (user request 2 Nov) – a company created from 1.62.1 on finishes the required steps before HR transactions
+    # (ZeoAdmin/setup_gate.py). False for every company that existed before: nothing changes for them.
+    gate_on = models.BooleanField(default=False, help_text='HR transactions wait until the required steps are done')
+    gate_allow = models.BooleanField(default=False, help_text='"Allow transactions before the setup is finished"')
+    gate_by_id = models.IntegerField(null=True, blank=True)
+    gate_at = models.DateTimeField(null=True, blank=True)
 
     @classmethod
     def get(cls):

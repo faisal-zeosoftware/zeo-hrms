@@ -335,7 +335,8 @@ class JobView(APIView):
         st = S.job_status(job)
         if not st:
             return Response({'detail': tr('Not found.')}, status=404)
-        return Response({k: st.get(k) for k in ('state', 'step', 'step_no', 'steps', 'name', 'schema', 'company_id', 'error', 'failed')})
+        return Response({k: st.get(k) for k in ('state', 'step', 'step_no', 'steps', 'name', 'schema', 'company_id', 'error', 'failed',
+                                                 'percent', 'detail', 'stages', 'elapsed', 'remaining')})   # v1.62.1 progress
 
 
 # ------------------------------------------------------------------ the open company: banner and licences
@@ -462,6 +463,12 @@ class AccountDatabasesView(Base):
         label = ' '.join(str(request.data.get('label') or '').split())[:120]
         if len(label) < 2:
             return Response({'detail': tr('Give the database a name, for example Test or Group 2.')}, status=400)
+        if request.data.get('background'):   # v1.62.1: in the background – the screen polls db-jobs/<job>/ for the %
+            try:
+                job = owndb.start_create_db(acc, by=request.user, label=label)
+            except owndb.MoveError as e:
+                return Response({'detail': tr(str(e))}, status=409)
+            return Response({'job': job}, status=202)
         try:
             srv = owndb.create_own_db(acc, by=request.user, new=True, label=label)
         except Exception as e:
@@ -533,17 +540,29 @@ class AccountDatabaseView(Base):
         return Response({'databases': databases_json(acc), 'default': Account.objects.get(pk=acc.pk).db_alias})
 
 
+DB_JOB_FIELDS = ('state', 'step', 'source', 'target', 'label', 'companies', 'error', 'failed',
+                 # v1.62.1 the progress (<z-job-progress>): %, what is being done now, the steps, time taken / left
+                 'kind', 'key', 'name', 'percent', 'step_t', 'step_p', 'step_no', 'steps', 'detail', 'detail_t', 'detail_p',
+                 'stages', 'started', 'ended', 'elapsed', 'remaining')
+
+
 class DbJobView(Base):
-    """GET – progress of a database copy (owner of the account or Adept)."""
+    """GET – progress of a database job: a copy of a database, or (v1.62.1) a new database (owner of the account or Adept)."""
     def get(self, request, job):
         from . import owndb
-        st = owndb.dup_status(job)
+        from ZeoApps.job_progress import with_elapsed
+        st = owndb.dup_status(job) or owndb.db_job_status(job)
         if not st:
             return Response({'detail': tr('Not found.')}, status=404)
         acc, err = self.account(request, st.get('account') or 0)
         if err:
             return err
-        return Response({k: st.get(k) for k in ('state', 'step', 'source', 'target', 'label', 'companies', 'error', 'failed')})
+        st = with_elapsed(st)
+        out = {k: st.get(k) for k in DB_JOB_FIELDS}
+        out['companies'] = [{k: v for k, v in c.items() if k != 'size'} for c in (st.get('companies') or [])]
+        if not out.get('kind'):
+            out['kind'] = 'duplicate'
+        return Response(out)
 
 
 class AccountMovesView(Base):
@@ -942,7 +961,22 @@ def move_json(j):
             'keep_until': _iso(j.keep_until), 'error': j.error, 'log': j.log,
             'started_at': j.started_at.isoformat() if j.started_at else None,
             'finished_at': j.finished_at.isoformat() if j.finished_at else None,
-            'by': j.created_by.username if j.created_by else '', 'can_back': j.state == 'done' and bool(j.company_id)}
+            'by': j.created_by.username if j.created_by else '', 'can_back': j.state == 'done' and bool(j.company_id),
+            **_move_progress(j)}
+
+
+def _move_progress(j):
+    """v1.62.1: the % and steps of a move (kept in the cache by owndb.run_move) for <z-job-progress>."""
+    from . import owndb
+    p = owndb.move_progress(j.id) or {}
+    out = {k: p.get(k) for k in ('percent', 'step_t', 'step_p', 'detail', 'detail_t', 'detail_p', 'stages', 'elapsed', 'remaining')
+           if p.get(k) is not None}
+    if j.state in ('done', 'rolled_back'):
+        out['percent'] = 100
+    out.setdefault('percent', 0)
+    if j.state == 'waiting':
+        out.setdefault('step_t', 'Waiting')
+    return out
 
 
 def _srv_label(key):

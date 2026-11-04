@@ -326,6 +326,7 @@ class NotesView(APIView):
         if isinstance(extra, str):
             extra = re.split(r'[,;\s]+', extra)
         try:
+            C.auto_followers(rec, label, m.page)   # v1.62.1: also when the message comes without opening the panel (API, mobile)
             C.follow(rec.key, rec.id, user=request.user, reason='author', label=label, page=m.page)
             C.deliver(m, request.user, extra if kind == 'message' else ())
         except Exception:

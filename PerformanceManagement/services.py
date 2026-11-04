@@ -113,6 +113,12 @@ def calibrate(sheet, new_rating, reason, user=None):
         raise ValidationError("Rating must be 1 to 5.")
     if not reason:
         raise ValidationError("A reason is required for every calibration change.")
+    # v1.62.0 talent-ops: a rating whose outcome is approved or already in payroll cannot change underneath it
+    o = AppraisalOutcome.objects.filter(sheet=sheet).first()
+    if o is not None and o.status == 'pushed' and new_rating != o.final_rating:
+        raise ValidationError("The outcome of this rating is already in payroll – the rating cannot change any more.")
+    if o is not None and o.status == 'approved' and new_rating != o.final_rating:
+        raise ValidationError("The outcome of this rating is already approved – reject the outcome first, then change the rating.")
     CalibrationLog.objects.create(sheet=sheet, old_rating=sheet.final_rating, new_rating=new_rating, reason=reason, changed_by=user)
     sheet.final_rating = new_rating
     sheet.save(update_fields=['final_rating', 'updated_at'])
@@ -206,6 +212,9 @@ def push_to_payroll(outcome, user=None):
         eff = outcome.effective_date or timezone.localdate()
         line._effective_period = eff.strftime('%B%Y')
         line.amount = outcome.new_basic
+        # v1.62.2 (item 45): the new basic is valid from the effective date – payroll of earlier months keeps the old basic
+        # (the old amount is in the salary history); it was paid at once (March 2027 increase paid in November 2026)
+        line.valid_from = eff
         line.save()
     outcome.status = 'pushed'
     outcome.pushed_on = timezone.now()

@@ -10,6 +10,15 @@ def custom_exception_handler(exc, context):
     """
     Converts Django ValidationError to DRF ValidationError (JSON instead of HTML).
     """
+    # v1.62.5 (item 19): leave on days of a payroll already made – 409 with the month, the days, the pay difference and, for HR /
+    # payroll, the choice "Add to <next month> salary" (the screen sends the request again with confirm_paid_period)
+    if isinstance(exc, DjangoValidationError) and getattr(exc, 'info', None) and exc.info.get('code') == 'period_paid':
+        from rest_framework.views import set_rollback
+        from LeavePolicy.paid_period import answer
+        set_rollback()
+        req = (context or {}).get('request')
+        return Response(answer(exc.info, getattr(req, 'user', None)), status=status.HTTP_409_CONFLICT)
+
     # If it's a Django ValidationError, convert it
     if isinstance(exc, DjangoValidationError):
         if hasattr(exc, "message_dict"):

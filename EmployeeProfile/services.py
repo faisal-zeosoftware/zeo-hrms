@@ -60,6 +60,8 @@ def user_branches(request):
     """None = every branch."""
     try:
         c = ctx(request)
+        if getattr(c, 'pick', None):   # v1.62.0 ui: the top-bar branch selection
+            return c.branches
         return None if c.admin else (c.branches or [])
     except Exception:
         return []

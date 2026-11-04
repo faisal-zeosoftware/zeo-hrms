@@ -321,6 +321,11 @@ class AppraisalOutcomeViewSet(EmployeeScopedQuerysetMixin, BaseViewSet):
         o = self.get_object()
         if o.status not in ('pending', 'rejected'):
             raise ValidationError({'detail': 'Only pending outcomes can be approved.'})
+        # v1.62.0 talent-ops: only on locked ratings, and only while the outcome still matches the calibrated rating
+        if o.sheet.cycle.status not in ('calibration', 'closed'):
+            raise ValidationError({'detail': 'Lock the ratings of the cycle before approving outcomes.'})
+        if o.sheet.final_rating != o.final_rating:
+            raise ValidationError({'detail': 'The rating changed after this outcome was made – generate the outcomes again before approving.'})
         o.status = 'approved'; o.save(update_fields=['status'])
         return Response(AppraisalOutcomeSerializer(o).data)
 
@@ -343,8 +348,17 @@ class AppraisalOutcomeViewSet(EmployeeScopedQuerysetMixin, BaseViewSet):
         cycle = request.data.get('cycle')
         if not cycle:
             raise ValidationError({'cycle': 'Required.'})
-        n = AppraisalOutcome.objects.filter(sheet__cycle_id=cycle, status='pending').update(status='approved')
-        return Response({'detail': f'{n} outcome(s) approved.'})
+        # v1.62.0 talent-ops: only on locked ratings; outcomes whose rating changed since they were made are left out
+        from .models import AppraisalCycle
+        c = AppraisalCycle.objects.filter(pk=cycle).first()
+        if c is None or c.status not in ('calibration', 'closed'):
+            raise ValidationError({'detail': 'Lock the ratings of the cycle before approving outcomes.'})
+        qs = AppraisalOutcome.objects.filter(sheet__cycle_id=cycle, status='pending').select_related('sheet')
+        ids = [o.pk for o in qs if o.sheet.final_rating == o.final_rating]
+        stale = qs.count() - len(ids)
+        n = AppraisalOutcome.objects.filter(pk__in=ids).update(status='approved')
+        msg = f'{n} outcome(s) approved.' + (f' {stale} left out: the rating changed after the outcome was made – generate the outcomes again.' if stale else '')
+        return Response({'detail': msg, 'approved': n, 'stale': stale})
 
     @action(detail=False, methods=['post'])
     def push_all(self, request):

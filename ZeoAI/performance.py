@@ -262,3 +262,82 @@ def _polish(text, instruction):
         return out or text
     except Exception:
         return text
+
+
+# ---------------------------------------------------------------- v1.62.0 talent-ops: who needs attention
+def attention(branch_ids=None, within=90):
+    """Employees who need attention, with why: a final rating of 2 or below, an open PIP, skill gaps against the role, certificates
+    expiring or expired, overdue training needs. Read only; the same rules as the per-employee views above."""
+    E = M('EmpManagement', 'emp_master')
+    emps = E.objects.filter(is_active=True).select_related('emp_dept_id', 'emp_desgntn_id')
+    if branch_ids is not None:
+        emps = emps.filter(emp_branch_id__in=branch_ids)
+    try:   # leavers whose last working day has passed need no development
+        R_ = M('EmpManagement', 'EmployeeResignation')
+        gone = set(R_.objects.filter(status__iexact='approved', last_working_date__lt=date.today()).values_list('employee_id', flat=True))
+        emps = emps.exclude(pk__in=gone)
+    except LookupError:
+        pass
+    emps = {e.id: e for e in emps}
+    ids = list(emps)
+    flags = defaultdict(list)
+    today = date.today()
+    # latest final rating per employee
+    try:
+        GS = M('PerformanceManagement', 'GoalSheet')
+        seen = set()
+        for s in GS.objects.filter(employee_id__in=ids, final_rating__isnull=False).select_related('cycle').order_by('-cycle_id'):
+            if s.employee_id in seen:
+                continue
+            seen.add(s.employee_id)
+            if s.final_rating <= 2:
+                flags[s.employee_id].append({'kind': 'rating', 'level': 'critical' if s.final_rating == 1 else 'warning',
+                                             'text': f'Final rating {s.final_rating} of 5 in {s.cycle.name}'})
+        PIP = M('PerformanceManagement', 'PerformanceImprovementPlan')
+        for p in PIP.objects.filter(employee_id__in=ids, status__in=('active', 'extended')):
+            flags[p.employee_id].append({'kind': 'pip', 'level': 'warning', 'text': f'Improvement plan open until {p.end_date:%d/%m/%Y}' if p.end_date else 'Improvement plan open'})
+    except LookupError:
+        pass
+    # skill gaps vs the role
+    try:
+        RoleSkill, EmployeeSkill = M('LearningPlus', 'RoleSkill'), M('LearningPlus', 'EmployeeSkill')
+        req = defaultdict(list)
+        for r in RoleSkill.objects.select_related('skill'):
+            req[r.designation_id].append(r)
+        have = defaultdict(dict)
+        for s in EmployeeSkill.objects.filter(employee_id__in=ids):
+            have[s.employee_id][s.skill_id] = max(s.level or 0, have[s.employee_id].get(s.skill_id, 0))
+        for eid, e in emps.items():
+            gaps = [r for r in req.get(e.emp_desgntn_id_id, []) if have[eid].get(r.skill_id, 0) < r.required_level]
+            if gaps:
+                names = ', '.join(g.skill.name for g in gaps[:3]) + (f' +{len(gaps) - 3}' if len(gaps) > 3 else '')
+                flags[eid].append({'kind': 'skills', 'level': 'warning' if len(gaps) > 1 else 'info',
+                                   'text': f'{len(gaps)} skill gap{"s" if len(gaps) != 1 else ""} for the role: {names}'})
+    except LookupError:
+        pass
+    # certificates
+    try:
+        Cert = M('LearningManagement', 'Certificate')
+        for c in Cert.objects.filter(employee_id__in=ids, expiry_date__lte=today + timedelta(days=within)).order_by('expiry_date'):
+            d = (c.expiry_date - today).days
+            flags[c.employee_id].append({'kind': 'certificate', 'level': 'critical' if d < 0 else 'warning' if d <= 30 else 'info',
+                                         'text': (f'{c.title} expired on {c.expiry_date:%d/%m/%Y}' if d < 0 else f'{c.title} expires on {c.expiry_date:%d/%m/%Y}')})
+        TN = M('LearningManagement', 'TrainingNeed')
+        for n in TN.objects.filter(employee_id__in=ids, target_date__lt=today).exclude(status__in=('closed', 'completed', 'cancelled')).select_related('course'):
+            flags[n.employee_id].append({'kind': 'need', 'level': 'info', 'text': f'Training need overdue since {n.target_date:%d/%m/%Y}: {n.course.title if n.course_id else n.need}'})
+    except LookupError:
+        pass
+    weight = {'critical': 3, 'warning': 2, 'info': 1}
+    rows = []
+    for eid, fl in flags.items():
+        if eid not in emps:
+            continue
+        row = _emp(emps[eid])
+        row['flags'] = sorted(fl, key=lambda f: -weight[f['level']])
+        row['score'] = sum(weight[f['level']] for f in fl)
+        row['top'] = row['flags'][0]['level']
+        rows.append(row)
+    rows.sort(key=lambda r: (-weight[r['top']], -r['score'], r['name']))
+    kinds = Counter(f['kind'] for r in rows for f in r['flags'])
+    return {'rows': rows, 'employees': len(emps), 'counts': {'flagged': len(rows), 'rating': kinds['rating'], 'pip': kinds['pip'], 'skills': kinds['skills'],
+                                                           'certificate': kinds['certificate'], 'need': kinds['need']}}

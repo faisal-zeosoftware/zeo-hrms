@@ -100,6 +100,8 @@ def my_emp(request):
 def user_branches(request):
     try:
         c = _ctx(request)
+        if getattr(c, 'pick', None):   # v1.62.0 ui: the top-bar branch selection
+            return c.branches
         return None if c.admin else (c.branches or [])
     except Exception:
         return []
@@ -1778,6 +1780,18 @@ def leaving_employees(request):
         paid = set(E.objects.filter(status='paid').values_list('resignation__employee_id', flat=True))
     except LookupError:
         paid = set()
+    # v1.62.0 talent-ops: a leaver whose final settlement is paid but who still has an asset or an unsigned return form stays on the list
+    left = set(R_.objects.filter(status__iexact='approved').values_list('employee_id', flat=True)) & paid
+    if left:
+        still = set(S.Allocation().objects.filter(employee_id__in=left, returned_date__isnull=True).values_list('employee_id', flat=True))
+        try:
+            from django.apps import apps as _apps
+            still |= set(_apps.get_model('ZeoHR', 'AssetHandover').objects.filter(employee_id__in=left, kind='return', status__in=('draft', 'sent'))
+                         .values_list('employee_id', flat=True))
+        except LookupError:
+            pass
+        ids |= still
+        paid -= still
     qs = S.Emp().objects.filter(pk__in=ids - paid)
     br = user_branches(request)
     if br is not None:

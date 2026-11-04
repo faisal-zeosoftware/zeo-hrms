@@ -826,15 +826,53 @@ class  LoanApplication(models.Model):
         # save: a payroll run that updates the balance of an existing loan failed for the whole run when the employee already had
         # two active loans of the same type (imported data, a loan restarted by HR).
         ACTIVE = ('Pending', 'Approved', 'Disbursed', 'Paused', 'In Progress')
-        old = LoanApplication.objects.filter(pk=self.pk).values('status', 'loan_type_id', 'employee_id').first() if self.pk else None
+        old = LoanApplication.objects.filter(pk=self.pk).values('status', 'loan_type_id', 'employee_id', 'amount_requested', 'repayment_period',
+                                                                'emi_amount').first() if self.pk else None   # v1.62.3 (item 107): + amount / months / EMI
         if old is None or (self.status in ACTIVE and (old['status'] not in ACTIVE or old['loan_type_id'] != self.loan_type_id
                                                       or old['employee_id'] != self.employee_id)):
             self.clean()
+        if old is not None:
+            self._v1623_terms_changed(old, kwargs)   # v1.62.3 (item 107)
         if self.amount_requested and self.repayment_period and not self.emi_amount:
             self.emi_amount = round(self.amount_requested / self.repayment_period, 2)
         if self.remaining_balance is None:
             self.remaining_balance = self.amount_requested
         super().save(*args, **kwargs)
+
+    # v1.62.3 (item 107): the amount or the months of a loan changed (loan request edited). The balance is amount − repaid and the
+    # instalment is what is left spread over the months left (months − instalments already deducted); before, the old EMI and the old
+    # saved balance stayed, so payroll stopped after the planned months with part of the new amount never deducted (10,000 → 14,000
+    # after 3 instalments: 4,000 never deducted, balance shown 7,000). An EMI changed in the same save (top-up / reschedule) is kept.
+    # An edit that cannot be consistent (amount below what is repaid, no month left for a balance) is refused.
+    def _v1623_terms_changed(self, old, kwargs):
+        from decimal import Decimal as _D
+        from django.db.models import Sum as _Sum
+        from Translations.i18n import tr as _tr
+        amount = _D(str(self.amount_requested or 0))
+        months = int(self.repayment_period or 0)
+        if amount == _D(str(old['amount_requested'] or 0)) and months == int(old['repayment_period'] or 0):
+            return
+        reps = LoanRepayment.objects.filter(loan_id=self.pk)
+        n = reps.count()
+        repaid = _D(str(reps.aggregate(t=_Sum('amount_paid'))['t'] or 0))
+        left = amount - repaid
+        if left < 0:
+            raise ValidationError(_tr('The loan amount cannot be less than what is already repaid ({0}).', f'{repaid:,.2f}'))
+        months_left = months - n
+        if left > 0 and months_left <= 0:
+            raise ValidationError(_tr('{0} instalments are already deducted – give more months to repay the balance of {1}.', n, f'{left:,.2f}'))
+        emi_given = (self.emi_amount is not None and old['emi_amount'] is not None and
+                     _D(str(self.emi_amount)) != _D(str(old['emi_amount']))) or 'emi_amount' in (kwargs.get('update_fields') or ())
+        if not emi_given:
+            self.emi_amount = (left / months_left).quantize(_D('0.01'), rounding='ROUND_HALF_UP') if months_left > 0 else _D('0.00')
+        self.remaining_balance = left
+        extra = {'emi_amount', 'remaining_balance'}
+        if left == 0 and n and self.status in ('Approved', 'Disbursed', 'In Progress', 'Paused'):
+            self.status = 'Closed'   # the new amount is exactly what is already repaid
+            extra.add('status')
+        uf = kwargs.get('update_fields')
+        if uf is not None:
+            kwargs['update_fields'] = list(set(uf) | extra)
 
     
     def pause(self, start_date, reason=None):
@@ -1944,7 +1982,7 @@ class AirTicketPolicy(models.Model):
             raise ValidationError("An active policy already exists for this country, department, and category combination.")
 
     def __str__(self):
-        return f"{self.name} - {self.allowance_type}"
+        return f"{self.name} – {self.get_allowance_type_display()}"
 class AirTicketRule(models.Model):
     RULE_TYPE_CHOICES = [
         ('ONE_WAY', 'One Way Ticket'),
@@ -1960,7 +1998,7 @@ class AirTicketRule(models.Model):
     remarks = models.TextField(blank=True)
 
     def __str__(self):
-        return f"{self.rule_type} after {self.required_service_years} year(s)"
+        return f"{self.get_rule_type_display()} after {self.required_service_years} year(s)"
 
 class AirTicketAllocation(models.Model):
     STATUS_CHOICES = [
@@ -2266,9 +2304,9 @@ class AirTicketRequest(models.Model):
         send_notification_email(
             user=next_level.approver,
             employee=None,
-            message=(f"Your DocumentRequest {self.request_type}"
-                     f"(Document No: {self.document_number}) is waiting for your Approval."
-                    ),
+            message=(f"Air ticket request {self.document_number} of "   # v1.62.0: was "Your DocumentRequest <code>"
+                     f"{getattr(self.employee, 'emp_first_name', '') or ''} {getattr(self.employee, 'emp_last_name', '') or ''}".rstrip()
+                     + " is waiting for your approval."),
             template_type="request_created",
             context={
                 **get_employee_context(self.employee),
@@ -2606,7 +2644,9 @@ def track_salary_revision(sender, instance, **kwargs):
             new_amount=instance.amount,
             revised_by=getattr(instance, '_revised_by', None),
             remarks=getattr(instance, '_remarks', ''),
-            effective_period=getattr(instance, '_effective_period', None),
+            # v1.62.2 (item 45): a change saved with a new valid_from takes effect on that day (payroll and arrears use it)
+            effective_period=getattr(instance, '_effective_period', None) or (
+                instance.valid_from.isoformat() if instance.valid_from and instance.valid_from != old_instance.valid_from else None),
         )
 class LeaveEncashment(models.Model):
 

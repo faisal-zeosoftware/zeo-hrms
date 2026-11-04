@@ -75,11 +75,15 @@ class WeekendAssignSerializer(serializers.ModelSerializer):
     def validate(self, data):
         related_to = data.get('related_to')
         weekend_model = data.get('weekend_model')
+        # v1.62.1 (tester 30-10 item 193): on an edit the assignment itself is not "already assigned"
+        others = assign_weekend.objects.all()
+        if self.instance is not None:
+            others = others.exclude(pk=self.instance.pk)
         
         if related_to == 'branch':
             existing_branches = data.get('branch')
             if existing_branches:
-                existing = assign_weekend.objects.filter(
+                existing = others.filter(
                     weekend_model=weekend_model,
                     branch__in=existing_branches
                 ).exists()
@@ -89,7 +93,7 @@ class WeekendAssignSerializer(serializers.ModelSerializer):
         elif related_to == 'department':
             existing_departments = data.get('department')
             if existing_departments:
-                existing = assign_weekend.objects.filter(
+                existing = others.filter(
                     weekend_model=weekend_model,
                     department__in=existing_departments
                 ).exists()
@@ -99,7 +103,7 @@ class WeekendAssignSerializer(serializers.ModelSerializer):
         elif related_to == 'category':
             existing_categories = data.get('category')
             if existing_categories:
-                existing = assign_weekend.objects.filter(
+                existing = others.filter(
                     weekend_model=weekend_model,
                     category__in=existing_categories
                 ).exists()
@@ -109,7 +113,7 @@ class WeekendAssignSerializer(serializers.ModelSerializer):
         elif related_to == 'employee':
             existing_employees = data.get('employee')
             if existing_employees:
-                existing = assign_weekend.objects.filter(
+                existing = others.filter(
                     weekend_model=weekend_model,
                     employee__in=existing_employees
                 ).exists()
@@ -140,6 +144,15 @@ class HolidaySerializer(serializers.ModelSerializer):
     class Meta:
         model = holiday
         fields = '__all__'
+
+    def validate(self, attrs):
+        # v1.62.10 (item 176): a holiday may not end before it starts (it was saved and counted as no day)
+        a = attrs.get('start_date', getattr(self.instance, 'start_date', None))
+        b = attrs.get('end_date', getattr(self.instance, 'end_date', None))
+        if a and b and b < a:
+            from Translations.i18n import tr
+            raise serializers.ValidationError({'end_date': [tr('The end date is before the start date.')]})
+        return attrs
 
 class HolidayCalandarSerializer(serializers.ModelSerializer):
     year = serializers.ChoiceField(choices=[(year, year) for year in range(2000, 2040)])
@@ -268,6 +281,17 @@ class LeaveResetPolicySerializer(serializers.ModelSerializer):
 
         if instance.leave_type:
             rep['leave_type'] = instance.leave_type.name
+            rep['leave_type_id'] = instance.leave_type_id   # v1.65.0: the screens need the id of the type too
+        try:   # v1.65.0 (items 82, 83, 84): birth date, days given back, extension link
+            from LeavePolicy.leave_rules import info_of
+            i = info_of(instance)
+            if i is not None:
+                rep['birth_date'] = i.birth_date
+                rep['extension_of'] = i.extension_of_id
+                rep['cancelled_days'] = i.cancelled_days
+                rep['original_end_date'] = i.original_end_date
+        except Exception:
+            pass
 
         if instance.leave_entitlement:
             rep['leave_entitlement'] = str(instance.leave_entitlement)
@@ -383,9 +407,8 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def validate_unit(self, value):
-        # v1.11.0: leave requests count days only – hourly leave is hidden until requests can take hours
-        if value == 'hours' and getattr(self.instance, 'unit', None) != 'hours':
-            raise serializers.ValidationError('Hourly leave is not available: leave requests are counted in days.')
+        # v1.11.0: leave requests counted days only – hourly leave was hidden until requests could take hours.
+        # v1.62.4 (item 81): short leave requests take hours (leave_duration), so a type may be counted in hours.
         return value
 
     def to_representation(self, instance):
@@ -396,9 +419,29 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
 
 
 class LeaveRequestSerializer(serializers.ModelSerializer):
+    # v1.62.4 (item 81): the hours of a short leave (leave type counted in hours) – kept in applied_days / number_of_days
+    leave_duration = serializers.FloatField(write_only=True, required=False, allow_null=True)
+    # v1.65.0 (item 82): the date of birth of the child (maternity / parental leave) – kept in LeavePolicy.LeaveRequestInfo
+    birth_date = serializers.DateField(write_only=True, required=False, allow_null=True)
+
     class Meta:
         model = employee_leave_request
         fields = '__all__'
+
+    def create(self, validated_data):   # v1.65.0 (item 82)
+        bd = validated_data.pop('birth_date', None)
+        try:
+            from LeavePolicy.leave_rules import extras
+        except ImportError:
+            return super().create(validated_data)
+        with extras(birth_date=bd):
+            return super().create(validated_data)
+
+    def update(self, instance, validated_data):   # v1.65.0 (item 82)
+        bd = validated_data.pop('birth_date', None)
+        if bd is not None:
+            instance._lv_birth_date = bd
+        return super().update(instance, validated_data)
 
     def to_internal_value(self, data):
         # v1.62.0: the supporting document may come as a data URI (JSON clients, the data workbook) – sick and maternity leave
@@ -425,6 +468,17 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 
         if instance.leave_type:
             rep['leave_type'] = instance.leave_type.name
+            rep['leave_type_id'] = instance.leave_type_id   # v1.65.0: the screens need the id of the type too
+        try:   # v1.65.0 (items 82, 83, 84): birth date, days given back, extension link
+            from LeavePolicy.leave_rules import info_of
+            i = info_of(instance)
+            if i is not None:
+                rep['birth_date'] = i.birth_date
+                rep['extension_of'] = i.extension_of_id
+                rep['cancelled_days'] = i.cancelled_days
+                rep['original_end_date'] = i.original_end_date
+        except Exception:
+            pass
 
         if instance.status == 'pending':   # v1.18.0: roster / staffing conflict for the approvers
             try:
@@ -455,12 +509,25 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         half_day_period = data.get('half_day_period')
 
         # ---------------- LEAVE TYPE VALIDATION ----------------
+        # v1.62.4 (item 81): every short leave request failed – leave_duration was not a field of the serializer, so it was
+        # always 0 ("duration must be between 0 and 8 hours"). It is now an input field; the hours go into applied_days (the
+        # request, the balance and the leave ledger of an hourly type are in hours). Also accepted as "hours".
+        duration = data.pop('leave_duration', None)
+        if duration is None and hasattr(self, 'initial_data') and hasattr(self.initial_data, 'get') and self.initial_data.get('hours') not in (None, ''):
+            try:
+                duration = float(self.initial_data.get('hours'))
+            except (TypeError, ValueError):
+                duration = 0
         if leave_type.unit == 'hours':
-            duration = data.get('leave_duration', 0)
+            if duration is None and self.instance is not None and getattr(self.instance, 'leave_type_id', None) == leave_type.pk:
+                duration = float(self.instance.applied_days or 0)   # an edit that does not change the hours keeps them
+            duration = float(duration or 0)
             if duration > 8 or duration <= 0:
                 raise serializers.ValidationError(
                     "For hourly leave types, duration must be between 0 and 8 hours."
                 )
+            data['applied_days'] = duration
+            data['dis_half_day'] = False
 
         if leave_type.unit == 'days' and is_half_day:
             if data.get('start_date') != data.get('end_date'):
@@ -1520,6 +1587,17 @@ class AttendanceRecheckSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceRecheck
         fields = '__all__'
+
+    def to_representation(self, instance):
+        # v1.62.10 (item 171): the Recheck list shows who answered, for which day (read-only, nothing stored)
+        rep = super().to_representation(instance)
+        att = getattr(instance, 'attendance', None)
+        e = getattr(att, 'employee', None)
+        rep['employee'] = getattr(e, 'id', None)
+        rep['emp_code'] = getattr(e, 'emp_code', '') or ''
+        rep['employee_name'] = ' '.join(x for x in [getattr(e, 'emp_first_name', ''), getattr(e, 'emp_last_name', '')] if x)
+        rep['date'] = att.date.isoformat() if att and att.date else None
+        return rep
 class OvertimePolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = OvertimePolicy

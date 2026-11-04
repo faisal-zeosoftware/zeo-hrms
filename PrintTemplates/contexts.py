@@ -308,6 +308,9 @@ def settlement_ctx(case, lang='en'):
             out.append({'label': l.get('label', ''), 'basis': basis, 'amount': money(l.get('amount'))})
         return out
     net = st.get('net') or 0
+    # v1.62.11 (EOS settings): the salary breakup (one line per month) and the components left out of the final salary
+    _sl = next((l for l in st.get('lines') or [] if l.get('key') == 'salary'), None) or {}
+    _rec = float(net or 0) < 0
     c['settlement'] = {
         'number': st.get('number') or '', 'status': case.get('stage_label') or '', 'exit_type': case.get('exit_type_label') or '',
         'joined': d(case.get('joined'), lang), 'last_working_date': d(case.get('last_working_date'), lang), 'service': service,
@@ -318,7 +321,18 @@ def settlement_ctx(case, lang='en'):
         'net_display': 'AED ' + money(net), 'net_words': st.get('net_words') if lang == 'en' and st.get('net_words') else words(net, 'ar' if lang == 'ar' else 'en'),
         'net_words_ar': words(net, 'ar') if lang == 'bi' else '', 'paid_on': d(st.get('paid_on'), lang), 'payment_ref': st.get('payment_ref') or '',
         'currency': 'AED',
+        # v1.62.11 (EOS settings): Emirates ID (masked unless the setting shows it), contract type, reason, journal, breakup, net recoverable
+        'emirates_id': case.get('emirates_id') or '', 'contract_type': case.get('contract_type') or '', 'reason': case.get('reason') or '',
+        'journal': ((st.get('journal') or {}).get('number') or ''), 'journal_status': ((st.get('journal') or {}).get('status_label') or ''),
+        'breakup': [{'label': r.get('label', ''), 'amount': money(r.get('amount'))} for r in (_sl.get('breakup') or [])],
+        'excluded': [{'name': x.get('name', ''), 'amount': money(x.get('amount'))} for x in (_sl.get('excluded') or [])],
+        'recoverable': _rec,
     }
+    if _rec:   # the amount and the words of the amount recovered (positive)
+        c['settlement']['net'] = money(-float(net))
+        c['settlement']['net_display'] = 'AED ' + money(-float(net))
+        c['settlement']['net_words'] = words(-float(net), 'ar' if lang == 'ar' else 'en')
+        c['settlement']['net_words_ar'] = words(-float(net), 'ar') if lang == 'bi' else ''
     if not emp:
         c['employee'] = {'name': case.get('employee', ''), 'code': case.get('employee_code', ''), 'designation': case.get('designation', ''),
                          'department': case.get('department', ''), 'branch': case.get('branch', '')}

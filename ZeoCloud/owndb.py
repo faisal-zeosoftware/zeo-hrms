@@ -152,16 +152,21 @@ def users_for(key):
     return sorted(ids)
 
 
-def sync_shared(key, users=True, initial=False):
-    """Bring the copies of the shared rows in an own database up to date. Returns {table: rows}."""
+def sync_shared(key, users=True, initial=False, progress=None):
+    """Bring the copies of the shared rows in an own database up to date. Returns {table: rows}.
+    progress(i, n): v1.62.1 – called after each table (the % of a database job)."""
     src, dst = conn(CONTROL), conn(key)
     done = {}
-    for t in _replica_tables(initial):
+    tables = _replica_tables(initial)
+    n = len(tables) + (1 if users else 0)
+    for i, t in enumerate(tables):
         try:
             done[t] = _copy_rows(src, dst, t)
         except Exception as e:          # a table missing on one side (before migrate) – report, go on
             log.warning('sync %s.%s: %s', key, t, e)
             done[t] = f'error: {e}'[:120]
+        if progress:
+            progress(i + 1, n)
     if users:
         ids = users_for(key)
         done['UserManagement_customuser'] = _copy_rows(src, dst, 'UserManagement_customuser', 'WHERE id = ANY(%s)', [ids]) if ids else 0
@@ -213,12 +218,71 @@ def _next_key(account):
         n += 1
 
 
-def create_own_db(account, by=None, note='', new=False, label=''):
+# v1.62.1 the steps of a new database (the % of Add database, and the first part of Duplicate database)
+CREATE_PLAN = [('db', 'Creating the database', 8), ('structure', 'Copying the structure of the shared tables', 52),
+               ('shared', 'Copying users and masters', 40)]
+
+
+class _NoSteps:
+    def begin(self, key, detail='', **kw):
+        pass
+
+    def sub(self, fraction, detail=None, **kw):
+        pass
+
+    def part(self, lo, hi):
+        return self
+
+
+def _part(P, lo, hi):
+    """lo–hi of the current step of P (a Progress, _Steps or _NoSteps) as a target with .sub()."""
+    if hasattr(P, 'part'):
+        return P.part(lo, hi)
+    from ZeoApps.job_progress import Share
+    return Share(P, lo, hi)
+
+
+class _Part:
+    def __init__(self, steps, lo, hi):
+        self.steps, self.lo, self.hi = steps, lo, hi
+
+    def sub(self, fraction, detail=None, **kw):
+        self.steps.sub(self.lo + (self.hi - self.lo) * max(0.0, min(1.0, float(fraction))), detail)
+
+
+class _Steps:
+    """v1.62.1: the steps of create_own_db as parts of one step of a bigger job (Duplicate database): the parent shows
+    the sub step as its detail."""
+
+    def __init__(self, share, plan):
+        tot = float(sum(w for _k, _l, w in plan)) or 1.0
+        self.r, acc = {}, 0.0
+        for k, l, w in plan:
+            self.r[k] = (acc / tot, (acc + w) / tot, l)
+            acc += w
+        self.share, self.cur = share, plan[0][0]
+
+    def begin(self, key, detail='', **kw):
+        self.cur = key
+        self.share.sub(self.r[key][0], self.r[key][2])
+
+    def sub(self, fraction, detail=None, **kw):
+        lo, hi, label = self.r[self.cur]
+        self.share.sub(lo + (hi - lo) * max(0.0, min(1.0, float(fraction))), label)
+
+    def part(self, lo, hi):
+        return _Part(self, lo, hi)
+
+
+def create_own_db(account, by=None, note='', new=False, label='', progress=None):
     """Create (or finish creating) an own database of an account. Returns the DatabaseServer.
 
     new=False: the account's default database (made when the account changes to Premium – as in 1.24.0).
-    new=True (v1.26.0): one more database for the account (Settings → Subscription → Databases, or the console)."""
+    new=True (v1.26.0): one more database for the account (Settings → Subscription → Databases, or the console).
+    progress (v1.62.1): a Progress with the steps of CREATE_PLAN (or _Steps inside a bigger job); None = not shown."""
     from . import services as S
+    from ZeoApps.job_progress import timed_watch
+    P = progress or _NoSteps()
     if new:
         key, n = _next_key(account)
     else:
@@ -239,22 +303,28 @@ def create_own_db(account, by=None, note='', new=False, label=''):
     dbrouting.forget()
     try:
         main = _params(CONTROL)
-        with conn(CONTROL).cursor() as cur:
+        P.begin('db', ('PostgreSQL database {0}', [srv.name]))
+        with timed_watch(P, 'createdb', 3, ('PostgreSQL database {0}', [srv.name])), conn(CONTROL).cursor() as cur:
             cur.execute('SELECT 1 FROM pg_database WHERE datname = %s', [srv.name])
             if not cur.fetchone():
                 cur.execute(f'CREATE DATABASE "{srv.name}"')
         own = dict(_params(key))
         psql, pg_dump = _tool('psql'), _tool('pg_dump')
         # structure of the shared tables (no rows – shared data stays in the main database)
+        P.begin('structure', 'Reading the structure from the main database (no rows)')
         _run([psql, *_pg_args(own), '-d', srv.name, '-v', 'ON_ERROR_STOP=1', '-q', '-c', 'DROP SCHEMA IF EXISTS public CASCADE'], own)
         with tempfile.NamedTemporaryFile(suffix='.sql') as f:
-            _run([pg_dump, *_pg_args(main), '-d', main['NAME'], '--schema-only', '--no-owner', '--no-privileges',
-                  '-n', 'public', *(['-n', 'extensions'] if schema_exists('', 'extensions') else []), '-f', f.name], main)
-            _run([psql, *_pg_args(own), '-d', srv.name, '-v', 'ON_ERROR_STOP=1', '-q', '-f', f.name], own)
+            with timed_watch(_part(P, 0.0, 0.4), 'dbstruct_dump', 15, 'Reading the structure from the main database (no rows)'):
+                _run([pg_dump, *_pg_args(main), '-d', main['NAME'], '--schema-only', '--no-owner', '--no-privileges',
+                      '-n', 'public', *(['-n', 'extensions'] if schema_exists('', 'extensions') else []), '-f', f.name], main)
+            P.sub(0.4, 'Making the tables in the new database')
+            with timed_watch(_part(P, 0.4, 1.0), 'dbstruct_load', 6, 'Making the tables in the new database'):
+                _run([psql, *_pg_args(own), '-d', srv.name, '-v', 'ON_ERROR_STOP=1', '-q', '-f', f.name], own)
         srv.state = 'ready'
         srv.save(update_fields=['state'])
         dbrouting.forget()
-        sync_shared(key, initial=True)
+        P.begin('shared', 'Countries, currencies, users and the other shared rows')
+        sync_shared(key, initial=True, progress=lambda i, n: P.sub(i / max(n, 1), ('{0} of {1} tables', [i, n])))
         if not account.db_alias or not new:   # the first database is the default one
             account.hosting, account.db_alias = 'own', key
             account.save(update_fields=['hosting', 'db_alias'])
@@ -277,6 +347,66 @@ def create_own_db(account, by=None, note='', new=False, label=''):
         srv.save(update_fields=['state', 'note'])
         dbrouting.forget()
         raise
+
+
+# ---------------------------------------------------------------- v1.62.1 Add database in the background, with progress
+DBJOB = 'zeo:cloud:dbjob:{}'
+CREATING = 'zeo:cloud:dbcreate:{}'   # account id → job id while a new database is being made
+
+
+def _job_set(job, **kw):
+    from django.core.cache import cache
+    d = cache.get(DBJOB.format(job)) or {}
+    d.update(kw)
+    cache.set(DBJOB.format(job), d, 60 * 60 * 24)
+
+
+def db_job_status(job):
+    from django.core.cache import cache
+    return cache.get(DBJOB.format(job))
+
+
+def creating(account_id):
+    """The job id of a new database still being made for the account, or ''."""
+    from django.core.cache import cache
+    j = cache.get(CREATING.format(account_id))
+    st = db_job_status(j) if j else None
+    return j if st and st.get('state') == 'running' else ''
+
+
+def start_create_db(account, by=None, label=''):
+    """One more, empty database (as create_own_db(new=True)) in a thread: returns a job id for db_job_status() – the
+    screen shows what is being done, the % and the steps. The synchronous create_own_db stays for the console,
+    the plan change and Duplicate database."""
+    import uuid
+    from django.core.cache import cache
+    from ZeoApps.job_progress import Progress
+    if creating(account.pk):
+        raise MoveError('A database is already being created for this account.')
+    job = uuid.uuid4().hex[:16]
+    _job_set(job, kind='create', account=account.pk, label=label, key='', error='', by=getattr(by, 'pk', None))
+    P = Progress(lambda **kw: _job_set(job, **kw), CREATE_PLAN)
+    cache.set(CREATING.format(account.pk), job, 60 * 60 * 6)
+    threading.Thread(target=_run_create_db, args=(job, account.pk, getattr(by, 'pk', None), label, P), daemon=True).start()
+    return job
+
+
+def _run_create_db(job, account_id, by_id, label, P):
+    from django.core.cache import cache
+    from UserManagement.models import CustomUser
+    close_old_connections()
+    try:
+        account = Account.objects.get(pk=account_id)
+        by = CustomUser.objects.filter(pk=by_id).first() if by_id else None
+        srv = create_own_db(account, by=by, new=True, label=label, progress=P)
+        cache.delete(f'zeo:cloud:usage:{account_id}')
+        P.finish('done', key=srv.key, name=srv.name, label=srv.label)
+    except Exception as e:
+        log.exception('new database (job %s)', job)
+        P.finish('failed', error=str(e)[:300])
+    finally:
+        cache.delete(CREATING.format(account_id))
+        close_old_connections()
 
 
 def forget_db(key):
@@ -347,10 +477,26 @@ def dup_running(key):
     return bool(st and st.get('state') == 'running')
 
 
+DUP_CREATE, DUP_COMPANIES, DUP_FINISH = 12, 85, 3   # v1.62.1 weights of the % (the companies by their size)
+DUP_COPY_PART = 0.75   # of one company: the copy (Duplicate company) – the rest is the move into the new database
+
+
+def _dup_plan(rows):
+    total = float(sum(r['size'] for r in rows)) or 1.0
+    return ([('create', 'Creating the new database', DUP_CREATE)]
+            + [(f"c{r['id']}", ('Copying {0}', [r['name']]), max(0.5, DUP_COMPANIES * r['size'] / total)) for r in rows]
+            + [('finish', 'Finishing', DUP_FINISH)])
+
+
 def start_duplicate_db(account, source_key, label, by=None, neutralize=False, suffix=''):
     """A new own database with a copy of every company of `source_key` (data, settings and users, like Duplicate
-    company). Runs in the background: returns a job id for dup_status()."""
+    company). Runs in the background: returns a job id for dup_status().
+
+    v1.62.1: dup_status() also has the % (create the database, then one share per company – by its size – that moves
+    with the duplicate-company progress and the move into the new database), what is being done now and the steps;
+    every company row has its own percent."""
     import uuid
+    from ZeoApps.job_progress import Progress, _schema_bytes
     src = DatabaseServer.objects.filter(account=account, key=source_key, state='ready').first()
     if src is None:
         raise MoveError('This database is not ready.')
@@ -361,28 +507,69 @@ def start_duplicate_db(account, source_key, label, by=None, neutralize=False, su
         raise MoveError('This database has no companies to copy.')
     job = uuid.uuid4().hex[:16]
     suffix = (suffix or label or 'Copy').strip()[:30]
+    rows = []
+    for l in links:
+        try:
+            size = _schema_bytes(l.company.schema_name, source_key)
+        except Exception:
+            size = 0
+        rows.append({'id': l.company_id, 'name': l.company.name, 'copy': f'{l.company.name} ({suffix})'[:100], 'state': 'waiting',
+                     'error': '', 'percent': 0, 'size': max(size, 1024 * 1024)})
     _dup_set(job, state='running', step='Creating the new database', source=source_key, target='', label=label, account=account.id,
-             companies=[{'id': l.company_id, 'name': l.company.name, 'copy': f'{l.company.name} ({suffix})'[:100], 'state': 'waiting', 'error': ''} for l in links],
-             error='', by=getattr(by, 'pk', None), neutralize=bool(neutralize))
-    threading.Thread(target=_run_duplicate_db, args=(job, account.id, source_key, label, getattr(by, 'pk', None), bool(neutralize)), daemon=True).start()
+             companies=rows, error='', by=getattr(by, 'pk', None), neutralize=bool(neutralize), kind='duplicate')
+    P = Progress(lambda **kw: _dup_set(job, **kw), _dup_plan(rows))
+    threading.Thread(target=_run_duplicate_db, args=(job, account.id, source_key, label, getattr(by, 'pk', None), bool(neutralize), P),
+                     daemon=True).start()
     return job
 
 
-def _run_duplicate_db(job, account_id, source_key, label, by_id, neutralize):
+class _Row:
+    """v1.62.1: lo–hi of one company of a database copy: its own percent in the companies list and the parent's %."""
+
+    def __init__(self, P, rows, row, lo, hi, wrap=None):
+        self.P, self.rows, self.row, self.lo, self.hi, self.wrap = P, rows, row, lo, hi, wrap
+
+    def sub(self, fraction, detail=None, **kw):
+        f = self.lo + (self.hi - self.lo) * max(0.0, min(1.0, float(fraction)))
+        self.row['percent'] = max(self.row.get('percent') or 0, min(99, int(round(f * 100))))
+        if detail is not None and self.wrap:
+            detail = self.wrap(detail)
+        self.P.sub(f, detail, companies=self.rows)
+
+
+def _dup_probe(D, sub):
+    """The duplicate-company job of one company, read every 1.5 s: (fraction, its detail)."""
+    def probe(_secs):
+        ds = D.status(sub) or {}
+        if not ds.get('started'):
+            return None
+        d = (ds.get('detail_t') or ds.get('step_t') or ds.get('step') or '', ds.get('detail_p') or [])
+        return (ds.get('percent') or 0) / 100.0, d
+    return probe
+
+
+def _run_duplicate_db(job, account_id, source_key, label, by_id, neutralize, P=None):
     from . import services as S
     from UserManagement.models import CustomUser, company as Company
     from ZeoApps import duplicate as D
+    from ZeoApps.job_progress import Progress, Share, _Watch
     close_old_connections()
+    st = dup_status(job) or {}
+    rows = st.get('companies') or []
+    if P is None:
+        for r in rows:
+            r.setdefault('size', 1024 * 1024)
+        P = Progress(lambda **kw: _dup_set(job, **kw), _dup_plan(rows))
     try:
         account = Account.objects.get(pk=account_id)
         by = CustomUser.objects.filter(pk=by_id).first() if by_id else None
-        st = dup_status(job) or {}
-        srv = create_own_db(account, by=by, new=True, label=label or f'Copy of {DatabaseServer.objects.get(key=source_key).label}')
-        _dup_set(job, target=srv.key, step='Copying the companies')
-        rows = st.get('companies') or []
+        P.begin('create', 'Creating the new database')
+        srv = create_own_db(account, by=by, new=True, label=label or f'Copy of {DatabaseServer.objects.get(key=source_key).label}',
+                            progress=_Steps(Share(P), CREATE_PLAN))
+        P.set(target=srv.key)
         for row in rows:
-            row['state'] = 'copying'
-            _dup_set(job, companies=rows, step=f"Copying {row['name']}")
+            row['state'], row['percent'] = 'copying', 0
+            P.begin(f"c{row['id']}", ('Copying every table and row of {0}', [row['name']]), companies=rows)
             try:
                 comp = Company.objects.filter(pk=row['id']).first()
                 if comp is None:
@@ -394,41 +581,49 @@ def _run_duplicate_db(job, account_id, source_key, label, by_id, neutralize):
                 sub = f'{job}-{row["id"]}'
                 schema = D.schema_for(name)
                 D._set(sub, state='running', step=D.STEPS[0], schema=schema)
-                D._run(sub, comp.pk, name, schema, neutralize, by_id or (account.owner_id or 0))   # copy next to the original
+                # the duplicate-company job has its own % – it moves this company's share of the bar (1.5 s)
+                with _Watch(_Row(P, rows, row, 0.0, DUP_COPY_PART), _dup_probe(D, sub), every=1.5):
+                    D._run(sub, comp.pk, name, schema, neutralize, by_id or (account.owner_id or 0))   # copy next to the original
                 close_old_connections()
                 ds = D.status(sub) or {}
                 if ds.get('state') != 'done' or not ds.get('company_id'):
                     raise MoveError(ds.get('error') or 'The copy failed.')
                 new = Company.objects.get(pk=ds['company_id'])
-                mv = start_move(new, srv.key, by=by, settle=0, run_now=True, account=account)   # then into the new database
+                tail = _Row(P, rows, row, DUP_COPY_PART, 1.0, wrap=lambda d: ('Moving the copy to the new database – {0}', [d]))
+                mv = start_move(new, srv.key, by=by, settle=0, run_now=True, account=account, progress=tail)   # then into the new database
                 if mv.state != 'done':
                     raise MoveError(f'Copied, but not moved to the new database: {mv.error}'[:300])
-                row.update(state='done', copy=name, copy_id=new.pk)
+                row.update(state='done', copy=name, copy_id=new.pk, percent=100)
             except Exception as e:
                 log.exception('duplicate database %s: %s', source_key, row.get('name'))
                 row.update(state='failed', error=str(e)[:300])
-            _dup_set(job, companies=rows)
+            P.set(companies=rows)
         failed = [r for r in rows if r['state'] != 'done']
+        P.begin('finish', 'Noting the copy in the history')
         S.event(account, 'database', f'Database copied – {srv.label} ({len(rows) - len(failed)} of {len(rows)} companies)', by=by, job=job)
         from django.core.cache import cache
         cache.delete(f'zeo:cloud:usage:{account.pk}')
-        _dup_set(job, state='done', step='Done', failed=len(failed))
+        P.finish('done', failed=len(failed), companies=rows)
     except Exception as e:
         log.exception('duplicate database %s', source_key)
-        _dup_set(job, state='failed', error=str(e)[:300])
+        P.finish('failed', error=str(e)[:300], companies=rows)
     finally:
         close_old_connections()
 
 
 # ---------------------------------------------------------------- move
-def _tables_and_rows(key, schema):
-    """{table: rows} and {sequence: last value} of one schema – the checks before the switch."""
+def _tables_and_rows(key, schema, progress=None):
+    """{table: rows} and {sequence: last value} of one schema – the checks before the switch.
+    progress(i, n): v1.62.1 – every 25 tables counted."""
     rows, seqs = {}, {}
     with conn(key).cursor() as cur:
         cur.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = %s AND c.relkind IN ('r', 'p') ORDER BY 1", [schema])
-        for (t,) in cur.fetchall():
+        names = [t for (t,) in cur.fetchall()]
+        for i, t in enumerate(names):
             cur.execute(f'SELECT count(*) FROM "{schema}"."{t}"')
             rows[t] = cur.fetchone()[0]
+            if progress and (i % 25 == 24 or i == len(names) - 1):
+                progress(i + 1, len(names))
         cur.execute("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = %s AND c.relkind = 'S' ORDER BY 1", [schema])
         for (s,) in cur.fetchall():
             cur.execute(f'SELECT last_value, is_called FROM "{schema}"."{s}"')
@@ -443,8 +638,47 @@ def _say(job, step, line=None):
     job.save(update_fields=['step', 'log'])
 
 
-def start_move(company, target, by=None, settle=None, run_now=False, account=None):
-    """Queue (and start in a thread) the move of one company to target ('' = main database, or an own database key)."""
+# ---------------------------------------------------------------- v1.62.1 progress of a move (cache – MoveJob has no field for it)
+MV = 'zeo:cloud:move:{}'
+
+
+def _mv_set(job_id, **kw):
+    from django.core.cache import cache
+    d = cache.get(MV.format(job_id)) or {}
+    d.update(kw)
+    cache.set(MV.format(job_id), d, 60 * 60 * 24 * 3)
+
+
+def move_progress(job_id):
+    """{percent, step, detail, stages, started, elapsed, remaining …} of a move, or None (older moves, or after 3 days)."""
+    from django.core.cache import cache
+    from ZeoApps.job_progress import with_elapsed
+    return with_elapsed(cache.get(MV.format(job_id)))
+
+
+def _move_plan(dst, settle):
+    plan = [('close', 'Closing the company for the move', 12 if settle else 2)]
+    if dst:
+        plan.append(('shared', 'Copying users and masters', 8))
+    plan += [('copy', 'Copying the data', 55), ('check', 'Checking tables, rows and numbering', 13),
+             ('switch', 'Switching to the new database', 12 if settle else 3)]
+    return plan
+
+
+def _wait(P, secs, detail):
+    """time.sleep(secs) with the % of the current step moving each second."""
+    t0 = time.time()
+    while True:
+        left = secs - (time.time() - t0)
+        if left <= 0:
+            break
+        time.sleep(min(1.0, left))
+        P.sub(min(1.0, (time.time() - t0) / secs), detail)
+
+
+def start_move(company, target, by=None, settle=None, run_now=False, account=None, progress=None):
+    """Queue (and start in a thread) the move of one company to target ('' = main database, or an own database key).
+    progress (v1.62.1): a target with .sub(fraction, step) that follows this move (Duplicate database)."""
     link = AccountCompany.objects.select_related('account').filter(company=company).first()
     acc = account or (link.account if link else None)
     source = (link.db_alias or '') if link else ''
@@ -454,16 +688,20 @@ def start_move(company, target, by=None, settle=None, run_now=False, account=Non
         raise MoveError('This company is already being moved.')
     job = MoveJob.objects.create(account=acc, company=company, schema=company.schema_name, source=source, target=target or '',
                                  created_by=by if getattr(by, 'pk', None) else None)
+    _mv_set(job.id, state='waiting', percent=0, step='Waiting', step_t='Waiting', step_p=[], detail='', stages=[
+        dict(key=k, label=l, state='waiting', seconds=None) for k, l, _w in
+        _move_plan(target or '', getattr(settings, 'ZEO_MOVE_SETTLE', 12) if settle is None else settle)])
     if run_now:
-        run_move(job.id, settle=settle, own_thread=False)
+        run_move(job.id, settle=settle, own_thread=False, progress=progress)
         job.refresh_from_db()
     else:
         threading.Thread(target=run_move, args=(job.id,), kwargs={'settle': settle}, daemon=True).start()
     return job
 
 
-def run_move(job_id, settle=None, own_thread=True):
+def run_move(job_id, settle=None, own_thread=True, progress=None):
     from . import services as S
+    from ZeoApps.job_progress import Progress
     if own_thread:
         close_old_connections()
     job = MoveJob.objects.get(pk=job_id)
@@ -473,6 +711,17 @@ def run_move(job_id, settle=None, own_thread=True):
     restored = renamed = False
     job.state, job.started_at = 'running', timezone.now()
     job.save(update_fields=['state', 'started_at'])
+    seen = {}
+
+    def setter(**kw):   # the move's own progress (cache), and the job that waits for it (Duplicate database)
+        _mv_set(job_id, **kw)
+        seen.update(kw)
+        if progress is not None and 'percent' in kw:
+            try:
+                progress.sub((kw['percent'] or 0) / 100.0, seen.get('step_t') or seen.get('step') or '')
+            except Exception:
+                pass
+    P = Progress(setter, _move_plan(dst, settle))
     try:
         if not SAFE.match(schema):
             raise MoveError('Unusual schema name – move it by hand.')
@@ -489,15 +738,17 @@ def run_move(job_id, settle=None, own_thread=True):
             raise MoveError('The target database already has a schema with this name.')
 
         _say(job, 'Closing the company for the move')
+        P.begin('close', 'The users see "being moved – try again shortly"')
         link.moving = True
         link.save(update_fields=['moving'])
         S.forget(schema)
         if settle:
-            time.sleep(settle)          # every process sees "moving" (503) before the copy starts
+            _wait(P, settle, 'The users see "being moved – try again shortly"')   # every process sees "moving" (503) before the copy starts
 
         if dst:
             _say(job, 'Copying users and masters', f'shared rows → {dst}')
-            sync_shared(dst)
+            P.begin('shared', 'Countries, currencies, users and the other shared rows')
+            sync_shared(dst, progress=lambda i, n: P.sub(i / max(n, 1), ('{0} of {1} tables', [i, n])))
             ids = set(users_for(dst))
             from UserManagement.models import CustomUser
             ids |= set(CustomUser.objects.using(CONTROL).filter(tenants=link.company_id).values_list('id', flat=True))
@@ -505,15 +756,19 @@ def run_move(job_id, settle=None, own_thread=True):
                 _copy_rows(conn(CONTROL), conn(dst), 'UserManagement_customuser', 'WHERE id = ANY(%s)', [sorted(ids)])
 
         _say(job, 'Copying the data')
+        P.begin('copy', 'Copying every table and row (pg_dump / pg_restore)')
         ps, pd = _params(src), _params(dst)
         with tempfile.NamedTemporaryFile(suffix='.dump') as f:
-            _run([_tool('pg_dump'), *_pg_args(ps), '-d', ps['NAME'], '-Fc', '-n', schema, '--no-owner', '--no-privileges', '-f', f.name], ps)
-            restored = True
-            _run([_tool('pg_restore'), *_pg_args(pd), '-d', pd['NAME'], '--no-owner', '--no-privileges', '--exit-on-error', f.name], pd)
+            # one pg_dump and one pg_restore: their progress is not visible – estimated from the size and the last moves
+            with P.copy(schema, 'Copying every table and row', db=src, kind='dump'):
+                _run([_tool('pg_dump'), *_pg_args(ps), '-d', ps['NAME'], '-Fc', '-n', schema, '--no-owner', '--no-privileges', '-f', f.name], ps)
+                restored = True
+                _run([_tool('pg_restore'), *_pg_args(pd), '-d', pd['NAME'], '--no-owner', '--no-privileges', '--exit-on-error', f.name], pd)
 
         _say(job, 'Checking tables, rows and numbering')
-        r1, s1 = _tables_and_rows(src, schema)
-        r2, s2 = _tables_and_rows(dst, schema)
+        P.begin('check', 'Counting the rows in the old place')
+        r1, s1 = _tables_and_rows(src, schema, progress=lambda i, n: P.sub(0.5 * i / max(n, 1), ('Counting the rows in the old place – {0} of {1} tables', [i, n])))
+        r2, s2 = _tables_and_rows(dst, schema, progress=lambda i, n: P.sub(0.5 + 0.5 * i / max(n, 1), ('Counting the rows in the new place – {0} of {1} tables', [i, n])))
         if set(r1) != set(r2):
             raise MoveError(f'Tables differ: {sorted(set(r1) ^ set(r2))[:10]}')
         bad = [t for t in r1 if r1[t] != r2[t]]
@@ -524,6 +779,7 @@ def run_move(job_id, settle=None, own_thread=True):
             raise MoveError(f'Numbering differs: {badseq[:10]}')
         job.tables, job.rows = len(r1), sum(r1.values())
         _say(job, 'Switching to the new database', f'{job.tables} tables, {job.rows} rows, {len(s1)} sequences – same in both')
+        P.begin('switch', ('{0} tables, {1} rows – the same in both', [job.tables, f'{job.rows:,}']), tables=job.tables, rows=job.rows)
 
         old = f'zmv_{timezone.localdate():%Y%m%d}_{schema}'[:63]
         n = 1
@@ -538,13 +794,14 @@ def run_move(job_id, settle=None, own_thread=True):
         dbrouting.forget()
         S.forget(schema)
         if settle:
-            time.sleep(settle)          # every process now finds the company in the new database
+            _wait(P, settle, 'Every user now opens the company in the new place')   # every process now finds the company in the new database
         link.moving = False
         link.save(update_fields=['moving'])
         job.old_copy, job.keep_until = old, timezone.localdate() + timedelta(days=KEEP_DAYS)
         job.state, job.finished_at = 'done', timezone.now()
         job.save(update_fields=['old_copy', 'keep_until', 'state', 'finished_at', 'tables', 'rows'])
         _say(job, 'Done', f'old copy kept as {old} in {src or "the main database"} until {job.keep_until}')
+        P.finish('done')
         if link.account_id:
             S.event(link.account, 'move', f'{link.company.name} moved to {dst or "the shared cloud"}', by=job.created_by,
                     job=job.id, tables=job.tables, rows=job.rows)
@@ -573,6 +830,7 @@ def run_move(job_id, settle=None, own_thread=True):
         job.state, job.error, job.finished_at = 'failed', str(e)[:2000], timezone.now()
         job.save(update_fields=['state', 'error', 'finished_at'])
         _say(job, 'Failed – the company stays where it was', str(e)[:300])
+        P.finish('failed', error=str(e)[:300])
     finally:
         if own_thread:
             close_old_connections()

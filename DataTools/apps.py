@@ -12,6 +12,8 @@ class DatatoolsConfig(AppConfig):
         from .forms import install as install_forms
         install_forms()
         _tolerant_dates()
+        from .usage import install as install_usage   # v1.62.1 used records can't be deleted (make inactive)
+        install_usage()
 
 
 def _tolerant_dates():

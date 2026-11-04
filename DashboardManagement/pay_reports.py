@@ -77,13 +77,19 @@ def r_payroll_register(run):
         r.update({'gross': money(p.gross_salary) if p.gross_salary is not None else money(p.total_additions), 'additions': money(p.total_additions),
                   'deductions': money(p.total_deductions), 'arrears': money(p.arrears), 'net': net_of(p), **src(p),
                   '_cell': {'run': src(pr), 'period': src(pr)}})
+        try:   # v1.62.2 (items 41, 51): negative net pay, replaced statutory duplicate, deductions carried over
+            from PayrollManagement.payroll_guards import warnings_of
+            r['warning'] = ' · '.join(warnings_of(p))
+        except Exception:
+            r['warning'] = ''
         rows.append(r)
     cols = EMP_COLS + [('run', 'Payroll run', 'text'), ('period', 'Period', 'text'), ('run_status', 'Run status', 'text'), ('status', 'Payslip status', 'text'),
                        ('working_days', 'Working days', 'number'), ('days_worked', 'Days worked', 'number')] + \
         [('c_' + n, f'{n} (AED)', 'number') for n in adds] + [('gross', 'Gross (AED)', 'number')] + \
         [('c_' + n, f'{n} – deduction (AED)', 'number') for n in deds] + \
         [('deductions', 'Total deductions (AED)', 'number'), ('arrears', 'Arrears (AED)', 'number'), ('net', 'Net pay (AED)', 'number')] + \
-        [('c_' + n, f'{n} – employer, not in net pay (AED)', 'number') for n in _employer(names, kinds)]   # v1.62.0 payroll (P1-3)
+        [('c_' + n, f'{n} – employer, not in net pay (AED)', 'number') for n in _employer(names, kinds)] + \
+        [('warning', 'Warning', 'text')]   # v1.62.0 payroll (P1-3); v1.62.2 (items 41, 51) warning
     for r in rows:
         for n in _employer(names, kinds):
             r.setdefault('c_' + n, 0)

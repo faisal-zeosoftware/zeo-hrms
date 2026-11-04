@@ -183,6 +183,24 @@ class Ctx:
             if not ids and self.emp and self.emp.emp_branch_id_id:
                 ids = [self.emp.emp_branch_id_id]
             self.branches = ids
+        # v1.62.0 ui: ONE branch filter for every list and report – the branches ticked in the top bar come with each call
+        # (X-Branch-Ids, only when the user narrowed the choice). For reading only, and only inside the user's own branches:
+        # the selection can narrow, never widen (ids outside the allowed ones are dropped; nothing left = the header is ignored).
+        self.pick = None
+        try:
+            raw = request.META.get('HTTP_X_BRANCH_IDS', '') if self.tenant_schema != 'public' else ''
+            if raw and getattr(request, 'method', 'GET') in permissions.SAFE_METHODS:
+                ids = [int(x) for x in str(raw).split(',') if x.strip().isdigit()][:200]
+                if self.branches is not None:
+                    ids = [i for i in ids if i in self.branches]
+                else:
+                    from OrganisationManager.models import brnch_mstr
+                    ids = list(brnch_mstr.objects.filter(id__in=ids).values_list('id', flat=True))
+                if ids:
+                    self.pick = ids
+                    self.branches = ids
+        except Exception:
+            self.pick = None
 
 
 def ctx(request):
@@ -469,6 +487,56 @@ def _branch_or_mine(qs, model, branches, user):
 
 
 def scope_queryset(request, view, qs):
+    """Rows the user may see (rights and branches) – v1.62.0 ui: then narrowed to the branches ticked in the top bar."""
+    return active_only(request, view, narrow_to_pick(request, _scope_queryset(request, view, qs)))
+
+
+# v1.62.1: inactive masters are left out of lists used for new choices (drop-downs); their own register screens send
+# X-Include-Inactive: 1 and show them with the Active / Inactive filter. Existing records keep showing their (inactive) value.
+ACTIVE_ONLY = {('OrganisationManager', 'dept_master'): 'dept_is_active', ('OrganisationManager', 'desgntn_master'): 'desgntn_is_active',
+               ('OrganisationManager', 'ctgry_master'): 'ctgry_is_active', ('OrganisationManager', 'brnch_mstr'): 'br_is_active'}
+
+
+def active_only(request, view, qs):
+    try:
+        model = getattr(qs, 'model', None)
+        if model is None or getattr(request, 'method', 'GET') != 'GET' or getattr(view, 'action', 'list') not in ('list', None):
+            return qs
+        f = ACTIVE_ONLY.get((model._meta.app_label, model._meta.model_name))
+        if not f or request.META.get('HTTP_X_INCLUDE_INACTIVE') == '1' or request.GET.get('include_inactive') == '1':
+            return qs
+        if getattr(view, 'kwargs', None) and any(k in view.kwargs for k in ('pk', 'id')):
+            return qs   # one record (detail) – always
+        return qs.exclude(**{f: False})
+    except Exception:
+        return qs
+
+
+def narrow_to_pick(request, qs):
+    """v1.62.0 ui: a list read narrowed to the top-bar branch selection (X-Branch-Ids) – rows of other branches left out,
+    company-wide rows (no branch) kept. The branch master itself stays whole (branch pickers)."""
+    try:
+        model = getattr(qs, 'model', None)
+        if model is None or connection.schema_name == 'public' or getattr(request, 'method', 'GET') not in permissions.SAFE_METHODS:
+            return qs
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return qs
+        Emp, Branch, User, Company = _models()
+        if model in (Branch, User, Company):
+            return qs
+        c = ctx(request)
+        if not getattr(c, 'pick', None):
+            return qs
+        bp, _m2m = branch_path(model)
+        if not bp:
+            return qs
+        return branch_filter(qs, model, c.pick)
+    except Exception:
+        return qs
+
+
+def _scope_queryset(request, view, qs):
     model = getattr(qs, 'model', None)
     if model is None or getattr(view, 'zeo_scope', True) is False:
         return qs

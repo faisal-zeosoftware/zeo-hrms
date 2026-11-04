@@ -21,11 +21,16 @@ class RequisitionApprovalSerializer(DisplayFieldsMixin, serializers.ModelSeriali
 class ManpowerRequisitionSerializer(DisplayFieldsMixin, serializers.ModelSerializer):
     approvals = RequisitionApprovalSerializer(many=True, read_only=True)
     pending_with = serializers.SerializerMethodField()
+    openings = serializers.SerializerMethodField()   # v1.62.0 talent-ops: the job openings made from this requisition
 
     class Meta:
         model = ManpowerRequisition
         fields = '__all__'
         read_only_fields = ('document_number', 'status', 'requested_by', 'submitted_on', 'approved_on', 'created_at')
+
+    def get_openings(self, obj):
+        return [{'id': j.pk, 'code': j.job_code, 'title': j.title, 'status': j.status, 'status_label': j.get_status_display()}
+                for j in obj.job_openings.all().order_by('id')]
 
     def get_pending_with(self, obj):
         step = obj.approvals.filter(status='pending').order_by('level').first()
@@ -232,12 +237,37 @@ class OfferSerializer(DisplayFieldsMixin, serializers.ModelSerializer):
     job_title = serializers.CharField(source='application.job.title', read_only=True)
     visa_progress = serializers.SerializerMethodField()
     onboarding_progress = serializers.SerializerMethodField()
+    existing_employee = serializers.SerializerMethodField()   # v1.62.0 talent-ops
+    stage = serializers.SerializerMethodField()
 
     class Meta:
         model = Offer
         fields = '__all__'
         read_only_fields = ('document_number', 'status', 'approved_by', 'approved_on', 'sent_on', 'responded_on',
                             'employee', 'created_by', 'created_at', 'decline_reason')
+
+    def get_existing_employee(self, obj):
+        """v1.62.0 talent-ops: the employee who already exists for an accepted, unlinked offer (link instead of creating a duplicate)."""
+        if obj.employee_id or obj.status != 'accepted':
+            return None
+        from .services import existing_employee
+        e = existing_employee(obj)
+        if e is None:
+            return None
+        return {'id': e.pk, 'code': e.emp_code, 'name': ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x)}
+
+    def get_stage(self, obj):
+        """v1.62.0 talent-ops: the onboarding stage in words – Joined, Ready to join, Visa in progress (step n of m: name)."""
+        if obj.employee_id or obj.status == 'joined':
+            return {'key': 'joined', 'label': 'Joined'}
+        if obj.status != 'accepted':
+            return {'key': obj.status, 'label': obj.get_status_display()}
+        steps = sorted(obj.visa_steps.all(), key=lambda s: (s.sequence or 0, s.pk))
+        open_ = [s for s in steps if s.status in ('pending', 'in_progress')]
+        if not open_:
+            return {'key': 'ready', 'label': 'Ready to join'}
+        n = steps.index(open_[0]) + 1
+        return {'key': 'visa', 'label': f'Visa step {n} of {len(steps)}: {open_[0].name}'}
 
     def get_candidate_nationality(self, obj):
         n = obj.application.candidate.nationality

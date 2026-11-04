@@ -38,6 +38,17 @@ class Base(APIView):
         self.c = ctx(request)
 
     def handle_exception(self, exc):
+        # v1.62.1 (tester 30-10 item 201): Post to accounting (cost allocation, provisions) – the journal builder's refusals ("Nothing is allocated away
+        # from the departments this month", "already posted …") are ZeoAccounting's own Refused and ended in a 500
+        try:
+            from ZeoAccounting.services import Refused as AccRefused
+        except ImportError:
+            AccRefused = None
+        if AccRefused is not None and isinstance(exc, AccRefused):
+            body = {'detail': tr(exc.message)}
+            if exc.problems:
+                body['errors'] = exc.problems
+            return Response(body, status=exc.status)
         if isinstance(exc, S.Refused):
             body = {'detail': exc.message}
             if exc.problems:
@@ -55,6 +66,14 @@ class Base(APIView):
         return E.objects.filter(pk=emp_id, emp_branch_id__in=self.c.branches).exists()
 
 
+def _payslip_lock_public():   # v1.62.11 (item 230)
+    try:
+        from . import payslip_lock
+        return payslip_lock.public()
+    except Exception:
+        return {}
+
+
 class SettingsView(Base):
     def get(self, request):
         s = S.settings()
@@ -70,7 +89,18 @@ class SettingsView(Base):
                          'settlement_due_days': s.settlement_due_days, 'part_month': s.part_month, 'wps_period': s.wps_period,
                          'payslip_language': s.payslip_language,
                          'pay_weekly': s.pay_weekly, 'pay_biweekly': s.pay_biweekly, 'pay_semimonthly': s.pay_semimonthly,   # v1.55.0
+                         **self._net(),   # v1.62.2 (item 51)
+                         **_payslip_lock_public(),   # v1.62.11 (item 230) payslip password
                          'can_edit': self.can({'change_payrollplussettings'})})
+
+    @staticmethod
+    def _net():
+        """v1.62.2 (item 51): net pay controls (company option, off / no limit by default)."""
+        from PayrollManagement.payroll_guards import net_settings
+        n = net_settings()
+        return {'keep_net_positive': n['keep_net_positive'],
+                # v1.62.3: plain number – normalize() gave "5E+1" for 50
+                'max_deduction_pct': None if n['max_deduction_pct'] is None else format(n['max_deduction_pct'].normalize(), 'f')}
 
     def put(self, request):
         # the payroll team must not be able to switch off the controls on its own work – only the company administrator or
@@ -114,6 +144,28 @@ class SettingsView(Base):
                     setattr(s, f, v)
                 except (TypeError, ValueError):
                     raise S.Refused(tr('Enter a number of days between 0 and 60.'), problems={f: 'Invalid.'})
+        if any(k in d for k in ('payslip_password', 'payslip_password_rule', 'payslip_password_email', 'payslip_password_download')):   # v1.62.11 (item 230)
+            from . import payslip_lock as _lock
+            try:
+                _lock.save({k2: d[k1] for k1, k2 in (('payslip_password', 'enabled'), ('payslip_password_rule', 'rule'), ('payslip_password_email', 'on_email'),
+                                                       ('payslip_password_download', 'on_download')) if k1 in d})
+            except ValueError as e:
+                raise S.Refused(e.args[1], problems={e.args[0]: e.args[1]})
+        if 'keep_net_positive' in d or 'max_deduction_pct' in d:   # v1.62.2 (item 51)
+            from decimal import Decimal, InvalidOperation
+            from PayrollManagement.payroll_guards import save_net_settings
+            keep = (str(d['keep_net_positive']).lower() in ('1', 'true', 'yes', 'on')) if 'keep_net_positive' in d else None
+            pct = '__keep__'
+            if 'max_deduction_pct' in d:
+                pct = d.get('max_deduction_pct')
+                if pct not in (None, ''):
+                    try:
+                        pct = Decimal(str(pct))
+                        if not (1 <= pct <= 100):
+                            raise InvalidOperation
+                    except (InvalidOperation, ValueError, TypeError):
+                        raise S.Refused(tr('Enter a percentage between 1 and 100, or leave it empty for no limit.'), problems={'max_deduction_pct': 'Invalid.'})
+            save_net_settings(keep, pct)
         if isinstance(d.get('branch_wps'), list):   # v1.20.2
             import re as _re
             BW = M('PayrollPlus', 'BranchWPS')
@@ -237,6 +289,11 @@ class SettlementView(Base):
                 if was != st.notice_waived:   # v1.62.0 EOS
                     S.log_step(st, 'notice_waived', request.user, tr('Notice not served: waived') if st.notice_waived else tr('Notice not served: deducted'))
             S.compute(st, request.user)
+        elif action == 'inputs':   # v1.62.11 (EOS settings): HR's entries on the draft, the accounting date
+            if not self.can(hr):
+                raise S.Refused(tr('You may not change this settlement.'), status=403)
+            from . import eos_settings as ES
+            ES.set_inputs(st, request.data, request.user)
         elif action in ('lines', 'assets'):   # v1.62.0 EOS: HR's other lines / asset decisions
             if not self.can(hr):
                 raise S.Refused(tr('You may not change this settlement.'), status=403)
@@ -254,6 +311,10 @@ class SettlementView(Base):
 
     def delete(self, request, pk, action=None, line_id=None):   # v1.62.0 EOS: DELETE settlements/<id>/lines/<line id>/
         st = self._get(pk)
+        if action is None and line_id is None:   # v1.62.11 (EOS settings): DELETE settlements/<id>/ – a draft, its history kept
+            from . import eos_settings as ES
+            res_id = ES.delete_draft(st, request.user, self.c.codes, self.c.admin, str(request.data.get('note') or request.GET.get('note') or ''))
+            return Response({'deleted': True, 'resignation_id': res_id})
         if action != 'lines' or line_id is None:
             raise S.Refused(tr('Unknown action.'), status=405)
         if not self.can({'add_exitsettlement', 'change_exitsettlement'}):
@@ -641,7 +702,7 @@ class LegalRatesView(APIView):
                 if r.effective_from <= on:
                     cur = r
             rows.append({'key': k, 'label': tr(meta.get('label', k)), 'country': meta.get('country', h[0].country if h else ''),
-                         'built_in': str(meta['default']) if meta else None,
+                         'built_in': str(meta['default']) if meta else None, 'to_be_confirmed': bool(meta.get('tbc')),   # v1.62.11 (item 229)
                          'value': str(plain(cur.value)) if cur else (str(meta['default']) if meta else None),
                          'source': 'rate' if cur else 'built-in', 'from': cur.effective_from.isoformat() if cur else None,
                          'law_reference': cur.law_reference if cur else '',
@@ -1290,13 +1351,14 @@ class ArrearsView(_V155):
         SC = M('PayrollManagement', 'SalaryComponent')
         mine = set(self.emps().values_list('pk', flat=True))
         rows = [x for x in ArrearLine.objects.exclude(status='cancelled').order_by('-created_at')[:2000] if x.employee_id in mine]
-        names = {e.pk: f'{e.emp_code} {e.emp_first_name or ""} {e.emp_last_name or ""}'.strip() for e in E.objects.filter(pk__in={x.employee_id for x in rows})}
+        # v1.62.0 talent-ops: "Ravi Pillai (GD-0020)" – the name first, with the code
+        names = {e.pk: f'{(e.emp_first_name or "")} {(e.emp_last_name or "")}'.strip() + f' ({e.emp_code})' for e in E.objects.filter(pk__in={x.employee_id for x in rows})}
         comps = {c.pk: c.name for c in SC.objects.filter(pk__in={x.component_id for x in rows})}
         H = M('PayrollManagement', 'SalaryRevisionHistory')
         recent = []
         for h in H.objects.filter(employee_id__in=mine).select_related('employee', 'component').order_by('-date_updated')[:200]:
             last = (h.revisions or [{}])[-1]
-            recent.append({'employee_id': h.employee_id, 'employee': f'{h.employee.emp_code} {h.employee.emp_first_name or ""}'.strip(),
+            recent.append({'employee_id': h.employee_id, 'employee': f'{h.employee.emp_first_name or ""} {h.employee.emp_last_name or ""}'.strip() + f' ({h.employee.emp_code})',   # v1.62.0 talent-ops
                            'component_id': h.component_id, 'component': h.component.name, 'old': last.get('old_amount'), 'new': last.get('new_amount'),
                            'revised_on': last.get('revised_on'), 'effective_period': last.get('effective_period')})
         return Response({'lines': [{'id': x.pk, 'employee_id': x.employee_id, 'employee': names.get(x.employee_id, ''), 'component': comps.get(x.component_id, ''),
@@ -1326,3 +1388,22 @@ class ArrearsView(_V155):
         self.check_emps(ids)
         comps = [int(x) for x in d.get('component_ids') or [] if str(x).isdigit()] or None
         return Response(C.calculate(ids, eff, comps, request.user, save=d.get('action') == 'save'))
+
+
+# ---------------------------------------------------------------- v1.62.11 (EOS settings) Payroll › Setup › End of service settings
+class EosSettingsView(Base):
+    """GET api/eos-settings/  the company's end-of-service rules + the lists (components, leave types)   PUT  save (payroll setup right)"""
+    SET = {'change_payrollplussettings'}
+
+    def get(self, request):
+        if not self.can(READ | self.SET | {'view_payrollplussettings'}):
+            raise S.Refused(tr('You may not see these settings.'), status=403)
+        from . import eos_settings as ES
+        return Response({'settings': ES.settings(), **ES.options(), 'can_edit': self.can(self.SET)})
+
+    def put(self, request):
+        if not self.can(self.SET):
+            raise S.Refused(tr('You may not change these settings.'), status=403)
+        from . import eos_settings as ES
+        ES.save_settings(request.data, request.user)
+        return Response({'settings': ES.settings(), **ES.options(), 'can_edit': True})

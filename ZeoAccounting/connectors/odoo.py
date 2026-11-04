@@ -81,12 +81,13 @@ class Odoo:
         return {'ok': True, 'detail': f"Connected – companies: {', '.join(c['name'] for c in comp)}; language {me.get('lang', '')}; "
                                       f"journal {self.st.journal_code}: {'found' if j else 'NOT FOUND'}"}
 
-    def journal(self, required=True):
-        rows = self.call('account.journal', 'search_read', domain=[['code', '=', self.st.journal_code or 'MISC']], fields=['id', 'name'], limit=1)
+    def journal(self, required=True, code=None):
+        code = code or self.st.journal_code   # v1.62.11 (EOS settings): a journal of the source (settlements) before the global one
+        rows = self.call('account.journal', 'search_read', domain=[['code', '=', code or 'MISC']], fields=['id', 'name'], limit=1)
         if not rows:
             rows = self.call('account.journal', 'search_read', domain=[['type', '=', 'general']], fields=['id', 'name'], limit=1) if not required else []
         if not rows and required:
-            raise ConnectorError(f'Odoo has no journal with the code {self.st.journal_code}.')
+            raise ConnectorError(f'Odoo has no journal with the code {code}.')
         return rows[0]['id'] if rows else None
 
     def accounts(self):
@@ -172,7 +173,7 @@ class Odoo:
                     v['partner_id'] = int(l.partner_ref)
                 lines.append([0, 0, v] if self.mode == 'json2' else (0, 0, v))
             mid = self._id(self.call('account.move', 'create', vals_list=[{'move_type': 'entry', 'date': batch.date.isoformat(), 'ref': ref,
-                                                                           'journal_id': self.journal(), 'line_ids': lines}]))
+                                                                           'journal_id': self.journal(code=(batch.rules or {}).get('journal_code')), 'line_ids': lines}]))   # v1.62.11 (EOS settings)
         if self.st.post_as == 'posted':
             st = self.call('account.move', 'read', ids=[mid], fields=['state'])
             if st and st[0].get('state') == 'draft':

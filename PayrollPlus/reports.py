@@ -73,10 +73,34 @@ def r_final_settlements(run):
                          ('due', 'Due by (14 days)', 'date'), ('paid_on', 'Paid on', 'date'), ('state', 'Payment', 'text')], rows
 
 
+def r_accruals(run):
+    """v1.62.7 (item 18): accrue now – pay later – per employee and component: opening, accrued, paid by payroll, paid at exit, balance."""
+    R = _h()
+    from . import accruals as A
+    emps = {e.pk: e for e in run.all_employees}
+    rows = []
+    for r in A.summary(run.date_from, run.date_to, set(emps)):
+        e = emps.get(r['employee_id'])
+        if e is None:
+            continue
+        rows.append({**R.emp_cols(e), 'component': r['component'], 'code': r['code'], 'opening': R.money(r['opening']), 'accrued': R.money(r['accrued']),
+                     'paid': R.money(r['paid']), 'paid_exit': R.money(r['paid_exit']), 'balance': R.money(r['balance']),
+                     'status': 'Active' if e.is_active else 'Inactive', **R.src(e)})
+    rows.sort(key=lambda x: (x['component'].lower(), x['employee']))
+    return R.EMP_COLS + [('component', 'Component', 'text'), ('code', 'Code', 'text'), ('opening', 'Opening balance (AED)', 'number'),
+                         ('accrued', 'Accrued (AED)', 'number'), ('paid', 'Paid by payroll (AED)', 'number'), ('paid_exit', 'Paid at final settlement (AED)', 'number'),
+                         ('balance', 'Balance (AED)', 'number'), ('status', 'Employee status', 'text')], rows, \
+        {'filters': ['department', 'category', 'employee', 'component', 'status'],
+         'notes': ['Accrue now – pay later components: the monthly amount is accrued (not in the net pay) and paid in the payout month or with the final settlement. Opening balance = the balance before the period, with go-live opening balances.']}
+
+
 REPORTS = {
+    'accruals': ('Accrued components – accrued, paid, balance', 'Payroll', 'Accrue now – pay later components per employee: opening balance, accrued, paid by payroll, paid at the final settlement and the balance.',
+                 r_accruals, 'year', ['view_payrollrun', 'view_payslip']),   # v1.62.7 (item 18)
     'wps-status': ('WPS payment status', 'Payroll', 'Every payroll run with salary month, payment date, the WPS due date, late or on time, and who prepared, approved and paid it.',
                    r_wps_status, 'year', ['view_payrollrun']),
     'final-settlements': ('Final settlements', 'Requests & exits', 'Final settlements with eligible service, gratuity, net amount, the 14-day due date and payment.',
                           r_final_settlements, 'year', ['view_exitsettlement', 'view_endofservice']),
 }
-REPORT_MODELS = {'wps-status': {'PayrollManagement.PayrollRun'}, 'final-settlements': {'EmpManagement.emp_master'}}
+REPORT_MODELS = {'accruals': set(), 'wps-status': {'PayrollManagement.PayrollRun'},   # v1.62.7 (item 18): accruals
+                 'final-settlements': {'EmpManagement.emp_master'}}

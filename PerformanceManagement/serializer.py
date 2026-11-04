@@ -121,6 +121,10 @@ class AppraisalOutcomeSerializer(DisplayFieldsMixin, serializers.ModelSerializer
     employee_code = serializers.CharField(source='sheet.employee.emp_code', read_only=True)
     department = serializers.SerializerMethodField()
     cycle = serializers.CharField(source='sheet.cycle.name', read_only=True)
+    # v1.62.0 talent-ops: the cycle stage and the sheet's current rating – an outcome is only approvable on locked, unchanged ratings
+    cycle_status = serializers.CharField(source='sheet.cycle.status', read_only=True)
+    sheet_rating = serializers.IntegerField(source='sheet.final_rating', read_only=True)
+    ready = serializers.SerializerMethodField()
 
     class Meta:
         model = AppraisalOutcome
@@ -134,6 +138,12 @@ class AppraisalOutcomeSerializer(DisplayFieldsMixin, serializers.ModelSerializer
     def get_department(self, obj):
         d = obj.sheet.employee.emp_dept_id
         return d.dept_name if d else None
+
+    def get_ready(self, obj):
+        """v1.62.0 talent-ops: ready | stale (rating changed since) | not_locked"""
+        if obj.sheet.cycle.status not in ('calibration', 'closed'):
+            return 'not_locked'
+        return 'ready' if obj.sheet.final_rating == obj.final_rating else 'stale'
 
     def update(self, instance, validated_data):
         if instance.status == 'pushed':

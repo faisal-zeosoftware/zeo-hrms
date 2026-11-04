@@ -280,6 +280,7 @@ def apply(t, user=None):
                 done.append(f'Removed from punch location {g.location_name}')
     ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
     SRH = M('PayrollManagement', 'SalaryRevisionHistory')
+    changed_from = {}   # v1.62.2 (item 55): component id → amount before the transfer
     for code, amt in (t.salary_changes or {}).items():
         amt = Decimal(str(amt)).quantize(Decimal('0.01'))
         comp = M('PayrollManagement', 'SalaryComponent').objects.filter(code=code, branch_id=emp.emp_branch_id_id).first() \
@@ -288,13 +289,27 @@ def apply(t, user=None):
         old = s.amount if s else None
         if s:
             ESS.objects.filter(pk=s.pk).update(amount=amt)
+            comp = s.component   # v1.62.2 (item 55): the revision is of the component the employee has
         else:
             ESS.objects.create(employee=emp, component=comp, amount=amt, is_active=True, valid_from=t.effective_date)
+        # v1.62.2 (item 55): one revision row per employee + component (unique) – SRH.objects.create failed with an IntegrityError
+        # for anyone whose salary was revised before; inside the atomic transfer that broke the transaction and the transfer
+        # was not saved ("current transaction is aborted"). The change is now added to the row's revision list, in a savepoint.
         try:
-            SRH.objects.create(employee=emp, component=comp, old_amount=old, new_amount=amt, effective_period=f'{t.effective_date:%B%Y}', created_by=user)
+            with transaction.atomic():
+                h, _ = SRH.objects.get_or_create(employee=emp, component=comp, defaults={'created_by': user if getattr(user, 'pk', None) else None})
+                SRH.objects.filter(pk=h.pk).update(old_amount=old, new_amount=amt, effective_period=f'{t.effective_date:%B%Y}',
+                                                   remarks=f'Transfer {t.number or t.pk} from {t.effective_date:%d/%m/%Y}'[:255])
+                h.refresh_from_db()
+                h.add_revision(old, amt, revised_by=user if getattr(user, 'pk', None) else None, effective_period=f'{t.effective_date:%B%Y}',
+                               remarks=f'Transfer {t.number or t.pk} from {t.effective_date:%d/%m/%Y}')
         except Exception:
             log.exception('salary revision line failed')
         done.append(f'Salary: {code} {old} → {amt}')
+        if old is not None and Decimal(str(old)) != amt:
+            changed_from[comp.pk] = Decimal(str(old))
+    if changed_from:   # v1.62.2 (item 55): the new salary from the transfer date
+        done += _salary_from_date(emp, t, changed_from, user)
     try:
         Msg = M('Chatter', 'Message')
         Msg.objects.create(model='EmpManagement.emp_master', object_id=str(emp.pk), author=user,
@@ -304,6 +319,55 @@ def apply(t, user=None):
     t.status, t.done_at, t.result = 'done', timezone.now(), {'done': done, 'plan': p}
     t.save()
     return done
+
+
+def _salary_from_date(emp, t, old_amounts, user=None):
+    """v1.62.2 (item 55): the salary amounts of a transfer apply from its effective date. Payroll pays the amounts of the salary
+    structure for the whole month, so
+    * payslips already made for days from the effective date (a transfer dated back) get arrear lines for those days
+      (PayrollPlus arrears, paid with the next payroll – the same as a salary revision with an earlier effective date);
+    * the month of the effective date when no payslip has it yet: the days before the date are at the old amount – a
+      correction line (old − new) × days before ÷ days of the month waits for that month's payroll."""
+    out = []
+    try:
+        from PayrollPlus import cycles as C
+        from PayrollPlus.models import ArrearLine
+    except ImportError:
+        return out
+    eff = t.effective_date
+    try:
+        r = C.calculate([emp.pk], eff, component_ids=list(old_amounts), user=user if getattr(user, 'pk', None) else None, save=True)
+        n = sum(len(x.get('lines') or []) for x in r.get('rows') or [])
+        if n:
+            out.append(f'Salary: {n} arrear line(s) for payslips from {eff:%d/%m/%Y}')
+    except Exception:
+        log.exception('transfer arrears failed')
+    if eff.day == 1:
+        return out
+    import calendar as _cal
+    P = M('PayrollManagement', 'Payslip')
+    if P.objects.filter(employee=emp, payroll_run__year=eff.year, payroll_run__month=eff.month).exists():
+        return out   # the month is paid – the arrear lines above correct it
+    ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
+    SC = M('PayrollManagement', 'SalaryComponent')
+    dim = _cal.monthrange(eff.year, eff.month)[1]
+    before = Decimal(eff.day - 1)
+    m0 = eff.replace(day=1)
+    for cid, old in old_amounts.items():
+        c = SC.objects.filter(pk=cid).first()
+        new = Decimal(str(ESS.objects.filter(employee=emp, component_id=cid).values_list('amount', flat=True).first() or 0))
+        if c is None or not (c.component_value_type == 'fixed' or C.scalable(c)):
+            continue
+        diff = ((old - new) * before / Decimal(dim)).quantize(Decimal('0.01'))
+        if not diff:
+            continue
+        ArrearLine.objects.filter(employee_id=emp.pk, component_id=cid, month=m0, source_payslip_id__isnull=True, effective_from=eff,
+                                  status='pending').delete()
+        ArrearLine.objects.create(employee_id=emp.pk, component_id=cid, month=m0, old_amount=old, new_amount=new, amount=-diff if c.component_type == 'deduction' else diff,
+                                  effective_from=eff, note=f'Transfer {t.number or t.pk}: {int(before)} day(s) before {eff:%d/%m/%Y} at the old amount'[:200],
+                                  created_by_id=getattr(user, 'pk', None))
+        out.append(f'Salary: {c.code} {diff:+.2f} for {int(before)} day(s) before {eff:%d/%m/%Y} at the old amount (with the payroll of {eff:%B %Y})')
+    return out
 
 
 def due(today=None):

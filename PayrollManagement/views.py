@@ -302,6 +302,32 @@ class PayslipViewSet(viewsets.ModelViewSet):
         aproved_payslips = self._scoped().filter(status__in=self.RELEASED)
         serializer = self.get_serializer(aproved_payslips, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    def _payslip_of_month(self, request, year, month, **emp):
+        """v1.62.0 (pending item 9): an employee can have several payslips in one month (the monthly run plus an
+        off-cycle / bonus run). ?payslip=<id> or ?run=<payroll run id> picks one; otherwise the monthly run's payslip
+        (not an off-cycle run), the latest run first. Raises Payslip.DoesNotExist when there is none."""
+        qs = self._scoped().filter(payroll_run__month=month, payroll_run__year=year, **emp)
+        pick = request.query_params.get('payslip')
+        if pick and str(pick).isdigit():
+            return qs.get(pk=int(pick))
+        run = request.query_params.get('run')
+        if run and str(run).isdigit():
+            return qs.filter(payroll_run_id=int(run)).order_by('-id').first() or qs.none().get()
+        rows = list(qs.order_by('-payroll_run_id', '-id'))
+        if not rows:
+            raise Payslip.DoesNotExist
+        if len(rows) > 1:
+            try:
+                from PayrollPlus.models import OffCycleRun
+                off = set(OffCycleRun.objects.filter(payroll_run_id__in=[r.payroll_run_id for r in rows])
+                          .values_list('payroll_run_id', flat=True))
+                regular = [r for r in rows if r.payroll_run_id not in off]
+                if regular:
+                    return regular[0]
+            except Exception:
+                pass
+        return rows[0]
+
     @action(detail=False, methods=['get'], url_path='employee/(?P<emp_code>[^/.]+)/download/(?P<year>\d{4})/(?P<month>\d{1,2})')
     def download_employee_payslip_by_month(self, request, emp_code=None, year=None, month=None):
         """Download a payslip for a specific employee for a given month and year."""
@@ -313,19 +339,20 @@ class PayslipViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Month must be between 1 and 12"}, status=status.HTTP_400_BAD_REQUEST)
 
             # Fetch the payslip for the employee, month, and year (v1.13.0: only payslips this user may see)
-            payslip = self._scoped().get(
-                employee__emp_code=emp_code,
-                payroll_run__month=month,
-                payroll_run__year=year
-            )
+            payslip = self._payslip_of_month(request, year, month, employee__emp_code=emp_code)
             try:   # v1.62.0 print – the company's default payslip design; the old payslip when there is none
                 from PrintTemplates.hooks import payslip_response
                 _r = payslip_response(request, payslip)
-                if _r is not None:
-                    return _r
+            except ImportError:
+                _r = None
+            _r = _r if _r is not None else generate_payslip_pdf(request, payslip)
+            try:   # v1.62.11 (item 230): the employee's own payslip is password-protected when the company setting is on (HR downloads stay plain)
+                from PayrollPlus import payslip_lock as _lock
+                if _lock.for_download(payslip, request.user):
+                    return _lock.protect_response(payslip, _r)
             except ImportError:
                 pass
-            return generate_payslip_pdf(request, payslip)
+            return _r
         except Payslip.DoesNotExist:
             return Response(
                 {"error": f"No payslip found for employee {emp_code} for {month}/{year}"}, 
@@ -345,11 +372,7 @@ class PayslipViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Month must be between 1 and 12"}, status=status.HTTP_400_BAD_REQUEST)
 
             # Fetch the payslip for the employee, month, and year (v1.13.0: only payslips this user may see)
-            payslip = self._scoped().get(
-                employee_id=employee_id,
-                payroll_run__month=month,
-                payroll_run__year=year
-            )
+            payslip = self._payslip_of_month(request, year, month, employee_id=employee_id)
             serializer = self.get_serializer(payslip)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Payslip.DoesNotExist:
@@ -895,6 +918,15 @@ class LoanApplicationviewset(viewsets.ModelViewSet):
 
             serializer.save(document_number=document_number)
 
+    def perform_update(self, serializer):
+        # v1.62.3 (item 107): an edit of the amount / months that cannot match the instalments already deducted is refused by the
+        # model (LoanApplication._v1623_terms_changed) – answered as a 400 with the reason instead of a server error
+        from rest_framework.exceptions import ValidationError as _DRFValidationError
+        try:
+            serializer.save()
+        except ValidationError as e:
+            raise _DRFValidationError({'detail': ' '.join(e.messages)})
+
 
     @action(detail=False, methods=['get'], url_path='paused-loans')
     def paused_loans(self, request):
@@ -1103,7 +1135,7 @@ class LoanApprovalviewset(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1 (tester 30-10 item 203): best effort – an SMTP failure gave a 500
             )
 
         # ---------------- NOTIFICATION ----------------
@@ -1587,7 +1619,7 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------
@@ -1842,7 +1874,7 @@ class AirticketApprovalViewSet(viewsets.ModelViewSet):
                 message=response_text,
                 from_email=None,
                 recipient_list=[approval.approver.email],
-                fail_silently=False,
+                fail_silently=True,   # v1.62.1: best effort (item 203)
             )
 
         # ---------------- NOTIFICATION ----------------
@@ -2326,6 +2358,18 @@ class LeaveEncashmentViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        # v1.62.2 (item 57): this screen could set the status to approved / processed directly – the leave balance was not
+        # reduced and payroll never paid it (no approval date). Approving / rejecting goes through Leave › Encashment
+        # approvals only (balance check, ledger "encashed", approval steps, paid with the next payroll); here only an open
+        # encashment can be put back to draft / pending or cancelled.
+        new_status = serializer.validated_data.get('status')
+        if new_status is not None and new_status != instance.status and (
+                new_status not in ('draft', 'pending', 'cancelled') or instance.status not in ('draft', 'pending')):
+            from Translations.i18n import tr
+            transaction.set_rollback(True)
+            return Response({"error": tr("Leave encashments are approved or rejected in Leave › Encashment approvals – the leave "
+                                         "balance is reduced there and the amount is paid with the next payroll.")},
+                            status=status.HTTP_400_BAD_REQUEST)
         formula = serializer.validated_data.pop('formula', None)
         sent = 'formula' in request.data and str(request.data.get('formula') or '').strip()
         formula = (str(sent).strip() if sent else (instance.formula_used or DEFAULT_ENCASHMENT_FORMULA)).strip()

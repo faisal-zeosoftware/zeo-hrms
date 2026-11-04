@@ -165,6 +165,10 @@ def case(res, c, user):
            'step_label_1': tr('Resignation approved') if exit_key(res, st) == 'resignation' else tr('Exit approved'),
            'assets': S.asset_items(e.pk, st, since), 'settlement': S.settlement_row(st, full=True) if st is not None else None,
            'company': _company_name()}
+    from . import eos_settings as _ES   # v1.62.11 (EOS settings): Emirates ID, contract type, deleted drafts, the rules
+    out.update(_ES.case_extra(e, res))
+    out['deleted_settlements'] = _ES.deleted_for(res.pk)
+    out['eos_rules'] = {k: v for k, v in _ES.settings().items() if k in _ES.DEFAULTS}
     out['rights'] = rights(st, c, user)
     return out
 
@@ -187,7 +191,12 @@ def rights(st, c, user):
             'approve': status == 'validated' and (admin or 'approve_exitsettlement' in codes) and user.pk not in done_by,
             'pay': status == 'approved' and (admin or 'pay_exitsettlement' in codes) and user.pk != (st.approved_by_id if st is not None else None),
             'reject': status in ('submitted', 'validated') and (admin or bool({'validate_exitsettlement', 'approve_exitsettlement'} & codes)),
-            'new_leaver': hr, 'pdf': st is not None}
+            'new_leaver': hr, 'pdf': st is not None,
+            # v1.62.11 (EOS settings): HR's entries (draft), accounting date, reset / cancel / delete
+            'inputs': hr and status == 'draft', 'accounting_date': hr and status in ('draft', 'submitted', 'validated', 'approved', 'paid'),
+            'reset': status in ('approved', 'cancelled') and (admin or 'approve_exitsettlement' in codes),
+            'cancel_any': status in ('submitted', 'validated', 'approved') and (admin or 'approve_exitsettlement' in codes),
+            'delete': status == 'draft' and (admin or 'delete_exitsettlement' in codes)}
 
 
 def calculate(res, user):
@@ -306,7 +315,8 @@ def add_line(st, data, user):
     lines = list(st.other_lines or [])
     nid = max([int(x.get('id') or 0) for x in lines] + [0]) + 1
     lines.append({'id': nid, 'kind': kind, 'label': label[:120], 'amount': float(amount), 'note': str(data.get('note') or '').strip()[:300],
-                  'by_id': user.pk, 'by': S.person(user.pk), 'at': timezone.now().isoformat()})
+                  'by_id': user.pk, 'by': S.person(user.pk), 'at': timezone.now().isoformat(),
+                  'account': str(data.get('account') or '').strip()[:30]})   # v1.62.11 (EOS settings): optional account of the line
     st.other_lines = lines
     S.log_step(st, 'line_added', user, f'{label[:120]} {"−" if kind == "deduction" else "+"}{amount:,.2f}')
     S.compute(st, user)

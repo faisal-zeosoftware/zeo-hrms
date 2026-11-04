@@ -77,6 +77,10 @@ def opening_from_requisition(req):
     from .models import JobOpening
     if req.status != 'approved':
         raise ValidationError("The requisition must be approved first.")
+    # v1.62.0 talent-ops: one requisition, one opening (an approved MRF offered "Create opening" again and made duplicates)
+    have = req.job_openings.exclude(status='closed').first()
+    if have is not None:
+        raise ValidationError(f"This requisition already has the job opening {have.job_code} – open it under Job openings.")
     return JobOpening.objects.create(
         requisition=req, title=req.position_title, branch=req.branch, department=req.department,
         designation=req.designation, openings=req.headcount, employment_type=req.employment_type,
@@ -180,12 +184,55 @@ def _next_emp_code():
 
 
 @transaction.atomic
+def existing_employee(offer):
+    """v1.62.0 talent-ops: the employee record that already exists for this offer's candidate (made by hand or by an import before
+    the offer was converted) – same personal e-mail, or same first and last name joining on the offer's joining date. None when
+    the offer is linked already or nobody matches. Employees linked to another offer are not proposed."""
+    from EmpManagement.models import emp_master
+    from .models import Offer
+    if offer.employee_id:
+        return None
+    cand = offer.application.candidate
+    taken = Offer.objects.exclude(employee__isnull=True).values_list('employee_id', flat=True)
+    qs = emp_master.objects.exclude(pk__in=list(taken))
+    if cand.email:
+        m = qs.filter(emp_personal_email__iexact=cand.email.strip()).first()
+        if m:
+            return m
+    if cand.first_name and offer.joining_date:
+        return qs.filter(emp_first_name__iexact=cand.first_name.strip(), emp_last_name__iexact=(cand.last_name or '').strip(),
+                         emp_joined_date=offer.joining_date).first()
+    return None
+
+
+@transaction.atomic
+def link_employee(offer, employee, user=None):
+    """v1.62.0 talent-ops: link an accepted offer to the employee who already exists (no second employee record): the offer is
+    'Joined' and the application moves to Hired."""
+    from .models import Offer
+    if offer.employee_id:
+        raise ValidationError("This offer is already linked to an employee.")
+    if offer.status != 'accepted':
+        raise ValidationError("Only accepted offers can be linked to an employee.")
+    if Offer.objects.filter(employee=employee).exclude(pk=offer.pk).exists():
+        raise ValidationError(f"{employee.emp_code} is already linked to another offer.")
+    offer.employee = employee
+    offer.status = 'joined'
+    offer.save(update_fields=['employee', 'status'])
+    move_stage(offer.application, 'hired', user, f"Linked to employee {employee.emp_code}")
+    return employee
+
+
 def convert_to_employee(offer, user=None, emp_code=None, require_visa=True):
     from EmpManagement.models import emp_master
     if offer.employee_id:
         raise ValidationError("This offer is already converted to an employee.")
     if offer.status != 'accepted':
         raise ValidationError("Only accepted offers can be converted.")
+    same = existing_employee(offer)   # v1.62.0 talent-ops: no duplicate employee record
+    if same is not None:
+        name = ' '.join(x for x in (same.emp_first_name, same.emp_last_name) if x)
+        raise ValidationError(f"{same.emp_code} {name} already exists for this candidate – link the offer to this employee instead of creating a second record.")
     if require_visa and offer.visa_steps.filter(status__in=('pending', 'in_progress')).exists():
         raise ValidationError("Visa / onboarding steps are still open. Mark them done or not applicable first.")
     cand = offer.application.candidate

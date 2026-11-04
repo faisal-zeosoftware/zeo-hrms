@@ -409,10 +409,19 @@ class PayslipSerializer(serializers.ModelSerializer):
     employee_details = serializers.SerializerMethodField()   # v1.20.2: the payslip page header (one payslip only)
     employee_name = serializers.SerializerMethodField()   # v1.26.0: pay sheets showed the employee code only
     employee_code = serializers.SerializerMethodField()
+    payroll_warnings = serializers.SerializerMethodField()   # v1.62.2 (items 41, 51)
 
     class Meta:
         model = Payslip
         fields = '__all__'
+
+    def get_payroll_warnings(self, obj):
+        """v1.62.2 (items 41, 51): negative net pay, a component replaced by the statutory scheme, deductions carried over."""
+        try:
+            from .payroll_guards import warnings_of
+            return warnings_of(obj)
+        except Exception:
+            return []
 
     def get_employee_name(self, obj):
         e = obj.employee
@@ -1697,6 +1706,27 @@ class SIFSerializer(serializers.Serializer):
 
             # ✅ net pay of the payslip: variable = additions of variable components (overtime, encashment, expenses …), fixed = the rest
             net = max(Decimal(str(ps.net_salary or 0)), Decimal("0.00"))
+            try:   # v1.62.11 (item 228): a held salary is not paid this month – the file pays net − held, a fully held one is left out
+                from PayrollPlus.payctl import held_amount as _v16211_held
+                _held = _v16211_held(ps)
+            except ImportError:
+                _held = Decimal("0.00")
+            try:   # v1.63.0 (item 27): a split salary – the file pays the WPS portion (held salary off the main portion first)
+                from PayrollPlus.paysplit import wps_amount as _v1630_wps
+                _v1630_amt, _v1630_split = _v1630_wps(ps, net, _held)
+            except ImportError:
+                _v1630_amt, _v1630_split = max(net - _held, Decimal("0.00")), None
+            if _v1630_split is not None:
+                net = _v1630_amt
+                if net == 0:
+                    skipped_employees.append({"emp_code": employee.emp_code, "reason": ("Salary held (Payroll › Hold / release salary)" if _held > 0
+                                                                                      else "Salary paid outside WPS (salary split)")})
+                    continue
+            elif _held > 0:
+                net = max(net - _held, Decimal("0.00"))
+                if net == 0:
+                    skipped_employees.append({"emp_code": employee.emp_code, "reason": "Salary held (Payroll › Hold / release salary)"})
+                    continue
             variable_income = Decimal("0.00")
             for pc in ps.components.select_related('component'):
                 c = pc.component
@@ -2145,6 +2175,22 @@ class AirTicketPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = AirTicketPolicy
         fields = '__all__'
+
+    def validate(self, data):
+        # v1.66.0 (item 123): with Air ticket rules › "Two policies for the same employee" = refuse, an active policy whose country and
+        # limits cross another active policy is refused (default 'first': saved as before)
+        inst = getattr(self, 'instance', None)
+        full = {k: data.get(k, getattr(inst, k, None) if inst is not None and k in ('country', 'is_active') else None)
+                for k in ('country', 'is_active')}
+        for k in ('eligible_departments', 'eligible_designations', 'eligible_categories', 'branch'):
+            full[k] = data[k] if k in data else (list(getattr(inst, k).all()) if inst is not None else [])
+        if full['is_active'] is None:
+            full['is_active'] = True
+        from PayrollPlus.air_policy import overlap_problem
+        _why = overlap_problem(full, exclude_pk=getattr(inst, 'pk', None))
+        if _why:
+            raise serializers.ValidationError({'country': _why})
+        return data
     def to_representation(self, instance):
         rep = super(AirTicketPolicySerializer, self).to_representation(instance)
         if instance.country:  
@@ -2198,6 +2244,31 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         warn_if_email_not_configured()
         employee = data.get('employee')
         branch = data.get('branch')
+
+        # v1.62.3 (items 101, 102, 103): the allocation must be the employee's own, approved, active, not expired, with an amount
+        # left and no other ticket / cash payout request (a cash payout was accepted on an allocation whose ticket was approved,
+        # on another employee's allocation and on a pending / expired allocation – all paid by payroll)
+        inst = getattr(self, 'instance', None)
+        _alloc = data.get('allocation', getattr(inst, 'allocation', None))
+        _emp = data.get('employee', getattr(inst, 'employee', None))
+        if inst is None or (getattr(_alloc, 'pk', None) != inst.allocation_id or getattr(_emp, 'pk', None) != inst.employee_id
+                            or data.get('request_type', inst.request_type) != inst.request_type):
+            from PayrollPlus.air_rules import request_problem
+            _why = request_problem(_emp.pk if _emp is not None else None, _alloc,
+                                   data.get('request_date') or getattr(inst, 'request_date', None), exclude_pk=getattr(inst, 'pk', None),
+                                   request_type=data.get('request_type', getattr(inst, 'request_type', 'TICKET')))   # v1.66.0 (item 120)
+            if _why:
+                raise serializers.ValidationError({'allocation': _why})
+            # v1.66.0 (items 119, 122): probation, leavers, ticket or cash as the policy allows, rule years, a second request of the
+            # same cycle – each a company setting (Air ticket rules), off = as before
+            from PayrollPlus.air_policy import request_problem as _v1660_problem
+            _why = _v1660_problem(_emp, _alloc, data.get('request_type', getattr(inst, 'request_type', 'TICKET')),
+                                  data.get('request_date') or getattr(inst, 'request_date', None),
+                                  data.get('departure_date') or getattr(inst, 'departure_date', None), exclude_pk=getattr(inst, 'pk', None))
+            if _why:
+                raise serializers.ValidationError({'allocation': _why})
+        if employee is None and inst is not None:
+            employee = inst.employee
 
         if not branch:
             return data

@@ -253,7 +253,7 @@ def a_claim_paid(o, request, f):
 
 
 app.reg(Reg('benefit_plan', BenefitPlan, 'Benefit plan', 'Benefit plans', 'Benefits',
-            cols=('code', 'name', 'kind', 'provider', 'employee_cost', 'employer_cost', 'eligible_after_months', 'covers_dependants', 'is_active', 'review_status'),
+            cols=('code', 'name', 'kind', 'provider', 'employee_cost', 'employer_cost', 'eligible_after_months', 'covers_dependants', 'is_active'),   # v1.62.0 talent-ops: no review status column
             form=('code', 'name', 'kind', 'provider', 'policy_no', 'description', 'employee_cost', 'employer_cost', 'eligible_after_months', 'eligible_categories',
                   'covers_dependants', 'max_dependants', 'claim_limit_year', 'deduction_component', 'needs_approval', 'renewal_date', 'documents_note', 'is_active'),
             manage=BEN, view=VIEW + HR + ('ppl_benefits',), public=lambda r: Q(is_active=True), search=('code', 'name', 'provider'), filters=('kind', 'is_active', 'review_status'),
@@ -366,7 +366,7 @@ app.reg(Reg('sign_request', SignRequest, 'Signature request', 'Signatures', 'E-s
 
 # ================================================================== forms
 app.reg(Reg('form_template', FormTemplate, 'Form', 'Form templates', 'Forms',
-            cols=('code', 'name', 'audience', 'needs_approval', 'approver', 'sign', 'is_active', 'review_status'),
+            cols=('code', 'name', 'audience', 'needs_approval', 'approver', 'sign', 'is_active'),   # v1.62.0 talent-ops
             form=('code', 'name', 'description', 'fields', 'audience', 'needs_approval', 'approver', 'sign', 'notify_email', 'once', 'is_active'),
             manage=HR, view=VIEW, public=lambda r: Q(is_active=True), search=('code', 'name'), filters=('audience', 'needs_approval', 'is_active', 'review_status'),
             title='name', review=True, deletable=True, children=(('Submissions', 'form_submission', 'template'),),
@@ -526,7 +526,7 @@ def survey_extra(o, r):
 
 
 app.reg(Reg('survey', Survey, 'Survey', 'Surveys', 'Surveys',
-            cols=('number', 'title', 'kind', 'anonymous', 'start', 'end', 'status', 'review_status'),
+            cols=('number', 'title', 'kind', 'anonymous', 'start', 'end', 'status'),   # v1.62.0 talent-ops
             form=('title', 'kind', 'description', 'anonymous', 'questions', 'audience', 'departments', 'start', 'end', 'reminder_days'),
             number=('survey', 'SRV'), manage=HR, view=VIEW, public=lambda r: Q(status='open'), search=('number', 'title'), filters=('status', 'kind', 'anonymous'),
             title='title', subtitle='kind', defaults=survey_defaults, edit_when=lambda o: o.status == 'draft', review=True, deletable=True,
@@ -599,7 +599,7 @@ def points_of(emp_id):
     return int(got) - int(used)
 
 
-app.reg(Reg('award', Award, 'Award', 'Awards', 'Recognition', cols=('code', 'name', 'icon', 'points', 'who_can_give', 'monthly_limit', 'is_active', 'review_status'),
+app.reg(Reg('award', Award, 'Award', 'Awards', 'Recognition', cols=('code', 'name', 'icon', 'points', 'who_can_give', 'monthly_limit', 'is_active'),   # v1.62.0 talent-ops
             form=('code', 'name', 'icon', 'points', 'description', 'who_can_give', 'monthly_limit', 'is_active'), manage=MANAGE, view=VIEW + HR,
             public=lambda r: Q(is_active=True), search=('code', 'name'), filters=('who_can_give', 'is_active', 'review_status'), title='name', review=True, deletable=True, files=False,
             help='Awards and their points. Anyone can give a Thank you; managers give the bigger awards.'))
@@ -644,7 +644,7 @@ app.reg(Reg('reward', Reward, 'Reward', 'Rewards', 'Recognition', cols=('number'
 
 
 # ================================================================== 360° reviews and development plans
-app.reg(Reg('competency', Competency, 'Competency', 'Competencies', '360° reviews', cols=('code', 'name', 'group', 'for_managers', 'is_active', 'review_status'),
+app.reg(Reg('competency', Competency, 'Competency', 'Competencies', '360° reviews', cols=('code', 'name', 'group', 'for_managers', 'is_active'),   # v1.62.0 talent-ops
             form=('code', 'name', 'group', 'description', 'levels', 'for_managers', 'is_active'), manage=HR, view=VIEW + ('ppl_benefits',), public=lambda r: Q(is_active=True),
             search=('code', 'name'), filters=('group', 'is_active', 'review_status'), title='name', subtitle='group', review=True, deletable=True, files=False,
             help='The behaviours rated in 360° reviews, with the meaning of levels 1–5.'))

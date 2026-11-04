@@ -12,6 +12,10 @@ Now the request only checks the form and answers 202 {job, schema} at once; a ba
      policies, Housing / Transport / Food / Other allowance, payslip approval, public holidays, weekend),
   4. gives the creator access.
 The screen polls GET /users/api/company-jobs/<job>/ and shows the steps.
+
+v1.62.1 (user request 2 Nov): with "Copy from an existing company" (plan from ZeoApps.company_copy.check_request) the first
+branch gets the name and code of the form and, after the standard defaults, the setup of the chosen branch and the
+company-wide settings of the source are copied (step "Copying the setup"); the job keeps the summary in `copied`.
 """
 import logging
 import threading
@@ -25,6 +29,7 @@ log = logging.getLogger(__name__)
 
 JOB = 'zeo:companyjob:{}'
 STEPS = ['Creating the company', 'Setting up the apps', 'Loading the country defaults', 'Giving access', 'Finishing']
+PLAN = [('create', STEPS[0], 55), ('apps', STEPS[1], 25), ('defaults', STEPS[2], 12), ('access', STEPS[3], 5), ('finish', STEPS[4], 3)]
 
 
 def _job(job, **kw):
@@ -34,7 +39,8 @@ def _job(job, **kw):
 
 
 def status(job):
-    return cache.get(JOB.format(job))
+    from ZeoApps.job_progress import with_elapsed
+    return with_elapsed(cache.get(JOB.format(job)))
 
 
 def _detach_files(data):
@@ -62,19 +68,19 @@ def _schema_for(name):
     return schema
 
 
-def start(validated_data, apps, user, run_now=False):
-    """Returns (job, schema). validated_data comes from CompanySerializer (already checked)."""
+def start(validated_data, apps, user, run_now=False, copy=None):
+    """Returns (job, schema). validated_data comes from CompanySerializer (already checked); copy: the checked copy plan."""
     job = uuid.uuid4().hex[:16]
     data = _detach_files(validated_data)
     schema = data.get('schema_name') or _schema_for(data.get('name', ''))
     data['schema_name'] = schema
     _job(job, state='running', step=STEPS[0], step_no=1, steps=len(STEPS), name=data.get('name', ''), schema=schema,
-         company_id=None, apps=[], failed={}, defaults=[], error='', by=getattr(user, 'pk', None))
+         company_id=None, apps=[], failed={}, defaults=[], error='', by=getattr(user, 'pk', None), copy=copy or None, copied=None)
     args = (job, data, list(apps or []), getattr(user, 'pk', None))
     if run_now:
-        _make(*args, own_thread=False)
+        _make(*args, own_thread=False, copy=copy)
     else:
-        threading.Thread(target=_make, args=args, kwargs={'own_thread': True}, daemon=True).start()
+        threading.Thread(target=_make, args=args, kwargs={'own_thread': True, 'copy': copy}, daemon=True).start()
     return job, schema
 
 
@@ -112,11 +118,20 @@ def _after_clone(comp):
                     break
 
 
-def _make(job, data, apps, user_id, own_thread=True):
+PLAN_COPY = PLAN[:3] + [('copy', 'Copying the setup', 10)] + PLAN[3:]
+
+
+def _make(job, data, apps, user_id, own_thread=True, copy=None):
     from django.db import close_old_connections
     if own_thread:
         close_old_connections()
     schema = data['schema_name']
+    from ZeoApps.job_progress import Progress
+    P = Progress(lambda **kw: _job(job, **kw), PLAN_COPY if copy else PLAN)   # v1.62.1: % and what is being done now
+    tok = None
+    if copy:   # v1.62.1: the first branch is made with the name and code of the form (OrganisationManager.signals)
+        from OrganisationManager.signals import FIRST_BRANCH
+        tok = FIRST_BRANCH.set((copy['name'], copy['code']))
     try:
         from .models import company as Company, CustomUser
         connection.set_schema_to_public()
@@ -127,10 +142,17 @@ def _make(job, data, apps, user_id, own_thread=True):
         if _template_ready():
             from django_tenants.clone import CloneSchema
             from ZeoCloud.services import TEMPLATE
-            CloneSchema().clone_schema(TEMPLATE, schema, clone_mode='DATA')
+            P.begin('create', 'Copying the ready company template')
+            with P.copy(TEMPLATE, 'Copying the ready company template'):
+                CloneSchema().clone_schema(TEMPLATE, schema, clone_mode='DATA')
             comp.auto_create_schema = False
             cloned = True
-        comp.save()                                   # without the template: schema + company migrations
+            P.sub(0.97, 'Registering the company')
+            comp.save()
+        else:
+            P.begin('create', 'Creating the database')
+            with P.migrations(schema):
+                comp.save()                           # without the template: schema + company migrations
         for k, v in m2m.items():
             try:
                 getattr(comp, k).set(v)
@@ -141,11 +163,20 @@ def _make(job, data, apps, user_id, own_thread=True):
                 _after_clone(comp)
             except Exception:
                 log.exception('rename the template branch of %s', schema)
-        _job(job, step=STEPS[1], step_no=2, company_id=comp.pk)
+        if copy:   # v1.62.1: name and code of the new branch (a template copy keeps the template's; numbering follows the code)
+            try:
+                from django_tenants.utils import schema_context
+                from ZeoApps.company_copy import rename_first_branch
+                with schema_context(schema):
+                    rename_first_branch(copy['name'], copy['code'])
+            except Exception:
+                log.exception('name of the first branch of %s', schema)
+        P.begin('apps', 'Preparing the apps', company_id=comp.pk)
 
         from ZeoApps.services import setup_new_company
-        done, failed = setup_new_company(comp, apps or ['hrms', 'payroll'], user)
-        _job(job, step=STEPS[2], step_no=3, apps=done, failed=failed)
+        done, failed = setup_new_company(comp, apps or ['hrms', 'payroll'], user,
+                                         progress=lambda i, n, app: P.sub(i / max(n, 1), ('Setting up {0} ({1} of {2})', [app, i + 1, n])))
+        P.begin('defaults', 'Leave types, allowances, public holidays and weekend of the company country', apps=done, failed=failed)
 
         defaults = []
         try:
@@ -164,7 +195,18 @@ def _make(job, data, apps, user_id, own_thread=True):
         except Exception as e:   # noqa: BLE001
             log.exception('approval chains of %s', schema)
             failed['approval chains'] = str(e)[:200]
-        _job(job, step=STEPS[3], step_no=4, defaults=defaults, failed=failed)
+        if copy:   # v1.62.1 (user request 2 Nov): the setup of the chosen branch and the company settings of the source
+            P.begin('copy', ('Copying the setup of {0} – {1}', [copy.get('source_name', ''), copy.get('branch_source_name', '')]),
+                    defaults=defaults, failed=failed)
+            try:
+                from ZeoApps.company_copy import copy as copy_setup
+                res = copy_setup(copy, schema, user, progress=lambda f, area: P.sub(f, ('Copying the setup: {0}', [area])))
+                _job(job, copied={k: v for k, v in res.items() if k != 'at'})   # tables that failed are in copied.failed
+            except Exception as e:   # noqa: BLE001 – the company is made with the standard defaults
+                log.exception('copy setup into %s', schema)
+                _job(job, copied={'source': copy.get('source_name'), 'branch': copy.get('branch_source_name'), 'items': [],
+                                  'counts': {}, 'failed': {'all': str(e)[:200]}})
+        P.begin('access', 'The creator and the system administrators can open the company', defaults=defaults, failed=failed)
 
         try:   # v1.28.1: the creator AND every system administrator can open the new company at once (before: only the
             # creator, so other admins / superusers did not see the company in "Choose a company" until allocated by hand)
@@ -180,10 +222,11 @@ def _make(job, data, apps, user_id, own_thread=True):
                     log.exception('access of %s to %s', getattr(u, 'username', '?'), schema)
         except Exception:
             log.exception('access to %s', schema)
-        _job(job, state='done', step='Done', step_no=len(STEPS), company_id=comp.pk)
+        P.begin('finish', 'Opening the company')
+        P.finish('done', company_id=comp.pk)
     except Exception as e:
         log.exception('create company %s', schema)
-        _job(job, state='failed', error=str(e)[:400])
+        P.finish('failed', error=str(e)[:400])
         try:
             from django_tenants.utils import schema_exists
             from .models import company as Company
@@ -197,6 +240,12 @@ def _make(job, data, apps, user_id, own_thread=True):
         except Exception:
             log.exception('clean-up after a failed company')
     finally:
+        if tok is not None:
+            try:
+                from OrganisationManager.signals import FIRST_BRANCH
+                FIRST_BRANCH.reset(tok)
+            except Exception:
+                pass
         if own_thread:
             try:
                 connection.set_schema_to_public()

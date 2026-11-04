@@ -779,8 +779,16 @@ class MyPayslipsView(Base):
         if emp is None:
             return Response({'payslips': [], 'ytd': None, 'next': None})
         year = request.GET.get('year')
+        _hint = ''
+        try:   # v1.62.11 (item 230): how the payslip password is made, when the company protects downloads
+            from PayrollPlus import payslip_lock as _lock
+            _ls = _lock.settings()
+            if _ls['enabled'] and _ls['on_download']:
+                _hint = tr(_lock.HINT[_ls['rule']])
+        except Exception:
+            _hint = ''
         return Response({'payslips': [S.payslip_json(p) for p in S.my_payslips(emp)], 'ytd': S.ytd(emp, int(year) if str(year or '').isdigit() else None),
-                         'next': S.next_payslip(emp)})
+                         'next': S.next_payslip(emp), 'password_hint': _hint})
 
 
 class MyPayslipView(Base):
@@ -799,8 +807,11 @@ class MyPayslipPdfView(Base):
         if p is None:
             return deny(tr('Payslip not found.'), 404)
         from PayrollPlus.models import PayrollPlusSettings   # v1.50.0: a chosen language (or the bilingual setting) is made fresh
+        from PayrollPlus import payslip_lock as _lock   # v1.62.11 (item 230): password-protected payslip (company setting)
+        _locked = _lock.for_download(p)
         if p.payslip_pdf and p.payslip_pdf.name and not request.GET.get('lang') and PayrollPlusSettings.get().payslip_language != 'en_ar':
-            return _file(p.payslip_pdf, f'payslip-{p.payroll_run.year}-{p.payroll_run.month:02d}.pdf')
+            _r = _file(p.payslip_pdf, f'payslip-{p.payroll_run.year}-{p.payroll_run.month:02d}.pdf')
+            return _lock.protect_response(p, _r) if _locked else _r
         from PayrollManagement.utils import generate_payslip_pdf
         resp = None
         try:   # v1.62.0 print – the company's default payslip design; the old payslip when there is none
@@ -810,7 +821,7 @@ class MyPayslipPdfView(Base):
             pass
         resp = resp or generate_payslip_pdf(request, p)
         resp['Content-Disposition'] = f'attachment; filename="payslip-{p.payroll_run.year}-{p.payroll_run.month:02d}.pdf"'
-        return resp
+        return _lock.protect_response(p, resp) if _locked else resp   # v1.62.11 (item 230)
 
 
 class MyDocumentsView(Base):

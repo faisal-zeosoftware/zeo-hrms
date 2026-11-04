@@ -36,6 +36,8 @@ def standard_hours(employee, start, end):
             book = memo(('shift_book', start, end), lambda: Book(start, end)) if active() else Book(start, end, [employee.pk])
         except Exception:
             book = None
+    from PayrollManagement.perf import working_day_plan   # v1.62.6 (item 22)
+    _wdp = working_day_plan(employee, start, end)
     total, shift_days, d = 0, 0, start
     any_shift = False
     while d <= end:
@@ -43,7 +45,7 @@ def standard_hours(employee, start, end):
         if sh and sh.get('off'):
             d += timedelta(days=1)
             continue
-        if d in hol or (not sh and d.strftime('%A') in wk):
+        if d in hol or (not sh and _wdp.day(employee, d).off):   # v1.62.6 (item 22): the one weekend rule (category counted), per day
             d += timedelta(days=1)
             continue
         if sh and sh.get('start') and sh.get('end'):
@@ -87,15 +89,23 @@ def variables(employee, start, end, overtime_ids=None):
 
     # rate-weighted approved OT (rate of the day's result, else the OT policy / rule rate)
     rates = {d: r for d, r in qs.values_list('date', 'ot_rate')}
+    splits = {d: f for d, f in qs.filter(flags__has_key='night_ot_minutes').values_list('date', 'flags')}   # v1.62.11 (item 255)
     rows = EmployeeOvertime.objects.filter(employee=employee, date__range=(start, end))
     paid = rows.filter(pk__in=overtime_ids) if overtime_ids is not None else rows.filter(Q(approved=True) | Q(source='MANUAL'))
     rule = E.rule_for(employee)
     w = {'NORMAL': D0, 'WEEKEND': D0, 'HOLIDAY': D0}
+    # v1.67.0 (item 25d): the rest-day / holiday row of a working day (shift running into a rest day) has its own rate
+    rdx = {d: f.get('rest_day_ot') or {} for d, f in qs.filter(flags__has_key='rest_day_ot').values_list('date', 'flags')}
     for o in paid:
         t = o.ot_type or 'NORMAL'
         rate = rates.get(o.date)
+        if o.date in rdx and t == rdx[o.date].get('type') and o.source != 'MANUAL' and rdx[o.date].get('rate'):
+            rate = Decimal(str(rdx[o.date]['rate']))
         if not rate or rate == 1:
             rate = E._ot_rate(employee, rule, t)
+        if o.date in splits and o.source != 'MANUAL' and t == 'NORMAL':   # v1.62.11 (item 255): night part at the night rate only
+            w[t] = w.get(t, D0) + E.weighted_ot(o.hours, rate, splits[o.date])
+            continue
         w[t] = w.get(t, D0) + Decimal(str(o.hours)) * Decimal(str(rate))
     out['normal_ot_weighted_hours'] = _d(w['NORMAL'])
     out['weekend_ot_weighted_hours'] = _d(w['WEEKEND'])

@@ -2,11 +2,14 @@
 from django.urls import path
 
 from . import views as V
+from . import month_views as MV   # v1.67.0 (item 21)
 
 urlpatterns = [
     path('api/meta/', V.MetaView.as_view()),
     path('api/shift-master/', V.ShiftMasterView.as_view()),
     path('api/shift-master/<int:pk>/', V.ShiftMasterDetail.as_view()),
+    path('api/month-roster/', MV.MonthRosterView.as_view()),   # v1.67.0 (item 21) month roster grid
+    path('api/month-roster/<str:action>/', MV.MonthRosterAction.as_view()),
     path('api/periods/', V.PeriodsView.as_view()),
     path('api/periods/<int:pk>/', V.PeriodDetail.as_view()),
     path('api/periods/<int:pk>/grid/', V.GridView.as_view()),

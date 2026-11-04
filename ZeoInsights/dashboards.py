@@ -7,6 +7,7 @@ A card runs its report as the person looking at the dashboard (their rights and 
   table  – the first rows with chosen columns.
 """
 import re
+from Translations.i18n import tr   # v1.62.0 ui
 from datetime import date, timedelta
 
 PERIODS = [('report', 'The report\'s own period'), ('this_month', 'This month'), ('last_month', 'Last month'), ('this_year', 'This year'),
@@ -44,7 +45,7 @@ def report_data(request, key, params):
     q['schema'] = getattr(connection, 'schema_name', '')
     rf = APIRequestFactory().get(f'/dashboard/api/reports/{key}/', q)
     rf.tenant = getattr(connection, 'tenant', None)
-    for h in ('HTTP_X_LANGUAGE', 'HTTP_X_SELECTED_BRANCHES', 'HTTP_X_SELECTED_LOCATIONS'):
+    for h in ('HTTP_X_LANGUAGE', 'HTTP_X_SELECTED_BRANCHES', 'HTTP_X_SELECTED_LOCATIONS', 'HTTP_X_BRANCH_IDS'):   # v1.62.0 ui X-Branch-Ids
         if h in request.META:
             rf.META[h] = request.META[h]
     force_authenticate(rf, user=request.user)
@@ -83,6 +84,16 @@ def card_data(request, card):
     view = out['view']
     if view == 'number':
         out['value'] = measure(rows)
+        # v1.62.0 ui: early in a month the report's own period (this month) is still empty – the card showed 0. Then it shows
+        # the last complete month, and says so.
+        if not out['value'] and (card.get('period') or 'report') == 'report':
+            la, lb = period_range('last_month')
+            d2, e2 = report_data(request, key, {'from': la.isoformat(), 'to': lb.isoformat(), 'as_of': lb.isoformat()})
+            if d2 is not None and d2.get('rows'):
+                rows = d2['rows']
+                v2 = measure(rows)
+                if v2:
+                    out.update({'value': v2, 'count': d2['count'], 'period': d2.get('period'), 'period_note': tr('Last complete month')})
         return out
     if view == 'table':
         show = [c for c in (card.get('columns') or []) if c in cols] or [c['key'] for c in data['columns'][:5]]
@@ -116,6 +127,9 @@ def card_data(request, card):
                 cur = (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
             have = dict(pairs)
             pairs = [(k, have.get(k, 0)) for k in want]
+    elif pairs and all(_month_key(k) for k, _ in pairs):
+        # v1.62.0 ui: months ("May 2026", "2026-10", "10/2026") stay in calendar order – the biggest-first order put Oct after May
+        pairs.sort(key=lambda p: _month_key(p[0]))
     else:
         pairs.sort(key=lambda p: -p[1])
         if len(pairs) > 12:
@@ -126,3 +140,21 @@ def card_data(request, card):
     out['group_label'] = cols[g]['label']
     out['value'] = measure(rows)
     return out
+
+
+_MON = {m: i for i, m in enumerate(['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'], 1)}
+
+
+def _month_key(k):
+    """v1.62.0 ui: (year, month) of a month label, or None."""
+    t = str(k or '').strip().lower()
+    m = re.match(r'^([a-z]{3})[a-z]*\.?\s+(\d{4})$', t)
+    if m and m.group(1) in _MON:
+        return (int(m.group(2)), _MON[m.group(1)])
+    m = re.match(r'^(\d{4})-(\d{1,2})$', t) or None
+    if m:
+        return (int(m.group(1)), int(m.group(2)))
+    m = re.match(r'^(\d{1,2})/(\d{4})$', t)
+    if m:
+        return (int(m.group(2)), int(m.group(1)))
+    return None

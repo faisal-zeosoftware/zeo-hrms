@@ -239,6 +239,13 @@ def include_arrears(payslip, employee):
     from .models import ArrearLine
     release_orphans(employee.pk)
     lines = list(ArrearLine.objects.filter(employee_id=employee.pk, status='pending'))
+    # v1.62.3: a recovery spread over several months (at most 20 % of the wage a month) has one line per month; a line waits
+    # until the payslip whose period reaches its effective_from (other lines always have a past effective date)
+    try:
+        _s, _e, _f = _payslip_period(payslip)
+        lines = [x for x in lines if not x.effective_from or x.effective_from <= _e]
+    except Exception:
+        pass
     if not lines:
         return Decimal('0')
     total = money(sum(Decimal(str(x.amount)) for x in lines))
@@ -296,6 +303,13 @@ def calculate(employee_ids, effective_from, component_ids=None, user=None, save=
                          'note': tr('No salary change on or after this date.')})
             continue
         now = {x.component_id: Decimal(str(x.amount or 0)) for x in ESS.objects.filter(employee=emp, is_active=True, component__in=comps)}
+        # v1.62.2 (item 46): the salary valid in each month (dated changes from the salary history / valid_from / valid_until) –
+        # today's amount was used for every past month, so a later increase was paid for months before it (overpaid 1,800)
+        from PayrollManagement import salary_dates as _sd
+        _rows = {x.component_id: x for x in ESS.objects.filter(employee=emp, is_active=True, component__in=comps)}
+        _H = M('PayrollManagement', 'SalaryRevisionHistory')
+        _chg = {h.component_id: h for h in _H.objects.filter(employee=emp, component__in=comps)}
+        _chg = {cid: _sd._changes(r, _chg.get(cid)) for cid, r in _rows.items()}
         done = set(ArrearLine.objects.filter(employee_id=emp.pk, status__in=('pending', 'included')).values_list('source_payslip_id', 'component_id'))
         lines = []
         for p in P.objects.filter(employee=emp).exclude(payroll_run_id__in=off_runs).select_related('payroll_run').order_by('payroll_run__year', 'payroll_run__month', 'pk'):
@@ -311,7 +325,14 @@ def calculate(employee_ids, effective_from, component_ids=None, user=None, save=
                 if (p.pk, c.pk) in done:
                     continue
                 r = ratio if c.deduct_leave else Decimal(1)
-                raw_new = now.get(c.pk, Decimal(0)) * r * f * share
+                # v1.62.2 (item 46): new = the salary valid in that month over the days from the effective date (shared by days
+                # when it changes inside the period); without dated changes this is today's amount × share, as before
+                if c.pk in _rows:
+                    _a0 = max(s, effective_from)
+                    _new_part = sum((amt * Decimal((t - fr).days + 1) for fr, t, amt in _sd.segments(_rows[c.pk], _a0, e, _chg[c.pk])), Decimal(0))
+                    raw_new = _new_part / Decimal((e - s).days + 1) * r * f
+                else:
+                    raw_new = now.get(c.pk, Decimal(0)) * r * f * share
                 raw_old = paid.get(c.pk, Decimal(0)) * share
                 new, old = money(raw_new), money(raw_old)
                 diff = money(raw_new - raw_old)   # rounded once

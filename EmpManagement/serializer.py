@@ -1807,6 +1807,12 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "employee": "Employee is required."
             })
+        # v1.62.11 (EOS settings): the last working day cannot be before the joining date (Leavers › New leaver checked it already)
+        _lwd = data.get('last_working_date', getattr(self.instance, 'last_working_date', None))
+        if _lwd and employee.emp_joined_date and _lwd < employee.emp_joined_date:
+            raise serializers.ValidationError({
+                "last_working_date": "The last working day is before the joining date."
+            })
 
         # ✅ FIX 1: correct ManyToMany filtering + stable selection
         workflow = ResignationApprovalWorkflow.objects.filter(
@@ -1968,11 +1974,12 @@ class EscalationRuleSerializer(serializers.ModelSerializer):
             'escalate_after_minutes',
         ]
 
+        # v1.62.10 (item 174): escalate_to is no longer read-only – the Escalation screen of general requests could not set
+        # whom a level escalates to (the PUT answered 200 and kept the old value); the other five escalation APIs allow it
         read_only_fields = [
             'level',
             'role',
             'approver',
-            'escalate_to',
             'request_type',
             'branch',
             'approver_name',

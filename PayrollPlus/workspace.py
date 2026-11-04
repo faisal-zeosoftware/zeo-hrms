@@ -471,7 +471,7 @@ class WorkspaceRunView(_RunBase):
             a = AR.objects.filter(payroll_run_id=run.pk).first()
             if a is not None:
                 f = a.findings.all()
-                audit = {'id': a.id, 'at': _iso(a.at), 'by': _user(a.by_id) if a.by_id else '', 'summary': a.summary,
+                audit = {'id': a.id, 'at': _iso(a.at), 'by': _user(a.by_id) if a.by_id else '', 'summary': _audit_summary(a),   # v1.62.0 ui: in the user's language
                          'open': f.filter(status='open').count(), 'open_critical': f.filter(status='open', severity='critical').count(),
                          'total': f.count()}
             from ZeoAI.payroll_audit import gate
@@ -834,6 +834,14 @@ class WorkspaceComponentsView(Base):
                                'name': c.name, 'formula': c.formula or '', 'deduct_leave': c.deduct_leave, 'show_in_payslip': c.show_in_payslip,
                                'employees': u.get('n') or 0})
         rows = list(groups.values())
+        try:   # v1.62.7 (item 18): accrue now – pay later – the setting shown on the component's row
+            from .accruals import all_settings
+            _acc = all_settings()
+            for g in rows:
+                s_ = next((_acc[i['id']] for i in g['items'] if i['id'] in _acc and _acc[i['id']].enabled), None)
+                g['accrual'] = {'payout_month': s_.payout_month, 'pay_at_exit': s_.pay_at_exit, 'account': s_.accrual_account} if s_ else None
+        except Exception:
+            pass
         for g in rows:
             g['monthly_total'] = d2(g['monthly_total'])
         order = {'addition': 0, 'deduction': 1, 'system': 2}
@@ -841,3 +849,12 @@ class WorkspaceComponentsView(Base):
         return Response({'rows': rows, 'count': len(comps),
                          'can_add': self.can({'add_salarycomponent'}), 'can_edit': self.can({'change_salarycomponent'}),
                          'can_delete': self.can({'delete_salarycomponent'})})
+
+
+def _audit_summary(a):
+    """v1.62.0 ui"""
+    try:
+        from ZeoAI.payroll_audit import summary_display
+        return summary_display(a)
+    except Exception:
+        return a.summary

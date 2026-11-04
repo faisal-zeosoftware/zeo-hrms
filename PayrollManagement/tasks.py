@@ -58,66 +58,7 @@ def accrue_air_tickets():
         try:
             with schema_context(tenant_schema_name):
                 logger.info(f"🎫 Air ticket allocation started on {today} for tenant: {tenant_schema_name}")
-                
-                employees = emp_master.objects.filter(is_active=True)
-                count = 0
-
-                for employee in employees:
-                    # Skip employee if required fields are missing
-                    if not all([employee.emp_dept_id, employee.emp_desgntn_id, employee.emp_ctgry_id, employee.emp_country_id]):
-                        logger.warning(f"⚠️ Skipping employee {employee.emp_first_name} due to missing profile data.")
-                        continue
-
-                    years = (today - employee.emp_joined_date).days // 365
-
-                    # Fetch policies matching by country only first
-                    policies = AirTicketPolicy.objects.filter(
-                        is_active=True,
-                        country=employee.emp_country_id
-                    ).distinct()
-
-                    #  Now filter based on flexible department/designation/category
-                    filtered_policies = []
-                    for policy in policies:
-                        matches_department = (
-                            not policy.eligible_departments.exists() or
-                            policy.eligible_departments.filter(id=employee.emp_dept_id.id).exists()
-                        )
-                        matches_designation = (
-                            not policy.eligible_designations.exists() or
-                            policy.eligible_designations.filter(id=employee.emp_desgntn_id.id).exists()
-                        )
-                        matches_category = (
-                            not policy.eligible_categories.exists() or
-                            policy.eligible_categories.filter(id=employee.emp_ctgry_id.id).exists()
-                        )
-
-                        if matches_department and matches_designation and matches_category:
-                            filtered_policies.append(policy)
-
-                    # Process allocation
-                    for policy in filtered_policies:
-                        already_allocated = AirTicketAllocation.objects.filter(
-                            employee=employee,
-                            policy=policy,
-                            allocated_date__year=today.year
-                        ).exists()
-                        if already_allocated:
-                            continue
-
-                        rules = policy.rules.filter(required_service_years__lte=years).order_by('-required_service_years')
-                        if rules.exists():
-                            rule = rules.first()
-                            AirTicketAllocation.objects.create(
-                                employee=employee,
-                                policy=policy,
-                                amount=policy.amount,
-                                remaining_amount=policy.amount,
-                                status='PENDING',
-                                is_active=True,
-                            )
-                            count += 1
-
+                count = allocate_air_tickets(today)   # v1.62.3 (items 105, 124)
                 logger.info(f"{count} air ticket(s) allocated for tenant: {tenant_schema_name}")
 
         except Exception as e:
@@ -125,6 +66,52 @@ def accrue_air_tickets():
 
     return " Air ticket allocation task completed for all tenants."
 
+
+def allocate_air_tickets(today=None):
+    """v1.62.3 (items 105, 124): the air ticket allocations of the current schema on `today`.
+    * item 105 – the policy frequency is followed: the next allocation of a policy only when "every N years" has passed since the
+      employee's last allocation of it (before: one every calendar year – 26 extra allocations on 01/01/2027 for "every 2 years").
+    * item 124 – the employee's country is not required: the policy country is matched on the employee country, else the
+      nationality's country, and the branch country (a policy for the country of work); department / designation / category are
+      only needed when the policy limits them, and the policy's branches are respected. Employees who left or are leaving
+      (inactive, approved resignation / termination, leaving status) get no new allocation.
+    Returns the number of allocations made."""
+    from PayrollPlus import air_rules as AR
+    from PayrollPlus import air_policy as AP   # v1.66.0 (items 119–123)
+    from EmpManagement.utils import service_years
+    today = today or timezone.now().date()
+    policies = list(AirTicketPolicy.objects.filter(is_active=True).prefetch_related(
+        'rules', 'eligible_departments', 'eligible_designations', 'eligible_categories', 'branch').order_by('id'))
+    count = 0
+    for employee in emp_master.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_nationality'):
+        if not employee.emp_joined_date or employee.emp_joined_date > today:
+            continue
+        if AR.employee_left(employee, today):
+            logger.info(f"Air ticket: {employee.emp_code} left / is leaving – no new allocation")
+            continue
+        countries = AR.policy_countries(employee)
+        years = service_years(employee.emp_joined_date, today)
+        # v1.66.0 (item 123): the overlap setting – every matching policy (today) or only the one that wins (most specific)
+        _v1660_match = [p for p in policies if p.country_id in countries and AR.policy_matches(p, employee)]
+        for policy in AP.policies_to_allocate(employee, _v1660_match):
+            if not [r for r in policy.rules.all() if r.required_service_years <= years]:
+                continue
+            if AP.probation_blocks(employee, policy, today):   # v1.66.0 (item 119): "Can be used during probation" off, still in probation
+                continue
+            if AP.category_change(employee, policy, today) is not None:   # v1.66.0 (item 123): old policy closed pro-rata, new cycle starts
+                count += 1
+                continue
+            if not AP.allocation_due(employee, policy, today):   # 1.62.3 frequency + v1.66.0 policy change day
+                continue
+            _amt = AP.allocation_amount(employee, policy, today)   # v1.66.0 (items 119, 120): fare / class / family / one-way (default: policy amount)
+            a = AirTicketAllocation.objects.create(employee=employee, policy=policy, amount=_amt,
+                                                   remaining_amount=_amt, status='PENDING', is_active=True,
+                                                   expiry_date=AP.allocation_expiry(policy, today))   # v1.66.0 (item 121): lapse
+            if a.allocated_date != today:   # the job run for another day (catch-up / test): the allocation carries that day
+                AirTicketAllocation.objects.filter(pk=a.pk).update(allocated_date=today)
+            count += 1
+    AP.apply_lapse(today)   # v1.66.0 (item 121): open allocations of a lapsing policy get their expiry
+    return count
 
 
 def get_all_tenant_schemas(): 

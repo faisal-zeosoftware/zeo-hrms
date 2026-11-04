@@ -3,45 +3,15 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from .models import leave_entitlement, assign_weekend,assign_holiday,AttendancePolicy
 
-def get_employee_weekend_calendar(employee):
+def get_employee_weekend_calendar(employee, day=None):
     """
-    Return weekend model assigned to employee 
-    by priority: employee > branch > department > category.
+    Return the weekend model of the employee (on `day`, default today).
+    v1.62.6 (item 22): one rule – calendars/workdays.py: the most specific assignment wins
+    (employee > designation > category > department > branch). Before: employee > branch > department > category,
+    so a branch weekend overrode a category weekend.
     """
-
-    # 1. Direct employee-wise assignment
-    direct = assign_weekend.objects.filter(
-        related_to='employee',
-        employee=employee
-    ).first()
-    if direct:
-        return direct.weekend_model
-
-    # 2. Branch-wise assignment
-    branch_assign = assign_weekend.objects.filter(
-        related_to='branch',
-        branch=employee.emp_branch_id
-    ).first()
-    if branch_assign:
-        return branch_assign.weekend_model
-
-    # 3. Department-wise assignment
-    dept_assign = assign_weekend.objects.filter(
-        related_to='department',
-        department=employee.emp_dept_id
-    ).first()
-    if dept_assign:
-        return dept_assign.weekend_model
-
-    # 4. Category-wise assignment
-    cat_assign = assign_weekend.objects.filter(
-        related_to='category',
-        category=employee.emp_ctgry_id
-    ).first()
-    if cat_assign:
-        return cat_assign.weekend_model
-
-    return None
+    from .workdays import weekend_of   # v1.62.6 (item 22)
+    return weekend_of(employee, day)[0]
 def get_employee_holiday_calendar(employee):
     direct = assign_holiday.objects.filter(related_to='employee', employee=employee).first()
     if direct:
@@ -115,63 +85,37 @@ def daterange(start_date, end_date):
     for n in range(int((end_date - start_date).days) + 1):
         yield start_date + timedelta(n)
 
-def get_employee_weekend_days(employee):
-    assigned = assign_weekend.objects.filter(
-        Q(employee=employee) |
-        Q(branch=employee.emp_branch_id) |
-        Q(department=employee.emp_dept_id) #d|
-        # Q(category=employee.emp_ctgry_id)
-    ).first()
-    if assigned:
-        return set(assigned.weekend_model.get_weekend_days())  # list of days e.g., ["Saturday", "Sunday"]
-    return set()
+def get_employee_weekend_days(employee, day=None):
+    """{'Friday', …} – v1.62.6 (item 22): the weekend calendar chosen by calendars/workdays.py (most specific assignment
+    wins, category assignments counted). Before: the first assignment by id naming the employee, the branch or the
+    department – category assignments were ignored."""
+    from .workdays import weekend_names   # v1.62.6 (item 22)
+    return weekend_names(employee, day)
 
-# def get_employee_holidays(employee, start_date, end_date):
-#     assigned = assign_holiday.objects.filter(employee=employee).first()
-#     if not assigned:
-#         return []
-
-#     holidays = assigned.holiday_model.holiday_list.filter(
-#         start_date__lte=end_date,
-#         end_date__gte=start_date
-#     )
-#     return holidays
 def get_employee_holidays(employee, start_date, end_date):
-    assigned = assign_holiday.objects.filter(
-        Q(employee=employee) |
-        Q(branch=employee.emp_branch_id) |
-        Q(department=employee.emp_dept_id)
-    ).first()
+    """v1.62.6 (item 22): the dates of the employee's holiday calendar (get_employee_holiday_calendar: employee > branch >
+    department > category – the calendar leave counting already used). Before: the first assignment by id naming the
+    employee, the branch or the department."""
+    from .workdays import holiday_dates   # v1.62.6 (item 22)
+    return holiday_dates(employee, start_date, end_date)
 
-    if not assigned:
-        return set()
 
-    holidays = assigned.holiday_model.holiday_list.filter(
-        start_date__lte=end_date,
-        end_date__gte=start_date
-    )
-
-    holiday_dates = set()
-    for holiday in holidays:
-        for day in daterange(holiday.start_date, holiday.end_date):
-            holiday_dates.add(day)
-    return holiday_dates
 def get_attendance_summary(employee, start_date, end_date):
     summary = []
     total_present = 0
     total_absent = 0
 
-    weekend_days = get_employee_weekend_days(employee)
-    holiday_dates = get_employee_holidays(employee, start_date, end_date)
+    from .workdays import Plan   # v1.62.6 (item 22): roster > shift override > shift pattern > weekend calendar
+    _plan = Plan(start_date, end_date, [employee.pk])
 
     for day in daterange(start_date, end_date):
-        weekday = day.strftime("%A")
         status = "Absent"
         leave_type = None
+        _f = _plan.day(employee, day)
 
-        if weekday in weekend_days:
+        if _f.off:
             status = "Weekend"
-        elif day in holiday_dates:
+        elif _f.holiday:
             status = "Holiday"
         elif Attendance.objects.filter(employee=employee, date=day).exists():
             status = "Present"
@@ -254,8 +198,10 @@ def sync_attendance_calendar(employee, start_date, end_date):
     """
     from .models import AttendanceCalendar, Attendance, employee_leave_request
     
-    weekend_days = get_employee_weekend_days(employee)
-    holiday_dates = get_employee_holidays(employee, start_date, end_date)
+    # v1.62.6 (item 22): one answer per day – roster > shift override > shift pattern > weekend calendar (calendars/workdays.py).
+    # Before: the weekend calendar (category ignored) was checked first, so a rostered Friday shift became "Weekend".
+    from .workdays import Plan
+    _plan = Plan(start_date, end_date, [employee.pk])
     
     # Fetch existing attendances and leaves for bulk check
     attendances = set(Attendance.objects.filter(
@@ -269,9 +215,10 @@ def sync_attendance_calendar(employee, start_date, end_date):
         status='approved',
         start_date__lte=end_date,
         end_date__gte=start_date
-    ).select_related('leave_type')
+    ).exclude(leave_type__unit='hours').select_related('leave_type')   # v1.62.4 (item 81): short leave in hours is not a leave day
     today = _local_today()
     mark_absent = None
+    _steps = {}   # v1.62.2 (item 48): pay steps per leave request
 
     for day in daterange(start_date, end_date):
         # Skip if manual override exists
@@ -308,11 +255,23 @@ def sync_attendance_calendar(employee, start_date, end_date):
                 unpaid_fraction = duration
             else:
                 unpaid_fraction = 0.0
+            # v1.62.2 (item 48): the nightly job wrote 0 % unpaid on every paid-type leave day – the half-pay and no-pay days of
+            # sick / maternity leave (pay steps written by the leave rules) became full pay. The step of the day is kept.
+            try:
+                from LeavePolicy import engine as _lp
+                if current_leave.pk not in _steps:
+                    _steps[current_leave.pk] = {d: (p, u) for d, p, u in _lp.paid_split(current_leave)}
+                st = _steps[current_leave.pk].get(day)
+                if st is not None and getattr(leave_obj, 'type', '') != 'unpaid':
+                    unpaid_fraction = round(st[1] * (1 - st[0]), 2)
+                    remarks = f'{_lp.TAG}: {current_leave.document_number} – {int(st[0] * 100)}% pay'
+            except Exception:
+                __import__("logging").getLogger(__name__).exception("leave pay step for %s on %s", current_leave.pk, day)
             
-        elif day in holiday_dates:
+        elif _plan.day(employee, day).holiday:   # v1.62.6 (item 22)
             status = "Holiday"
             unpaid_fraction = 0.0
-        elif weekday in weekend_days or _shift_off_day(employee, day):
+        elif _plan.day(employee, day).off:       # v1.62.6 (item 22): weekend or roster / override / pattern day off
             status = "Weekend"
             unpaid_fraction = 0.0
         else:

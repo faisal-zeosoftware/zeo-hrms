@@ -526,8 +526,67 @@ def s_time():
             chk('hours', rule is not None, 'Save the working hours (an attendance rule for the company is made).', MS + 'attendance-plus/rules'),
             chk('holidays', H.objects.filter(start_date__year=year).exists(), tr('Load the public holidays of {0}.', year), MS + 'settings/holiday-calendar'),
             chk('eid', not pend, tr('Confirm the Eid dates of {0}: {1}.', year, ', '.join(h.description for h in pend[:4])), None, 'warn'),
-        ],
+        ] + _v1626_time_checks(),
     }
+
+
+def _v1626_working_day_gaps():
+    """v1.62.6 (item 22): active employees with no roster, shift pattern or weekend calendar (calendars/workdays.py decides nothing
+    for them: every day counts as a working day)."""
+    from datetime import timedelta
+    from calendars.workdays import Plan
+    today = timezone.localdate()
+    p = Plan(today, today + timedelta(days=30))
+    out = []
+    for e in employees().order_by('emp_code'):
+        if p.rules.pick(e, today)[0] is not None:
+            continue
+        if p.book is not None:
+            if p.book.schedule_for(e, today) is not None:
+                continue
+            if any(k[0] == e.pk for k in p.book.entries) or any(k[0] == e.pk for k in p.book.overrides):
+                continue
+        out.append(e)
+    return out
+
+
+def _v1626_draft_rosters():
+    """v1.62.6 (item 22): roster periods of next month that are not published yet (draft / sent / approved / sent back)."""
+    if not has('ShiftPlanner.RosterPeriod'):
+        return []
+    import calendar as _c
+    t = timezone.localdate()
+    y, m = (t.year + 1, 1) if t.month == 12 else (t.year, t.month + 1)
+    a, b = t.replace(year=y, month=m, day=1), t.replace(year=y, month=m, day=_c.monthrange(y, m)[1])
+    R = M('ShiftPlanner', 'RosterPeriod')
+    return list(R.objects.filter(date_from__lte=b, date_to__gte=a).exclude(status='published').order_by('date_from'))
+
+
+def _v1626_time_checks():
+    """v1.62.6 (item 22): warnings – employees whose working days nothing decides, draft rosters of next month, employees whose
+    holiday calendar was overwritten by a department / category weekend assignment (bug fixed 1 Nov 2026)."""
+    out = []
+    try:
+        gaps = _v1626_working_day_gaps()
+        out.append(chk('working_days', not gaps, tr('{0} employee(s) have no roster, shift pattern or weekend calendar – every day counts as a working day for them: {1}.',
+                                                    len(gaps), ', '.join(e.emp_code for e in gaps[:8]) + (' …' if len(gaps) > 8 else '')),
+                       MS + 'settings/weekcalendar', 'warn'))
+    except Exception:
+        log.exception('setup guide: working-day check')
+    try:
+        drafts = _v1626_draft_rosters()
+        out.append(chk('draft_rosters', not drafts, tr('{0} roster(s) of next month are not published yet: {1}. Unpublished rosters do not count for attendance, leave or payroll.',
+                                                       len(drafts), ', '.join(r.name for r in drafts[:5])), MS + 'shift-planner/rosters', 'warn'))
+    except Exception:
+        log.exception('setup guide: draft roster check')
+    try:
+        from calendars.holiday_repair import check as _hc
+        bad = [r for r in _hc() if r['kind'] == 'bug']
+        out.append(chk('holiday_overwritten', not bad, tr("{0} employee(s) have another calendar's public holidays (overwritten by a weekend assignment by department or category): {1}. Ask your ZEO support to run the holiday calendar repair.",
+                                                          len(bad), ', '.join(r['code'] for r in bad[:8])), MS + 'settings/holiday-calendar', 'warn'))
+    except Exception:
+        log.exception('setup guide: holiday calendar check')
+    return out
 
 
 def _time(v, label):
@@ -629,15 +688,15 @@ def s_shifts():
     R = M('ShiftPlanner', 'RosterPeriod') if has('ShiftPlanner.RosterPeriod') else None
     return {
         'fills': ['Shift templates of the industry', 'Rotation applied to teams or a whole category', 'Skip when everyone works the default hours'],
-        'tables': [{'title': tr('Shifts'), 'columns': [tr('Shift'), tr('Time'), tr('Break')], 'rows': rows, 'add': MS + 'shift-options/shift-pattern'},
+        'tables': [{'title': tr('Shifts'), 'columns': [tr('Shift'), tr('Time'), tr('Break')], 'rows': rows, 'add': MS + 'shift-planner/patterns'},
                    {'title': tr('Rosters (shift schedules)'), 'columns': [tr('Schedule'), tr('Pattern'), tr('From'), tr('Applies to')],
                     'rows': [[x.schedule_name, str(x.shift_pattern or ''), iso(x.start_date),
                               ', '.join([c.ctgry_title for c in x.categories.all()] + [b.branch_name for b in x.branches.all()]) or tr('{0} employees', x.employee.count())] for x in sch]}],
-        'links': [link('Shift master (rules)', 'shift-planner/shifts'), link('Shift patterns', 'shift-options/shift-pattern'),
-                  link('Employee shifts', 'shift-options/shift-employee'), link('Shift rosters', 'shift-planner/rosters')],
+        'links': [link('Shift master (rules)', 'shift-planner/shifts'), link('Shift patterns', 'shift-planner/patterns'),
+                  link('Employee shifts', 'shift-planner/employee-shifts'), link('Shift rosters', 'shift-planner/rosters')],
         'matrix': True,
         'checks': [
-            chk('rosters', not S.objects.exists() or sch or (R and R.objects.exists()), 'Shifts exist but no roster uses them – give each shift team or category a roster.', MS + 'shift-options/shift-employee', 'warn'),
+            chk('rosters', not S.objects.exists() or sch or (R and R.objects.exists()), 'Shifts exist but no roster uses them – give each shift team or category a roster.', MS + 'shift-planner/employee-shifts', 'warn'),
         ],
     }
 
@@ -725,8 +784,21 @@ def s_payroll():
             chk('paystructure', not no_ps, tr('No pay structure for: {0} – the default rules apply.', ', '.join(no_ps)), MS + 'salary-options/pay-structure', 'warn'),
             chk('employer', getattr(c, 'employer_unique_id', '') or pk not in ('AE', 'QA', 'OM', 'BH'), 'Enter the employer ID of the bank file (step 2).', None),
             chk('salaries', no_struct == 0, tr('{0} employees have no salary yet.', no_struct), MS + 'salary-options/salary-structure', 'warn'),
+            # v1.62.2 (item 41): the same contribution in a pension formula component and a statutory scheme
+            chk('statutory_duplicate', not _v1622_dup(), tr('{0} takes the same contribution as the statutory scheme {1} – payroll deducts it once, '
+                                                           'by the statutory scheme. Switch {0} off.', *(_v1622_dup() or ['', ''])), MS + 'salary-options/salary', 'warn'),
         ],
     }
+
+
+def _v1622_dup():
+    """v1.62.2 (item 41): [pension component name, statutory component name] of the first duplicate, or None."""
+    try:
+        from PayrollManagement.payroll_guards import duplicate_setup
+        d = duplicate_setup()
+        return [d[0][0].name, d[0][1].name] if d else None
+    except Exception:
+        return None
 
 
 def save_payroll(v, user):
@@ -747,43 +819,84 @@ def save_payroll(v, user):
 
 # ---------------------------------------------------------------------- 10 approvals
 APPROVAL_TYPES = [
-    # label, level model, link
-    ('Leave, encashment', 'calendars.LeaveApprovalLevels', 'leave-options/leave-approval-level'),
-    ('Late in / early out', 'calendars.LateinEarlyoutApprovalLevel', 'attendance-sidebar/latein-earlyout-approval-level'),
-    ('Payroll run (payslips)', 'PayrollManagement.PayslipCommonWorkflow', 'salary-options/payroll-approval-level'),
-    ('Loans', 'PayrollManagement.LoanCommonWorkflow', 'loan-sidebar/loan-approval-level'),
-    ('Advance salary', 'PayrollManagement.AdvanceCommonWorkflow', 'salary-options/advance-salary-approval-level'),
-    ('Air tickets', 'PayrollManagement.AirticketWorkflow', 'air-ticket-options/airticket-approval-level'),
-    ('General requests', 'EmpManagement.ApprovalLevel', 'general-sidebar/approval-level'),
-    ('Document requests', 'EmpManagement.DocumentApprovalLevel', 'general-sidebar/document-request-level'),
-    ('Resignation, settlement', 'EmpManagement.ResignationApprovalLevel', 'sub-sidebar/resignation-approval-level'),
-    ('Asset requests', 'OrganisationManager.AssetApprovalLevel', 'asset-options/asset-approval-level'),
-    ('Manpower requisitions', 'RecruitmentManagement.RequisitionApprovalLevel', 'recruitment-options'),
+    # v1.62.1 (tester 30-10 items 188-190): label, WORKFLOW model (None = levels only), LEVEL model, link of the setup screen.
+    # Before, only a level table was read and for several types the wrong one (Loans read LoanCommonWorkflow, which the
+    # Loans screen never writes; Leave / Late in read levels only, so a "Reporting manager" or "No approval" chain showed as
+    # "No approval levels yet"), and Manpower requisitions linked to recruitment-options (= Job openings).
+    ('Leave, encashment', 'calendars.LVApprovalWorkflow', 'calendars.LeaveApprovalLevels', 'leave-options/leave-approval-level'),
+    ('Late in / early out', 'calendars.LatinEarlyApprovalWorkflow', 'calendars.LateinEarlyoutApprovalLevel', 'attendance-sidebar/latein-earlyout-approval-level'),
+    ('Payroll run (payslips)', 'PayrollManagement.PayslipApprovalWorkflow', 'PayrollManagement.PayslipCommonWorkflow', 'salary-options/payroll-approval-level'),
+    ('Loans', 'PayrollManagement.LoanApprovalWorkflow', 'PayrollManagement.LoanApprovalLevels', 'loan-sidebar/loan-approval-level'),
+    ('Advance salary', 'PayrollManagement.AdvanceApprovalWorkflow', 'PayrollManagement.AdvanceCommonWorkflow', 'salary-options/advance-salary-approval-level'),
+    ('Air tickets', 'PayrollManagement.AirticketApprovalWorkflow', 'PayrollManagement.AirticketWorkflow', 'air-ticket-options/airticket-approval-level'),
+    ('General requests', 'EmpManagement.ApprovalWorkflow', 'EmpManagement.ApprovalLevel', 'general-sidebar/approval-level'),
+    ('Document requests', 'EmpManagement.DocumentApprovalWorkflow', 'EmpManagement.DocumentApprovalLevel', 'general-sidebar/document-request-level'),
+    ('Resignation, settlement', 'EmpManagement.ResignationApprovalWorkflow', 'EmpManagement.ResignationApprovalLevel', 'sub-sidebar/resignation-approval-level'),
+    ('Asset requests', 'OrganisationManager.AssetApprovalWorkflow', 'OrganisationManager.AssetApprovalLevel', 'asset-options/asset-approval-level'),
+    ('Manpower requisitions', None, 'RecruitmentManagement.RequisitionApprovalLevel', 'recruitment-options/approval-levels'),
 ]
 
 
 def _approver(lv):
-    for f in ('role', 'approver'):
-        v = getattr(lv, f, None)
-        if v:
-            if hasattr(v, 'username'):
-                return v.get_full_name() or v.username
-            return tr(str(v).replace('_', ' ').capitalize())
+    v = getattr(lv, 'approver', None)
+    if v is not None and hasattr(v, 'username'):
+        try:   # by name ("Layla Farouk"), not the login (gdis_layla)
+            from HRActions.names import user_obj_name
+            return user_obj_name(v, with_code=False) or v.username
+        except Exception:
+            return v.get_full_name() or v.username
+    v = getattr(lv, 'role', None)
+    if v:
+        return tr(str(v).replace('_', ' ').capitalize())
     return '–'
 
 
-def s_approvals():
+def _chain(wf, levels):
+    """The approvers of one chain in words: [level 1, level 2, …]."""
+    kind = getattr(wf, 'approval_type', None) if wf is not None else 'multi_approval'
+    if kind == 'no_approval':
+        return [tr('No approval')]
+    if kind == 'reporting_manager' and not levels:
+        return [tr('Reporting manager')]
+    return [_approver(x) for x in levels] or [tr('Reporting manager') if kind == 'reporting_manager' else tr('No levels yet')]
+
+
+def approval_rows():
+    """One row per request type: the first chain's approvers (levels 1-3), how many other chains there are (per type /
+    branch) and whether anything is set up."""
     rows, missing = [], []
-    for label, model, path in APPROVAL_TYPES:
-        if not has(model):
+    for label, wf_model, lv_model, path in APPROVAL_TYPES:
+        if not has(lv_model) or (wf_model and not has(wf_model)):
             continue
-        Mo = M(*model.split('.'))
-        order = 'level' if any(f.name == 'level' for f in Mo._meta.concrete_fields) else 'id'
-        lv = list(Mo.objects.order_by(order)[:3])
-        cells = [_approver(x) for x in lv] + [''] * (3 - len(lv))
-        rows.append({'cells': [tr(label)] + cells, 'link': MS + path, 'set': bool(lv)})
-        if not lv:
+        L = M(*lv_model.split('.'))
+        order = 'level' if any(f.name == 'level' for f in L._meta.concrete_fields) else 'id'
+        if wf_model:
+            W = M(*wf_model.split('.'))
+            fk = next((f.name for f in L._meta.concrete_fields if f.is_relation and f.related_model is W), None)
+            wfs = list(W.objects.order_by('id')[:200])
+            chains = []
+            for w in wfs:
+                lv = list(L.objects.filter(**{fk: w}).select_related('approver').order_by(order)[:5]) if fk else []
+                c = _chain(w, lv)
+                if c not in chains:
+                    chains.append(c)
+        else:
+            lv = list(L.objects.select_related('approver').order_by(order)[:5])
+            chains = [_chain(None, lv)] if lv else []
+        first = chains[0] if chains else [tr('Not set up')]
+        cells = (first + [''] * 3)[:3]
+        if len(first) > 3:
+            cells[2] = cells[2] + ' …'
+        note = '' if len(chains) < 2 else tr('+ 1 other chain (per type or branch)') if len(chains) == 2 else \
+            tr('+ {0} other chains (per type or branch)', len(chains) - 1)
+        rows.append({'cells': [tr(label)] + cells, 'link': MS + path, 'set': bool(chains), 'note': note})
+        if not chains:
             missing.append(tr(label))
+    return rows, missing
+
+
+def s_approvals():
+    rows, missing = approval_rows()
     s = pp_settings()
     try:
         from .approval_defaults import missing as _missing
@@ -809,7 +922,7 @@ def s_approvals():
         'checks': [
             chk('no_chain', not refused, tr('Requests are refused until these have a chain: {0} – use "Set up the standard chains".',
                                             '; '.join(f'{k} ({", ".join(v)})' for k, v in refused)), None),
-            chk('chains', not missing, tr('No approval levels yet (the reporting manager approves): {0}.', ', '.join(missing)), None, 'warn'),
+            chk('chains', not missing, tr('No approval chain set up yet: {0}.', ', '.join(missing)), None, 'warn'),
             chk('no_manager', not no_mgr, tr('{0} employees have no reporting manager – the reporting manager approves their requests, so their requests are refused until one is set.', no_mgr),
                 MS + 'sub-sidebar/employee-master', 'warn'),
             chk('segregation', not payroll_on() or (s and s.segregation), 'Payroll approver is not the preparer: switch on the control.', MS + 'salary-options/payroll-controls', 'warn'),
@@ -1043,6 +1156,16 @@ def s_golive():
             if not c['ok']:
                 c = dict(c, step=key, step_no=no)
                 (out if c['level'] == 'block' and not (optional or BY_KEY[key][4] and step_status(key) == 'skipped') else warn).append(c)
+    # v1.62.1 (user request 2 Nov): a new company under the required-setup rule goes live only when every step is completed
+    # (or skipped where it can be) – otherwise HR transactions would stay closed after go-live
+    g0 = guide()
+    if getattr(g0, 'gate_on', False):
+        from .setup_gate import step_ok
+        for key, no, title, stage, can_skip, optional in STEPS:
+            if key != 'golive' and not step_ok(((g0.steps or {}).get(key) or {}).get('status'), can_skip):
+                out.append({'key': 'step_open', 'ok': False, 'level': 'block', 'step': key, 'step_no': no, 'link': None,
+                            'text': tr('Not completed yet – open the step and choose Save and continue or Skip for now.') if can_skip
+                            else tr('Not completed yet – open the step and choose Save and continue.')})
     s = pp_settings()
     PR = M('PayrollManagement', 'PayrollRun')
     trial = None
@@ -1100,6 +1223,11 @@ def mark(g, key, status, user):
     nxt = next((k for k in KEYS[KEYS.index(key) + 1:] if (steps.get(k) or {}).get('status') != 'done'), key)
     g.current = nxt
     g.save(update_fields=['steps', 'current', 'updated_at'])
+    try:   # v1.62.1 the required-setup rule reads the steps again
+        from .setup_gate import forget
+        forget()
+    except Exception:
+        log.exception('setup gate: forget')
 
 
 def overview(full=False):
@@ -1114,12 +1242,26 @@ def overview(full=False):
                 cs = st.get('checks', [])
                 r['open'] = sum(1 for c in cs if not c['ok'] and c['level'] == 'block')
                 r['warnings'] = sum(1 for c in cs if not c['ok'] and c['level'] == 'warn')
+                # v1.62.1 (user request 2 Nov) the Get started list shows the first blocking item under the step name
+                r['first'] = next((c['text'] for c in cs if not c['ok'] and c['level'] == 'block'), '')
+                if key == 'golive' and st.get('blocking'):
+                    r['open'] = len(st['blocking'])
+                    b = st['blocking'][0]
+                    r['first'] = tr('Step {0}', b['step_no']) + ' · ' + b['text']
             except Exception:
                 log.exception('setup guide: step %s', key)
         rows.append(r)
     done = sum(1 for r in rows if r['status'] == 'done')
+    copied = None
+    try:   # v1.62.1 (user request 2 Nov): the company was made with the setup of a branch of another company
+        from ZeoApps.company_copy import copied_from
+        c = copied_from()
+        if c:
+            copied = {'source': c.get('source') or '', 'branch': c.get('branch') or '', 'new_branch': c.get('new_branch') or ''}
+    except Exception:
+        copied = None
     return {'steps': rows, 'current': g.current or 'start', 'done': done, 'total': len(rows), 'live_at': g.live_at.isoformat() if g.live_at else None,
-            'opened_at': g.opened_at.isoformat() if g.opened_at else None}
+            'opened_at': g.opened_at.isoformat() if g.opened_at else None, 'copied_from': copied}
 
 
 def step(key):

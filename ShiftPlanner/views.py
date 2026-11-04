@@ -725,6 +725,8 @@ def grid_payload(p, r, a=None, b=None):
     days = list(S.days(a, b))
     hol_cache = {}
     rows = []
+    from .month_grid import shift_codes as _sc   # v1.67.0 (item 21)
+    _codes = _sc()
     for e in emps:
         hk = (e.emp_branch_id_id, e.emp_dept_id_id)
         if hk not in hol_cache:
@@ -740,7 +742,8 @@ def grid_payload(p, r, a=None, b=None):
             lv = leaves.get((e.pk, d))
             cells[d.isoformat()] = {
                 'entry_id': x.pk if x else None, 'shift_id': sh.pk if sh else None, 'off': bool(x and x.off), 'empty': x is None,
-                'code': (rules.get(sh.pk).code if sh and rules.get(sh.pk) else '') or (sh.name[:3].upper() if sh else ('OFF' if x and x.off else '')),
+                # v1.67.0 (item 21): a shift without its own code showed the first 3 letters – "Office day shift" read as OFF
+                'code': (_codes.get(sh.pk) if sh else ('OFF' if x and x.off else '')),
                 'label': S.shift_label(sh, rules) if sh else ('Day off' if x and x.off else ''),
                 'colour': (rules.get(sh.pk).colour if sh and rules.get(sh.pk) else '#5b4ff5') if sh else '',
                 'start': hhmm(sh.start_time) if sh else None, 'end': hhmm(sh.end_time) if sh else None,

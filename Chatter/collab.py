@@ -41,8 +41,8 @@ def user_email(u):
         return u.email
     try:
         from EmpManagement.models import emp_master
-        e = emp_master.objects.filter(users=u).only('emp_personal_email').first()
-        return (getattr(e, 'emp_personal_email', '') or '') if e else ''
+        e = emp_master.objects.filter(users=u).only('emp_personal_email', 'emp_company_email').first()
+        return ((getattr(e, 'emp_personal_email', '') or getattr(e, 'emp_company_email', '') or '') if e else '')
     except Exception:
         return ''
 
@@ -90,8 +90,22 @@ def auto_followers(rec, label='', page=''):
     first = RecordLog.objects.filter(model=key, object_id=oid, action='created').exclude(user__isnull=True).order_by('at').first()
     if first:
         users.append((first.user, 'creator'))
-    if key == 'EmpManagement.emp_master' and rec.obj is not None and getattr(rec.obj, 'users_id', None):
-        users.append((rec.obj.users, 'employee'))
+    # v1.62.1 (user report 2 Nov): the employee of an employee record – and of a request / record that has an employee – follows
+    # it; without a ZEO login by the employee's e-mail (personal, else company), which never got the message before
+    emp = None
+    if rec.obj is not None:
+        if key == 'EmpManagement.emp_master':
+            emp = rec.obj
+        elif 'employee' in {f.name for f in rec.obj._meta.fields}:
+            emp = getattr(rec.obj, 'employee', None)
+    if emp is not None and getattr(getattr(emp, '_meta', None), 'label', '') == 'EmpManagement.emp_master':
+        if emp.users_id:
+            users.append((emp.users, 'employee'))
+        else:
+            addr = (getattr(emp, 'emp_personal_email', '') or getattr(emp, 'emp_company_email', '') or '').strip()
+            if addr and '@' in addr:
+                nm = ' '.join(x for x in [getattr(emp, 'emp_first_name', '') or '', getattr(emp, 'emp_last_name', '') or ''] if x).strip() or addr
+                follow(key, oid, email_addr=addr, name=nm, reason='employee', label=label, page=page)
     for m in Message.objects.filter(model=key, object_id=oid).exclude(author__isnull=True).select_related('author')[:50]:
         users.append((m.author, 'author'))
     for a in Activity.objects.filter(model=key, object_id=oid).exclude(state='cancelled').select_related('assigned_to')[:50]:
@@ -129,10 +143,27 @@ def link(page):
     return (base + page) if (base and page) else (page or '')
 
 
-def send_mail(to, subject, body, msg_id='', reply_to='', in_reply_to=''):
+def no_mail_server():
+    """v1.62.1: True when neither the company (Settings › E-mail configuration) nor the server has a mail server – e-mails
+    would only be printed in the server log."""
+    try:
+        from EmpManagement.models import EmailConfiguration
+        cfg = EmailConfiguration.objects.filter(is_active=True).first()
+        if cfg and cfg.email_host_user:
+            return False
+    except Exception:
+        pass
+    real = getattr(dj, 'ZEO_REAL_EMAIL_BACKEND', '') or ''
+    return real.endswith('console.EmailBackend') and not getattr(dj, 'EMAIL_HOST_USER', '')
+
+
+def send_mail_status(to, subject, body, msg_id='', reply_to='', in_reply_to=''):
+    """(sent, error): error is a short reason for the person who wrote the message (v1.62.1)."""
     to = [x for x in dict.fromkeys(t.strip() for t in (to or []) if t and '@' in t)]
     if not to:
-        return False
+        return False, 'no e-mail address'
+    if no_mail_server():
+        return False, 'no mail server – set it in Settings › E-mail configuration'
     try:
         from django.core.mail import EmailMessage, get_connection
         conn, sender = None, dj.DEFAULT_FROM_EMAIL
@@ -151,12 +182,62 @@ def send_mail(to, subject, body, msg_id='', reply_to='', in_reply_to=''):
         if in_reply_to:
             headers['In-Reply-To'] = in_reply_to
             headers['References'] = in_reply_to
-        EmailMessage(subject=subject[:200], body=body, from_email=sender, to=to, connection=conn, headers=headers,
-                     reply_to=[reply_to] if reply_to else None).send(fail_silently=False)
-        return True
-    except Exception:
+        n = EmailMessage(subject=subject[:200], body=body, from_email=sender, to=to, connection=conn, headers=headers,
+                         reply_to=[reply_to] if reply_to else None).send(fail_silently=False)
+        if not n:   # the neutralized test copy (zeo/mailguard.py) or a gate that refused
+            return False, 'e-mail is switched off for this company'
+        return True, ''
+    except Exception as e:
         log.exception('chatter e-mail failed')
-        return False
+        why = str(e).strip().splitlines()[0][:160] if str(e).strip() else type(e).__name__
+        return False, why
+
+
+def send_mail(to, subject, body, msg_id='', reply_to='', in_reply_to=''):
+    return send_mail_status(to, subject, body, msg_id=msg_id, reply_to=reply_to, in_reply_to=in_reply_to)[0]
+
+
+def _mail_later(message_id, jobs):
+    """v1.62.1: the e-mails of a message are sent after the request (the writer no longer waits for the mail server);
+    each recipient row gets mail = sent / failed (+ why) on the message, so the record panel shows what happened.
+    jobs: [(address, subject, body, msg_id, reply_to)]."""
+    if not jobs:
+        return
+    from django.db import transaction
+    schema = getattr(connection, 'schema_name', 'public')
+
+    def run():
+        from django_tenants.utils import schema_context
+        try:
+            with schema_context(schema):
+                res = {}
+                for addr, subject, body, mid, rt in jobs:
+                    ok, why = send_mail_status([addr], subject, body, msg_id=mid, reply_to=rt)
+                    res[addr.lower()] = (ok, why)
+                m = Message.objects.filter(pk=message_id).first()
+                if m is None:
+                    return
+                rows = list(m.recipients or [])
+                for r in rows:
+                    hit = res.get((r.get('email') or '').lower())
+                    if hit is not None:
+                        r['mail'] = 'sent' if hit[0] else 'failed'
+                        if not hit[0]:
+                            r['why'] = hit[1]
+                Message.objects.filter(pk=message_id).update(recipients=rows)
+        except Exception:
+            log.exception('chatter e-mails of message %s', message_id)
+        finally:
+            try:
+                from django.db import connections
+                connections.close_all()
+            except Exception:
+                pass
+
+    def start():
+        import threading
+        threading.Thread(target=run, daemon=True).start()
+    transaction.on_commit(start)
 
 
 def _bell(user, title, message, page, key, oid):
@@ -197,11 +278,14 @@ def deliver(m, author, extra_emails=()):
     if m.kind == 'note':
         m.recipients = recipients
         m.save(update_fields=['recipients'])
-        for u in U.objects.filter(pk__in=mentioned):
-            if author is None or u.pk != author.pk:
-                e = user_email(u)
-                if e:
-                    send_mail([e], f'{who} mentioned you on {label}', f'{text}\n\n{link(m.page)}'.strip())
+        jobs = []
+        for r in recipients:
+            if r.get('email'):
+                r['mail'] = 'sending'
+                jobs.append((r['email'], f'{who} mentioned you on {label}', f'{text}\n\n{link(m.page)}'.strip(), '', ''))
+        m.recipients = recipients
+        m.save(update_fields=['recipients'])
+        _mail_later(m.pk, jobs)
         return recipients
     if author is not None:
         follow(m.model, m.object_id, user=author, reason='author', label=m.record_label, page=m.page)
@@ -235,10 +319,16 @@ def deliver(m, author, extra_emails=()):
         subject = f'{m.subject or ("Re: " + label)} [ZEO#M{m.pk}]'
         body = f'{text}\n\n— {who}, about {label}\n{link(m.page)}\n\nReply to this e-mail to answer on the record.' if reply_to else \
                f'{text}\n\n— {who}, about {label}\n{link(m.page)}'
-        for e in dict.fromkeys(mails):
-            send_mail([e], subject, body, msg_id=mid, reply_to=reply_to)
+        jobs = [(e, subject, body, mid, reply_to) for e in dict.fromkeys(mails)]
+        wanted = {e.lower() for e in mails}
+        for r in recipients:
+            if (r.get('email') or '').lower() in wanted:
+                r['mail'] = 'sending'
+    else:
+        jobs = []
     m.recipients = recipients
     m.save(update_fields=['recipients', 'email_id'])
+    _mail_later(m.pk, jobs)
     return recipients
 
 

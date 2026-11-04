@@ -201,9 +201,9 @@ def days(a, b):
         d += timedelta(days=1)
 
 
-def _weekend_names(emp):
+def _weekend_names(emp, day=None):
     from .resolver import _weekend_names as w
-    return w(emp)
+    return w(emp, day)   # v1.62.6 (item 22): the weekend of that day (a weekend change with a start date)
 
 
 def check_editable(p):
@@ -244,10 +244,11 @@ def generate(p, user=None, overwrite=False):
     book = Book(p.date_from, p.date_to, [e.pk for e in emps], roster=False)
     existing = {(x.employee_id, x.date): x for x in RosterEntry.objects.filter(period=p)}
     out = {'created': 0, 'updated': 0, 'kept': 0, 'no_shift': 0}
+    from calendars.workdays import Plan as _WPlan   # v1.62.6 (item 22): weekend assignments read once
+    _wk_rules = _WPlan(p.date_from, p.date_to, [e.pk for e in emps], book=book)
     with transaction.atomic():
         for emp in emps:
             hol = holidays(emp, p.date_from, p.date_to)
-            wk = None
             for d in days(p.date_from, p.date_to):
                 cur = existing.get((emp.pk, d))
                 if cur is not None and not overwrite and cur.source != 'generated':
@@ -260,9 +261,7 @@ def generate(p, user=None, overwrite=False):
                     if d in hol and not off:
                         shift_id, off, note = None, True, 'Public holiday'
                 elif p.default_shift_id:
-                    if wk is None:
-                        wk = _weekend_names(emp)
-                    off = d.strftime('%A').lower() in wk or d in hol
+                    off = d.strftime('%A') in _wk_rules.weekend_days(emp, d) or d in hol   # v1.62.6 (item 22): one rule, per day
                     shift_id = None if off else p.default_shift_id
                     note = 'Public holiday' if d in hol else ''
                 else:

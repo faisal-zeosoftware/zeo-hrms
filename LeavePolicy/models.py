@@ -39,7 +39,8 @@ class LeavePolicyLine(models.Model):
     PRORATE = [('none', 'No prorate (full amount)'), ('calendar', 'Calendar days of the month'), ('fixed', 'Fixed days a month (e.g. 30)'),
                ('worked', 'Days worked (attendance)')]
     WORKED_FROM = [('punch', 'Check-ins (attendance records)'), ('calendar', 'Attendance calendar (Present days)')]
-    COUNT = [('calendar', 'Calendar days'), ('working', 'Working days (no weekends or public holidays)')]
+    COUNT = [('calendar', 'Calendar days'), ('working', 'Working days (no weekends or public holidays)'),
+             ('cal_nohol', 'Calendar days except public holidays')]   # v1.65.0 (item 87)
     GENDER = [('B', 'Both'), ('M', 'Male'), ('F', 'Female')]
     EXCESS = [('keep', 'Keep (flag for HR)'), ('encash', 'Encash (request for approval)'), ('lapse', 'Lapse')]
     policy = models.ForeignKey(LeavePolicy, on_delete=models.CASCADE, related_name='lines')
@@ -175,3 +176,84 @@ class BlackoutPeriod(models.Model):
 
     class Meta:
         ordering = ['start_date']
+
+
+# ------------------------------------------------------------------ v1.65.0 leave rules (items 82–97)
+class LeaveTypeRule(models.Model):
+    """v1.65.0 – rules of one leave type that the policy line does not hold (one row per leave type; a branch copy of the type
+    uses the row of its type of the same code / name). Every rule is off by default = the behaviour before 1.65.0."""
+    leave_type_id = models.IntegerField(unique=True)
+    # item 82 – maternity / parental leave: the birth date on the request, taken within N months of the birth, once per birth
+    birth_required = models.BooleanField(default=False)
+    birth_window_months = models.PositiveSmallIntegerField(default=6)
+    birth_window_from = models.CharField(max_length=10, default='birth', choices=[('birth', 'From the birth'), ('before', 'Up to 30 days before the birth')])
+    one_per_birth = models.BooleanField(default=True)
+    # item 86 – sandwich rule: weekends / public holidays between two leave days count as leave
+    sandwich = models.BooleanField(default=False)
+    # item 88 – the balance projected to the leave start (accrual up to then) is used for the balance check
+    allow_projected = models.BooleanField(default=False)
+    # item 85 – leave salary paid before the leave starts
+    advance_salary = models.BooleanField(default=False)
+    # item 92 – the supporting document only above N days (empty = as the policy line / always when required)
+    document_above_days = models.FloatField(null=True, blank=True)
+    # item 91 – HR confirms the employee's eligibility before the first request (e.g. Hajj); N years of service
+    hr_eligibility = models.BooleanField(default=False)
+    min_service_years = models.FloatField(null=True, blank=True)
+    # item 94 – nursing breaks after this (maternity) leave
+    nursing_breaks = models.BooleanField(default=False)
+    # item 97 – not refused / warned during the notice period (e.g. sick leave)
+    notice_exempt = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class LeaveRuleSettings(models.Model):
+    """v1.65.0 – company leave rules (one row)."""
+    NOTICE = [('allow', 'Allow (as before)'), ('warn', 'Warn'), ('block', 'Block (only HR enters leave)')]
+    REDUCE = [('policy', 'As set on each policy line (as before)'), ('unpaid', 'Unpaid leave reduces annual leave earned'),
+              ('unpaid_absence', 'Unpaid leave and absent days reduce annual leave earned')]
+    EXIT6 = [('none', 'Nothing (as before)'), ('two_days', '2 days for each month of service'), ('pro_rata', 'Days a year x months / 12')]
+    WHEN = [('next_payroll', 'In the next payroll before the leave'), ('off_cycle', 'At once in an off-cycle run')]
+    BASIS = [('gross', 'Salary prorated by days (basic and allowances)'), ('basic', 'Basic salary only')]
+    notice_leave = models.CharField(max_length=10, choices=NOTICE, default='allow')                 # item 97
+    accrual_reduction = models.CharField(max_length=20, choices=REDUCE, default='policy')          # item 89
+    exit_under_6m = models.CharField(max_length=10, choices=EXIT6, default='none')                  # item 90 (to be confirmed)
+    advance_when = models.CharField(max_length=15, choices=WHEN, default='next_payroll')           # item 85
+    advance_basis = models.CharField(max_length=10, choices=BASIS, default='gross')                 # item 85
+    catch_up = models.BooleanField(default=True)                                                    # item 93
+    catch_up_max_months = models.PositiveSmallIntegerField(default=12)
+    nursing_enabled = models.BooleanField(default=True)                                             # item 94 (law)
+    nursing_minutes = models.PositiveSmallIntegerField(default=60)
+    nursing_months = models.PositiveSmallIntegerField(default=6)
+    extension_skips_notice = models.BooleanField(default=True)                                      # item 84
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def get(cls):
+        return cls.objects.order_by('id').first() or cls.objects.create()
+
+
+class LeaveRequestInfo(models.Model):
+    """v1.65.0 – what a leave request carries besides the calendars request (no column added to the core table)."""
+    request_id = models.IntegerField(unique=True)
+    birth_date = models.DateField(null=True, blank=True)                     # item 82
+    extension_of_id = models.IntegerField(null=True, blank=True, db_index=True)   # item 84
+    original_end_date = models.DateField(null=True, blank=True)              # item 83 part cancel
+    cancelled_days = models.FloatField(default=0)
+    cancel_note = models.CharField(max_length=255, blank=True, default='')
+    advance = models.JSONField(default=dict, blank=True)                      # item 85 {status, amount, lines, run}
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class LeaveEligibility(models.Model):
+    """v1.65.0 (item 91) – HR's confirmation that an employee may take a leave type (e.g. Hajj, once in service). No religion or
+    other protected attribute is stored: only "eligible – confirmed by HR" and "taken before (in this employment)"."""
+    employee_id = models.IntegerField()
+    leave_type_id = models.IntegerField()
+    confirmed = models.BooleanField(default=False)
+    taken_before = models.BooleanField(default=False)
+    note = models.CharField(max_length=255, blank=True, default='')
+    confirmed_by_id = models.IntegerField(null=True, blank=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('employee_id', 'leave_type_id')

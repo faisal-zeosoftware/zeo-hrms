@@ -1869,7 +1869,7 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Rejected",
                 notification_type="document",
-                message=(f"Your DocumentRequest {self.request_type}"
+                message=(f"Your document request {self.request_type} "
                         f"(Document No: {self.document_number}) has been Rejected."
                     ),
                 template_type="request_rejected",
@@ -1915,7 +1915,7 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="document",
-                message=(f"Your DocumentRequest {self.request_type}"
+                message=(f"Your document request {self.request_type} "
                         f"(Document No: {self.document_number}) has been Approved."
                     ),
                 template_type="request_approved",
@@ -1941,7 +1941,7 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="document",
-                message=(f"Your DocumentRequest {self.request_type}"
+                message=(f"Your document request {self.request_type} "
                         f"(Document No: {self.document_number}) has been AutoApproved."
                     ),
                 template_type="request_approved",
@@ -1972,7 +1972,7 @@ class DocumentRequest(models.Model):
                     branch=self.branch,
                     title="Request Approved",
                     notification_type="document",
-                    message=(f"Your DocumentRequest {self.request_type}"
+                    message=(f"Your document request {self.request_type} "
                             f"(Document No: {self.document_number}) has been Approved by ReportingManager."
                     ),
                     template_type="request_approved",
@@ -2021,7 +2021,7 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Created",
                 notification_type="document",
-                message=(f"Your DocumentRequest {self.request_type}"
+                message=(f"Your document request {self.request_type} "
                         f"(Document No: {self.document_number}) is  waiting for you Approval."
                     ),
                 template_type="request_created",
@@ -2045,7 +2045,7 @@ class DocumentRequest(models.Model):
                 branch=self.branch,
                 title="Request Approved",
                 notification_type="document",
-                message=(f"Your DocumentRequest {self.request_type}"
+                message=(f"Your document request {self.request_type} "
                         f"(Document No: {self.document_number}) has been fully Approved."
                     ),
                 template_type="request_approved",

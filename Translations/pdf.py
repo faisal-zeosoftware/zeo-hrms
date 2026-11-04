@@ -44,6 +44,53 @@ def has_arabic(s):
     return bool(s) and bool(ARABIC_RE.search(str(s)))
 
 
+_MIRROR = dict(zip('()[]{}<>«»‹›', ')(][}{><»«›‹'))
+
+
+def _visual(line, base):
+    """Visual order for reportlab, WITH the mirrored brackets of the right-to-left parts (v1.62.0, pending item 10:
+    python-bidi 0.6 reorders but does not mirror, so "(21 days)" showed as ")21 days(" in Arabic PDFs).
+    The levels come from python-bidi itself (debug output); the reorder below (rule L2) must give exactly what
+    get_display gives – if it does not (another python-bidi version), get_display's own output is used."""
+    import re
+    from bidi import get_display
+    plain = get_display(line, base_dir=base)
+    if not any(c in _MIRROR for c in line):
+        return plain
+    try:
+        info = get_display(line, base_dir=base, debug=True)
+        m = re.search(r'levels:\s*\[(.*?)\]\s*,\s*paragraphs', str(info), re.S)
+        byte_lv = [int(x) for x in re.findall(r'Level\(\s*(\d+)\s*,?\s*\)', m.group(1))]
+        lv, i = [], 0
+        for ch in line:
+            lv.append(byte_lv[i]); i += len(ch.encode('utf-8'))
+        if i != len(byte_lv):
+            return plain
+        base_lv = 1 if base == 'R' else 0
+        # rule L1: trailing whitespace goes back to the paragraph level
+        j = len(line) - 1
+        while j >= 0 and line[j].isspace():
+            lv[j] = base_lv; j -= 1
+        chars = [(_MIRROR.get(c, c) if lv[k] % 2 else c, c) for k, c in enumerate(line)]
+        order = list(range(len(line)))
+        for level in range(max(lv), 0, -1):          # rule L2
+            k = 0
+            while k < len(order):
+                if lv[order[k]] >= level:
+                    e = k
+                    while e < len(order) and lv[order[e]] >= level:
+                        e += 1
+                    order[k:e] = order[k:e][::-1]
+                    k = e
+                else:
+                    k += 1
+        if ''.join(chars[k][1] for k in order) != plain:
+            return plain
+        return ''.join(chars[k][0] for k in order)
+    except Exception:
+        return plain
+
+
 def shape(text, rtl=True):
     """Logical-order text → what reportlab must draw (joined Arabic letters, right-to-left order). Lines without Arabic
     are returned unchanged."""
@@ -60,7 +107,7 @@ def shape(text, rtl=True):
         try:
             import arabic_reshaper
             from bidi import get_display
-            out.append(get_display(arabic_reshaper.reshape(line), base_dir='R' if rtl else 'L'))
+            out.append(_visual(arabic_reshaper.reshape(line), 'R' if rtl else 'L'))
         except Exception:
             try:
                 from SelfService.arabic import visual_line

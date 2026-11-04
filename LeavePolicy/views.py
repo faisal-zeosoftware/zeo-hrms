@@ -131,7 +131,8 @@ class PolicySerializer(serializers.ModelSerializer):
         Emp = M('EmpManagement', 'emp_master')
         over = set(EmployeeLeavePolicy.objects.values_list('employee_id', flat=True))
         by_cat = Emp.objects.filter(is_active=True, emp_ctgry_id__in=o.category_ids or []).exclude(pk__in=over).count()
-        n = by_cat + o.employees.count()
+        # v1.62.11 (regression): an employee given this policy who has left (inactive) was still counted – only active ones now
+        n = by_cat + Emp.objects.filter(is_active=True, pk__in=o.employees.values_list('employee_id', flat=True)).count()
         if o.is_default and o.active:   # v1.26.0: the default policy also covers employees whose category no policy names
             named = set()
             for p in LeavePolicy.objects.filter(active=True):
@@ -254,6 +255,31 @@ class EmployeePolicyViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
+# ------------------------------------------------------------------ v1.62.1 which leave types the policies cover
+class CoverageView(APIView):
+    """GET – the leave types no active policy covers (they follow the rules on the leave type itself: Leave types › Entitlement)
+    and the branch copies of a type that a policy line covers (e.g. Annual Leave of the Dubai branch follows the line of the
+    head-office Annual Leave)."""
+    permission_classes = [LeaveHR]
+
+    def get(self, request):
+        LT = M('calendars', 'leave_type')
+        managed = engine.managed_type_ids()
+        lined = set(LeavePolicyLine.objects.filter(policy__active=True).values_list('leave_type_id', flat=True))
+        rows = list(LT.objects.select_related('branch').order_by('name', 'id'))
+        names = {t.pk: t.name for t in rows}
+        branch = lambda t: t.branch.branch_name if t.branch_id else ''
+        out, copies = [], []
+        for t in rows:
+            if t.pk not in managed:
+                out.append({'id': t.pk, 'name': t.name, 'code': t.code, 'branch': branch(t)})
+            elif t.pk not in lined:
+                src = next((j for j in lined if engine.twin_type(j, t.branch_id) == t.pk), None)
+                copies.append({'id': t.pk, 'name': t.name, 'branch': branch(t), 'follows_id': src,
+                               'follows': names.get(src), 'follows_branch': next((branch(x) for x in rows if x.pk == src), '')})
+        return Response({'uncovered': out, 'branch_copies': copies})
+
+
 # ------------------------------------------------------------------ an employee's effective policy
 class EffectiveView(APIView):
     permission_classes = [IsAuthenticated]
@@ -271,7 +297,7 @@ class EffectiveView(APIView):
                'how': ('assigned to the employee' if EmployeeLeavePolicy.objects.filter(employee_id=emp.pk).exists() else
                        'by category' if p and emp.emp_ctgry_id_id in (p.category_ids or []) else 'default policy') if p else 'no policy',
                'service_months': engine.months_of_service(emp, date.today()), 'lines': []}
-        for l in (p.lines.all() if p else []):
+        for l in (engine.emp_lines(emp, p) if p else []):   # v1.62.1: the employee's branch copy of each leave type
             bal = float(engine.balance_row(emp.pk, l.leave_type_id).balance or 0)
             taken = None
             if l.accrual in ('per_event', 'none'):   # no running balance: show what was taken this leave year
@@ -357,6 +383,10 @@ class OpeningsView(APIView):
             return Response({'detail': tr('You may not load opening balances.')}, status=403)
         d = parse_date(str(request.data.get('date') or '')) or date.today()
         mode = request.data.get('mode') or 'set'
+        adj = request.data.get('kind') == 'adjustment'   # v1.62.0 people
+        adj_note = str(request.data.get('note') or '').strip()
+        if adj and not adj_note:
+            return Response({'note': [tr('Say why the balance is adjusted.')]}, status=400)
         Emp, LT = M('EmpManagement', 'emp_master'), M('calendars', 'leave_type')
         types = {t.name.lower(): t for t in LT.objects.all()} | {(t.code or '').lower(): t for t in LT.objects.all()}
         for t in LT.objects.all():   # v1.26.0: "AL" also matches code "AL-SCHEMA"
@@ -376,7 +406,7 @@ class OpeningsView(APIView):
                 return Response({'detail': tr('The file needs an "Employee Code" column.')}, status=400)
             if 'leave_type' in hn or 'leave type' in hn:
                 li = hn.index('leave_type') if 'leave_type' in hn else hn.index('leave type')
-                di = next((i for i, h in enumerate(hn) if h in ('days', 'balance', 'opening', 'opening balance')), None)
+                di = next((i for i, h in enumerate(hn) if h in ('days', 'balance', 'opening', 'opening balance', 'openings')), None)   # v1.62.10 (item 170): the template's "Openings" column
                 rows = [{'employee_code': _txt(r[ci]), 'leave_type': _txt(r[li]), 'days': (r[di] if di is not None and di < len(r) else None)}
                         for r in data_rows if ci < len(r)]
             else:
@@ -410,7 +440,10 @@ class OpeningsView(APIView):
             cur = float(engine.balance_row(e.pk, t.pk).balance or 0)
             delta = days - cur if mode == 'set' else days
             if delta:
-                engine.post(e.pk, t.pk, d, 'opening', delta, note=f'Opening balance ({mode} {days:g})', user_id=request.user.pk, move_balance=True)
+                if adj:   # v1.62.0 people: an adjustment from the Leave balance grid – same rights and booking, its own ledger kind and reason
+                    engine.post(e.pk, t.pk, d, 'adjustment', delta, note=(adj_note or f'Adjustment {delta:+g}')[:255], user_id=request.user.pk, move_balance=True)
+                else:
+                    engine.post(e.pk, t.pk, d, 'opening', delta, note=f'Opening balance ({mode} {days:g})', user_id=request.user.pk, move_balance=True)
             done += 1
         _p.__exit__(None, None, None)
         return Response({'loaded': done, 'errors': errors[:500], 'error_count': len(errors), 'rows': len(rows)})
@@ -585,8 +618,17 @@ APPROVE_CODES = {'change_lvapprovalworkflow', 'add_lvapprovalworkflow', 'change_
 
 
 def _uname(u):
+    """v1.62.1: "Name (code)" of the person (HRActions.names, as the other 1.62 approval screens) – the approver lists showed
+    login names (gdis_admin)."""
     if u is None:
         return ''
+    try:
+        from HRActions.names import user_obj_name
+        n = user_obj_name(u)
+        if n:
+            return n
+    except Exception:
+        pass
     full = ' '.join(x for x in [getattr(u, 'first_name', ''), getattr(u, 'last_name', '')] if x)
     return f'{full} ({u.username})' if full else u.username
 
@@ -629,7 +671,7 @@ class ApproversView(APIView):
         # a sample: who would approve for each employee at level 1 of their annual leave workflow
         Br = M('OrganisationManager', 'brnch_mstr'); D = M('OrganisationManager', 'dept_master')
         return Response({'org_roles': roles, 'workflows': wfs, 'roles': LevelRole.ROLES, 'org_role_kinds': OrgRole.ROLES,
-                         'users': [{'id': u.pk, 'name': _uname(u)} for u in users.values()],
+                         'users': sorted(({'id': u.pk, 'name': _uname(u)} for u in users.values()), key=lambda x: x['name'].lower()),   # v1.62.1 by name
                          'branches': [{'id': b.pk, 'name': b.branch_name} for b in (Br.objects.all() if mine is None else Br.objects.filter(pk__in=mine)).order_by('branch_name')],  # v1.22.0 branch rights
                          'departments': [{'id': d.pk, 'name': d.dept_name} for d in D.objects.all().order_by('dept_name')]})
 
@@ -754,7 +796,7 @@ class BalanceExplainedView(APIView):
         ys, ye = engine.leave_year(p, today)
         names = _type_names()
         out = []
-        for l in p.lines.all():
+        for l in engine.emp_lines(emp, p):   # v1.62.1: the employee's branch copy of each leave type
             if l.accrual in ('per_event', 'none') or (l.gender not in ('B', emp.emp_gender or '')):
                 continue
             led = LeaveLedger.objects.filter(employee_id=emp.pk, leave_type_id=l.leave_type_id)
@@ -765,8 +807,9 @@ class BalanceExplainedView(APIView):
             carried = engine._carried(emp.pk, l.leave_type_id, ys - timedelta(days=1))
             bal = float(engine.balance_row(emp.pk, l.leave_type_id).balance or 0)
             per_year, _st = engine.step_on(l, emp, today)
-            left_months = (ye.year - today.year) * 12 + (ye.month - today.month)
-            to_earn = round(float(per_year or 0) * left_months / 12, 2) if l.accrual == 'monthly' else 0
+            # v1.62.4 (item 74): the months not credited yet, by the accrual rules (first-year rule, joining / leaving, rounding) –
+            # was days a year × months to the year end (this month not counted) / 12: 2.5 on 2 November instead of 5 (or 14)
+            to_earn = engine.to_earn_by_year_end(emp, l, today, ye) if l.accrual == 'monthly' else 0
             cf_exp = None
             cf_left = None
             if carried and l.carry_forward_expiry_months:
@@ -780,6 +823,7 @@ class BalanceExplainedView(APIView):
                 enc_now = round(max(0, min(bal, (cap - done) if cap is not None else bal)), 2)
             lim = engine.cf_limit(l, emp, ye)
             out.append({'leave_type_id': l.leave_type_id, 'leave_type': names.get(l.leave_type_id), 'accrual': l.get_accrual_display(),
+                        'unit': apps.get_model('calendars', 'leave_type').objects.filter(pk=l.leave_type_id).values_list('unit', flat=True).first() or 'days',   # v1.62.4 (item 81)
                         'days_per_year': per_year, 'first_year_uae': l.first_year_uae, 'after_probation': l.after_probation,
                         'carry_forward_max': lim, 'carry_forward_expiry_months': l.carry_forward_expiry_months, 'excess_action': l.get_excess_action_display(),
                         'encashable': l.encashable, 'encash_max_per_year': l.encash_max_per_year,
@@ -829,8 +873,11 @@ class LeaveCheckView(APIView):
         if (b - a).days > 400:
             return Response({'detail': tr('Choose at most a year.')}, status=400)
         by = request.user.pk
-        res = check(emp, lt, a, b, str(d.get('half_day')).lower() in ('1', 'true'), exclude_id=d.get('request') or None, created_by_id=by,
-                    document=str(d.get('has_document')).lower() in ('1', 'true'))
+        from .leave_rules import extras   # v1.65.0 (items 82, 84): the birth date / the leave it extends, checked like the request
+        with extras(birth_date=d.get('birth_date') or None, extension_of=d.get('extension_of') or None):
+            res = check(emp, lt, a, b, str(d.get('half_day')).lower() in ('1', 'true'), exclude_id=d.get('request') or None, created_by_id=by,
+                        document=str(d.get('has_document')).lower() in ('1', 'true'), hours=d.get('hours') or d.get('leave_duration'))   # v1.62.4 (item 81)
+        res['unit'] = lt.unit or 'days'   # v1.62.4 (item 81)
         return Response(res)
 
 

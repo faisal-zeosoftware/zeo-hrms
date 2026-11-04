@@ -121,6 +121,10 @@ class ExitSettlement(models.Model):
     asset_decisions = models.JSONField(default=dict, blank=True, help_text='v1.62.0: {asset key: {decision: returned|recover|waive, amount, note, by, at}}')
     history = models.JSONField(default=list, blank=True, help_text='v1.62.0: [{action, by, at, note}]')
     last_action_at = models.DateTimeField(null=True, blank=True, help_text='v1.62.0: time of the latest step (the history shows it)')
+    # v1.62.11 (EOS settings): HR's entries on the draft (gratuity adjustment, leave balance / unpaid days overrides, contract leave days,
+    # unpaid salary from, air ticket entered by HR) and the rules the last calculation used – PayrollPlus/eos_settings.py
+    inputs = models.JSONField(default=dict, blank=True, help_text='v1.62.11: HR entries on the draft + the rules of the last calculation')
+    accounting_date = models.DateField(null=True, blank=True, help_text='v1.62.11: date of the journal (empty = paid on, else the last working day)')
 
     class Meta:
         ordering = ['-last_working_date', '-id']
@@ -401,3 +405,225 @@ class GoLiveEmployee(models.Model):
     gratuity_from = models.DateField(null=True, blank=True)
     note = models.CharField(max_length=200, blank=True, default='')
     updated_at = models.DateTimeField(auto_now=True)
+
+
+# ------------------------------------------------------------------ v1.62.7 (item 18) accrue now – pay later
+# v1.62.7 (item 18): own tables in PayrollPlus (its own migrations) instead of new columns on the core SalaryComponent / Payslip – a
+# per-employee balance needs a ledger that reports and the final settlement can add up; JSON in CompanyOption could not be queried.
+class AccrualSetting(models.Model):
+    """v1.62.7 (item 18) – a salary component that is accrued each month (type Others, not in the month's net pay) and paid later:
+    in the payout month's payroll run and / or with the final settlement. One row per component (all its branch copies – same code –
+    get the same setting)."""
+    component_id = models.IntegerField(unique=True)
+    enabled = models.BooleanField(default=True)
+    payout_month = models.PositiveSmallIntegerField(null=True, blank=True, help_text='1–12: the month whose payroll run pays the balance; empty = never by payroll')
+    include_payout_month = models.BooleanField(default=True, help_text="the payout month's own amount is paid in the same run")
+    pay_at_exit = models.BooleanField(default=True, help_text='the balance is paid with the final settlement')
+    accrual_account = models.CharField(max_length=40, blank=True, default='224005', help_text='accrued liability (GL)')
+    payout_component_id = models.IntegerField(null=True, blank=True, help_text='the addition component of the payout line (made by ZEO)')
+    previous_type = models.CharField(max_length=20, blank=True, default='', help_text='the component type before it was accrued (given back when switched off)')
+    updated_by_id = models.IntegerField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class AccrualEntry(models.Model):
+    """v1.62.7 (item 18) – one movement of an employee's accrued balance: opening balance (go-live), the month's accrual (a payslip),
+    a payout (payroll run of the payout month) or the payout at exit (final settlement). Paid amounts are negative. The rows of a
+    payslip go when the payslip is deleted (run deleted / recalculated); those of a rejected payslip do not count."""
+    KINDS = [('opening', 'Opening balance'), ('accrual', 'Accrued'), ('payout', 'Paid by payroll'), ('exit', 'Paid at final settlement'),
+             ('adjust', 'Adjustment')]
+    employee_id = models.IntegerField(db_index=True)
+    component_id = models.IntegerField(db_index=True)
+    kind = models.CharField(max_length=10, choices=KINDS)
+    month = models.DateField(help_text='first day of the salary month (the payroll run’s month); the date of an opening balance')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payslip_id = models.IntegerField(null=True, blank=True, db_index=True)
+    run_id = models.IntegerField(null=True, blank=True, db_index=True)
+    settlement_id = models.IntegerField(null=True, blank=True, db_index=True)
+    note = models.CharField(max_length=255, blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['month', 'id']
+
+
+# ------------------------------------------------------------------ v1.62.11 (items 228, 231) payroll controls (group payctl)
+# v1.62.11 (items 228, 231): own tables in PayrollPlus (migration 0016) – no new column in the core apps.
+class SalaryHold(models.Model):
+    """v1.62.11 (item 228) – the salary of a month held in full or in part. The payslip keeps the salary earned (net pay unchanged);
+    the held part is not paid in that month (WPS file / bank list: payctl.payable_amount) and is paid as the line "Held salary
+    released" in a later payroll run after it is released."""
+    KINDS = [('full', 'Whole salary'), ('amount', 'An amount'), ('percent', 'A percentage')]
+    STATUS = [('pending', 'Waiting for the payroll run'), ('held', 'Held'), ('to_release', 'Release in the next payroll run'),
+              ('released', 'Released'), ('cancelled', 'Cancelled')]
+    employee_id = models.IntegerField(db_index=True)
+    month = models.DateField(help_text='first day of the salary month that is held')
+    kind = models.CharField(max_length=8, choices=KINDS, default='full')
+    value = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text='amount (AED) or percent of the net pay')
+    reason = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=12, choices=STATUS, default='pending', db_index=True)
+    payslip_id = models.IntegerField(null=True, blank=True, db_index=True)
+    held_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    release_from = models.DateField(null=True, blank=True, help_text='first day of the month whose run pays the release (empty = the next run)')
+    release_payslip_id = models.IntegerField(null=True, blank=True, db_index=True)
+    released_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    history = models.JSONField(default=list, blank=True, help_text='[{action, by, by_id, at, note}]')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-month', 'employee_id', 'id']
+
+
+class PeriodLock(models.Model):
+    """v1.62.11 (item 231) – a closed payroll period that nothing may change (payslips, attendance, leave, salary changes)."""
+    STATUS = [('locked', 'Locked'), ('unlocked', 'Unlocked')]
+    month = models.DateField(help_text='first day of the salary month')
+    branch_id = models.IntegerField(null=True, blank=True, help_text='empty = every branch')
+    start = models.DateField(help_text='first day covered (the attendance window of the month’s runs)')
+    end = models.DateField()
+    status = models.CharField(max_length=10, choices=STATUS, default='locked', db_index=True)
+    locked_by_id = models.IntegerField(null=True, blank=True)
+    locked_at = models.DateTimeField(auto_now_add=True)
+    note = models.CharField(max_length=255, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-month', 'branch_id']
+        permissions = (('unlock_periodlock', 'Can unlock a locked payroll period'),)
+
+
+class PeriodLockEvent(models.Model):
+    """v1.62.11 (item 231) – the log of a period lock: locked / unlocked (with the reason) / locked again."""
+    lock = models.ForeignKey(PeriodLock, on_delete=models.CASCADE, related_name='events')
+    action = models.CharField(max_length=10)
+    reason = models.CharField(max_length=255, blank=True, default='')
+    user_id = models.IntegerField(null=True, blank=True)
+    user_name = models.CharField(max_length=150, blank=True, default='')
+    at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['id']
+
+
+class SalaryRevisionRequest(models.Model):
+    """v1.62.11 (item 228) – Revise salary: new amounts from an effective date, approved through the general request workflow of the
+    request type "Salary revision" (Requests › Approval levels); applied when the request is approved."""
+    STATUS = [('pending', 'Waiting for approval'), ('applied', 'Approved and applied'), ('rejected', 'Rejected'), ('cancelled', 'Cancelled'),
+              ('failed', 'Approved – not applied')]
+    employee_id = models.IntegerField(db_index=True)
+    effective_from = models.DateField()
+    lines = models.JSONField(default=list, blank=True, help_text='[{component_id, code, name, old, new}]')
+    reason = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=10, choices=STATUS, default='pending', db_index=True)
+    general_request_id = models.IntegerField(null=True, blank=True, db_index=True)
+    arrears = models.JSONField(default=dict, blank=True, help_text='the arrear lines made for past months {lines, total}')
+    result = models.CharField(max_length=255, blank=True, default='')
+    history = models.JSONField(default=list, blank=True)
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-id']
+
+
+class ServicePeriod(models.Model):
+    """v1.62.11 (item 228) – the employments of an employee: a re-hired leaver gets a new period, the old one is closed (its final
+    settlement stays)."""
+    employee_id = models.IntegerField(db_index=True)
+    start = models.DateField()
+    end = models.DateField(null=True, blank=True)
+    settlement_id = models.IntegerField(null=True, blank=True)
+    gratuity_continuity = models.BooleanField(default=False, help_text='gratuity service counted from the first period')
+    note = models.CharField(max_length=255, blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['employee_id', 'start']
+
+
+# ------------------------------------------------------------------ v1.63.0 (items 27, 28) payroll group "pay"
+# v1.63.0 (items 27, 28): own tables in PayrollPlus (migration 0018) – no new column in the core apps.
+class PaySplit(models.Model):
+    """v1.63.0 (item 27) – one salary paid through two methods: the main account (the employee's payment mode) plus a second part –
+    a second bank account (bank transfer outside WPS), cash, cheque or a company own method – by a fixed amount or a % of the net pay.
+    Dated: the row with the latest `effective_from` on or before the end of the salary month counts; method 'none' ends the split
+    from its date. Older rows are the history."""
+    BASIS = [('amount', 'Fixed amount'), ('percent', 'Percentage of the net pay')]
+    STATUS = [('active', 'Active'), ('cancelled', 'Cancelled')]
+    employee_id = models.IntegerField(db_index=True)
+    effective_from = models.DateField()
+    method = models.CharField(max_length=20, help_text="bank_transfer / cash / cheque / a company method code / 'none' (split ended)")
+    basis = models.CharField(max_length=8, choices=BASIS, default='percent')
+    value = models.DecimalField(max_digits=12, decimal_places=2, default=0, help_text='amount (AED) or % of the net pay paid by the second method')
+    bank_name = models.CharField(max_length=120, blank=True, default='')
+    iban = models.CharField(max_length=34, blank=True, default='')
+    account_number = models.CharField(max_length=50, blank=True, default='')
+    routing_code = models.CharField(max_length=9, blank=True, default='')
+    note = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=10, choices=STATUS, default='active', db_index=True)
+    history = models.JSONField(default=list, blank=True)
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['employee_id', '-effective_from', '-id']
+
+
+class Recovery(models.Model):
+    """v1.63.0 (item 28) – a recovery schedule of any deduction (accommodation, transport, uniform, damage …): a total recovered by
+    monthly instalments from a start month – over N months or an amount per month – on the payslip line of a deduction component,
+    within its own monthly cap and the company's net-pay controls; what is not taken carries to the next month."""
+    MODES = [('months', 'Number of months'), ('amount', 'Amount per month')]
+    STATUS = [('pending', 'Waiting for approval'), ('active', 'Active'), ('paused', 'Paused'), ('completed', 'Recovered in full'),
+              ('settled', 'Settled early'), ('written_off', 'Written off'), ('rejected', 'Rejected'), ('cancelled', 'Cancelled')]
+    EXIT = [('deduct', 'Deduct the balance in the final settlement'), ('write_off', 'Write off the balance at exit')]
+    number = models.CharField(max_length=30, blank=True, default='', db_index=True)
+    employee_id = models.IntegerField(db_index=True)
+    component_id = models.IntegerField(help_text='PayrollManagement.SalaryComponent (a deduction)')
+    total = models.DecimalField(max_digits=12, decimal_places=2)
+    start_month = models.DateField(help_text='first day of the first salary month')
+    mode = models.CharField(max_length=8, choices=MODES, default='months')
+    months = models.PositiveIntegerField(null=True, blank=True)
+    per_month = models.DecimalField(max_digits=12, decimal_places=2, default=0, help_text='the planned instalment')
+    monthly_cap = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text='never more than this in one month')
+    reason = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=12, choices=STATUS, default='pending', db_index=True)
+    exit_action = models.CharField(max_length=10, choices=EXIT, default='deduct')
+    settle_next = models.BooleanField(default=False, help_text='settle early: the next payroll takes the whole balance')
+    general_request_id = models.IntegerField(null=True, blank=True, db_index=True)
+    history = models.JSONField(default=list, blank=True, help_text='[{action, by, by_id, at, note}]')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-id']
+
+
+class RecoveryEntry(models.Model):
+    """v1.63.0 (item 28) – a movement of a recovery: an instalment taken by a payslip (due = planned + carried in; amount = taken;
+    the rest carries to the next month), a settlement paid early, a write-off, the balance taken by the final settlement. An entry of a
+    rejected / deleted payslip is given back (status given_back – not counted)."""
+    KINDS = [('payroll', 'Deducted by payroll'), ('settled', 'Settled early'), ('write_off', 'Written off'), ('exit', 'Final settlement'),
+             ('exit_write_off', 'Written off at exit')]
+    recovery = models.ForeignKey(Recovery, on_delete=models.CASCADE, related_name='entries')
+    kind = models.CharField(max_length=14, choices=KINDS, default='payroll')
+    month = models.DateField()
+    due = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payslip_id = models.IntegerField(null=True, blank=True, db_index=True)
+    line_id = models.IntegerField(null=True, blank=True, help_text='PayslipComponent of the instalment')
+    settlement_id = models.IntegerField(null=True, blank=True)
+    status = models.CharField(max_length=10, default='taken', db_index=True, help_text='taken / given_back')
+    note = models.CharField(max_length=255, blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['month', 'id']

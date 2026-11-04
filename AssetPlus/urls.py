@@ -3,6 +3,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views
+from . import desk   # v1.62.0 talent-ops
 
 router = DefaultRouter()
 router.register(r'api/assets', views.AssetViewSet, basename='assetplus-asset')
@@ -17,6 +18,8 @@ router.register(r'api/disposals', views.DisposalViewSet, basename='assetplus-dis
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('api/desk/requests/', desk.DeskRequestsView.as_view()),     # v1.62.0 talent-ops
+    path('api/desk/approvals/', desk.DeskApprovalsView.as_view()),
     path('api/recoveries/', views.RecoveryView.as_view()),
     path('api/clearance/', views.ClearanceView.as_view()),
     path('api/clearance/<int:emp_id>/', views.ClearanceView.as_view()),

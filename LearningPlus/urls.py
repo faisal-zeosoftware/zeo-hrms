@@ -3,6 +3,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views as V
+from . import talent_ops as TO   # v1.62.0 talent-ops
 
 router = DefaultRouter()
 router.register(r'categories', V.CategoryViewSet)
@@ -26,6 +27,8 @@ router.register(r'employee-skills', V.EmployeeSkillViewSet)
 urlpatterns = [
     path('api/calendar/', V.CalendarView.as_view()),
     path('api/history/', V.HistoryView.as_view()),
+    path('api/history/people/', TO.HistoryPeopleView.as_view()),              # v1.62.0 talent-ops
+    path('api/attendance/sessions/', TO.AttendanceSessionsView.as_view()),   # v1.62.0 talent-ops
     path('api/skill-matrix/', V.SkillMatrixView.as_view()),
     path('api/course-progress/', V.CourseProgressView.as_view()),
     path('api/my-learning/', V.MyLearningView.as_view()),

@@ -91,10 +91,57 @@ def _annual_tax(scheme, monthly_base):
     return tax
 
 
+def _is_gpssa(scheme):
+    return (scheme.code or '').strip().lower() == 'gpssa' or (scheme.authority or '').strip().upper() == 'GPSSA'
+
+
+def _is_code(scheme, code):
+    return (scheme.code or '').strip().lower() == code
+
+
+ZERO3 = (Decimal('0.00'), Decimal('0.00'), Decimal('0.00'))
+
+
+def _branch_scheme(scheme, employee, rows, nat):
+    """v1.62.11 (item 229) – the schemes that depend on the employee's branch (Payroll › Branch pension schemes):
+    GPSSA → nothing for a branch on ADPF; ADPF → only for a branch on ADPF (nationals; contract salary 6,000 – 100,000, 11 % / 5 % + 15 %);
+    DEWS → only for a DIFC branch (not for UAE / GCC nationals registered with GPSSA): 5.83 % / 8.33 % of the monthly basic wage
+    (at least 50 % of the wage). None = not one of these – the scheme's own rules apply."""
+    is_g, is_a, is_d = _is_gpssa(scheme), _is_code(scheme, 'adpf'), _is_code(scheme, 'dews')
+    if not (is_g or is_a or is_d):
+        return None
+    try:
+        from . import branch_schemes as BS
+    except ImportError:
+        return None
+    if is_g:
+        return ZERO3 if BS.is_adpf(employee) else None
+    from .legal import _on, adpf_terms, dews_terms
+    on = _on(None)
+    if is_a:
+        if not (nat and BS.is_adpf(employee)):
+            return ZERO3
+        t = adpf_terms(employee, base_amount(rows, scheme.base or 'gross'), on)
+        b = t['base']
+        if b <= 0:
+            return ZERO3
+        return b.quantize(Q2), (b * t['emp']).quantize(Q2, ROUND_HALF_UP), (b * t['er']).quantize(Q2, ROUND_HALF_UP)
+    if not BS.is_dews(employee) or BS.is_gcc_national(employee) or on < BS.dews_start(employee):
+        return ZERO3
+    t = dews_terms(employee, base_amount(rows, 'basic'), base_amount(rows, 'gross'), on)
+    b = t['base']
+    if b <= 0:
+        return ZERO3
+    return b.quantize(Q2), Decimal('0.00'), (b * t['rate']).quantize(Q2, ROUND_HALF_UP)
+
+
 def compute(scheme, employee, rows=None, national=None):
     """(base, employee_amount, employer_amount) for one employee, all monthly."""
     rows = _rows(employee) if rows is None else rows
     nat = is_national(employee) if national is None else national
+    _bs = _branch_scheme(scheme, employee, rows, nat)   # v1.62.11 (item 229): ADPF instead of GPSSA / DIFC DEWS per branch
+    if _bs is not None:
+        return _bs
     if scheme.applies_to == 'nationals' and not nat or scheme.applies_to == 'expats' and nat:
         return Decimal('0'), Decimal('0'), Decimal('0')
     gross = base_amount(rows, 'gross')
@@ -107,7 +154,15 @@ def compute(scheme, employee, rows=None, national=None):
         base = _d(scheme.min_base)
     if scheme.max_base is not None and base > _d(scheme.max_base):
         base = _d(scheme.max_base)
-    if scheme.kind == 'percent':
+    if scheme.kind == 'percent' and _is_gpssa(scheme):
+        # v1.62.3: old law (joined before 31 Oct 2023) 5 % / 12.5 %, salary 1,000–50,000; new law the scheme's rates, the
+        # employer 15 % from a contribution salary of AED 20,000 (Payroll › Legal rates)
+        from .legal import gpssa_terms, _on
+        t = gpssa_terms(employee, base_amount(rows, scheme.base), _on(None), _d(scheme.employee_rate) / 100, _d(scheme.employer_rate) / 100,
+                        scheme.min_base, scheme.max_base)
+        base = t['base']
+        emp, er = base * t['emp'], base * t['er']
+    elif scheme.kind == 'percent':
         emp = base * _d(scheme.employee_rate) / 100
         er = base * _d(scheme.employer_rate) / 100
     elif scheme.kind == 'fixed':
@@ -269,8 +324,13 @@ def preview(employee_id, on=None):
     rows = _rows(e)
     nat = is_national(e)
     out = []
+    try:   # v1.62.11 (item 229): every figure of the day asked (GPSSA old / new law, ADPF, DEWS years of service) – before, today's
+        from CountryPack.services import rules_on as _ro
+    except ImportError:
+        from contextlib import nullcontext as _ro
     for s in schemes_on(on):
-        base, emp, er = compute(s, e, rows, nat)
+        with _ro(on):
+            base, emp, er = compute(s, e, rows, nat)
         v = s._version
         out.append({'code': s.code, 'name': s.name, 'base': str(base), 'employee': str(emp), 'employer': str(er), 'applies': bool(base or emp or er),
                     'rates_from': v.effective_from.isoformat() if v else (s.effective_from.isoformat() if s.effective_from else None),

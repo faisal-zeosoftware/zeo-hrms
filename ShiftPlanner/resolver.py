@@ -236,15 +236,10 @@ def off_day(employee, day):
     return None if r is None else bool(r['off'])
 
 
-def _weekend_names(emp):
-    try:
-        from calendars.utils import get_employee_weekend_calendar
-        w = get_employee_weekend_calendar(emp)
-    except Exception:
-        w = None
-    if not w:
-        return set()
-    return {d for d in ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday') if getattr(w, d, None) == 'leave'}
+def _weekend_names(emp, day=None):
+    # v1.62.6 (item 22): the one weekend rule (calendars/workdays.py)
+    from calendars.workdays import weekend_names
+    return {n.lower() for n in weekend_names(emp, day)}
 
 
 def holidays(emp, a, b):
@@ -279,18 +274,7 @@ def scheduled_days(employee, a, b, book=None):
     if emp is None or a is None or b is None or b < a:
         return []
     book = book or Book(a, b, [emp.pk])
-    hol = holidays(emp, a, b)
-    wk = None
-    out, d = [], a
-    while d <= b:
-        r = book.get(emp, d)
-        if r is not None:
-            if not r['off'] and (r['source'] == 'roster' or d not in hol):
-                out.append(d)
-        else:
-            if wk is None:
-                wk = _weekend_names(emp)
-            if d.strftime('%A').lower() not in wk and d not in hol:
-                out.append(d)
-        d += timedelta(days=1)
-    return out
+    # v1.62.6 (item 22): the one resolver (calendars/workdays.py) – same order; the weekend calendar of each day by the most
+    # specific assignment (before: employee > branch > department > category, a branch weekend won over a category weekend)
+    from calendars.workdays import Plan
+    return Plan(a, b, [emp.pk], book=book).working_days(emp, a, b)

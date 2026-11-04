@@ -73,26 +73,30 @@ def _first_assignment(rows, employee):
     return None
 
 
-def employee_weekend_days(employee):
-    from calendars.utils import get_employee_weekend_days
-    if not active():
-        return get_employee_weekend_days(employee)
-    a = _first_assignment(memo(('assign_weekend',), lambda: _assignments('assign_weekend', 'weekend_model')), employee)
-    return set(a.weekend_model.get_weekend_days()) if a is not None else set()
+def employee_weekend_days(employee, day=None):
+    # v1.62.6 (item 22): the one weekend rule (calendars/workdays.py – most specific assignment wins, category counted).
+    # Before: the first assignment by id naming the employee, the branch or the department (category ignored).
+    from calendars.workdays import WeekendRules, model_days
+    rules = memo(('wd_weekend_rules',), WeekendRules)
+    return model_days(rules.pick(employee, day)[0], day)
 
 
 def employee_holidays(employee, start_date, end_date):
-    from calendars.utils import get_employee_holidays, daterange
-    if not active():
-        return get_employee_holidays(employee, start_date, end_date)
-    a = _first_assignment(memo(('assign_holiday',), lambda: _assignments('assign_holiday', 'holiday_model')), employee)
-    if a is None:
-        return set()
+    # v1.62.6 (item 22): the employee's holiday calendar by calendars.utils.get_employee_holiday_calendar's order
+    from calendars.workdays import HolidayRules
+    hol = memo(('wd_holiday_rules',), HolidayRules)
+    a = start_date.date() if hasattr(start_date, 'date') and callable(start_date.date) else start_date
+    b = end_date.date() if hasattr(end_date, 'date') and callable(end_date.date) else end_date
+    return {d for d in hol.dates(employee) if a <= d <= b}
 
-    def dates():
-        out = set()
-        for h in a.holiday_model.holiday_list.filter(start_date__lte=end_date, end_date__gte=start_date):
-            for day in daterange(h.start_date, h.end_date):
-                out.add(day)
-        return out
-    return set(memo(('holiday_dates', a.holiday_model_id, start_date, end_date), dates))
+
+def working_day_plan(employee, start_date, end_date):
+    """v1.62.6 (item 22): calendars.workdays.Plan for a payroll period – inside payroll_cache() one plan (one shift book, one read
+    of the weekend / holiday assignments) for every employee of the run."""
+    from calendars.workdays import Plan, WeekendRules, HolidayRules
+    a = start_date.date() if hasattr(start_date, 'date') and callable(start_date.date) else start_date
+    b = end_date.date() if hasattr(end_date, 'date') and callable(end_date.date) else end_date
+    if not active():
+        return Plan(a, b, [employee.pk])
+    return memo(('wd_plan', a, b), lambda: Plan(a, b, None, rules=memo(('wd_weekend_rules',), WeekendRules),
+                                                holidays=memo(('wd_holiday_rules',), HolidayRules)))

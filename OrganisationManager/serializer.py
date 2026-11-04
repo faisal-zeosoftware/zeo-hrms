@@ -13,11 +13,35 @@ from ProjectManagement .serializer import ProjectSerializer
 from EmpManagement .models import EmailConfiguration
 from django.db import models
 
+
+def _data_uri_files(data, *keys):
+    """v1.62.0 people: a file may come as a data URI (JSON clients, the data workbook – company policies, document
+    library) – it becomes an uploaded file; everything else is left as it was."""
+    if not hasattr(data, 'get') or not any(isinstance(data.get(k), str) and str(data.get(k)).startswith('data:') for k in keys):
+        return data
+    import base64
+    from django.core.files.base import ContentFile
+    data = data.copy() if hasattr(data, 'copy') else dict(data)
+    for k in keys:
+        v = data.get(k)
+        if isinstance(v, str) and v.startswith('data:') and ';base64,' in v:
+            head, raw = v.split(';base64,', 1)
+            ext = {'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg'}.get(head[5:], 'bin')
+            base = str(data.get('name') or data.get('title') or 'document').strip().replace(' ', '-').replace('/', '-')[:60]
+            try:
+                data[k] = ContentFile(base64.b64decode(raw), name=f'{base}.{ext}')
+            except (ValueError, TypeError):
+                raise serializers.ValidationError({k: ['The file could not be read.']})
+    return data
+
 class CompanyPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyPolicy
         fields = '__all__'
         read_only_fields = ['created_by']
+
+    def to_internal_value(self, data):   # v1.62.0 people
+        return super().to_internal_value(_data_uri_files(data, 'policy_file'))
 
     def validate_title(self, value):
         title = value.strip()
@@ -107,7 +131,66 @@ class CtgrySerializer(serializers.ModelSerializer):
         rep = super(CtgrySerializer, self).to_representation(instance)
         if instance.branch.exists():
             rep['branch'] = [branch.branch_name for branch in instance.branch.all()]
+        try:   # v1.67.0 (item 23): the category's rest days from the weekend records (calendars/workdays.py reads the same)
+            from AttendancePlus import v167
+            wr = self.context.get('_weekend_rules') if isinstance(self.context, dict) else None
+            if wr is None:
+                from calendars.workdays import WeekendRules
+                wr = WeekendRules()
+                if isinstance(self.context, dict):
+                    self.context['_weekend_rules'] = wr
+            rd = v167.rest_days_of('category', instance.pk, wr)
+            rep['rest_days'] = rd['days']
+            rep['rest_days_info'] = rd
+        except Exception:
+            pass
         return rep
+
+    # v1.67.0 (item 23): rest-day chips on the category form – written as the category's weekend (assign_weekend related_to
+    # 'category'); half days, alternate weeks and a change from a date stay on the Weekend calendar screens
+    def to_internal_value(self, data):
+        out = super().to_internal_value(data)
+        self._rest_days = None
+        if hasattr(data, 'get') and 'rest_days' in data:
+            from AttendancePlus import v167
+            raw = data.getlist('rest_days') if hasattr(data, 'getlist') and len(data.getlist('rest_days')) > 1 else data.get('rest_days')
+            try:
+                self._rest_days = v167.norm_days(raw)
+            except ValueError:
+                from Translations.i18n import tr
+                raise serializers.ValidationError({'rest_days': tr('Choose the rest days from Mon … Sun.')})
+        return out
+
+    def _save_rest_days(self, obj):
+        days = getattr(self, '_rest_days', None)
+        if days is None:
+            return
+        from AttendancePlus import v167
+        cur = v167.rest_days_of('category', obj.pk)
+        if days == cur['days']:
+            return
+        req = self.context.get('request')
+        if req is not None and not v167.can_set_weekends(req):
+            from Translations.i18n import tr
+            raise serializers.ValidationError({'rest_days': tr('You may not change weekends (Assign weekend rights).')})
+        try:
+            v167.set_rest_days('category', [obj.pk], days, getattr(req, 'user', None))
+        except ValueError as e:
+            raise serializers.ValidationError({'rest_days': str(e)})
+
+    def create(self, validated_data):
+        from django.db import transaction
+        with transaction.atomic():
+            obj = super().create(validated_data)
+            self._save_rest_days(obj)
+        return obj
+
+    def update(self, instance, validated_data):
+        from django.db import transaction
+        with transaction.atomic():
+            obj = super().update(instance, validated_data)
+            self._save_rest_days(obj)
+        return obj
 #CATEGARY Bulupload SERIALIZER
 class CtgryUploadSerializer(serializers.ModelSerializer):
     file = serializers.FileField(write_only=True)
@@ -726,6 +809,9 @@ class DocumentSerializer(serializers.ModelSerializer):
         model = Document
         fields = ['id', 'name', 'file', 'folder', 'uploaded_at']
 
+    def to_internal_value(self, data):   # v1.62.0 people
+        return super().to_internal_value(_data_uri_files(data, 'file'))
+
 
 class FolderSerializer(serializers.ModelSerializer):
     subfolders = serializers.SerializerMethodField()
@@ -759,10 +845,44 @@ class BranchSerializer(serializers.ModelSerializer):
     policies = serializers.SerializerMethodField()  # Add this field
     branch_announcements = AnnouncementSerializer(many=True, read_only=True)
     branch_projects = ProjectSerializer(many=True, read_only=True)
+    # v1.62.1 (user request 2 Nov): a new branch takes its setup from the branch chosen here (empty: the first branch)
+    copy_setup_from = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    copy_setup_none = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = brnch_mstr
         fields = '__all__'
+
+    def create(self, validated_data):
+        from OrganisationManager.branch_setup import CHOICE, RESULT
+        src = validated_data.pop('copy_setup_from', None)
+        none = validated_data.pop('copy_setup_none', False)
+        t1 = CHOICE.set('none' if none else src)
+        t2 = RESULT.set(None)
+        try:
+            obj = super().create(validated_data)
+            obj._setup_copy = RESULT.get()
+        finally:
+            CHOICE.reset(t1)
+            RESULT.reset(t2)
+        return obj
+
+    def update(self, instance, validated_data):
+        validated_data.pop('copy_setup_from', None)
+        validated_data.pop('copy_setup_none', None)
+        return super().update(instance, validated_data)
+
+    def validate_copy_setup_from(self, v):
+        from Translations.i18n import tr
+        if v not in (None, '') and not brnch_mstr.objects.filter(pk=v).exists():
+            raise serializers.ValidationError(tr('That branch does not exist.'))
+        return v
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        if getattr(obj, '_setup_copy', None) is not None:
+            data['setup_copy'] = obj._setup_copy
+        return data
 
     def get_holidays(self, obj):
         from calendars.serializer import HolidaySerializer  # Ensure correct import path
@@ -850,3 +970,13 @@ class BranchGeoFenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = BranchGeoFence
         fields = '__all__'
+
+    def to_representation(self, instance):   # v1.62.0 people: the geofence list shows branch names, type in words
+        rep = super().to_representation(instance)
+        try:
+            rep['branch_names'] = ', '.join(b.branch_name for b in instance.branch.all())
+            rep['employee_count'] = instance.employee.count()
+            rep['location_type_label'] = instance.get_location_type_display() if instance.location_type else ''
+        except Exception:
+            pass
+        return rep

@@ -212,17 +212,24 @@ def assign_weekend_to_employees(employees, weekend_model):
     """
     Updates employee weekend calendar and yearly calendar.
     """
-    # Update emp_weekend_calendar for all
-    employees.update(emp_weekend_calendar=weekend_model)
-
-    # Now update yearly calendar for each employee
+    # v1.62.6 (item 22): each employee gets the calendar the one rule gives (calendars/workdays.py: most specific assignment
+    # wins) – before, the assignment saved last was written to every employee of its group (a branch assignment saved after a
+    # category assignment gave the category's employees the branch weekend).
+    from .workdays import WeekendRules
+    rules = WeekendRules()
     for emp in employees.iterator():
-        update_employee_yearly_calendar(emp, weekend_model)
+        m = rules.pick(emp)[0]
+        if m is None:
+            continue
+        if emp.emp_weekend_calendar_id != m.pk:
+            type(emp).objects.filter(pk=emp.pk).update(emp_weekend_calendar=m)
+        update_employee_yearly_calendar(emp, m)
 
 @receiver(m2m_changed, sender=assign_weekend.branch.through)
 @receiver(m2m_changed, sender=assign_weekend.department.through)
 @receiver(m2m_changed, sender=assign_weekend.category.through)
 @receiver(m2m_changed, sender=assign_weekend.employee.through)
+@receiver(m2m_changed, sender=assign_weekend.designation.through)   # v1.62.6 (item 22): designation assignments were not applied
 def update_weekend_assignment(sender, instance, action, **kwargs):
 
     if action not in ['post_add', 'post_remove', 'post_clear']:
@@ -347,7 +354,10 @@ def update_department_weekend_calendar(sender, instance, action, **kwargs):
         departments = instance.department.all()
         # logger.debug(f"Updating employees for departments: {[department.id for department in departments]}")
         for department in departments:
-            updated_count = emp_master.objects.filter(emp_dept_id=department.id).update(holiday_calendar=instance.weekend_model)
+            # v1.62.0: was .update(holiday_calendar=instance.weekend_model) – a WEEKEND calendar written into the employees'
+            # HOLIDAY calendar (by id): their public holidays pointed at a holiday calendar that does not exist. The weekend
+            # itself is set by update_weekend_assignment above.
+            updated_count = 0
             # logger.debug(f"Updated {updated_count} employees for department ID {department.id}")
 @receiver(m2m_changed, sender=assign_weekend.category.through)
 def update_category_weekend_calendar(sender, instance, action, **kwargs):
@@ -355,7 +365,8 @@ def update_category_weekend_calendar(sender, instance, action, **kwargs):
         categories = instance.category.all()
         # logger.debug(f"Updating employees for categories: {[category.id for category in categories]}")
         for category in categories:
-            updated_count = emp_master.objects.filter(emp_ctgry_id=category.id).update(holiday_calendar=instance.weekend_model)
+            # v1.62.0: was .update(holiday_calendar=instance.weekend_model) – see the department handler above
+            updated_count = 0
             # logger.debug(f"Updated {updated_count} employees for category ID {category.id}")
 @receiver(m2m_changed, sender=assign_holiday.employee.through)
 def update_employee_weekend_calendar(sender, instance, action, **kwargs):
@@ -690,10 +701,8 @@ class emp_leave_balance(models.Model):
         )
     def is_weekend(self, date):
         """ Check if the given date is a weekend based on the employee's weekend calendar """
-        if self.employee.emp_weekend_calendar:
-            # Assuming emp_weekend_calendar has a method is_weekend
-            return self.employee.emp_weekend_calendar.is_weekend(date)
-        return False
+        from .workdays import day as _wd   # v1.62.6 (item 22): the one rule, not the last-saved emp_weekend_calendar
+        return _wd(self.employee, date).off
 
     def is_holiday(self, date):
         """ Check if the given date is a holiday based on the employee's holiday calendar """
@@ -1171,6 +1180,7 @@ class employee_leave_request(models.Model):
         ('pending', 'Pending'),
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
+        ('cancelled', 'Cancelled'),   # v1.65.0 (item 83): an approved leave cancelled (was shown as Rejected) – no DB change (max_length 10)
     ]
     HALF_DAY_CHOICES = [
         ('first_half', 'First Half'),
@@ -1204,35 +1214,6 @@ class employee_leave_request(models.Model):
         )
     def clean(self):
         super().clean()
-        # --- PAYROLL LOCK VALIDATION ---
-        leave_month = self.start_date.month
-        leave_year = self.start_date.year
-        emp = self.employee
-
-        # 🔹 Case 1: Employee included directly in a payroll run
-        payroll_exists = PayrollRun.objects.filter(
-            month=leave_month,
-            year=leave_year,
-            employees=emp,
-            status__in=['processed', 'approved', 'paid']
-        ).exists()
-
-        # 🔹 Case 2: Payroll run is for branch/department/category where employee belongs
-        if not payroll_exists:
-            payroll_exists = PayrollRun.objects.filter(
-                month=leave_month,
-                year=leave_year,
-                branch=emp.emp_branch_id,
-                department=emp.emp_dept_id,
-                category=emp.emp_ctgry_id,
-                status__in=['processed', 'approved', 'paid']
-            ).exists()
-
-        if payroll_exists:
-            raise ValidationError(
-                f"Leave cannot be created/edited because payroll for "
-                f"{leave_month}/{leave_year} is already processed."
-            )
         # Validate if half-day leave is allowed for this leave type
         if self.dis_half_day and not self.leave_type.allow_half_day:
             raise ValidationError(f"{self.leave_type} does not allow half-day leaves.")
@@ -1247,15 +1228,31 @@ class employee_leave_request(models.Model):
         try:
             from LeavePolicy import engine as lp_engine
             managed = lp_engine.line_for(self.employee, self.leave_type_id) is not None
-            prev = type(self).objects.filter(pk=self.pk).values('start_date', 'end_date', 'leave_type_id', 'dis_half_day').first() if self.pk else None
+            prev = type(self).objects.filter(pk=self.pk).values('start_date', 'end_date', 'leave_type_id', 'dis_half_day', 'applied_days').first() if self.pk else None
             changed = prev is None or (prev['start_date'], prev['end_date'], prev['leave_type_id'], prev['dis_half_day']) != (self.start_date, self.end_date, self.leave_type_id, self.dis_half_day)
+            if prev is not None and getattr(self.leave_type, 'unit', 'days') == 'hours' and float(prev['applied_days'] or 0) != float(self.applied_days or 0):
+                changed = True   # v1.62.4 (item 81): the hours of a short leave changed – checked again (balance, at most 8 hours)
             if changed and self.status == 'pending':
                 lp_engine.validate_request(self)
+        except ImportError:
+            pass
+        # v1.62.5 (item 19): days of a payroll already made (after the leave rules, so a request that breaks a rule is not first
+        # asked about the payroll) – by the run's attendance window (a cut-off on the 25th: 26/11 belongs to December), every day of the request (not the month of the start date), with the choice "Add to <next month> salary" for
+        # HR / payroll (LeavePolicy/paid_period.py). Before: refused by the start date's month only ("payroll for 11/2026 is
+        # already processed"), leave of 26–30/11 refused with a 25th cut-off, days in a closed period from another month saved.
+        try:
+            from LeavePolicy import paid_period as _pp
+            _pp.check(self)
         except ImportError:
             pass
         #
         if self.leave_type.type == 'unpaid' or managed:
             return
+        if getattr(self, '_v1626_recount', False) and self.status == 'approved':
+            return   # v1.62.6 (item 22): a weekend-change recount of an approved leave – the balance moved with its ledger line
+        if getattr(self, '_v1650_part', False) and self.status == 'approved':
+            return   # v1.65.0 (item 83): part of an approved leave given back – the balance moves with its ledger line
+
         # Fetch or create leave balance for the employee
         leave_balance, created = emp_leave_balance.objects.get_or_create(
             employee=self.employee,
@@ -1295,7 +1292,18 @@ class employee_leave_request(models.Model):
                 raise ValidationError(f'Set up document numbering for leave requests of branch {getattr(branch, "branch_name", "")} '
                                       '(Settings › Document numbering).')
         # Calculate leave days based on start and end date
-        self.number_of_days = self.calculate_leave_days()
+        # v1.62.6 (item 22): an approved leave's day count is frozen – it was counted again on every save, so a later weekend /
+        # roster / holiday change silently changed number_of_days of a leave already taken from the balance. It is counted
+        # again only when its dates, type or half day change, or when HR chooses "Recalculate" in a weekend change
+        # (LeavePolicy/weekend_change.py sets _v1626_recount).
+        _prev = type(self).objects.filter(pk=self.pk).values('status', 'start_date', 'end_date', 'leave_type_id', 'dis_half_day',
+                                                             'number_of_days').first() if self.pk else None
+        if (_prev and _prev['status'] == 'approved' and self.status == 'approved' and not getattr(self, '_v1626_recount', False)
+                and (_prev['start_date'], _prev['end_date'], _prev['leave_type_id'], _prev['dis_half_day'])
+                == (self.start_date, self.end_date, self.leave_type_id, self.dis_half_day)):
+            self.number_of_days = _prev['number_of_days']
+        else:
+            self.number_of_days = self.calculate_leave_days()
         # If applied_days not set, initialize with requested number_of_days
         if not self.applied_days or self.applied_days == 0:
             self.applied_days = self.number_of_days
@@ -1320,6 +1328,18 @@ class employee_leave_request(models.Model):
             
     def calculate_leave_days(self):
         from .utils import get_employee_holiday_calendar,get_employee_weekend_calendar
+        if getattr(self.leave_type, 'unit', 'days') == 'hours':
+            # v1.62.4 (item 81): a type counted in hours (Short Leave (hours)) – the request's hours (given in applied_days by the
+            # request screens), so the balance, the leave ledger and the approval take hours; it was counted as 1 day
+            return float(self.applied_days or 0)
+        try:   # v1.65.0 (items 86, 87): the sandwich rule / calendar days except public holidays
+            from LeavePolicy import engine as _lpe, leave_rules as _lpr
+            _sp = _lpr.special_days(self.employee, self.leave_type, _lpe.line_for(self.employee, self.leave_type_id), self.start_date,
+                                    self.end_date, bool(self.dis_half_day))
+            if _sp is not None:
+                return float(len(_sp))
+        except ImportError:
+            pass
         leave_days = 0
         current_date = self.start_date
 
@@ -1335,44 +1355,18 @@ class employee_leave_request(models.Model):
         except ImportError:
             pass
 
-        # Weekend Calendar
-        assigned_weekend = get_employee_weekend_calendar(self.employee)
-        weekend_days = []
-
-        if assigned_weekend:
-            # map weekend model boolean fields to weekday names
-            weekend_days = [
-                day for day, value in {
-                    'monday': assigned_weekend.monday,
-                    'tuesday': assigned_weekend.tuesday,
-                    'wednesday': assigned_weekend.wednesday,
-                    'thursday': assigned_weekend.thursday,
-                    'friday': assigned_weekend.friday,
-                    'saturday': assigned_weekend.saturday,
-                    'sunday': assigned_weekend.sunday,
-                }.items() if value == 'leave'
-            ]
-
-        # Holiday Calendar
-        assigned_holiday = get_employee_holiday_calendar(self.employee)
-        holiday_dates = set()
-
-        if assigned_holiday:
-            # v1.15.1: every day of a holiday (Eid / National Day run over several days) – only the first day was
-            # skipped, so working-day leave over the 2nd day was counted and taken from the balance
-            for _s, _e in assigned_holiday.holiday_list.all().values_list('start_date', 'end_date'):
-                _d = _s
-                while _d <= (_e or _s):
-                    holiday_dates.add(_d)
-                    _d += timedelta(days=1)
+        # v1.62.6 (item 22): one answer per day (calendars/workdays.py): roster > shift override > shift pattern > weekend
+        # calendar (most specific assignment wins, category counted). Before: the weekend calendar only (a branch weekend
+        # won over a category weekend; rosters and shift patterns were not looked at, unlike the leave policy's count).
+        from .workdays import Plan
+        _plan = Plan(self.start_date, self.end_date, [self.employee_id])
 
         # -------------------- DATE LOOP --------------------
         while current_date <= self.end_date:
 
-            weekday_name = current_date.strftime('%A').lower()
-
-            is_weekend_day = weekday_name in weekend_days
-            is_holiday_day = current_date in holiday_dates
+            _f = _plan.day(self.employee, current_date)
+            is_weekend_day = _f.off
+            is_holiday_day = _f.holiday and not _f.working   # a rostered shift on a public holiday is a working day
 
             # ---------- Weekend Filter ----------
             if is_weekend_day and not include_weekend:
@@ -1836,10 +1830,20 @@ class LeaveApproval(models.Model):
     is_escalation = models.BooleanField(default=False)
 
     def approve(self, note=None, approved_days=None):
+        # v1.62.5 (item 19): one step – a last approval refused by the request (salary of its days already paid) leaves this level
+        # waiting; before, the level was saved Approved and the request stayed pending
+        with transaction.atomic():
+            return self._approve(note=note, approved_days=approved_days)
+
+    def _approve(self, note=None, approved_days=None):
         self.status = self.APPROVED
         if note:
             self.note = note
         if approved_days is not None:
+            if self.leave_request and approved_days <= 0:
+                # v1.62.4 (item 80): 0 approved days was saved as 0 and the request then counted all its days ("not set" = all)
+                from Translations.i18n import tr
+                raise ValueError(tr('Approved days must be more than 0. To approve no day, reject the request.'))
             self.approved_days = approved_days
             if self.leave_request:
                 if approved_days > (self.leave_request.applied_days or self.leave_request.number_of_days):
@@ -3133,8 +3137,8 @@ class Attendance(models.Model):
         return end - start
 
     def is_weekend(self):
-        from calendars.utils import get_employee_weekend_days
-        return self.date.strftime("%A") in get_employee_weekend_days(self.employee)
+        from calendars.workdays import day as _wd   # v1.62.6 (item 22): roster > override > pattern > weekend calendar
+        return _wd(self.employee, self.date).off
 
     def is_holiday(self):
         from calendars.utils import get_employee_holidays
@@ -3156,8 +3160,8 @@ class Attendance(models.Model):
     # # calendars/models.py (inside Attendance)
 
     def is_weekend(self):
-        from .utils import get_employee_weekend_days
-        return self.date.strftime("%A") in get_employee_weekend_days(self.employee)
+        from .workdays import day as _wd   # v1.62.6 (item 22): roster > override > pattern > weekend calendar
+        return _wd(self.employee, self.date).off
 
     def is_holiday(self):
         from .utils import get_employee_holidays
@@ -3188,7 +3192,7 @@ def handle_rejoining(sender, instance, **kwargs):
         end_date__lt=attendance_date,
         end_date__gte=attendance_date - timedelta(days=60),
         employeerejoining__isnull=True
-    ).exclude(reason__startswith='Late return after').order_by('-end_date')
+    ).exclude(reason__startswith='Late return after').exclude(leave_type__unit='hours').order_by('-end_date')   # v1.62.4 (item 81): no return from a short leave in hours
 
     if not leave_requests.exists():
         return

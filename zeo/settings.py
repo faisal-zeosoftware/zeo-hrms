@@ -167,7 +167,7 @@ SESSION_COOKIE_DOMAIN = '.zeo.com'
 SESSION_COOKIE_SECURE = True
 MEDIA_URL = '/media/'
 ZEO_MEDIA_LOGIN = env('ZEO_MEDIA_LOGIN', 'true').lower() not in ('0', 'false', 'no', 'off')   # v1.56.1: files need a login
-ZEO_MEDIA_ACCEL = env('ZEO_MEDIA_ACCEL', 'false' if DEBUG else 'true').lower() not in ('0', 'false', 'no', 'off')   # nginx sends the file
+ZEO_MEDIA_ACCEL = env('ZEO_MEDIA_ACCEL', 'true' if DEBUG else 'true').lower() not in ('0', 'false', 'no', 'off')   # nginx sends the file
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 LOGGING = {
     'version': 1,

@@ -1,5 +1,6 @@
 """v1.12.0 – shift reminders: the day before a published shift every employee gets a notice (in-app + e-mail).
 Celery beat entry (zeo/settings.py, see INTEGRATION.md): 'shift-reminders-daily' → ShiftPlanner.tasks.shift_reminders."""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 from datetime import date, timedelta
 
@@ -34,7 +35,7 @@ def send_reminders(on=None):
 @shared_task
 def shift_reminders():
     out = {}
-    for t in get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True):
+    for t in get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True):
         try:
             with schema_context(t):
                 out[t] = send_reminders()

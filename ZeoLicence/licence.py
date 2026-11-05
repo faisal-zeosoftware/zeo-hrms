@@ -162,7 +162,8 @@ def usage():
     from django.apps import apps as A
     from django_tenants.utils import schema_context
     from UserManagement.models import CustomUser, company as Company
-    comps = list(Company.objects.exclude(schema_name__in=('public', 'zeo_template')))
+    from ZeoCloud.lifecycle import not_deleted   # v1.67.1 (companies) a deleted company frees its licence place at once
+    comps = list(not_deleted(Company.objects.exclude(schema_name__in=('public', 'zeo_template'))))
     emps = 0
     for c in comps:
         try:

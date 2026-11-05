@@ -1,5 +1,6 @@
 """Asset Management jobs every 15 minutes (v1.34.0): helpdesk escalation, e-mail to ticket, status of work orders handed
 over to the Maintenance app. Daily jobs (plans, overdue returns, HR sync) run with the other kit apps (ZeoApps.tasks.daily)."""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import importlib
 import logging
 
@@ -17,7 +18,7 @@ def frequent(schema=None):
     from .mailin import check_mailbox
     app = REGISTRY['ZeoAssets']
     out = {}
-    ts = get_tenant_model().objects.exclude(schema_name='public')
+    ts = get_tenant_model().objects.exclude(schema_name__in=_zeo_off())
     if schema:
         ts = ts.filter(schema_name=schema)
     for t in ts:

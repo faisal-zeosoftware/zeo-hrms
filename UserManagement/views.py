@@ -85,6 +85,11 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
     def tenants(self, request, pk=None):
         user_profile = self.get_object()
         tenants = user_profile.tenants.all()
+        try:   # v1.67.1 (companies) inactive and deleted companies are not in the company menu
+            from ZeoCloud.lifecycle import live
+            tenants = live(tenants)
+        except Exception:
+            pass
 
         # v1.28.1: this is the top bar's company / branch menu – it wants the notification counts (the plain
         # /users/api/user/<id>/ no longer computes them unless ?notifications=1)
@@ -287,6 +292,22 @@ class CompanyViewSet(viewsets.ModelViewSet):
     queryset = company.objects.all()
     serializer_class = CompanySerializer
 
+    def get_queryset(self):
+        """v1.67.1 (companies): inactive and deleted companies are not listed, opened or changed here."""
+        qs = super().get_queryset()
+        try:
+            from ZeoCloud.lifecycle import live
+            return live(qs)
+        except Exception:
+            return qs
+
+    def destroy(self, request, *args, **kwargs):
+        """v1.67.1 (companies): a plain DELETE never removes a company (before, it deleted the company row at once – no
+        check, no backup). Delete company on Choose a company makes a backup, keeps it 30 days and asks for the name."""
+        from Translations.i18n import tr
+        return Response({'detail': tr('A company is deleted from Choose a company › ⋯ › Delete company (a backup is made first and it is kept 30 days).')},
+                        status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
     def create(self, request, *args, **kwargs):
         """v1.26.0: the company is created in the background (it took 6–7 minutes inside the request and timed out).
         Answers 202 {job, schema}; poll GET /users/api/company-jobs/<job>/. Send sync=1 to wait (scripts)."""
@@ -457,13 +478,30 @@ class SendOTPView(APIView):
         user.is_2fa_verified = False
         user.save()
 
-        # Send email
-        send_mail(
-            "Your OTP Code",
-            f"Your OTP is {otp}. It is valid for 5 minutes.",
-            "no-reply@example.com",
-            [user.email]
-        )
+        # v1.67.1 (sign-in code fix): the code was sent from the made-up address "no-reply@example.com" through the server's
+        # .env mail account only; mail servers that check the sender refuse it and the screen only said "Try again in a minute".
+        # Now: the company's own mail server (Settings › E-mail configuration) with its own address, else the server's default
+        # sender; a user without an e-mail address and a refused e-mail get a clear reason.
+        if not (user.email or '').strip():
+            return Response({"error": "This user has no e-mail address for the sign-in code. Ask your administrator to add one."}, status=400)
+        try:
+            from django.core.mail import EmailMessage
+            try:
+                from ZeoAdmin.schedules import mail_connection
+                conn, sender = mail_connection()
+            except Exception:   # no company mail table here (e.g. the public schema) – the server's default sender
+                from django.core.mail import get_connection
+                from django.conf import settings as _s
+                conn, sender = get_connection(), _s.DEFAULT_FROM_EMAIL
+            EmailMessage("Your ZEO sign-in code", f"Your sign-in code is {otp}. It is valid for 5 minutes. Do not share it.",
+                         from_email=sender, to=[user.email], connection=conn).send()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).exception('sign-in code e-mail')
+            user.otp = None
+            user.save(update_fields=['otp'])
+            return Response({"error": f"The code could not be e-mailed ({str(e)[:120]}). Ask your administrator to check Settings › E-mail configuration."},
+                            status=502)
 
         return Response({"message": "OTP sent successfully"})
 from django.contrib.auth import authenticate
@@ -525,16 +563,18 @@ class VerifyOTPView(APIView):
             pass
 
         # TENANTS LIST
+        from ZeoCloud.lifecycle import live as _live   # v1.67.1 (companies) inactive / deleted companies are not offered
+        _tl = list(_live(user.tenants.all()))
         tenants_data = [
             {
                 "id": tenant.id,
                 "name": tenant.name,
                 "schema_name": tenant.schema_name
             }
-            for tenant in user.tenants.all()
+            for tenant in _tl
         ]
 
-        tenant_ids = [tenant.schema_name for tenant in user.tenants.all()]
+        tenant_ids = [tenant.schema_name for tenant in _tl]
 
         # Final Response
         return Response({
@@ -926,7 +966,25 @@ class MyCompaniesView(APIView):
         u = request.user
         labels = dict(company.INDUSTRY_CHOICES)
         out = []
+        try:   # v1.67.1 (companies) inactive: only its owner / administrators see it (marked); deleted: nobody
+            from ZeoCloud import lifecycle as _life
+            _states = _life.state_map()
+        except Exception:
+            _life, _states = None, {}
         for c in u.tenants.exclude(schema_name='public').select_related('country').order_by('name'):
+            _st = _states.get(c.schema_name, 'active')
+            _mng = bool(_life and _st != 'deleted' and _life.can_manage(u, c))
+            if _st == 'deleted' or (_st == 'inactive' and not _mng):
+                continue
+            if _st == 'inactive':
+                _lf = _life.life_of(c, create=False)
+                _h = next((h for h in reversed((_lf.history if _lf else []) or []) if h.get('action') == 'made_inactive'), None)
+                out.append({'id': c.id, 'name': c.name, 'schema_name': c.schema_name, 'country': getattr(c.country, 'country_name', '') or '',
+                            'city': c.city or '', 'industry': labels.get(c.industry_type or '', ''), 'state_label': '', 'logo': '', 'apps': [],
+                            'neutralized': False, 'copy_of': '', 'state': 'inactive', 'can_manage': True,
+                            'inactive_by': (_h or {}).get('by', ''), 'inactive_at': (_h or {}).get('at', ''),
+                            'inactive_db': _st == 'inactive' and not (_lf and _lf.state == 'inactive')})
+                continue
             apps, neutral, origin = [], False, ''
             try:
                 with schema_context(c.schema_name):
@@ -947,7 +1005,8 @@ class MyCompaniesView(APIView):
                         'country': getattr(c.country, 'country_name', '') or '', 'city': c.city or '',
                         'industry': labels.get(c.industry_type or '', ''),
                         'state_label': c.country.get_state_label() if c.country_id and hasattr(c.country, 'get_state_label') else '',
-                        'logo': logo, 'apps': apps, 'neutralized': neutral, 'copy_of': origin})
+                        'logo': logo, 'apps': apps, 'neutralized': neutral, 'copy_of': origin,
+                        'state': 'active', 'can_manage': _mng})   # v1.67.1 (companies)
         res = {'user': {'id': u.pk, 'username': u.username, 'email': u.email, 'name': ' '.join(x for x in [u.first_name, u.last_name] if x) if hasattr(u, 'first_name') else ''},
                'can_create': bool(u.is_superuser), 'companies': out}
         try:   # v1.26.0 invitations of this login to other companies
@@ -995,7 +1054,16 @@ class DuplicateCompanyView(APIView):
         name = ' '.join(str(request.data.get('name') or '').split())[:100]
         if len(name) < 2:
             return Response({'detail': 'Enter a name for the copy.', 'name': ['Enter a name for the copy.']}, status=400)
-        if company.objects.filter(name__iexact=name).exists():
+        try:   # v1.67.1 (companies) unique among the companies of this user / account only; an inactive source is not copied
+            from ZeoCloud import lifecycle as _life
+            if not _life.is_live(src.schema_name):
+                return Response({'detail': 'This company is inactive – make it active first.'}, status=409)
+            from ZeoCloud.models import AccountCompany
+            _l = AccountCompany.objects.select_related('account').filter(company=src).first()
+            clash = _life.name_clash(name, user=u, account=_l.account if _l else None)
+        except Exception:
+            clash = company.objects.filter(name__iexact=name).first()
+        if clash is not None:
             return Response({'detail': 'A company with this name exists already.', 'name': ['A company with this name exists already.']}, status=400)
         from ZeoApps.duplicate import start
         job, schema = start(src, name, bool(request.data.get('neutralize', True)), u)

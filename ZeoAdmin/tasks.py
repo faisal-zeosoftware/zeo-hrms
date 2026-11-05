@@ -4,6 +4,7 @@
     'zeoadmin-heartbeat'  every 5 minutes  – the scheduler's heartbeat (Health checks)
     'zeoadmin-daily'      every day 00:20  – out-of-office periods starting today hand over the waiting approvals; old sign-in sessions pruned; data retention (v1.53.0)
 """
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 
 from celery import shared_task
@@ -14,7 +15,7 @@ log = logging.getLogger(__name__)
 
 def _each(fn, table, schema=None):
     out = {}
-    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
     for sch in schemas:
         try:
             with schema_context(sch):

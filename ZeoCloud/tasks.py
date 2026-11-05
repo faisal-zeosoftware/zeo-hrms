@@ -12,9 +12,21 @@ def run_daily(today=None):
     from django.utils import timezone
     from .models import Account
     from .services import cloud_on, event, status_of, tr
-    if not cloud_on():
-        return 0
     d = today or timezone.localdate()
+    try:   # v1.67.1 (companies) deleted companies past their 30 days are removed – on every server, ZEO Cloud or not
+        from .lifecycle import purge_due
+        res = purge_due(d)
+        if res['companies'] or res['backups_removed']:
+            log.info('deleted companies removed: %s; old deletion backups removed: %s', res['companies'], res['backups_removed'])
+    except Exception:
+        log.exception('remove deleted companies')
+    if not cloud_on():
+        try:   # v1.67.1 (companies) own databases removed 30 days ago are dropped (also when ZEO Cloud was switched off)
+            from . import owndb
+            owndb.drop_retired(d)
+        except Exception:
+            log.exception('drop retired databases')
+        return 0
     sent = 0
     for acc in Account.objects.exclude(state='cancelled').select_related('plan'):
         st = status_of(acc, d)
@@ -31,6 +43,7 @@ def run_daily(today=None):
             event(acc, 'reminder', f'E-mail to the owner: {msg[0]}')
             sent += 1
     # v1.24.0: old copies of moved companies are removed after 7 days; shared rows refreshed in own databases
+    # v1.67.1 (companies): a removed / deleted own database is dropped 30 days after it was removed (drop_retired)
     try:
         from . import owndb
         from .models import DatabaseServer

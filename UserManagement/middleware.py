@@ -121,6 +121,9 @@ class SchemaMiddleware(MiddlewareMixin):
         try:
             TenantModel = get_tenant_model()
             tenant = TenantModel.objects.get(schema_name=schema_name)
+            refused = _company_closed(schema_name)   # v1.67.1 (companies) an inactive or deleted company cannot be used
+            if refused is not None:
+                return refused
             request.tenant = tenant  # Attach the tenant to the request
             with schema_context(schema_name):
                 response = self.get_response(request)
@@ -129,3 +132,21 @@ class SchemaMiddleware(MiddlewareMixin):
             return JsonResponse({"error": "Invalid schema name"}, status=400)
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=400)
+
+def _company_closed(schema_name):
+    """v1.67.1 (companies): 403 for every request of an inactive or deleted company (sign-in, screens, devices, the API)."""
+    try:
+        from ZeoCloud.lifecycle import state_of
+        st = state_of(schema_name)
+    except Exception:
+        return None
+    if st == 'active':
+        return None
+    try:
+        from Translations.i18n import tr
+    except Exception:
+        def tr(t, *a):
+            return t
+    msg = tr('This company is inactive. Its owner or a company administrator can make it active again on Choose a company.') \
+        if st == 'inactive' else tr('This company is not available.')
+    return JsonResponse({'detail': msg, 'error': msg, 'company_state': 'inactive' if st == 'inactive' else 'closed'}, status=403)

@@ -1,4 +1,5 @@
 """Celery task (optional beat entry): remind employees about company policies they have not acknowledged in time."""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 from datetime import timedelta
 
 from celery import shared_task
@@ -10,7 +11,7 @@ def remind_unacknowledged_policies():
     from django.utils import timezone
     from django_tenants.utils import get_tenant_model, schema_context
     out = {}
-    for t in get_tenant_model().objects.exclude(schema_name='public'):
+    for t in get_tenant_model().objects.exclude(schema_name__in=_zeo_off()):
         with schema_context(t.schema_name):
             try:
                 apps.get_model('OrgStructure', 'PolicyVersion')

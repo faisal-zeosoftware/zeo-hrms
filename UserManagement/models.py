@@ -74,6 +74,14 @@ class company(TenantMixin):
             if existing_schemas.exists():
                 count = existing_schemas.count()
                 self.schema_name = f"{base_schema_name}{count + 1}"
+                # v1.67.1 (companies): two companies may share a name now – take the next free internal name (a deleted
+                # company keeps its schema 30 days; "alnoor", "alnoor3" gave "alnoor3" a second time)
+                from django_tenants.utils import schema_exists as _sx
+                n = count + 1
+                while type(self).objects.filter(schema_name=self.schema_name).exists() or _sx(self.schema_name) or \
+                        Domain.objects.filter(domain=f"{self.schema_name}.localhost").exists():
+                    n += 1
+                    self.schema_name = f"{base_schema_name}{n}"
 
         super().save(*args, **kwargs)  # Save the company and create the schema
 

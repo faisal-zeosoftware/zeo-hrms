@@ -62,7 +62,9 @@ def _schema_for(name):
     from .models import company as Company
     base = slugify(re.sub(r'[^a-zA-Z0-9]', '', name or '')) or 'company'
     schema, n = base, 1
-    while Company.objects.filter(schema_name=schema).exists():
+    from django_tenants.utils import schema_exists   # v1.67.1 (companies) also a schema / domain left by another company
+    from .models import Domain
+    while Company.objects.filter(schema_name=schema).exists() or schema_exists(schema) or Domain.objects.filter(domain=f'{schema}.localhost').exists():
         n += 1
         schema = f'{base}{n}'
     return schema

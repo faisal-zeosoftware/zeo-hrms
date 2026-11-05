@@ -40,7 +40,8 @@ def _tr(text, *a):
 def _server_companies():
     from UserManagement.models import company as Company
     out = []
-    for c in Company.objects.exclude(schema_name__in=TEMPLATE_SCHEMAS).order_by('name'):
+    from ZeoCloud.lifecycle import live   # v1.67.1 (companies) inactive / deleted companies are left out
+    for c in live(Company.objects.exclude(schema_name__in=TEMPLATE_SCHEMAS)).order_by('name'):
         out.append(c)
     return out
 
@@ -73,7 +74,8 @@ def groups_for(user):
             if not role:
                 continue
             feat = bool(acc.plan.group_features) if acc.plan_id else False
-            comps = [l.company for l in company_links(acc)]
+            from ZeoCloud.lifecycle import is_live   # v1.67.1 (companies)
+            comps = [l.company for l in company_links(acc) if is_live(l.company.schema_name)]
             out.append({'key': f'acc{acc.pk}', 'name': acc.name, 'role': role, 'features': feat, 'account_id': acc.pk,
                         'plan': acc.plan.name if acc.plan_id else '', 'companies': comps,
                         'locked': '' if feat else _tr('Available in Premium')})

@@ -41,10 +41,12 @@ def _sid(request):
 def login_payload(user, request, how, otp=False):
     t = S.tokens(user, request, how, otp=otp)
     rules = S.strictest(user)
+    from .lifecycle import live   # v1.67.1 (companies) inactive / deleted companies are not offered
+    tl = list(live(user.tenants.all()))
     return {'access': t['access'], 'refresh': t['refresh'], 'user_id': user.pk, 'username': user.username, 'email': user.email,
             'is_ess': bool(user.is_ess), 'is_superuser': bool(user.is_superuser), 'must_change_password': getattr(user, 'must_change_password', False),
-            'tenants': [{'id': x.id, 'name': x.name, 'schema_name': x.schema_name} for x in user.tenants.all()],
-            'tenant_id': [x.schema_name for x in user.tenants.all()], 'password_expired': S.password_expired(user),
+            'tenants': [{'id': x.id, 'name': x.name, 'schema_name': x.schema_name} for x in tl],
+            'tenant_id': [x.schema_name for x in tl], 'password_expired': S.password_expired(user),
             'setup_2fa': S.needs_2fa(user, rules), 'two_factor_done': True}
 
 

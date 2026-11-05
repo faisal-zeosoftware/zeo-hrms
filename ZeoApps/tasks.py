@@ -1,5 +1,6 @@
 """v1.21.0 – daily jobs of the CRM, Property and Maintenance apps (reservation expiry, renewal reminders, cheques to deposit,
 late first contact, expired offers, preventive jobs, late jobs) for every company where the app is active."""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import importlib
 import logging
 
@@ -16,7 +17,7 @@ def daily():
     out = {}
     for label in KIT:
         importlib.import_module(f'{label}.app')
-    for t in get_tenant_model().objects.exclude(schema_name='public'):
+    for t in get_tenant_model().objects.exclude(schema_name__in=_zeo_off()):
         with schema_context(t.schema_name):
             for label in KIT:
                 app = REGISTRY[label]

@@ -2,6 +2,7 @@
     'learning-certificate-expiry-alerts': {'task': 'LearningPlus.tasks.certificate_expiry_alerts', 'schedule': crontab(hour=7, minute=5)},
     'learning-nomination-escalations':    {'task': 'LearningPlus.tasks.nomination_escalations', 'schedule': crontab(hour=8, minute=5)},
 """
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 
 from celery import shared_task
@@ -11,7 +12,7 @@ log = logging.getLogger(__name__)
 
 
 def _tenants():
-    return list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    return list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
 
 
 def _each_tenant(fn, *args, **kwargs):

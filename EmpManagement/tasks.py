@@ -1,4 +1,5 @@
 # EmpManagement/tasks.py
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 from celery import shared_task
 from django.utils import timezone
 from datetime import date, timedelta
@@ -26,7 +27,7 @@ from .utils import get_employee_context,send_notification_email
 @shared_task
 def send_document_expiry_notifications_for_all_tenants():
     try:
-        tenants = get_tenant_model().objects.exclude(schema_name='public')
+        tenants = get_tenant_model().objects.exclude(schema_name__in=_zeo_off())
         print(f"[TENANT TASK] Found {tenants.count()} tenants")
 
         for tenant in tenants:

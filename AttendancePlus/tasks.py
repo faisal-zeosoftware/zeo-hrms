@@ -2,6 +2,7 @@
     'attendance-plus-nightly': {'task': 'AttendancePlus.tasks.attendance_nightly', 'schedule': crontab(hour=2, minute=15)},
     'attendance-plus-missing-punch': {'task': 'AttendancePlus.tasks.missing_punch_check', 'schedule': crontab(minute=20)},
 """
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 
 from celery import shared_task
@@ -12,7 +13,7 @@ log = logging.getLogger(__name__)
 
 def _each_tenant(fn, schema=None, *args):
     out = {}
-    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
     for t in schemas:
         try:
             with schema_context(t):

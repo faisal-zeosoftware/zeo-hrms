@@ -1,3 +1,4 @@
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 from celery import shared_task
 from .utils import send_payslip_email 
 from .models import (Payslip,AdvanceSalaryApproval,AdvanceSalaryEmailTemplate,AdvanceSalaryNotification,AdvanceCommonWorkflow,
@@ -118,7 +119,7 @@ def get_all_tenant_schemas():
     # Implement this function based on your tenant management system 
     TenantModel = get_tenant_model() 
     # v1.56.1 not the public schema (it has no HR tables – every run logged "Error processing tenant public")
-    return TenantModel.objects.exclude(schema_name='public').values_list('schema_name', flat=True)
+    return TenantModel.objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True)
 
 @shared_task
 def advance_salary_escalate_approval_task(approval_id, schema_name):

@@ -51,7 +51,12 @@ class CustomUserManager(BaseUserManager):
         from UserManagement.models import company
         from UserManagement.utils import grant_admin_access
 
-        for tenant in company.objects.exclude(schema_name="public"):
+        try:   # v1.67.1 (companies) a deleted company is not given to a new system administrator
+            from ZeoCloud.lifecycle import not_deleted
+            _all = not_deleted(company.objects.exclude(schema_name="public"))
+        except Exception:
+            _all = company.objects.exclude(schema_name="public")
+        for tenant in _all:
             user.tenants.add(tenant)
             grant_admin_access(user, tenant)
 

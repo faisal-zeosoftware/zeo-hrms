@@ -92,12 +92,20 @@ class Command(BaseCommand):
         # 4. company (saving it creates the schema and all company tables – takes a minute)
         # v1.62.0: the same name ignoring case and spacing is the same company (as on the Companies screen, v1.28.1) – before, a
         # second company "FRESH  install trading llc" was created next to "Fresh Install Trading LLC"
+        # v1.67.1 (companies, like Odoo): a company name is unique only among the companies of one user / account – the
+        # "same name = same company, run again" rule applies only when the given administrator already has that company;
+        # another user's company with the same name is not touched and a new company is made. Deleted companies never count.
         o['company'] = ' '.join(str(o['company'] or '').split())
-        t = company.objects.filter(name__iexact=o['company']).first()
+        from ZeoCloud import lifecycle as _life
+        t = _life.name_clash(o['company'], user=user)
         if t is not None and o.get('schema') and t.schema_name != o['schema']:
             raise CommandError(f'A company named "{t.name}" already exists (schema "{t.schema_name}"). Use a different name, '
                                f'or leave out --schema to set up that company again.')
-        t = t or (company.objects.filter(schema_name=o['schema']).first() if o.get('schema') else None)
+        if t is None and o.get('schema'):
+            t = company.objects.filter(schema_name=o['schema']).first()
+            if t is not None and _life.state_of(t.schema_name) == 'deleted':
+                raise CommandError(f'The schema "{o["schema"]}" belongs to a deleted company (kept 30 days). Choose another schema, '
+                                   f'or restore it: python manage.py restore_company {o["schema"]}')
         is_new = t is None
         # v1.56.1: a re-run ("safe to run again") left out --apps and the default hrms,projects switched Payroll / other core apps
         # of an existing company off. New company: default hrms,projects as before; existing company: apps only when --apps is given.

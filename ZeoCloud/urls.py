@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views as V
+from . import lifecycle_views as LV   # v1.67.1 (companies)
 
 urlpatterns = [
     path('api/signup/plans/', V.SignupPlansView.as_view()),
@@ -31,4 +32,9 @@ urlpatterns = [
     path('api/console/customers/<int:pk>/moves/', V.ConsoleMovesView.as_view()),
     path('api/console/customers/<int:pk>/change-plan/', V.ConsoleChangePlanView.as_view()),
     path('api/console/moves/<int:pk>/', V.ConsoleMoveView.as_view()),
+    # v1.67.1 (companies) make inactive / active, delete (kept 30 days), the backup download, restore (Adept)
+    path('api/companies/<int:pk>/life/', LV.CompanyLifeView.as_view()),
+    path('api/companies/<int:pk>/delete/', LV.CompanyDeleteView.as_view()),
+    path('api/deleted-backups/<str:token>/', LV.DeletedBackupView.as_view()),
+    path('api/console/deleted/', LV.ConsoleDeletedView.as_view()),
 ]

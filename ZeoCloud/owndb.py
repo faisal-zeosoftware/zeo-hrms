@@ -29,6 +29,7 @@ from .models import Account, AccountCompany, DatabaseServer, MoveJob, PlatformAd
 
 log = logging.getLogger(__name__)
 KEEP_DAYS = 7
+RETIRED_DAYS = 30   # v1.67.1 (companies) a removed / deleted own database is dropped 30 days later (was right after the old copies, "7 days")
 CONTROL = 'control'
 SAFE = re.compile(r'^[a-z_][a-z0-9_]{0,62}$')
 
@@ -208,14 +209,25 @@ def databases_of(account, include_retired=False):
 
 
 def _next_key(account):
-    """acc12 for the first database of account 12, then acc12_2, acc12_3 … (a retired key is used again)."""
+    """acc12 for the first database of account 12, then acc12_2, acc12_3 …
+    v1.67.1 (companies): a retired key is NOT used again – a retired database is kept 30 days for a restore (before, a new
+    database took the key of a removed one and so its PostgreSQL database too). The row goes when the database is dropped."""
     n = 1
     while True:
         key = f'acc{account.id}' + (f'_{n}' if n > 1 else '')
         srv = DatabaseServer.objects.filter(key=key).first()
-        if srv is None or (srv.state == 'retired' and srv.account_id == account.id):
+        if srv is None and not _pg_db_exists(db_name_for(account, n)):
             return key, n
         n += 1
+
+
+def _pg_db_exists(name):
+    try:
+        with conn(CONTROL).cursor() as cur:
+            cur.execute('SELECT 1 FROM pg_database WHERE datname = %s', [name])
+            return cur.fetchone() is not None
+    except Exception:
+        return False
 
 
 # v1.62.1 the steps of a new database (the % of Add database, and the first part of Duplicate database)
@@ -427,22 +439,23 @@ def set_default_db(account, key, by=None):
 
 
 def remove_db(account, key, by=None):
-    """v1.26.0: an empty database that is not the default one is retired (dropped by the daily job after 7 days)."""
+    """v1.26.0: an empty database that is not the default one is retired (dropped by the daily job after 30 days –
+    v1.67.1 (companies), was 7). A database with companies: lifecycle.delete_database (backup, companies deleted)."""
     from . import services as S
     srv = DatabaseServer.objects.filter(account=account, key=key).exclude(state='retired').first()
     if srv is None:
         raise MoveError('Not found.')
     if key == account.db_alias:
         raise MoveError('This is the default database – make another one the default first.')
-    if AccountCompany.objects.filter(db_alias=key).exists():
-        raise MoveError('Move or archive the companies of this database first.')
+    if AccountCompany.objects.filter(db_alias=key).exclude(company__zeo_life__state='deleted').exists():
+        raise MoveError('This database has companies – use Delete database (a backup is made and its companies are deleted with it).')
     if MoveJob.objects.filter(target=key, state__in=('waiting', 'running')).exists() or dup_running(key):
         raise MoveError('A copy or a move into this database is still running.')
-    srv.state = 'retired'
-    srv.save(update_fields=['state'])
+    srv.state, srv.retired_on, srv.retired_by = 'retired', timezone.localdate(), by if getattr(by, 'pk', None) else None   # v1.67.1 (companies)
+    srv.save(update_fields=['state', 'retired_on', 'retired_by'])
     dbrouting.forget()
     forget_db(key)
-    S.event(account, 'database', f'Database removed – {srv.label or srv.name} (deleted after 7 days)', by=by)
+    S.event(account, 'database', f'Database removed – {srv.label or srv.name} (deleted after {RETIRED_DAYS} days)', by=by)
     return srv
 
 
@@ -502,7 +515,8 @@ def start_duplicate_db(account, source_key, label, by=None, neutralize=False, su
         raise MoveError('This database is not ready.')
     if dup_running(source_key):
         raise MoveError('This database is already being copied.')
-    links = list(AccountCompany.objects.select_related('company').filter(account=account, db_alias=source_key, archived=False))
+    links = list(AccountCompany.objects.select_related('company').filter(account=account, db_alias=source_key, archived=False)
+                 .exclude(company__zeo_life__state='deleted'))   # v1.67.1 (companies) a deleted company is not copied
     if not links:
         raise MoveError('This database has no companies to copy.')
     job = uuid.uuid4().hex[:16]
@@ -575,7 +589,8 @@ def _run_duplicate_db(job, account_id, source_key, label, by_id, neutralize, P=N
                 if comp is None:
                     raise MoveError('The company no longer exists.')
                 name, n = row['copy'], 2
-                while Company.objects.filter(name__iexact=name).exists():
+                from .lifecycle import name_clash   # v1.67.1 (companies) unique within the account only
+                while name_clash(name, account=account) is not None:
                     name = f"{row['copy'][:95]} {n}"
                     n += 1
                 sub = f'{job}-{row["id"]}'
@@ -874,17 +889,32 @@ def retire_empty():
         # account left Premium (hosting shared) – an explicit Remove retires it at once (remove_db)
         if not AccountCompany.objects.filter(db_alias=srv.key).exists() and srv.account and srv.account.db_alias != srv.key \
                 and srv.account.hosting != 'own':
-            srv.state = 'retired'
-            srv.save(update_fields=['state'])
+            srv.state, srv.retired_on = 'retired', timezone.localdate()   # v1.67.1 (companies)
+            srv.save(update_fields=['state', 'retired_on'])
     dbrouting.forget()
 
 
 def drop_retired(today=None):
-    """Drop retired own databases whose old copies have all expired (cloud_daily)."""
+    """Drop retired own databases whose old copies have all expired (cloud_daily).
+    v1.67.1 (companies): only RETIRED_DAYS (30) days after it was retired (a server administrator can restore it until
+    then); the companies deleted with it are removed first (lifecycle.purge_company)."""
     today = today or timezone.localdate()
     out = []
     for srv in DatabaseServer.objects.filter(state='retired'):
+        if srv.retired_on is None:   # retired before 1.67.1: the 30 days start now
+            srv.retired_on = timezone.localdate()
+            srv.save(update_fields=['retired_on'])
+        if today <= srv.retired_on + timedelta(days=RETIRED_DAYS):
+            continue
         if MoveJob.objects.filter(source=srv.key, keep_until__gte=today).exclude(old_copy='').exists():
+            continue
+        try:
+            from .lifecycle import purge_company
+            from .models import CompanyLife
+            for life in CompanyLife.objects.filter(state='deleted', company__cloud__db_alias=srv.key).select_related('company'):
+                purge_company(life, today)
+        except Exception:
+            log.exception('remove the companies of retired database %s', srv.name)
             continue
         if AccountCompany.objects.filter(db_alias=srv.key).exists():
             continue

@@ -1,5 +1,6 @@
 """v1.45.0 – read the reply mailbox of every company (replies to the messages sent from records). In CELERY_BEAT_SCHEDULE:
     'chatter-replies': {'task': 'Chatter.tasks.check_reply_mailboxes', 'schedule': crontab(minute='*/5')},"""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 
 from celery import shared_task
@@ -11,7 +12,7 @@ log = logging.getLogger(__name__)
 @shared_task
 def check_reply_mailboxes(schema=None):
     out = {}
-    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
     for sch in schemas:
         try:
             with schema_context(sch):
@@ -30,7 +31,7 @@ def check_reply_mailboxes(schema=None):
 def send_reminders(schema=None):
     """v1.46.0 – record reminders due today → inbox and bell (CELERY_BEAT: 'chatter-reminders', every hour)."""
     out = {}
-    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
     for sch in schemas:
         try:
             with schema_context(sch):

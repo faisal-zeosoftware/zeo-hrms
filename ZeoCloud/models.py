@@ -186,6 +186,11 @@ class DatabaseServer(models.Model):
     paid_until = models.DateField(null=True, blank=True)
     price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text='Price per year (empty = the plan\'s)')
     created_at = models.DateTimeField(auto_now_add=True)
+    # v1.67.1 (companies): Make inactive (its companies closed, hidden) and Delete (retired, dropped after 30 days)
+    inactive = models.BooleanField(default=False, help_text='v1.67.1: the owner made it inactive – its companies are closed and hidden')
+    retired_on = models.DateField(null=True, blank=True, help_text='v1.67.1: day it was removed; dropped by the daily job 30 days later')
+    retired_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    backup = models.CharField(max_length=500, blank=True, default='', help_text='v1.67.1: backup made before it was removed')
 
     class Meta:
         ordering = ['key']
@@ -512,3 +517,30 @@ class SharedRowOwner(models.Model):
 
     class Meta:
         unique_together = [('model', 'object_id')]
+
+
+# ---------------------------------------------------------------- v1.67.1 (companies) make inactive / delete, kept 30 days
+class CompanyLife(models.Model):
+    """v1.67.1 (companies) – the state of a company beyond "it exists": made inactive by its owner / administrator, or
+    deleted (kept 30 days: hidden from everyone, its users unlinked, restorable by a server administrator, then removed by
+    the daily job). A company without a row is active. The row stays after the removal (company empty) as a record."""
+    STATES = [('active', 'Active'), ('inactive', 'Inactive'), ('deleted', 'Deleted'), ('purged', 'Removed')]
+    company = models.OneToOneField('UserManagement.company', null=True, blank=True, on_delete=models.SET_NULL, related_name='zeo_life')
+    schema_name = models.CharField(max_length=63, db_index=True)
+    name = models.CharField(max_length=150, blank=True, default='', help_text='Name of the company when it was deleted')
+    state = models.CharField(max_length=10, choices=STATES, default='active')
+    changed_at = models.DateTimeField(null=True, blank=True)
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    purge_after = models.DateField(null=True, blank=True, help_text='Last day it can be restored; removed by the daily job after it')
+    db_key = models.CharField(max_length=40, blank=True, default='', help_text='Deleted together with this own database')
+    links = models.JSONField(default=dict, blank=True, help_text='Users, rights, invitations and branch access it had (put back on restore)')
+    backup = models.CharField(max_length=500, blank=True, default='', help_text='Backup folder made before the deletion')
+    history = models.JSONField(default=list, blank=True, help_text='[{at, by, by_id, action, note}]')
+    purged_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-id']
+
+    def __str__(self):
+        return f'{self.schema_name} ({self.state})'

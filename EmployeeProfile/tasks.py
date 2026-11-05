@@ -4,6 +4,7 @@ For every company: open probations ending in 30, 14, 7 or 1 days, today, or over
 the reporting manager and to the HR users of the employee's branch (company admins and users with change_emp_master
 whose branch access includes the branch). Employees on notice whose last working day has passed get their final status.
 """
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 from datetime import date, timedelta
 
@@ -86,7 +87,7 @@ def probation_reminders():
     from django_tenants.utils import get_tenant_model, schema_context
     from . import services as S
     out = {}
-    for t in get_tenant_model().objects.exclude(schema_name='public'):
+    for t in get_tenant_model().objects.exclude(schema_name__in=_zeo_off()):
         with schema_context(t.schema_name):
             if not S.table_ready():
                 continue

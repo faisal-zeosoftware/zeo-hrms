@@ -142,7 +142,10 @@ def start(src, user, kinds, name=None):
         raise ValueError('Choose what to copy.')
     name = (name or f'{src.name} – test')[:100]
     from UserManagement.models import company
-    if company.objects.filter(name__iexact=name).exists():
+    from ZeoCloud import lifecycle as _life   # v1.67.1 (companies) unique within this user / account only
+    from ZeoCloud.models import AccountCompany
+    _l = AccountCompany.objects.select_related('account').filter(company=src).first()
+    if _life.name_clash(name, user=user, account=_l.account if _l else None) is not None:
         raise ValueError('A company with this name exists already – give the test company another name.')
     t = TestCompany.objects.create(name=name, kinds=kinds, by=user, step='Making the company')
     threading.Thread(target=_run, args=(connection.schema_name, t.pk, src.pk, name, kinds, user.pk), daemon=True).start()

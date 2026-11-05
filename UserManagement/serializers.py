@@ -245,15 +245,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                     data["user_id"] = user.id
                     data["username"] = user.username
                     data["must_change_password"] = user.must_change_password
+                    from ZeoCloud.lifecycle import live as _live   # v1.67.1 (companies) inactive / deleted companies are not offered
+                    _tenants = list(_live(user.tenants.all()))
                     data["tenants"] = [
                         {
                             "id": tenant.id,
                             "name": tenant.name,
                             "schema_name": tenant.schema_name
                         }
-                        for tenant in user.tenants.all()
+                        for tenant in _tenants
                     ]
-                    data["tenant_id"] = [tenant.schema_name for tenant in user.tenants.all()]
+                    data["tenant_id"] = [tenant.schema_name for tenant in _tenants]
                     return data
                 else:
                     _sec.fail(user, _s)
@@ -297,14 +299,24 @@ class CompanySerializer(serializers.ModelSerializer):
 
     def validate_name(self, v):
         """v1.28.1: two companies cannot carry the same name (ignoring case and spacing) – the second one could not be
-        told apart in "Choose a company", imports and reports."""
+        told apart in "Choose a company", imports and reports.
+        v1.67.1 (companies, like Odoo): unique only among the companies of the same user / account – the requesting user's
+        companies and those of the ZeoCloud accounts the user owns (and, when renaming, the company's own account).
+        Deleted companies do not count. The server looks companies up by id / schema, never by name."""
         name = ' '.join(str(v or '').split())
         if not name:
             raise serializers.ValidationError('Enter the company name.')
-        qs = company.objects.filter(name__iexact=name)
+        req = self.context.get('request') if isinstance(getattr(self, 'context', None), dict) else None
+        user = getattr(req, 'user', None)
+        user = user if getattr(user, 'is_authenticated', False) else None
+        from ZeoCloud import lifecycle as _life
+        acc = None
         if self.instance is not None:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
+            from ZeoCloud.models import AccountCompany
+            _l = AccountCompany.objects.select_related('account').filter(company=self.instance).first()
+            acc = _l.account if _l else None
+        clash = _life.name_clash(name, user=user, account=acc, exclude_id=getattr(self.instance, 'pk', None))
+        if clash is not None:
             raise serializers.ValidationError(f'A company named "{name}" already exists. Use a different name (for example add the emirate or the branch).')
         return name
 

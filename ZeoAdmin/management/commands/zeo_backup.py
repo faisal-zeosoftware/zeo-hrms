@@ -24,6 +24,12 @@ v1.62.0 – encrypted and off the server:
     ZEO_BACKUP_COPY_CMD="rclone copy {folder} offsite:zeo/{name}"  any copy command (rclone to S3 / Azure / B2 with object lock,
     rsync over SSH …) run after each backup; {folder} and {name} are filled in. The result is in last-backup.json.
 
+v1.67.1 (companies) – the backup made before a company or an own database is deleted:
+    --db <key>          one own database only (with --schema: the company schema in that database)
+    --company-files     with --schema / --db: also the uploaded files of the company(ies) (files.tar.gz)
+    --tag <text>        added to the folder name (backup-YYYYMMDD-HHMMSS-<tag>)
+    --no-status         do not write last-backup.json (System health keeps showing the nightly backup)
+
 Restore (by hand, on purpose): stop gunicorn and Celery; createdb a new empty database; pg_restore --no-owner -d <newdb> db-default.dump;
 point .env to it; tar xzf media.tar.gz -C <project>; start again. See README-UPDATE section 82.
 """
@@ -138,6 +144,49 @@ def check(folder, key=None):
     return problems
 
 
+def _company_files(folder, schema, db_key):
+    """v1.67.1 (companies): files.tar.gz with the uploaded files of one company (or of every company of an own database):
+    the files registered for it (ZeoCloud.MediaFile), its logo and a media/<schema>/ folder when there is one. None = no file."""
+    from django.conf import settings as st
+    media = str(getattr(st, 'MEDIA_ROOT', '') or '')
+    if not media or not os.path.isdir(media):
+        return None
+    schemas = [schema] if schema else []
+    if not schemas and db_key:
+        from ZeoCloud.models import AccountCompany
+        schemas = list(AccountCompany.objects.filter(db_alias=db_key).values_list('company__schema_name', flat=True))
+    if not schemas:
+        return None
+    from ZeoCloud.models import MediaFile
+    from UserManagement.models import company as Company
+    paths = set(MediaFile.objects.filter(schema__in=schemas).values_list('path', flat=True))
+    for c in Company.objects.filter(schema_name__in=schemas):
+        if c.logo:
+            paths.add(c.logo.name)
+    root = os.path.realpath(media)
+    found = []
+    for pth in sorted(paths):
+        full = os.path.realpath(os.path.join(root, pth))
+        if full.startswith(root + os.sep) and os.path.isfile(full):
+            found.append((full, os.path.relpath(full, root)))
+    for sch in schemas:
+        d = os.path.join(root, sch)
+        if os.path.isdir(d):
+            for base, _dirs, names in os.walk(d):
+                for nm in names:
+                    full = os.path.join(base, nm)
+                    found.append((full, os.path.relpath(full, root)))
+    if not found:
+        return None
+    seen = set()
+    with tarfile.open(os.path.join(folder, 'files.tar.gz'), 'w:gz') as t:
+        for full, rel in found:
+            if rel not in seen:
+                seen.add(rel)
+                t.add(full, arcname=os.path.join('media', rel))
+    return len(seen)
+
+
 class Command(BaseCommand):
     help = 'Back up the ZEO database(s) and uploaded files (see the module text for restore).'
 
@@ -152,6 +201,11 @@ class Command(BaseCommand):
         p.add_argument('--decrypt', default='', help='decrypt the files of this backup folder (for a restore)')
         p.add_argument('--out', default='', help='with --decrypt: where the plain files go (default: the same folder)')
         p.add_argument('--copy-to', default='', help='copy the new backup to this folder (another disk / a network share)')
+        # v1.67.1 (companies) the backup made before a company / an own database is deleted
+        p.add_argument('--db', default='', help='one own database (key) only; with --schema the schema is read from it')
+        p.add_argument('--company-files', action='store_true', help='with --schema / --db: the uploaded files of the company(ies)')
+        p.add_argument('--tag', default='', help='added to the folder name')
+        p.add_argument('--no-status', action='store_true', help='do not write last-backup.json')
 
     def handle(self, *a, **o):
         key = os.environ.get('ZEO_BACKUP_KEY') or getattr(settings, 'ZEO_BACKUP_KEY', '')
@@ -173,7 +227,8 @@ class Command(BaseCommand):
         root = o['dir'] or os.environ.get('ZEO_BACKUP_DIR') or getattr(settings, 'ZEO_BACKUP_DIR', '') or os.path.join(settings.BASE_DIR, 'backups')
         os.makedirs(root, exist_ok=True)
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-        folder = os.path.join(root, PREFIX + stamp)
+        tag = ''.join(ch for ch in str(o.get('tag') or '') if ch.isalnum() or ch in '_-')[:60]   # v1.67.1 (companies)
+        folder = os.path.join(root, PREFIX + stamp + (f'-{tag}' if tag else ''))
         os.makedirs(folder)
         t0 = time.time()
         files = []
@@ -181,7 +236,10 @@ class Command(BaseCommand):
             for alias, p in databases():
                 name = f'db-{alias}.dump'
                 args, env = _pg(p)
-                if o['schema'] and alias != 'default':
+                if o.get('db'):   # v1.67.1 (companies) one own database (whole, or the company schema in it)
+                    if alias != o['db']:
+                        continue
+                elif o['schema'] and alias != 'default':
                     continue
                 cmd = [_tool('pg_dump'), *args, '-d', p['NAME'], '-Fc', '--no-owner', '--no-privileges', '-f', os.path.join(folder, name)]
                 if o['schema']:
@@ -197,6 +255,11 @@ class Command(BaseCommand):
                     t.add(media, arcname='media')
                 files.append('media.tar.gz')
                 self.stdout.write(f'files: {os.path.getsize(os.path.join(folder, "media.tar.gz")):,} bytes')
+            if o.get('company_files') and (o['schema'] or o.get('db')):   # v1.67.1 (companies)
+                n = _company_files(folder, o['schema'], o.get('db'))
+                if n is not None:
+                    files.append('files.tar.gz')
+                    self.stdout.write(f'company files: {n} file(s)')
             version = ''
             try:
                 version = open(os.path.join(settings.BASE_DIR, 'VERSION')).read().strip()
@@ -234,6 +297,9 @@ class Command(BaseCommand):
         status = {'folder': folder, 'made_at': manifest['made_at'], 'zeo_version': version, 'bytes': sum(f['bytes'] for f in manifest['files']),
                   'checked': True, 'encrypted': bool(manifest.get('encrypted'))}
         status['copy'] = self._copy(folder, o['copy_to'] or os.environ.get('ZEO_BACKUP_COPY_TO', ''), key)
+        if o.get('no_status'):   # v1.67.1 (companies)
+            self.stdout.write(self.style.SUCCESS(f'Backup made and checked: {folder} ({status["bytes"]:,} bytes).'))
+            return
         target = os.environ.get('ZEO_BACKUP_STATUS_FILE') or getattr(settings, 'ZEO_BACKUP_STATUS_FILE', '') or os.path.join(root, 'last-backup.json')
         json.dump(status, open(target, 'w'), indent=1)
         removed = 0

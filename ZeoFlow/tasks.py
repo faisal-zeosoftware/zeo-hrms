@@ -3,6 +3,7 @@
     'zeoflow-run-due': {'task': 'ZeoFlow.tasks.run_due', 'schedule': crontab(minute='*/15')},
 
 Without Celery: `python manage.py run_workflows` every 15 minutes from cron. Each job runs once per company."""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 
 from celery import shared_task
@@ -13,7 +14,7 @@ log = logging.getLogger(__name__)
 
 def each(fn, schema=None):
     out = {}
-    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
     for sch in schemas:
         try:
             with schema_context(sch):

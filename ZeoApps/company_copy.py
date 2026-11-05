@@ -77,6 +77,12 @@ def can_administer(user, comp):
         return False
     if not user.tenants.filter(pk=comp.pk).exists():
         return False
+    try:   # v1.67.1 (companies) an inactive / deleted company is not a source
+        from ZeoCloud.lifecycle import is_live
+        if not is_live(comp.schema_name):
+            return False
+    except Exception:
+        pass
     if user.is_superuser:
         return True
     try:

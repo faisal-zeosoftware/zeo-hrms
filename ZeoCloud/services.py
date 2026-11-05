@@ -122,7 +122,7 @@ def banner_of(acc, owner=False):
 
 # ------------------------------------------------------------------ usage
 def company_links(acc, include_archived=False):
-    qs = acc.companies.select_related('company')
+    qs = acc.companies.select_related('company').exclude(company__zeo_life__state='deleted')   # v1.67.1 (companies) a deleted company frees its place at once
     return list(qs if include_archived else qs.filter(archived=False))
 
 

@@ -64,7 +64,7 @@ if not SECRET_KEY:
     raise RuntimeError('Set ZEO_SECRET_KEY in the environment or in .env (see .env.example).')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool('ZEO_DEBUG', True)
+DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
 ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1','169.58.214.5'])
@@ -319,6 +319,16 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django_tenants.postgresql_backend',
+#         'NAME': env('ZEO_DB_NAME', 'zeo'),
+#         'USER': env('ZEO_DB_USER', 'zeo_user'),
+#         'PASSWORD': env('ZEO_DB_PASSWORD'),
+#         'HOST': env('ZEO_DB_HOST', '127.0.0.1'),
+#         'PORT': env('ZEO_DB_PORT', '5432'),
+#     }
+# }
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',
@@ -329,7 +339,6 @@ DATABASES = {
         'PORT': '5432',
     }
 }
-
 # v1.24.0 ZEO Cloud: a company can live in the own database of its account ('control' = this main database)
 from ZeoCloud.dbsettings import with_cloud_databases   # noqa: E402
 DATABASES = with_cloud_databases(DATABASES)
@@ -516,7 +525,6 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'aparnaudhayan03@gmail.com'
 EMAIL_HOST_PASSWORD = 'ruuh gtwd yzaz yeaw'
-
 DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')

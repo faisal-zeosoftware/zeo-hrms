@@ -1,4 +1,5 @@
 """Scheduled leave jobs (v1.11.0) – Celery beat entries are in zeo/settings.py; `manage.py run_leave_jobs` does the same by hand / cron."""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 from datetime import date, timedelta
 
@@ -9,7 +10,7 @@ log = logging.getLogger(__name__)
 
 
 def _tenants():
-    return list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    return list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
 
 
 def daily_jobs(today=None, dry=False):

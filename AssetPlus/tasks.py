@@ -2,6 +2,7 @@
     'asset-daily-reminders': {'task': 'AssetPlus.tasks.asset_daily_reminders', 'schedule': crontab(hour=7, minute=20)},
 Maintenance due / overdue, warranty and insurance expiry, overdue returns – once per due date.
 """
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 
 from celery import shared_task
@@ -17,7 +18,7 @@ def asset_daily_reminders(schema=None):
         with schema_context(schema):
             return {schema: daily_reminders()}
     out = {}
-    for t in get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True):
+    for t in get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True):
         try:
             with schema_context(t):
                 out[t] = daily_reminders()

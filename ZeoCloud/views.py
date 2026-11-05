@@ -92,7 +92,7 @@ def account_json(acc, full=False, user=None):
                    default_db=acc.db_alias, databases=databases_json(acc),
                    limits=S.limits(acc), usage=S.usage(acc), apps=S.apps_for(acc),
                    companies=[{'id': l.company_id, 'name': l.company.name, 'schema_name': l.company.schema_name, 'extra': l.extra,
-                               'archived': l.archived, 'where': 'Own database' if l.db_alias else 'Shared cloud', 'db_alias': l.db_alias,
+                               'archived': l.archived, 'inactive': _life_state(l.company.schema_name) == 'inactive',   # v1.67.1 (companies) 'where': 'Own database' if l.db_alias else 'Shared cloud', 'db_alias': l.db_alias,
                                'db_label': labels.get(l.db_alias, l.db_alias),
                                'apps': _apps_of(l.company.schema_name)} for l in S.company_links(acc, include_archived=True)],
                    invoices=[invoice_json(i) for i in acc.invoices.all()[:50]],
@@ -101,6 +101,11 @@ def account_json(acc, full=False, user=None):
                    history=[{'at': e.at.isoformat(), 'kind': e.kind, 'text': e.text, 'by': e.by.username if e.by else ''}
                             for e in acc.events.select_related('by')[:100]])
     return out
+
+
+def _life_state(schema):
+    from .lifecycle import state_of   # v1.67.1 (companies)
+    return state_of(schema)
 
 
 def _account_db(acc):
@@ -119,14 +124,18 @@ def _db_labels(acc):
 def databases_json(acc, size=False):
     """v1.26.0: the own databases of an account with their companies, the default one first."""
     from . import owndb
-    links = list(AccountCompany.objects.select_related('company').filter(account=acc).exclude(db_alias=''))
+    from . import lifecycle as L
+    links = list(AccountCompany.objects.select_related('company').filter(account=acc).exclude(db_alias='')
+                 .exclude(company__zeo_life__state='deleted'))   # v1.67.1 (companies) deleted companies are hidden
     out = []
     for d in owndb.databases_of(acc):
         j = server_json(d, size=size)
         j.update(default=d.key == acc.db_alias, copying=owndb.dup_running(d.key),
                  title=d.label if d.label and d.label != acc.name else d.name,
-                 company_list=[{'id': l.company_id, 'name': l.company.name, 'archived': l.archived, 'moving': l.moving}
-                               for l in links if l.db_alias == d.key])
+                 company_list=[{'id': l.company_id, 'name': l.company.name, 'archived': l.archived, 'moving': l.moving,
+                                'inactive': L.state_of(l.company.schema_name) == 'inactive'}   # v1.67.1 (companies)
+                               for l in links if l.db_alias == d.key],
+                 inactive=bool(getattr(d, 'inactive', False)))
         out.append(j)
     return out
 
@@ -311,8 +320,7 @@ class SignupView(APIView):
         from UserManagement.models import CustomUser, company as C
         if email and CustomUser.objects.filter(Q(email__iexact=email) | Q(username__iexact=email)).exists():
             errs['email'] = tr('This e-mail already has a ZEO login. Sign in and create the company from your company list.')
-        if company and C.objects.filter(name__iexact=company).exists():
-            errs['company'] = tr('A company with this name exists already.')
+        # v1.67.1 (companies): no server-wide name check for a new account – names are unique within one account only
         try:
             validate_password(pw)
         except DjValidationError as e:
@@ -399,8 +407,8 @@ class AccountCompanyCreateView(Base):
         name = ' '.join(str(d.get('name') or '').split())[:100]
         if len(name) < 2:
             return Response({'detail': tr('Enter the company name.')}, status=400)
-        from UserManagement.models import company as C
-        if C.objects.filter(name__iexact=name).exists():
+        from .lifecycle import name_clash   # v1.67.1 (companies) unique within the account / its owner only
+        if name_clash(name, user=request.user if acc.owner_id == request.user.pk else None, account=acc) is not None:
             return Response({'detail': tr('A company with this name exists already.')}, status=400)
         apps = [a for a in (d.get('apps') or []) if a in APP_KEYS]
         if not apps:
@@ -480,6 +488,8 @@ class AccountDatabasesView(Base):
 
 class AccountDatabaseView(Base):
     """POST {action}: duplicate {label, suffix, neutralize} → {job}; default; rename {label}; remove (empty, not default).
+    v1.67.1 (companies): inactive / active (not the default one); delete {confirm: the database name} – a backup of the whole
+    database (downloaded), every company in it deleted, the database dropped after 30 days (restore: Adept).
     Adept only: paid {until, price} – the extra database is paid until a date; extend – 14 more trial days."""
     def post(self, request, pk, key):
         from . import owndb
@@ -513,6 +523,22 @@ class AccountDatabaseView(Base):
             elif a == 'remove':
                 owndb.remove_db(acc, key, by=request.user)
                 cache.delete(f'zeo:cloud:usage:{acc.pk}')
+            elif a in ('inactive', 'active', 'delete'):   # v1.67.1 (companies)
+                from . import lifecycle as L
+                try:
+                    if a == 'delete':
+                        r = L.delete_database(acc, key, request.user, request.data.get('confirm'))
+                        return Response({'databases': databases_json(acc), 'default': Account.objects.get(pk=acc.pk).db_alias, 'deleted': True,
+                                         'companies': r['companies'], 'file_name': r['file_name'],
+                                         'download': f'/cloud/api/deleted-backups/{r["token"]}/' if r['token'] else '',
+                                         'detail': tr('The database {0} was deleted with {1} companies. Its backup is downloading; the server keeps a copy too.',
+                                                      L.db_title(r['server']), len(r['companies']))})
+                    L.set_db_active(acc, key, a == 'active', by=request.user)
+                except L.LifeError as e:
+                    body = {'detail': e.message}
+                    if e.extra.get('field'):
+                        body[e.extra['field']] = [e.message]
+                    return Response(body, status=e.status)
             elif a in ('paid', 'extend', 'price'):   # v1.26.0 the subscription of an extra database (Adept)
                 if not S.is_platform_admin(request.user):
                     return Response({'detail': tr('Only Adept can change the subscription of a database – use Request upgrade.')}, status=403)
@@ -910,6 +936,12 @@ class ConsoleCompaniesView(ConsoleBase):
             l.archived = bool(d['archive'])
             l.save(update_fields=['archived'])
             S.event(acc, 'company', f'{"Archived" if l.archived else "Restored"} – {l.company.name}', request.user)
+            try:   # v1.67.1 (companies): aligned – an archived company is also inactive (closed, hidden); restored = active
+                from . import lifecycle as L
+                if L.state_of(l.company.schema_name) != 'deleted':
+                    L.set_active(l.company, not l.archived, request.user, via='archived in the console' if l.archived else 'restored in the console')
+            except Exception:
+                log.exception('archive → inactive')
             return Response(account_json(acc, full=True))
         ok, extra, msg = S.check_company_add(acc)
         if not ok:
@@ -917,6 +949,9 @@ class ConsoleCompaniesView(ConsoleBase):
         name = ' '.join(str(d.get('name') or '').split())[:100]
         if len(name) < 2:
             return Response({'detail': tr('Enter the company name.')}, status=400)
+        from .lifecycle import name_clash   # v1.67.1 (companies) unique within the account
+        if name_clash(name, account=acc) is not None:
+            return Response({'detail': tr('A company with this name exists already.')}, status=400)
         db, bad = _pick_db(acc, d.get('db'))
         if bad:
             return bad

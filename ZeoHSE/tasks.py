@@ -5,6 +5,7 @@
 
 Each job runs once per company; one company failing does not stop the others.
 """
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 import logging
 
 from celery import shared_task
@@ -15,7 +16,7 @@ log = logging.getLogger(__name__)
 
 def _each(fn, schema=None):
     out = {}
-    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name='public').values_list('schema_name', flat=True))
+    schemas = [schema] if schema else list(get_tenant_model().objects.exclude(schema_name__in=_zeo_off()).values_list('schema_name', flat=True))
     for sch in schemas:
         try:
             with schema_context(sch):

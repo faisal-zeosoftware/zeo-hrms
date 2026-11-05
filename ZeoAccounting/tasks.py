@@ -1,11 +1,12 @@
 """Celery: every company – retry failed postings (hourly) and the month-end provisions (on the 1st)."""
+from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
 from celery import shared_task
 from django_tenants.utils import get_tenant_model, schema_context
 
 
 def _each(fn):
     out = {}
-    for t in get_tenant_model().objects.exclude(schema_name='public'):
+    for t in get_tenant_model().objects.exclude(schema_name__in=_zeo_off()):
         with schema_context(t.schema_name):
             try:
                 out[t.schema_name] = fn()

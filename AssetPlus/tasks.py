@@ -2,7 +2,7 @@
     'asset-daily-reminders': {'task': 'AssetPlus.tasks.asset_daily_reminders', 'schedule': crontab(hour=7, minute=20)},
 Maintenance due / overdue, warranty and insurance expiry, overdue returns – once per due date.
 """
-from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
+from ZeoApps.scheduling import hr_assets_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) companies with HR or Asset Management
 import logging
 
 from celery import shared_task

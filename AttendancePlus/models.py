@@ -318,3 +318,22 @@ class OvertimeDecision(models.Model):
 
     class Meta:
         unique_together = [('employee_id', 'date', 'ot_type')]
+
+
+class FaceProfile(models.Model):
+    """v1.67.5 (bugs) ESS1 – the employee's registered face for the self-service face punch.
+
+    Only face descriptors are kept (128 numbers per sample, made in the employee's browser by the bundled face-api model),
+    never the photos. The employee agrees to the consent text first; the text, the time and who registered are kept.
+    Removed by the employee (My profile › Face punch › Remove my face data) or by HR."""
+    employee_id = models.IntegerField(unique=True)
+    descriptors = models.JSONField(default=list)          # [[128 floats], …] – 1 to 5 samples
+    model = models.CharField(max_length=40, default='face-api/face_recognition_128')
+    consent_text = models.TextField()
+    consent_at = models.DateTimeField()
+    consent_by_id = models.IntegerField(null=True, blank=True)     # the login that agreed (the employee, or HR with the employee)
+    registered_by_id = models.IntegerField(null=True, blank=True)
+    last_match_at = models.DateTimeField(null=True, blank=True)
+    last_distance = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

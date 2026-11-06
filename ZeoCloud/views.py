@@ -63,7 +63,10 @@ def plan_json(p):
             'database_price': _num(p.database_price)}
 
 
+# v1.67.3 (apps) HR is an app of its own (free) – a company can be made without it; `needs` = what the app brings with it
+SIGNUP_KEYS = ['hrms'] + APP_KEYS
 APPS_INFO = [
+    ('hrms', 'HR', 'Leave, attendance, documents, letters, self service, expenses and talent (included in every plan)'),
     ('payroll', 'Payroll', 'Salaries, payslips, WPS, gratuity, loans and final settlement'),
     ('projects', 'Projects', 'Projects, tasks, timesheets, tickets with SLA, AMC'),
     ('crm', 'CRM', 'Contacts, pipelines, opportunities, activities'),
@@ -82,6 +85,7 @@ def _odoo_on():
 def account_json(acc, full=False, user=None):
     st = S.status_of(acc)
     out = {'id': acc.id, 'name': acc.name, 'owner_email': acc.owner_email, 'owner_name': acc.owner_name, 'owner_id': acc.owner_id, 'plan': plan_json(acc.plan),
+           'contact_name': acc.contact_name, 'contact_phone': acc.contact_phone, 'country': acc.country,   # v1.67.2 (signup)
            'status': st['status'], 'read_only': st['read_only'], 'days_left': st['days_left'], 'until': st['until'],
            'state': acc.state, 'trial_ends': _iso(acc.trial_ends), 'renews_on': _iso(acc.renews_on), 'grace_days': acc.grace_days,
            'hosting': acc.hosting, 'hosting_label': acc.get_hosting_display(), 'created_at': acc.created_at.isoformat()}
@@ -279,9 +283,39 @@ class SignupPlansView(APIView):
         S.ensure_plans()
         from UserManagement.models import company as C
         return Response({'plans': [plan_json(p) for p in Plan.objects.filter(active=True)],
-                         'apps': [{'key': k, 'title': t, 'description': d} for k, t, d in APPS_INFO],
+                         'apps': [{'key': k, 'title': t, 'description': d, 'needs': _needs(k)} for k, t, d in APPS_INFO],
+                         'core': _core_text(),   # v1.67.3 (apps)
                          'industries': [{'code': k, 'label': str(v)} for k, v in C.INDUSTRY_CHOICES],
-                         'trial_days': 14, 'cloud': S.cloud_on()})
+                         'trial_days': 14, 'cloud': S.cloud_on(),
+                         # v1.67.2 (signup): the country list (country master), UAE first by default; where to get help
+                         'countries': _countries(), 'default_country': getattr(S.default_country(), 'pk', None),
+                         'support_email': getattr(settings, 'ZEO_CLOUD_ADMIN_EMAIL', '') or '',
+                         'support_phone': getattr(settings, 'ZEO_CLOUD_SUPPORT_PHONE', '') or '',
+                         'expected': S.expected_seconds()})
+
+
+def _needs(key):
+    """v1.67.3 (apps) the apps an app needs (titles) – the sign-up and the console show them before the company is made."""
+    try:
+        from ZeoApps.services import BY_KEY, requires
+        return [{'key': d, 'title': BY_KEY[d][2]} for d in requires(key)]
+    except Exception:
+        return []
+
+
+def _core_text():
+    try:
+        from ZeoApps.services import CORE_TEXT
+        return tr(CORE_TEXT)
+    except Exception:
+        return ''
+
+
+def _countries():
+    """v1.67.2 (signup) the active countries of the country master: id, name, code."""
+    from Core.models import cntry_mstr
+    return [{'id': c.pk, 'name': c.country_name, 'code': (c.country_code or '').upper()}
+            for c in cntry_mstr.objects.filter(is_active=True).order_by('country_name')]
 
 
 EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
@@ -305,7 +339,7 @@ class SignupView(APIView):
         name = ' '.join(str(d.get('name') or '').split())[:150]
         email = str(d.get('email') or '').strip().lower()
         pw = str(d.get('password') or '')
-        apps = [a for a in (d.get('apps') or []) if a in APP_KEYS]
+        apps = [a for a in (d.get('apps') or []) if a in SIGNUP_KEYS]   # v1.67.3 (apps) HR can be chosen (or left out)
         plan = Plan.objects.filter(code=str(d.get('plan') or ''), active=True).first()
         if len(company) < 2:
             errs['company'] = tr('Enter the company name.')
@@ -317,6 +351,29 @@ class SignupView(APIView):
             errs['plan'] = tr('Choose a plan.')
         if not apps:
             errs['apps'] = tr('Select at least one app.')
+        # v1.67.2 (signup): contact person, contact number (UAE +971 or international) and country (country master, UAE by default)
+        from Core.models import cntry_mstr
+        from EmployeeProfile.validators import clean_contact_phone
+        contact = ' '.join(str(d.get('contact_name') or '').split())[:150]
+        country = None
+        if d.get('country') not in (None, ''):
+            try:
+                country = cntry_mstr.objects.filter(pk=int(d.get('country')), is_active=True).first()
+            except (TypeError, ValueError):
+                country = None
+            if country is None:
+                errs['country'] = tr('Choose the country.')
+        country = country or S.default_country()
+        if len(contact) < 2:
+            errs['contact_name'] = tr('Enter the contact person name.')
+        phone = ''
+        if not str(d.get('contact_phone') or '').strip():
+            errs['contact_phone'] = tr('Enter the contact number.')
+        else:
+            try:
+                phone = clean_contact_phone(d.get('contact_phone'), 'Contact number', (getattr(country, 'country_code', '') or 'AE'))
+            except ValueError as e:
+                errs['contact_phone'] = str(e)
         from UserManagement.models import CustomUser, company as C
         if email and CustomUser.objects.filter(Q(email__iexact=email) | Q(username__iexact=email)).exists():
             errs['email'] = tr('This e-mail already has a ZEO login. Sign in and create the company from your company list.')
@@ -329,11 +386,14 @@ class SignupView(APIView):
             return Response({'detail': next(iter(errs.values())), 'errors': errs}, status=400)
         cache.set(k, n + 1, 3600)
         user = CustomUser.objects.create_user(username=email, password=pw, email=email)
-        acc = S.create_account(company, email, plan, by=None, owner=user, apps=apps)
+        acc = S.create_account(company, email, plan, by=None, owner=user, apps=apps, country=getattr(country, 'country_name', '') or 'United Arab Emirates')
         acc.owner_name = name
-        acc.save(update_fields=['owner_name'])
-        job, schema = S.start_company(acc, company, str(d.get('industry') or 'OTH')[:10], apps, user)
-        return Response({'job': job, 'schema': schema, 'account': acc.id, 'username': user.username}, status=202)
+        acc.contact_name, acc.contact_phone = contact, phone   # v1.67.2 (signup)
+        acc.save(update_fields=['owner_name', 'contact_name', 'contact_phone'])
+        S.event(acc, 'account', f'Sign-up – contact {contact}, {phone}, {acc.country}', None)
+        job, schema = S.start_company(acc, company, str(d.get('industry') or 'OTH')[:10], apps, user,
+                                      country_id=getattr(country, 'pk', None), signup=True)   # v1.67.2 (signup) country, currency, pack
+        return Response({'job': job, 'schema': schema, 'account': acc.id, 'username': user.username, 'expected': S.expected_seconds()}, status=202)
 
 
 class JobView(APIView):
@@ -344,7 +404,56 @@ class JobView(APIView):
         if not st:
             return Response({'detail': tr('Not found.')}, status=404)
         return Response({k: st.get(k) for k in ('state', 'step', 'step_no', 'steps', 'name', 'schema', 'company_id', 'error', 'failed',
-                                                 'percent', 'detail', 'stages', 'elapsed', 'remaining')})   # v1.62.1 progress
+                                                 'percent', 'detail', 'stages', 'elapsed', 'remaining',   # v1.62.1 progress
+                                                 # v1.67.2 (signup): translatable texts, the usual seconds, stopped / slow / overdue, a retry
+                                                 'step_t', 'step_p', 'detail_t', 'detail_p', 'started', 'expected', 'stalled', 'slow',
+                                                 'overdue', 'retried', 'template_note')})
+
+
+class JobRetryView(APIView):
+    """v1.67.2 (signup) POST /cloud/api/jobs/<job>/retry/ – make the company of a sign-up again when its job failed or
+    stopped (no beat for 90 s: the server was restarted). Only while the account has no company yet; at most 3 times."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request, job):
+        st = S.job_status(job)
+        if not st or not st.get('signup') or not st.get('account'):
+            return Response({'detail': tr('Not found.')}, status=404)
+        if st.get('retried'):
+            return Response({'job': st['retried'], 'schema': (S.job_status(st['retried']) or {}).get('schema')}, status=202)
+        if st.get('state') == 'done':
+            return Response({'detail': tr('The company is ready – sign in.')}, status=409)
+        if st.get('state') == 'running' and not st.get('stalled'):
+            return Response({'detail': tr('The company is still being created.')}, status=409)
+        acc = Account.objects.filter(pk=st['account']).select_related('owner').first()
+        if acc is None or acc.owner is None:
+            return Response({'detail': tr('Not found.')}, status=404)
+        if AccountCompany.objects.filter(account=acc).exists():
+            return Response({'detail': tr('The company was created but not finished. Contact Adept and give the reference {0}.', job)}, status=409)
+        k = f'zeo:signup:retry:{acc.pk}'
+        n = cache.get(k, 0)
+        if n >= 3:
+            return Response({'detail': tr('It could not be created after 3 tries. Contact Adept and give the reference {0}.', job)}, status=429)
+        cache.set(k, n + 1, 60 * 60 * 24)
+        from django.db import connection
+        from django_tenants.utils import schema_exists
+        from UserManagement.models import company as C
+        old = st.get('schema') or ''
+        connection.set_schema_to_public()
+        if old:   # a copy whose web process stopped may still run in PostgreSQL (and commit later): stop it first
+            with connection.cursor() as cur:
+                cur.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() "
+                            "AND query ILIKE %s AND query LIKE %s", ['%clone_schema(%', f"%'{old}'%"])
+        if old and schema_exists(old) and not C.objects.filter(schema_name=old).exists():   # left by this job, never registered
+            with connection.cursor() as cur:
+                cur.execute(f'DROP SCHEMA "{old}" CASCADE')
+        req = st.get('req') or {}
+        new, schema = S.start_company(acc, st.get('name') or acc.name, req.get('industry') or 'OTH', req.get('apps') or [], acc.owner,
+                                      country_id=req.get('country_id'), signup=True)
+        S._job(job, retried=new, state='failed', error=st.get('error') or tr('The job stopped.'))
+        S.event(acc, 'company', f'Sign-up company tried again (job {job} → {new})', None)
+        return Response({'job': new, 'schema': schema}, status=202)
 
 
 # ------------------------------------------------------------------ the open company: banner and licences
@@ -410,7 +519,7 @@ class AccountCompanyCreateView(Base):
         from .lifecycle import name_clash   # v1.67.1 (companies) unique within the account / its owner only
         if name_clash(name, user=request.user if acc.owner_id == request.user.pk else None, account=acc) is not None:
             return Response({'detail': tr('A company with this name exists already.')}, status=400)
-        apps = [a for a in (d.get('apps') or []) if a in APP_KEYS]
+        apps = [a for a in (d.get('apps') or []) if a in SIGNUP_KEYS]   # v1.67.3 (apps) HR can be chosen (or left out)
         if not apps:
             return Response({'detail': tr('Select at least one app.')}, status=400)
         for a in apps:   # only licensed apps with a free place
@@ -680,7 +789,8 @@ class ConsoleCustomersView(ConsoleBase):
         qs = Account.objects.select_related('plan').order_by('name')
         q = (request.GET.get('q') or '').strip()
         if q:
-            qs = qs.filter(Q(name__icontains=q) | Q(owner_email__icontains=q) | Q(companies__company__name__icontains=q)).distinct()
+            qs = qs.filter(Q(name__icontains=q) | Q(owner_email__icontains=q) | Q(companies__company__name__icontains=q)
+                           | Q(contact_name__icontains=q) | Q(contact_phone__icontains=q)).distinct()   # v1.67.2 (signup)
         if request.GET.get('plan'):
             qs = qs.filter(plan__code=request.GET['plan'])
         rows = []
@@ -743,7 +853,8 @@ def _invite(user, acc):
 
 
 class ConsoleCustomerView(ConsoleBase):
-    FIELDS = ('name', 'trn', 'country', 'notes', 'grace_days', 'extra_companies', 'max_employees', 'max_users', 'storage_gb', 'allowed_email_domain')
+    FIELDS = ('name', 'trn', 'country', 'notes', 'grace_days', 'extra_companies', 'max_employees', 'max_users', 'storage_gb', 'allowed_email_domain',
+              'contact_name', 'contact_phone')   # v1.67.2 (signup)
 
     def get(self, request, pk):
         acc = Account.objects.select_related('plan').filter(pk=pk).first()
@@ -757,6 +868,15 @@ class ConsoleCustomerView(ConsoleBase):
             return Response({'detail': tr('Not found.')}, status=404)
         d = request.data
         changes = []
+        if d.get('contact_phone'):   # v1.67.2 (signup) the same check as the sign-up
+            from EmployeeProfile.validators import clean_contact_phone
+            from Core.models import cntry_mstr
+            cc = getattr(cntry_mstr.objects.filter(country_name__iexact=d.get('country') or acc.country).first(), 'country_code', '') or 'AE'
+            try:
+                d = dict(d.items())
+                d['contact_phone'] = clean_contact_phone(d['contact_phone'], 'Contact number', cc)
+            except ValueError as e:
+                return Response({'detail': str(e), 'errors': {'contact_phone': str(e)}}, status=400)
         for f in self.FIELDS:
             if f in d:
                 v = d[f]

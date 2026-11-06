@@ -129,7 +129,9 @@ def _make(job, data, apps, user_id, own_thread=True, copy=None):
         close_old_connections()
     schema = data['schema_name']
     from ZeoApps.job_progress import Progress
-    P = Progress(lambda **kw: _job(job, **kw), PLAN_COPY if copy else PLAN)   # v1.62.1: % and what is being done now
+    # v1.62.1: % and what is being done now; v1.67.2 (signup): learned step seconds (honest time left), a beat every 5 s
+    P = Progress(lambda **kw: _job(job, **kw), PLAN_COPY if copy else PLAN,
+                 learn=('companyjob:copy:' if copy else 'companyjob:') + ('clone' if _template_ready() else 'migrate'), heartbeat=True)
     tok = None
     if copy:   # v1.62.1: the first branch is made with the name and code of the form (OrganisationManager.signals)
         from OrganisationManager.signals import FIRST_BRANCH
@@ -141,15 +143,11 @@ def _make(job, data, apps, user_id, own_thread=True, copy=None):
         m2m = {k: data.pop(k) for k in list(data) if isinstance(data.get(k), (list, tuple))}
         comp = Company(**data)
         cloned = False
-        if _template_ready():
-            from django_tenants.clone import CloneSchema
-            from ZeoCloud.services import TEMPLATE
-            P.begin('create', 'Copying the ready company template')
-            with P.copy(TEMPLATE, 'Copying the ready company template'):
-                CloneSchema().clone_schema(TEMPLATE, schema, clone_mode='DATA')
+        from ZeoCloud.services import copy_template
+        if copy_template(P, schema):   # v1.67.2 (signup): real progress of the template copy; falls back on too little lock room
             comp.auto_create_schema = False
             cloned = True
-            P.sub(0.97, 'Registering the company')
+            P.sub(0.99, 'Registering the company')
             comp.save()
         else:
             P.begin('create', 'Creating the database')

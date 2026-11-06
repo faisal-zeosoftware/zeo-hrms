@@ -882,6 +882,8 @@ class Chemical(models.Model):
     name = models.CharField('Chemical name', max_length=200)
     trade_name = models.CharField(max_length=200, blank=True)
     supplier = models.CharField(max_length=200, blank=True)
+    supplier_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='supplier (business partner)')   # v1.67.4 (masters)
     product_code = models.CharField(max_length=60, blank=True)
     item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_chemicals', verbose_name='item (master)')   # v1.43.0 item master
     cas_no = models.CharField('CAS number', max_length=40, blank=True)

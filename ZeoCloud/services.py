@@ -406,12 +406,14 @@ def schema_for(name):
     return sf(name)
 
 
-def start_company(acc, name, industry, apps, user, extra=False, country_id=None, grant_creator=True, db=''):
-    """Create a company for the account in a background thread. Returns (job, schema)."""
+def start_company(acc, name, industry, apps, user, extra=False, country_id=None, grant_creator=True, db='', signup=False):
+    """Create a company for the account in a background thread. Returns (job, schema).
+    v1.67.2 (signup): the job keeps what is needed to try again (industry, apps, country) and beats every 5 s."""
     job = uuid.uuid4().hex[:16]
     schema = schema_for(name)
     _job(job, state='running', step=STEPS[0], step_no=1, steps=len(STEPS), account=acc.pk, name=name, schema=schema,
-         by=getattr(user, 'pk', None), company_id=None, error='')
+         by=getattr(user, 'pk', None), company_id=None, error='', signup=bool(signup), expected=expected_seconds(),
+         req={'industry': industry or 'OTH', 'apps': list(apps or []), 'country_id': country_id})
     t = threading.Thread(target=_make_company, args=(job, acc.pk, name, schema, industry, list(apps or []), getattr(user, 'pk', None), extra, country_id, True, grant_creator, db or ''), daemon=True)
     t.start()
     return job, schema
@@ -424,6 +426,41 @@ def make_company_now(acc, name, industry, apps, user, extra=False, country_id=No
     _job(job, state='running', step=STEPS[0], step_no=1, steps=len(STEPS), account=acc.pk, name=name, schema=schema, by=getattr(user, 'pk', None))
     _make_company(job, acc.pk, name, schema, industry, list(apps or []), getattr(user, 'pk', None), extra, country_id, own_thread=False)
     return job_status(job)
+
+
+def learn_name():
+    """v1.67.2 (signup) the name the step seconds are learned under: a template copy and a company made with the
+    migrations take very different times."""
+    return 'cloudjob:' + ('clone' if template_ready() else 'migrate')
+
+
+def expected_seconds():
+    """v1.67.2 (signup) the usual seconds of a new cloud company on this server (None before the first one)."""
+    from ZeoApps.job_progress import typical_total
+    return typical_total(learn_name())
+
+
+def copy_template(P, schema):
+    """v1.67.2 (signup): the new schema as a copy of the ready template, with real progress (ZeoApps.job_progress.
+    clone_watched). True when copied; False when the template cannot be used – not ready, or PostgreSQL has too little lock
+    room ("out of shared memory": the copy is rolled back, nothing is left) – then the caller makes the tables with the
+    migrations, and the job says why."""
+    if not template_ready():
+        return False
+    from ZeoApps.job_progress import CopyLockRoom, clone_watched
+    P.begin('create', 'Copying the ready company template')
+    try:
+        clone_watched(P, TEMPLATE, schema, 'Copying the ready company template')
+        return True
+    except CopyLockRoom as e:
+        log.warning('company template not used for %s: %s', schema, e)
+        from django_tenants.utils import schema_exists
+        connection.set_schema_to_public()
+        if schema_exists(schema):   # never registered – made by this copy only
+            with connection.cursor() as cur:
+                cur.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        P.set(template_note=str(e)[:300])
+        return False
 
 
 def grant_admin(user, comp):
@@ -443,35 +480,46 @@ def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, cou
     if own_thread:
         close_old_connections()
     from ZeoApps.job_progress import Progress
-    P = Progress(lambda **kw: _job(job, **kw), PLAN)   # v1.62.1: % and what is being done now
+    # v1.62.1: % and what is being done now; v1.67.2 (signup): learned step seconds, a beat every 5 s
+    P = Progress(lambda **kw: _job(job, **kw), PLAN, learn=learn_name(), heartbeat=True)
     try:
         from UserManagement.models import company as Company, CustomUser
         connection.set_schema_to_public()
         acc = Account.objects.get(pk=acc_id)
-        apps = [a for a in apps if a in APP_KEYS]
+        apps = [a for a in apps if a in ['hrms'] + APP_KEYS]   # v1.67.3 (apps) HR only when chosen (or needed by Payroll / People)
         country = None
         if country_id:
             from Core.models import cntry_mstr
             country = cntry_mstr.objects.filter(pk=country_id).first()
-        comp = Company(name=name[:100], schema_name=schema, country=country or default_country(), industry_type=industry or 'OTH')
-        if template_ready():   # seconds: copy of the ready template schema (kept up to date by migrate_schemas)
-            from django_tenants.clone import CloneSchema
-            P.begin('create', 'Copying the ready company template')
-            with P.copy(TEMPLATE, 'Copying the ready company template'):
-                CloneSchema().clone_schema(TEMPLATE, schema, clone_mode='DATA')
+        country = country or default_country()
+        comp = Company(name=name[:100], schema_name=schema, country=country, industry_type=industry or 'OTH')
+        try:   # v1.67.2 (signup): the currency of the country (the country pack follows the company country)
+            cur = country.currency.order_by('id').first() if country is not None else None
+            if cur is not None:
+                comp.currency = cur
+        except Exception:
+            pass
+        cloned = copy_template(P, schema)   # v1.67.2 (signup): real progress; falls back when PostgreSQL has too little lock room
+        if cloned:
             comp.auto_create_schema = False
-            P.sub(0.97, 'Registering the company')
+            P.sub(0.99, 'Registering the company')
             comp.save()
         else:
             P.begin('create', 'Creating the database')
             with P.migrations(schema):
                 comp.save()   # without the template: creates the schema and runs the company migrations (about 2 minutes)
+        if cloned:   # v1.67.2 (signup): the first branch gets the company's name, code and country (not the template's)
+            try:
+                from UserManagement.company_jobs import _after_clone
+                _after_clone(comp)
+            except Exception:
+                log.exception('rename the template branch of %s', schema)
         AccountCompany.objects.create(company=comp, account=acc, extra=extra, db_alias='')   # made in the main database
         forget(schema)
         P.begin('apps', 'Preparing the apps')
         from ZeoApps.services import setup_new_company
         user = CustomUser.objects.filter(pk=user_id).first()
-        done, failed = setup_new_company(comp, ['hrms'] + apps, user,
+        done, failed = setup_new_company(comp, apps, user,   # v1.67.3 (apps) was ['hrms'] + apps (HR with every app)
                                          progress=lambda i, n, app: P.sub(i / max(n, 1), ('Setting up {0} ({1} of {2})', [app, i + 1, n])))
         P.begin('access', 'The account owner can open the company')
         people = {u for u in [acc.owner, user if grant_creator else None] if u is not None}   # Adept staff are not added

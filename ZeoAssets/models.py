@@ -119,6 +119,8 @@ class Location(models.Model):
     property_building_id = models.IntegerField('building (Property)', null=True, blank=True)
     property_unit_id = models.IntegerField('unit (Property)', null=True, blank=True)
     mnt_location_id = models.IntegerField('location (Maintenance)', null=True, blank=True)
+    shared_location = models.ForeignKey('ZeoMasters.Location', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='store / location (shared)')   # v1.67.4 (masters)
     is_active = models.BooleanField(default=True)
 
     BRANCH_FROM = ('parent',)

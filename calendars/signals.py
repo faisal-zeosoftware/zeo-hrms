@@ -87,7 +87,10 @@ def update_emp_leave_balance(sender, instance, created, **kwargs):
         employees = employees.filter(emp_ctgry_id__in=criteria.role.all())
 
     # Create emp_leave_balance entries for each matching employee only if they don't already exist
+    from .utils import other_branch_copy   # v1.67.5 (bugs) L2: not on another branch's copy of a type the employee's branch has
     for employee in employees:
+        if other_branch_copy(employee, leave_type_instance):
+            continue
         emp_leave_balance.objects.get_or_create(
             employee=employee,
             leave_type=leave_type_instance,
@@ -112,7 +115,10 @@ def update_emp_leave_balance_on_employee_create(sender, instance, created, **kwa
         ).distinct()
 
         # Create emp_leave_balance entries for each applicable criteria only if they don't already exist
+        from .utils import other_branch_copy   # v1.67.5 (bugs) L2
         for criteria in applicable_criteria:
+            if other_branch_copy(instance, criteria.leave_type):
+                continue
             emp_leave_balance.objects.get_or_create(
                 employee=instance,
                 leave_type=criteria.leave_type,

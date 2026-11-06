@@ -249,6 +249,7 @@ MIDDLEWARE = [
 # v1.23.0 ZEO Cloud – accounts, plans and licences (off for an own installation: no limits, nothing changes)
 ZEO_CLOUD = env_bool('ZEO_CLOUD', True)
 ZEO_CLOUD_ADMIN_EMAIL = env('ZEO_CLOUD_ADMIN_EMAIL', '')   # upgrade and Enterprise requests are e-mailed here
+ZEO_CLOUD_SUPPORT_PHONE = env('ZEO_CLOUD_SUPPORT_PHONE', '')   # v1.67.2 (signup) shown on the sign-up when a company cannot be created
 # v1.28.0 Enterprise licence (README-UPDATE section 40)
 ZEO_EDITION = env('ZEO_EDITION', '')                                   # 'enterprise' on a client's own Enterprise server: licence checks on
 ZEO_LICENCE_PRIVATE_KEY = env('ZEO_LICENCE_PRIVATE_KEY', '')           # Adept's issuing server only: path of the private key (never in a package)
@@ -319,16 +320,6 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django_tenants.postgresql_backend',
-#         'NAME': env('ZEO_DB_NAME', 'zeo'),
-#         'USER': env('ZEO_DB_USER', 'zeo_user'),
-#         'PASSWORD': env('ZEO_DB_PASSWORD'),
-#         'HOST': env('ZEO_DB_HOST', '127.0.0.1'),
-#         'PORT': env('ZEO_DB_PORT', '5432'),
-#     }
-# }
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',

@@ -1,5 +1,5 @@
 """v1.13.0 – daily complaint escalation (celery beat: SelfService.tasks.escalate_complaints)."""
-from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
+from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 from celery import shared_task
 
 

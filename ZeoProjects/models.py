@@ -606,6 +606,8 @@ class ProjectExpense(models.Model):
     category = models.CharField(max_length=12, choices=CATEGORIES, default='third_party')
     description = models.CharField(max_length=255)
     vendor = models.CharField(max_length=150, blank=True)
+    vendor_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='vendor (business partner)')   # v1.67.4 (masters)
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
 

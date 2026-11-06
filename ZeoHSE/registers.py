@@ -65,10 +65,17 @@ OPTIONS = {
     'audits': (lambda: Audit.objects.all(), lambda x: f'{x.number} {x.title}', ('number', 'title')),
     'files': (lambda: HSEFile.objects.none(), lambda x: x.name, ('name',)),
 }
+def _partners():   # v1.67.4 (masters) business partners for the supplier picker
+    from ZeoMasters.models import Partner
+    return Partner.objects.filter(merged_into__isnull=True).exclude(status='archived')
+
+
+OPTIONS['partners'] = (_partners, lambda x: f'{x.name} ({x.number})', ('name', 'number', 'tax_id'))
+
 MODEL_OPTIONS = {'emp_master': 'employees', 'Site': 'sites', 'Area': 'areas', 'Contractor': 'contractors', 'Incident': 'incidents', 'Permit': 'permits',
                  'RiskAssessment': 'risks', 'FormTemplate': 'audit-templates', 'KPI': 'kpis', 'ExposureLimit': 'limits', 'EnvParameter': 'parameters',
                  'Obligation': 'obligations', 'CompetencyType': 'competency-types', 'Chemical': 'chemicals', 'HSEDocument': 'documents',
-                 'Audit': 'audits', 'HSEFile': 'files'}
+                 'Audit': 'audits', 'HSEFile': 'files', 'Partner': 'partners'}   # v1.67.4 (masters): + business partners
 
 
 def opt_label(model_name, obj):
@@ -357,10 +364,10 @@ reg(Reg('waste', WasteRecord, 'Waste record', 'Waste', 'environment',
                       ('manifest_no', 'Manifest no.', 'text', False), ('disposal_permit', 'Permit no.', 'text', False), ('transferred_on', 'Date', 'date', False)), 'primary'),
                  Act('disposed', 'Confirm disposal', lambda o, r, f: MD.waste_disposed(o, r, f), st('transferred'), (('disposed_on', 'Disposed on', 'date', True),), 'primary')]))
 
-# 11 – chemicals
+# 11 – chemicals (v1.67.4 (masters): supplier_partner – the business partner picker next to the typed supplier name)
 reg(Reg('chemicals', Chemical, 'Chemical', 'Chemicals and SDS', 'environment',
         cols=('number', 'name', 'trade_name', 'compat_group', 'site', 'storage_location', 'sds_date', 'status'),
-        form=('name', 'trade_name', 'supplier', 'product_code', 'cas_no', 'hazard_classes', 'signal_word', 'intended_use', 'site', 'storage_location',
+        form=('name', 'trade_name', 'supplier_partner', 'supplier', 'product_code', 'cas_no', 'hazard_classes', 'signal_word', 'intended_use', 'site', 'storage_location',
               'max_qty', 'unit', 'current_qty', 'compat_group', 'ppe', 'handling', 'emergency_measures', 'disposal', 'risk_assessment', 'owner'),
         number='chemical', manage=HSE + ('env_officer',), view=('site_manager', 'supervisor', 'occ_health'), create='all', own=(('requested_by', 'user'),),
         public=lambda req: Q(status='approved'), search=('number', 'name', 'trade_name', 'cas_no'), filters=('status', 'compat_group', 'site'),

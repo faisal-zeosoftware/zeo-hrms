@@ -84,6 +84,8 @@ class Location(models.Model):
     parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='children')
     property_unit_id = models.IntegerField('unit (Property)', null=True, blank=True)
     property_building_id = models.IntegerField('building (Property)', null=True, blank=True)
+    shared_location = models.ForeignKey('ZeoMasters.Location', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='store / location (shared)')   # v1.67.4 (masters)
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
 
@@ -206,6 +208,8 @@ class CostLine(models.Model):
     rate = models.DecimalField(**MONEY)
     amount = models.DecimalField(default=0, **MONEY)
     vendor_invoice = models.CharField('vendor invoice no.', max_length=40, blank=True)
+    item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='item (item master)')   # v1.67.4 (masters)
 
     class Meta:
         ordering = ['id']

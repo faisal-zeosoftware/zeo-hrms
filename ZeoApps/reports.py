@@ -28,6 +28,9 @@ def app_of(key):
 
 
 PAYROLL_EXTRA = {'final-settlements', 'leave-encashment'}   # v1.23.0 payroll reports outside the Payroll section
+# v1.67.3 (apps) the timesheet and project cost reports of the Projects menu: shown with Projects or with HR
+PROJECTS_EXTRA = {'timesheets', 'project-entries', 'project-hours', 'project-cost', 'employee-cost', 'project-profitability',
+                  'timesheet-approvals', 'billable-hours'}
 
 
 def hidden_keys(keys, specs=None):
@@ -39,6 +42,13 @@ def hidden_keys(keys, specs=None):
     state = {}
     out = set()
     for k in keys:
+        if k in PROJECTS_EXTRA:   # v1.67.3 (apps)
+            try:
+                if not (is_active('projects') or is_active('hrms')):
+                    out.add(k)
+            except Exception:
+                pass
+            continue
         a = app_of(k) or 'hrms'   # v1.22.0: reports without an app prefix are HRMS reports
         if a == 'hrms' and (k in PAYROLL_EXTRA or (specs and len(specs.get(k) or ()) > 1 and specs[k][1] == 'Payroll')):
             a = 'payroll'   # v1.23.0

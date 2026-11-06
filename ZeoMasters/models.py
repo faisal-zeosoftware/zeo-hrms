@@ -432,3 +432,47 @@ class DuplicatePair(models.Model):
         verbose_name = 'possible duplicate'
         unique_together = [('partner', 'other')]
 
+
+
+# ====================================================================== v1.67.4 (masters) shared stores and locations
+LOCATION_KINDS = (('site', 'Site'), ('building', 'Building'), ('floor', 'Floor'), ('room', 'Room / area'), ('store', 'Store / warehouse'),
+                  ('vehicle', 'Vehicle'), ('external', 'External / customer site'))   # v1.67.4 (masters) same kinds as Asset Management
+
+
+class Location(models.Model):
+    """v1.67.4 (masters) – one list of the company's places: sites, buildings, rooms and stores (warehouses).
+
+    Asset Management locations / stores are its first users, Maintenance locations the second; the Inventory app (1.77) keeps
+    its stock per store on these same records. The apps keep their own record (floor plan, custodian, Property unit…) linked
+    here by `shared_location`; name, kind, parent, branch, address and active are kept in step."""
+    number = models.CharField(max_length=20, unique=True, blank=True)
+    code = models.CharField(max_length=30, blank=True, help_text='Code of the first app record (the apps keep their own codes)')
+    name = models.CharField(max_length=150)
+    kind = models.CharField(max_length=10, choices=LOCATION_KINDS, default='room')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='children', verbose_name='inside')
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    address = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+    used_in = models.JSONField('used in apps', default=list, blank=True)
+    apps_text = models.CharField('used in', max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'store / location'
+        verbose_name_plural = 'stores and locations'
+
+    def __str__(self):
+        return f'{self.code or self.number} {self.name}'.strip()
+
+    @property
+    def is_store(self):
+        return self.kind == 'store'
+
+    def path(self):
+        names, x, guard = [], self, 0
+        while x is not None and guard < 12:
+            names.append(x.name)
+            x, guard = x.parent, guard + 1
+        return ' › '.join(reversed(names))

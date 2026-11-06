@@ -46,6 +46,8 @@ class Account(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='cloud_accounts')
     owner_email = models.EmailField()
     owner_name = models.CharField(max_length=150, blank=True, default='')
+    contact_name = models.CharField(max_length=150, blank=True, default='')   # v1.67.2 (signup) contact person of the sign-up
+    contact_phone = models.CharField(max_length=30, blank=True, default='')   # v1.67.2 (signup) +971 … / international
     trn = models.CharField(max_length=20, blank=True, default='')
     country = models.CharField(max_length=60, blank=True, default='United Arab Emirates')
     plan = models.ForeignKey(Plan, on_delete=models.PROTECT, related_name='accounts')

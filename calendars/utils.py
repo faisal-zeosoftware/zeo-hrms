@@ -869,6 +869,57 @@ from .models import (
 )
 
 
+def other_branch_copy(employee, leave_type_instance):
+    """v1.67.5 (bugs) L2: True when the leave type belongs to another branch and the employee's own branch has its copy (same
+    code or same name) – the employee uses that copy. Every employee got a balance row for every branch's copy, so a company
+    with two branches showed Annual, Sick, Casual … twice in Leave balance."""
+    from django.db.models import Q
+    b = getattr(employee, 'emp_branch_id_id', None)
+    lb = getattr(leave_type_instance, 'branch_id', None)
+    if not b or not lb or lb == b:
+        return False
+    return leave_type.objects.filter(branch_id=b).filter(Q(code=leave_type_instance.code) | Q(name__iexact=(leave_type_instance.name or '').strip())).exists()
+
+
+def duplicate_of(leave_type_instance):
+    """v1.67.5 (bugs) L2: the older leave type of the same name for the same branch (or both for every branch) – a type made
+    twice (before 1.67.5 nothing stopped a second "Annual Leave" for every branch). None when the type is the first."""
+    from django.db.models import Q
+    name = (leave_type_instance.name or '').strip()
+    if not name:
+        return None
+    qs = leave_type.objects.filter(name__iexact=name, pk__lt=leave_type_instance.pk)
+    qs = qs.filter(branch_id=leave_type_instance.branch_id) if leave_type_instance.branch_id else qs.filter(branch__isnull=True)
+    return qs.order_by('pk').first()
+
+
+def leave_gender(leave_type_instance):
+    """v1.67.5 (bugs) L5: 'F' / 'M' when the leave type is for one gender only, else None. In this order: the leave type's own
+    applicability (Leave types › Applicability – an explicit "Both" or no gender there means everybody), the leave policy lines
+    of the type (Maternity Leave lines of the UAE set are "female"), and the category: a maternity leave is for women.
+    Paternity / parental leave is not restricted here (UAE parental leave is for the father or the mother); a company that
+    gives paternity leave to fathers only sets it on the type or the policy line."""
+    crit = list(applicablity_critirea.objects.filter(leave_type=leave_type_instance).values_list('gender', flat=True))
+    if crit:
+        g = {(x or '').upper()[:1] for x in crit}
+        return g.pop() if len(g) == 1 and g <= {'F', 'M'} else None
+    try:
+        from django.apps import apps as _apps
+        lines = set(_apps.get_model('LeavePolicy', 'LeavePolicyLine').objects.filter(leave_type_id=leave_type_instance.pk).values_list('gender', flat=True))
+    except LookupError:
+        lines = set()
+    if len(lines) == 1 and lines <= {'F', 'M'}:
+        return lines.pop()
+    if (leave_type_instance.leave_category or '') == 'maternity' or 'maternity' in (leave_type_instance.name or '').lower():
+        return 'F'
+    return None
+
+
+def gender_allows(employee, leave_type_instance):
+    g = leave_gender(leave_type_instance)
+    return g is None or (getattr(employee, 'emp_gender', None) or '').upper()[:1] == g
+
+
 def is_leave_type_applicable(employee, leave_type_instance):
     """
     Check whether a leave type is applicable to an employee
@@ -880,6 +931,12 @@ def is_leave_type_applicable(employee, leave_type_instance):
         True  -> applicable
         False -> not applicable
     """
+    # v1.67.5 (bugs) L2 / L5: another branch's copy of a type the employee's branch has, and a type for the other gender
+    # (maternity leave for a man), are not applicable – no balance row is made for them
+    if other_branch_copy(employee, leave_type_instance) or duplicate_of(leave_type_instance) is not None:
+        return False
+    if not applicablity_critirea.objects.filter(leave_type=leave_type_instance).exists() and not gender_allows(employee, leave_type_instance):
+        return False
 
     criteria_list = (
         applicablity_critirea.objects
@@ -1145,3 +1202,49 @@ def get_or_create_applicable_leave_balance(
     )
 
     return leave_balance, created
+
+class BalanceView:
+    """v1.67.5 (bugs) L2 / L5: which balance rows a screen shows. A row is left out when it is empty (no days) and it is
+    another branch's copy of a type the employee's branch has, or the type is for the other gender. A row that holds days is
+    always shown (nothing is hidden that counts) – `manage.py clean_leave_balances` merges / removes those rows.
+    One instance per request: the leave types and their gender rules are read once."""
+
+    def __init__(self):
+        self.types = {t.pk: t for t in leave_type.objects.all()}
+        self.copies = set()
+        first = {}
+        self.dups = set()   # a second type of the same name in the same scope (see duplicate_of)
+        for t in sorted(self.types.values(), key=lambda x: x.pk):
+            if t.branch_id:
+                self.copies.add((t.branch_id, 'c', t.code))
+                self.copies.add((t.branch_id, 'n', (t.name or '').strip().lower()))
+            k = (t.branch_id, (t.name or '').strip().lower())
+            if k in first:
+                self.dups.add(t.pk)
+            else:
+                first[k] = t.pk
+        self._g = {}
+
+    def gender(self, lt_id):
+        if lt_id not in self._g:
+            t = self.types.get(lt_id)
+            self._g[lt_id] = leave_gender(t) if t is not None else None
+        return self._g[lt_id]
+
+    def other_copy(self, emp_branch_id, lt_id):
+        t = self.types.get(lt_id)
+        if t is None or not t.branch_id or not emp_branch_id or t.branch_id == emp_branch_id:
+            return False
+        return (emp_branch_id, 'c', t.code) in self.copies or (emp_branch_id, 'n', (t.name or '').strip().lower()) in self.copies
+
+    def hidden(self, emp_branch_id, emp_gender, lt_id, balance):
+        if balance not in (None, 0) and float(balance or 0) != 0:
+            return False
+        if self.other_copy(emp_branch_id, lt_id) or lt_id in self.dups:
+            return True
+        g = self.gender(lt_id)
+        return bool(g) and (emp_gender or '').upper()[:1] != g
+
+    def keep(self, rows):
+        """rows: emp_leave_balance objects with employee loaded."""
+        return [b for b in rows if not self.hidden(b.employee.emp_branch_id_id, b.employee.emp_gender, b.leave_type_id, b.balance)]

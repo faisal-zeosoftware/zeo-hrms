@@ -4,9 +4,9 @@ from celery import shared_task
 from django_tenants.utils import get_tenant_model, schema_context
 
 
-def _each(fn):
+def _each(fn, off=None):
     out = {}
-    for t in get_tenant_model().objects.exclude(schema_name__in=_zeo_off()):
+    for t in get_tenant_model().objects.exclude(schema_name__in=(off or _zeo_off)()):
         with schema_context(t.schema_name):
             try:
                 out[t.schema_name] = fn()
@@ -24,4 +24,5 @@ def hourly():
 @shared_task
 def month_start():
     from .services import month_end_provisions
-    return _each(lambda: getattr(month_end_provisions(), 'number', None))
+    from ZeoApps.scheduling import payroll_off   # v1.67.3 (apps) the payroll provisions: companies with Payroll only
+    return _each(lambda: getattr(month_end_provisions(), 'number', None), payroll_off)

@@ -43,6 +43,7 @@ TRANSACTION_PATHS = [
     r'/calendars/api/Emp-overtime/', r'/calendars/api/Emp-bulkupload-overtime/',
     r'/attendance-plus/api/punches/', r'/attendance-plus/api/corrections/', r'/attendance-plus/api/kiosk/punch/',
     r'/attendance-plus/api/overtime/', r'/attendance-plus/api/late-early/', r'/employee-profile/api/record/\d+/attendance/',
+    r'/attendance-plus/api/ess-punch/$',   # v1.67.5 (bugs) ESS1 the self-service barcode / face punch
     r'/api/v1/attendance/punches/',
     # payroll runs and payslips, final settlement
     r'/payroll/api/PayrollRun/', r'/payroll/api/payslip/', r'/payroll/api/PayslipConfirmedViewSet/', r'/payroll/api/approval-payroll/',
@@ -86,11 +87,20 @@ def _compute():
     from django.apps import apps
     G = apps.get_model('ZeoAdmin', 'SetupGuide')
     g = G.objects.order_by('id').first()
-    if g is None or not g.gate_on:
+    if g is None or not g.gate_on or not _hr_on():   # v1.67.3 (apps) a company without HR: no HR setup gate
         return {'enforced': False, 'allow': bool(g and g.gate_allow), 'open': [], 'blocked': False}
     steps = g.steps or {}
     open_ = [[k, no] for k, no, _n, can_skip in required() if not step_ok((steps.get(k) or {}).get('status'), can_skip)]
     return {'enforced': True, 'allow': bool(g.gate_allow), 'open': open_, 'blocked': bool(open_) and not g.gate_allow}
+
+
+def _hr_on():
+    """v1.67.3 (apps) the gate is about HR transactions – it never blocks a company that does not use HR."""
+    try:
+        from ZeoApps.services import is_active
+        return bool(is_active('hrms'))
+    except Exception:
+        return True
 
 
 def state(schema=None):

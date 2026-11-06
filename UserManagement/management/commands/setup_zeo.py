@@ -42,7 +42,7 @@ class Command(BaseCommand):
         p.add_argument('--expense-defaults', action='store_true', help='Load UAE expense categories and a default policy')
         # v1.21.0 apps of the company and its industry type (each app's default industry; Settings → Apps can change both later)
         p.add_argument('--apps', default=None,
-                       help='Apps the company uses, comma separated: hrms, projects, crm, property, maintenance, assets, people, hse (default for a new company: hrms,projects; add payroll for payroll. On a re-run only the apps named are switched on – none is switched off)')
+                       help='Apps the company uses, comma separated: hrms, payroll, projects, crm, property, maintenance, assets, people, hse (default for a new company: hrms,projects; add payroll for payroll. v1.67.3: HR only when named or needed – payroll and people bring HR; e.g. --apps property makes a company without HR. On a re-run only the apps named are switched on – none is switched off)')
         p.add_argument('--industry', default=None,
                        help='Company industry type: IT, HC, FIN, EDU, MFG, CON, OG, PM, RET or OTH (General)')
         p.add_argument('--no-country-defaults', action='store_true',
@@ -194,7 +194,7 @@ class Command(BaseCommand):
                 done, failed = [], {}
                 with schema_context(t.schema_name):
                     from ZeoApps.models import AppState
-                    for k in keys:
+                    for k in AS.with_deps(keys):   # v1.67.3 (apps) what the named apps need comes too (Payroll → HR)
                         if k not in AS.BY_KEY:
                             continue
                         try:

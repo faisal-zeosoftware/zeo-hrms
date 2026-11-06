@@ -16,6 +16,8 @@ APPROVAL_STATUS = [('draft', 'Draft'), ('submitted', 'Submitted'), ('approved', 
 class ProjectFinance(models.Model):
     project_id = models.IntegerField(unique=True, help_text='ProjectManagement.Project id')
     customer_name = models.CharField(max_length=200, blank=True, default='')
+    customer_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='customer (business partner)')   # v1.67.4 (masters)
     contract_value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     budget_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0, help_text='Cost budget')
     budget_hours = models.DecimalField(max_digits=10, decimal_places=2, default=0)

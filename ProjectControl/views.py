@@ -442,6 +442,7 @@ def _finance_json(request, project):
     f = S.finance_of(project.pk) or ProjectFinance(project_id=project.pk)
     rates = {m.employee_id: m for m in MemberRate.objects.filter(project_id=project.pk)}
     book = S.RateBook()
+    sal = S.salary_cost_available()   # v1.67.3 (apps)
     members = []
     seen = set()
     for role, qs in (('Manager', project.managers.all()), ('Member', project.members.all())):
@@ -452,7 +453,7 @@ def _finance_json(request, project):
             m = rates.get(e.pk)
             members.append({'employee_id': e.pk, 'employee': S._ename(e), 'project_role': role, 'role': m.role if m else '',
                             'bill_rate': m.bill_rate if m else None, 'cost_rate_override': m.cost_rate_override if m else None,
-                            'salary_cost_rate': S.salary_hour_rate(e, setting=book.setting),
+                            'salary_cost_rate': S.salary_hour_rate(e, setting=book.setting) if sal else None,   # v1.67.3 (apps) None = not available
                             'effective_cost_rate': book.cost_rate(e, project.pk), 'effective_bill_rate': book.bill_rate(project.pk, e.pk)})
     plans = {p.task_id: p for p in TaskPlan.objects.filter(task_id__in=Task.objects.filter(project=project).values('id'))}
     tasks = [{'task_id': t.pk, 'task': t.title, 'planned_hours': plans[t.pk].planned_hours if t.pk in plans else S.D0,
@@ -461,7 +462,9 @@ def _finance_json(request, project):
     return {'project': {'id': project.pk, 'title': project.title, 'status': project.status, 'start_date': project.start_date,
                         'end_date': project.end_date},
             'finance': {k: getattr(f, k) for k in FIN_FIELDS}, 'billing_types': [{'value': v, 'label': l} for v, l in BILLING_TYPES],
-            'members': members, 'tasks': tasks, 'can_edit': S.can_edit_finance(request, project)}
+            'members': members, 'tasks': tasks, 'can_edit': S.can_edit_finance(request, project),
+            'salary_cost_available': sal,   # v1.67.3 (apps)
+            'salary_cost_note': '' if sal else tr('Salary cost is not available – it comes from HR, which is not active in this company. A cost rate typed for a member still counts.')}
 
 
 class FinanceView(APIView):
@@ -575,7 +578,8 @@ class CostRateView(APIView):
         days = S.working_days_per_month(emp)
         return Response({'employee_id': emp.pk, 'employee': S._ename(emp), 'monthly_fixed_pay': monthly, 'working_days': days,
                          'hours_per_day': setting.hours_per_day, 'overhead_percent': setting.overhead_percent,
-                         'hourly_cost_rate': S.salary_hour_rate(emp, None, setting)})
+                         'hourly_cost_rate': S.salary_hour_rate(emp, None, setting) if S.salary_cost_available() else None,
+                         'salary_cost_available': S.salary_cost_available()})   # v1.67.3 (apps)
 
 
 class SettingsView(APIView):

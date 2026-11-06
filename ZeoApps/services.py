@@ -4,14 +4,20 @@ Every app works on its own. When two apps are active in the same company their l
 (HSE and the kit apps check that the other app is active); deactivating an app hides it and switches its links off,
 its data is kept.
 
-    hrms        HR (people, time, leave, documents, self service)    state: ZeoApps.AppState  – free with any app (v1.23.0)
-    payroll     Payroll (salaries, payslips, WPS, gratuity)          state: ZeoApps.AppState  – v1.23.0; no row = as HR
+    hrms        HR (people, time, leave, documents, self service)    state: ZeoApps.AppState  – v1.67.3: an app of its own
+    payroll     Payroll (salaries, payslips, WPS, gratuity)          state: ZeoApps.AppState  – v1.23.0; no row = as HR; needs HR
     projects    Projects (support tickets, AMC, delivery)             state: ZeoApps.AppState
     crm         CRM (contacts, pipelines, opportunities)              state: ZeoCRM.CRMSettings (app kit)
     property    Property (buildings, units, leases, sales, portals)   state: ZeoProperty.PropertySettings (app kit)
     maintenance Maintenance (work orders, preventive plans)           state: ZeoMaintenance.MaintSettings (app kit)
     assets      Asset Management (register, labels, counts, depreciation) state: ZeoAssets.AssetSettings (app kit) – v1.33.0
     hse         HSE (risk, permits, incidents, CAPA …)                state: ZeoHSE.HSESettings
+
+v1.67.3 (apps) – user decision of 5 Nov 2026: the apps work on their own, like Odoo and Zoho. The company core is always on and
+is not an app: company, branches, departments, designations, users and rights, the shared masters (partners, items, locations)
+and a basic employee directory (name, code, branch, department, designation, contact, status – ZeoApps.directory). Every app
+declares what it needs (DEPENDS); activating an app activates what it needs, deactivating is refused while an active app needs
+it ("Payroll needs HR"). HR no longer comes with every app; companies that have HR keep it.
 """
 import importlib
 import logging
@@ -41,6 +47,81 @@ KIT_KEYS = ('crm', 'property', 'maintenance', 'assets', 'people')   # apps on th
 CORE = ('hrms', 'projects', 'payroll')   # state in ZeoApps.AppState
 BY_KEY = {a[0]: a for a in APPS}
 BY_LABEL = {a[1]: a[0] for a in APPS}
+
+# v1.67.3 (apps) what every app needs besides the company core (Odoo-style "depends"). Asset Management works on the shared asset
+# register (OrganisationManager.Asset + AssetPlus profile): those tables are always there and Asset Management reaches them through
+# its own screens and services, so it needs only the core; the HR pages around the register (custody, asset requests, recoveries,
+# exit clearance) stay in HR and link up when HR is active. People is "part of HRMS" (benefits through payroll, HR letters to sign,
+# 360° reviews next to Performance, HR forms) – it needs HR.
+DEPENDS = {
+    'hrms': [],
+    'payroll': ['hrms'],
+    'projects': [],
+    'crm': [],
+    'property': [],
+    'maintenance': [],
+    'assets': [],
+    'people': ['hrms'],
+    'hse': [],
+}
+CORE_TEXT = ('Always on, not an app: company, branches, departments, designations, users and rights, business partners, items, '
+             'locations and the employee directory.')
+
+
+def requires(key):
+    """Every app `key` needs (what it needs needs too), the deepest first."""
+    out = []
+
+    def walk(k, seen):
+        for d in DEPENDS.get(k, []):
+            if d in seen:
+                continue
+            walk(d, seen | {d})
+            if d not in out:
+                out.append(d)
+    walk(key, {key})
+    return out
+
+
+def with_deps(keys):
+    """The apps chosen plus what they need, each needed app before the app that needs it (order of KEYS otherwise)."""
+    out = []
+    for k in [k for k in KEYS if k in (keys or [])]:
+        for d in requires(k) + [k]:
+            if d not in out:
+                out.append(d)
+    return out
+
+
+def dependents(key):
+    """The apps that need `key` (directly or through another app)."""
+    return [k for k in KEYS if k != key and key in requires(k)]
+
+
+def needed_by_active(key):
+    """The active apps that need `key` – it cannot be switched off while there is one."""
+    return [k for k in dependents(key) if installed(k) and is_active(k)]
+
+
+def brings(key):
+    """What activating `key` switches on with it: the apps it needs that are not active yet."""
+    return [d for d in requires(key) if not is_active(d)]
+
+
+def needs_message(key, users):
+    """'Payroll needs HR.' / 'Payroll and People need HR.'"""
+    t = [tr_(BY_KEY[k][2]) for k in users]   # the app names in the user's language too
+    if len(t) == 1:
+        return tr_('{0} needs {1}.', t[0], tr_(BY_KEY[key][2]))
+    return tr_('{0} and {1} need {2}.', ', '.join(t[:-1]), t[-1], tr_(BY_KEY[key][2]))
+
+
+def tr_(text, *args):
+    try:
+        from Translations.i18n import tr
+        return tr(text, *args)
+    except Exception:
+        return text.format(*args) if args else text
 
 
 def company():
@@ -176,6 +257,12 @@ def state(key):
     out['previous'] = previous_industry(key) if not out['active'] else ''
     out['roles'] = role_groups(key)
     out['links'] = links_of(key)
+    # v1.67.3 (apps): what the app needs, what activating it brings with it now and the active apps that need it
+    out['depends'] = [{'key': d, 'title': BY_KEY[d][2]} for d in requires(key)]
+    out['brings'] = [{'key': d, 'title': BY_KEY[d][2]} for d in brings(key)] if not out['active'] else []
+    nb = needed_by_active(key) if out['active'] else []
+    out['needed_by'] = [{'key': d, 'title': BY_KEY[d][2]} for d in nb]
+    out['needed_message'] = needs_message(key, nb) if nb else ''
     return out
 
 
@@ -276,6 +363,16 @@ def make_roles(key):
     return []
 
 
+def make_core_roles():
+    """v1.67.3 (apps) the role groups of the company core (Business partners – …), there with or without HR."""
+    from zeo.appkit.command import make_roles as mk
+    from zeo.appkit.engine import REGISTRY
+    import types
+    importlib.import_module('ZeoMasters.app')
+    a = REGISTRY['ZeoMasters']
+    return mk(types.SimpleNamespace(title='Business partners', roles=a.roles, label=a.label, code=a.code))
+
+
 # ------------------------------------------------------------------ activation
 class AppsError(Exception):
     def __init__(self, message, status=400):
@@ -305,7 +402,15 @@ def activate(key, industry=None, user=None):
         raise AppsError('Unknown app.')
     if not installed(key):
         raise AppsError(f'{BY_KEY[key][2]} is not installed on this server.')
+    # v1.67.3 (apps): what the app needs is switched on first (each with its own industry default and licence check)
+    need = [d for d in requires(key) if not is_active(d)]
+    for d in need:
+        if not installed(d):
+            raise AppsError(tr_('{0} needs {1}, which is not installed on this server.', tr_(BY_KEY[key][2]), tr_(BY_KEY[d][2])))
+        _cloud_check(d)
     _cloud_check(key)
+    for d in need:
+        activate(d, None, user)
     inds, sug = industries_of(key)
     ind = industry or previous_industry(key) or sug
     if ind not in dict(inds):
@@ -316,9 +421,12 @@ def activate(key, industry=None, user=None):
         if key in CORE:
             from .models import AppState
             s = AppState.objects.filter(app=key).first() or AppState(app=key)
+            first_hr = key == 'hrms' and s.pk is not None and s.activated_at is None and not s.active   # v1.67.3 (apps) HR added later
             s.active, s.industry, s.industry_source = True, ind, source
             s.activated_at, s.activated_by = timezone.now(), user
             s.save()
+            if key == 'hrms':
+                _hr_on(first_hr)
             if key == 'projects':   # v1.22.0: SLA policy, teams, categories … when Projects was not chosen at company set-up
                 try:
                     from ZeoProjects.models import SLAPolicy
@@ -359,13 +467,30 @@ def activate(key, industry=None, user=None):
         make_roles(key)
     except Exception:
         log.exception('role groups for %s', key)
-    if key != 'hrms' and not is_active('hrms'):   # v1.23.0: HR comes free with any app
-        try:
-            activate('hrms', None, user)
-        except Exception:
-            log.exception('HR with %s', key)
+    # v1.67.3 (apps): HR no longer comes with every app (v1.23.0 switched it on here) – only what the app needs (above)
     _forget()
+    if need:
+        added = dict(added or {}, **{'with': [BY_KEY[d][2] for d in need]})
     return added
+
+
+def _hr_on(first):
+    """v1.67.3 (apps) HR switched on. The employees of the directory are the HR employees already (the same records). A company
+    that never had HR (made with other apps only) finishes the required setup steps before HR transactions, as a new company
+    does (v1.62.1); the administrator can allow them earlier in the setup guide. The sample print templates are added."""
+    try:
+        from ZeoAdmin import setup_gate
+        if first:
+            setup_gate.enforce_new()
+        setup_gate.forget()
+    except Exception:
+        log.exception('setup gate when HR is activated')
+    if first:
+        try:
+            from PrintTemplates.services import seed as _print_seed
+            _print_seed()
+        except Exception:
+            log.exception('print templates when HR is activated')
 
 
 def deactivate(key, user=None):
@@ -375,8 +500,11 @@ def deactivate(key, user=None):
     others = [k for k in KEYS if k != key and is_active(k)]
     if not others:
         raise AppsError('At least one app must stay active.')
-    if key == 'hrms':   # v1.23.0: HR is needed by every other app (free with any app)
-        raise AppsError('HR cannot be switched off while another app is active – it comes with every app.')
+    # v1.67.3 (apps): refused while an active app needs it ("Payroll needs HR") – HR is no longer needed by every app
+    nb = needed_by_active(key)
+    if nb:
+        raise AppsError(tr_('{0} cannot be switched off: {1} Switch off {2} first.', tr_(BY_KEY[key][2]), needs_message(key, nb),
+                            ', '.join(tr_(BY_KEY[k][2]) for k in nb)), 409)
     with transaction.atomic():
         if key in CORE:
             from .models import AppState
@@ -386,6 +514,12 @@ def deactivate(key, user=None):
                 s.industry, s.industry_source = code, 'company'
             s.active = False
             s.save()
+            if key == 'hrms':   # v1.67.3 (apps) no HR setup gate for a company without HR
+                try:
+                    from ZeoAdmin import setup_gate
+                    setup_gate.forget()
+                except Exception:
+                    pass
         elif key == 'hse':
             from ZeoHSE.models import HSESettings
             s = HSESettings.get()
@@ -414,22 +548,27 @@ def setup_new_company(tenant, keys, user=None, progress=None):
     """Company creation: the apps ticked on the form (at least one). HRMS / Projects on or off; CRM, Property, Maintenance and
     HSE activated with the industry that matches the company industry type (it can be changed later in Settings → Apps)."""
     from django_tenants.utils import schema_context
-    keys = [k for k in (keys or []) if k in BY_KEY] or ['hrms']
-    if 'hrms' not in keys:   # v1.23.0: HR comes with any app
-        keys = ['hrms'] + keys
+    # v1.67.3 (apps): the apps chosen and what they need – HR only when chosen or needed (Payroll, People); none chosen = HR
+    keys = with_deps([k for k in (keys or []) if k in BY_KEY]) or ['hrms']
     done, failed = [], {}
     with schema_context(tenant.schema_name):
         set_core_default(keys, getattr(tenant, 'industry_type', '') or '')
-        try:   # v1.62.1 (user request 2 Nov): a new company finishes the required setup steps before HR transactions
-            from ZeoAdmin.setup_gate import enforce_new
-            enforce_new()
-        except Exception:
-            log.exception('setup gate of %s', tenant.schema_name)
-        try:   # v1.62.0 print – the sample print templates of the new company (payslip, letters, settlement …)
-            from PrintTemplates.services import seed as _print_seed
-            _print_seed()
-        except Exception:
-            log.exception('print templates of %s', tenant.schema_name)
+        if 'hrms' not in keys:   # v1.67.3 (apps) the Business partners role groups belong to the core (made with HR before)
+            try:
+                make_core_roles()
+            except Exception:
+                log.exception('core role groups of %s', tenant.schema_name)
+        if 'hrms' in keys:
+            try:   # v1.62.1 (user request 2 Nov): a new company finishes the required setup steps before HR transactions
+                from ZeoAdmin.setup_gate import enforce_new
+                enforce_new()
+            except Exception:
+                log.exception('setup gate of %s', tenant.schema_name)
+            try:   # v1.62.0 print – the sample print templates of the new company (payslip, letters, settlement …)
+                from PrintTemplates.services import seed as _print_seed
+                _print_seed()
+            except Exception:
+                log.exception('print templates of %s', tenant.schema_name)
         for i, k in enumerate(keys):
             if progress is not None:   # v1.62.1: progress of the company job – (done so far, total, app name)
                 try:

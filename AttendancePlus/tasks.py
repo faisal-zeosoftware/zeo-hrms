@@ -2,7 +2,7 @@
     'attendance-plus-nightly': {'task': 'AttendancePlus.tasks.attendance_nightly', 'schedule': crontab(hour=2, minute=15)},
     'attendance-plus-missing-punch': {'task': 'AttendancePlus.tasks.missing_punch_check', 'schedule': crontab(minute=20)},
 """
-from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
+from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 import logging
 
 from celery import shared_task

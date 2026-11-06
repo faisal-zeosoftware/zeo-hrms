@@ -56,6 +56,18 @@ class AssetTypeConfig(models.Model):
     useful_life_months = models.PositiveIntegerField(default=36)
     salvage_percent = models.DecimalField(max_digits=5, decimal_places=2, default=ZERO)
     maintenance_interval_days = models.PositiveIntegerField(null=True, blank=True)
+    item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='item (item master)')   # v1.67.4 (masters)
+
+    @property
+    def name(self):
+        """v1.67.4 (masters) the name of the HR asset type (OrganisationManager.AssetType, a core table) – used by the item link."""
+        from django.apps import apps as _apps
+        at = _apps.get_model('OrganisationManager', 'AssetType').objects.filter(pk=self.asset_type_id).only('name').first()
+        return at.name if at else ''
+
+    def __str__(self):
+        return self.name or f'Asset type {self.asset_type_id}'
 
 
 class AssetProfile(models.Model):
@@ -69,6 +81,8 @@ class AssetProfile(models.Model):
     purchase_cost = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
     currency = models.CharField(max_length=3, default='AED')
     vendor = models.CharField(max_length=150, blank=True)
+    vendor_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='vendor (business partner)')   # v1.67.4 (masters)
     invoice_no = models.CharField(max_length=60, blank=True)
     invoice_file = models.FileField(upload_to='asset_plus/invoices/', null=True, blank=True)
     purchase_order = models.CharField(max_length=60, blank=True)
@@ -199,6 +213,8 @@ class MaintenanceSchedule(models.Model):
     next_due_reading = models.DecimalField(max_digits=12, decimal_places=1, null=True, blank=True)
     remind_days_before = models.PositiveIntegerField(default=7)
     vendor = models.CharField(max_length=150, blank=True)
+    vendor_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='vendor (business partner)')   # v1.67.4 (masters)
     estimated_cost = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
     active = models.BooleanField(default=True)
     reminded_for = models.CharField(max_length=40, blank=True)
@@ -215,6 +231,8 @@ class MaintenanceRecord(models.Model):
     damage_id = models.IntegerField(null=True, blank=True)
     kind = models.CharField(max_length=12, choices=KIND, default='breakdown')
     vendor = models.CharField(max_length=150, blank=True)
+    vendor_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='vendor (business partner)')   # v1.67.4 (masters)
     description = models.TextField()
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
@@ -346,6 +364,8 @@ class AssetDisposal(models.Model):
     disposal_date = models.DateField()
     value = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, help_text='Sale price / scrap value received')
     buyer = models.CharField(max_length=150, blank=True)
+    buyer_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='buyer (business partner)')   # v1.67.4 (masters)
     reason = models.TextField()
     book_value = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
     gain_loss = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)

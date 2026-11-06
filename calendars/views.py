@@ -302,6 +302,18 @@ class leave_balance_viewset(viewsets.ModelViewSet):
     queryset = emp_leave_balance.objects.select_related('employee', 'leave_type').filter(employee__is_active=True).order_by('employee__emp_code', 'leave_type__name')
     serializer_class = EmployeeLeaveBalanceSerializer
 
+    def get_queryset(self):
+        # v1.67.5 (bugs) L2 / L5: the list shows each leave type once per employee – an empty row on another branch's copy of a
+        # type of the employee's branch, or on a type for the other gender (maternity for a man), is left out
+        qs = super().get_queryset()
+        if self.request.method != 'GET' or getattr(self, 'action', None) != 'list' or str(self.request.query_params.get('all', '')) == '1':
+            return qs
+        from .utils import BalanceView
+        bv = BalanceView()
+        hide = [r['id'] for r in qs.values('id', 'employee__emp_branch_id', 'employee__emp_gender', 'leave_type_id', 'balance')
+                if bv.hidden(r['employee__emp_branch_id'], r['employee__emp_gender'], r['leave_type_id'], r['balance'])]
+        return qs.exclude(id__in=hide) if hide else qs
+
     def perform_destroy(self, instance):
         # v1.62.10 (item 170): deleting a balance row is a balance change – the days still on the leave ledger are taken off
         # with a ledger line first (engine.post), so the ledger and the balance (a new row starts at 0) stay equal
@@ -465,7 +477,7 @@ class ShiftViewSet(viewsets.ModelViewSet):
     
 
 class ShiftPatternViewSet(viewsets.ModelViewSet):
-    queryset = ShiftPattern.objects.all()
+    queryset = ShiftPattern.objects.all().order_by('name', 'id')   # v1.67.5 (bugs) S2: a steady order (was storage order)
     serializer_class = ShiftPatternSerializer
     permission_classes = [ShiftPatternPermission]
 
@@ -484,7 +496,7 @@ class OvertimeRuleViewSet(viewsets.ModelViewSet):
     permission_classes = [ModelCodePermission]   # v1.12.0: was open to anybody
 
 class EmployeeShiftScheduleViewSet(viewsets.ModelViewSet):
-    queryset = EmployeeShiftSchedule.objects.all()
+    queryset = EmployeeShiftSchedule.objects.select_related('shift_pattern').order_by('-start_date', 'schedule_name', 'id')   # v1.67.5 (bugs) S3
     serializer_class = EmployeeShiftScheduleSerializer
     permission_classes = [EmployeeShiftSchedulePermission]   # v1.12.0: was commented out (open to anybody)
     @action(detail=True, methods=['get'])

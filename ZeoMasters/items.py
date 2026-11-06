@@ -55,8 +55,11 @@ class IExt:
     to_item / from_item are callables (or None) and direction is 'both' or 'up' (app → item only)."""
 
     def __init__(self, app, title, model, reg, label, fields, kind, url=None, fk='item', ref=False, plural=None, from_item=None,
-                 match_code=None):
+                 match_code=None, auto=True, new=None, fill=None):
         self.app, self.title, self.model_path, self.reg, self.label = app, title, model, reg, label
+        self.auto = auto                    # v1.67.4 (masters): False = existing records are linked only by `manage.py link_items`
+        self.new = new or {}                # v1.67.4 (masters): values of an item made from this record (e.g. not sold)
+        self.fill = fill or {}              # v1.67.4 (masters): ref records – {app field: fn(item)} filled when empty on the form
         self.fields, self.kind, self.url, self.fk, self.ref = fields, kind, url, fk, ref
         self.plural = plural or label + 's'
         self.from_item = from_item          # fn(item) → {app field: value} – extra values copied back (e.g. consumable flag)
@@ -150,7 +153,7 @@ def _ext_saved(ext, o, created):
         it = match(ext, o)
         if it is None:
             from .app import app
-            it = I(number=app.next_number('item', 'ITM'), kind=ext.kind(o))
+            it = I(number=app.next_number('item', 'ITM'), kind=ext.kind(o), **ext.new)
             for f in ext.fields:
                 v = _to_item(o, f)
                 if not _empty(v):
@@ -287,7 +290,7 @@ def item_saved(sender, instance, created, raw=False, **kw):
 def link_all(stdout=None):
     n = 0
     for ext in IEXTS:
-        if ext.ref:
+        if ext.ref or not ext.auto:   # v1.67.4 (masters): not auto = `manage.py link_items` only (dry run first)
             continue
         for o in ext.model.objects.filter(**{ext.fk + '__isnull': True}).order_by('pk'):
             o._itm_old = None

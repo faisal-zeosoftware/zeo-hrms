@@ -15,6 +15,15 @@ HRMS_PREFIXES = ('/employee/', '/calendars/', '/payroll/', '/project/', '/perfor
                  '/leave-policy/', '/hr-actions/', '/expense/', '/project-control/', '/org-structure/', '/shift-planner/',
                  '/attendance-plus/', '/asset-plus/', '/employee-profile/', '/self-service/', '/payroll-plus/', '/accounting/', '/iclock/')
 NOTIFY = re.compile(r'notif|notify', re.I)
+# v1.67.3 (apps) the company core stays open without HR: the employee directory (list, pick, one employee, new / change – not the
+# HR pages hanging under an employee), the logins of employees (Settings › Users and Give access) and the company e-mail account
+CORE_OPEN = re.compile(r'^/employee/api/(?:emplist|emp-by-user|email-config|ess-users|update-ess-user)(?:/|$)'
+                       r'|^/employee/api/Employee/(?:\d+/)?$')
+# v1.67.3 (apps) paths an app shares with HR: open when any of the apps is active (Projects tasks, timesheets and costing live in
+# the project module; the HR asset register under Asset Management)
+SHARED = (('/project/', ('hrms', 'projects')), ('/project-control/', ('hrms', 'projects')), ('/asset-plus/', ('hrms', 'assets')))
+# v1.67.3 (apps) the phone app's HR lists (my requests, approvals): empty without HR, sending answers 409
+MOBILE_HR = ('/mobile-co/api/requests/', '/mobile-co/api/approvals/')
 
 
 def _json(data, status):
@@ -27,11 +36,26 @@ class HRMSActiveMiddleware:
 
     def __call__(self, request):
         path = request.path
-        if path.startswith(HRMS_PREFIXES) and getattr(connection, 'schema_name', 'public') != 'public' and request.method != 'OPTIONS':
-            app = 'payroll' if path.startswith(PAYROLL_PREFIXES) else 'hrms'
+        if path.startswith(MOBILE_HR) and getattr(connection, 'schema_name', 'public') != 'public' and request.method != 'OPTIONS':
             try:
                 from .services import is_active
-                off = not is_active(app)
+                off = not is_active('hrms')
+            except Exception:
+                off = False
+            if off:
+                if request.method == 'GET':
+                    return _json([], 200)
+                return _json({'detail': 'HR is not active in this company. A company administrator activates it in Settings › Apps.',
+                              'activated': False}, 409)
+            return self.get_response(request)
+        if path.startswith(HRMS_PREFIXES) and CORE_OPEN.match(path):   # v1.67.3 (apps) the company core
+            return self.get_response(request)
+        if path.startswith(HRMS_PREFIXES) and getattr(connection, 'schema_name', 'public') != 'public' and request.method != 'OPTIONS':
+            app = 'payroll' if path.startswith(PAYROLL_PREFIXES) else 'hrms'
+            shared = next((a for p, a in SHARED if path.startswith(p)), None)
+            try:
+                from .services import is_active
+                off = (not any(is_active(a) for a in shared)) if shared else not is_active(app)
             except Exception:
                 off = False
             if off:

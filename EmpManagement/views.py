@@ -655,6 +655,16 @@ class EmpViewSet(viewsets.ModelViewSet):
             leave_balance = leave_balance.filter(_Q(leave_type__branch__isnull=True) | _Q(leave_type__branch_id=user.emp_branch_id_id)
                                                  | ~_Q(balance=0) & _Q(balance__isnull=False))
 
+        try:   # v1.67.5 (bugs) L5: an empty balance on a type for the other gender (maternity for a man) is not shown or offered
+            from calendars.utils import BalanceView
+            _bv = BalanceView()
+            _hide = [b.pk for b in leave_balance.select_related('employee') if _bv.hidden(user.emp_branch_id_id, user.emp_gender, b.leave_type_id, b.balance)]
+            if _hide:
+                leave_balance = leave_balance.exclude(pk__in=_hide)
+            available_leave_types = available_leave_types.exclude(pk__in=[t for t in available_leave_types.values_list('id', flat=True)
+                                                                          if _bv.gender(t) and (user.emp_gender or '').upper()[:1] != _bv.gender(t)])
+        except Exception:   # noqa: BLE001
+            logger.exception('leave balance filter')
         # Serialize data
         leave_balance_serializer = EmployeeLeaveBalanceSerializer(leave_balance, many=True)
         leave_type_serializer = LeaveTypeSerializer(available_leave_types, many=True)
@@ -677,6 +687,7 @@ class EmpViewSet(viewsets.ModelViewSet):
             applicable |= set(available_leave_types.values_list('id', flat=True))
         if user.emp_branch_id_id:   # v1.62.0: types of another branch are not offered (see above)
             applicable &= set(available_leave_types.values_list('id', flat=True)) | set(b.leave_type_id for b in leave_balance)
+        applicable &= set(available_leave_types.values_list('id', flat=True)) | set(b.leave_type_id for b in leave_balance)   # v1.67.5 (bugs) L5
         return Response({
             "leave_balance": leave_balance_serializer.data,
             "available_leave_types": leave_type_serializer.data,
@@ -1781,7 +1792,13 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
         mode = 'all' if str(request.data.get('mode', '')).lower() in ('all', 'all_or_nothing') else 'partial'
         dry = str(request.data.get('dry_run', '')).lower() in ('1', 'true', 'yes')
         sync = str(request.data.get('sync', '')).lower() in ('1', 'true', 'yes')
-        job = bulk_import.start(f.name, f.read(), mode=mode, dry_run=dry, user=request.user, run_now=sync)
+        pics = request.FILES.get('pictures')   # v1.67.5 (bugs) I1: the profile pictures as a .zip (file names as in "Profile Picture")
+        if pics is not None and pics.size > 200 * 1024 * 1024:
+            return Response({"error": "The pictures .zip is larger than 200 MB."}, status=400)
+        if pics is not None and not pics.name.lower().endswith('.zip'):
+            return Response({"error": "Upload the profile pictures as one .zip file."}, status=400)
+        job = bulk_import.start(f.name, f.read(), mode=mode, dry_run=dry, user=request.user, run_now=sync,
+                                pictures=pics.read() if pics is not None else None)
         if sync:
             return Response(dict(bulk_import.status(job) or {}, job=job))
         return Response({"job": job, "status_url": f"/employee/api/emp-bulkupload/import-status/?job={job}"}, status=202)
@@ -1822,7 +1839,8 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
         ws.append(['EMP-0001', 'Ahmed', '', 'Khan', 'Male', '15/04/1990', '01/09/2024', 'PAKISTANI', 'Head Office', 'Finance', 'Accountant',
                    'Staff', '', 'ahmed@example.com', '', '0501234567', 'Married', 'Islam', 'United Arab Emirates', 'Dubai', 'False', 'False',
                    'manual', '', 'Emirates NBD', 'AE070331234567890123456', '', '302620122', '', 'WPS', '784-1990-1234567-1', '01/09/2027',
-                   'AB1234567', '01/01/2030', '201/2024/1234567', '01/09/2026', '12345678', '01/09/2026', '6000', '2500', '800', '500', 'Active', ''])
+                   'AB1234567', '01/01/2030', '201/2024/1234567', '01/09/2026', '12345678', '01/09/2026', '6000', '2500', '800', '500', 'Active', '']
+                  + bulk_import.TEMPLATE_SAMPLE_EXTRA)   # v1.67.5 (bugs) I1
         for col in ws.columns:
             ws.column_dimensions[col[0].column_letter].width = max(14, len(str(col[0].value)) + 2)
         notes = wb.create_sheet('Read me')
@@ -1832,7 +1850,13 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
                      'Reports To: the employee code of the line manager (may be further down the file).',
                      'Salary: one column per salary component, named as in Payroll → Salary components (Basic Salary, Housing Allowance …).',
                      'Status Left / Exit date in the past: the employee is imported as a leaver (not active).',
-                     'Rows with errors are listed after the upload with the reason; the other rows are imported.']:
+                     'Rows with errors are listed after the upload with the reason; the other rows are imported.',
+                     # v1.67.5 (bugs) I1
+                     'Title: Mr, Mrs, Ms, Miss, Dr, Eng or Prof. Name in Arabic and Preferred Name are kept with the identity details.',
+                     'Attendance Card / Barcode: the number on the employee\'s card – used by the barcode / QR punch; it must be unique.',
+                     'Visa Location / Work Location: a branch name or code. City: text.',
+                     'Profile Picture: the file name of the picture (e.g. EMP-0001.jpg). Put all pictures in one .zip and choose it as '
+                     '"Profile pictures (.zip)" next to this file. JPG, PNG, WebP or GIF, up to 5 MB each.']:
             notes.append([line])
         out = io.BytesIO()
         wb.save(out)

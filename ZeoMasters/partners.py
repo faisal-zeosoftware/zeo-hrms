@@ -47,8 +47,10 @@ class Ext:
     """One kind of app record that belongs to a partner."""
 
     def __init__(self, app, title, model, reg, label, fields, roles, kind=None, sibling=None, to_partner=None, from_partner=None,
-                 active=None, fk='partner', ref=False, url=None, plural=None):
+                 active=None, fk='partner', ref=False, url=None, plural=None, by_name=False, auto=True):
         self.app, self.title, self.model_path, self.reg, self.label = app, title, model, reg, label
+        self.by_name = by_name          # v1.67.4 (masters): a typed name that links itself to the partner of exactly that name on save
+        self.auto = auto                # v1.67.4 (masters): False = existing records are linked only by `manage.py link_partners`
         self.fk = fk                    # v1.42.0: the link field (partner / supplier_partner / vendor_partner)
         self.ref = ref                  # v1.42.0: a reference (a part's supplier) – never makes a partner; one summary row in "Used in"
         self.url = url                  # v1.42.0: fn(record) → page of the record when the app is not a kit app (Projects, HSE)
@@ -226,6 +228,8 @@ def _ext_saved(ext, o, created):
     p = P.objects.filter(pk=pid).first() if pid else None
     old = getattr(o, '_mst_old', None) or {}
     changed = False
+    if ext.ref and ext.by_name:   # v1.67.4 (masters)
+        return _by_name_saved(ext, o, p, old)
     if p is None and ext.ref:
         prev = old.get('partner_id')
         if prev:
@@ -296,6 +300,46 @@ def _ext_saved(ext, o, created):
         refresh_used_in(p)
     else:
         refresh_used_in(p)
+
+
+def _by_name_saved(ext, o, p, old):
+    """v1.67.4 (masters) – a typed supplier / customer name with a partner link next to it (the text is kept):
+    the partner was picked (link changed)  → the text takes the partner's name
+    the text was changed                   → linked to the partner of exactly that name (case and spaces ignored), else no link
+    Nothing is ever created here – `manage.py link_partners` makes the missing partners (dry run first)."""
+    P = Partner()
+    tf = ext.fields[0][0]
+    text = ' '.join(str(getattr(o, tf) or '').split())
+    prev = old.get('partner_id')
+    att = ext.model._meta.get_field(tf).attname
+    picked = p is not None and p.pk != prev
+    new = p
+    if picked:
+        if getattr(o, tf) != _fit(ext.model, tf, p.name):
+            ext.model.objects.filter(pk=o.pk).update(**{att: _fit(ext.model, tf, p.name)})
+    elif not text:
+        new = None
+    elif p is None or ' '.join(p.name.split()).lower() != text.lower():
+        new = by_name(text)
+    if (new.pk if new else None) != (p.pk if p else None):
+        ext.model.objects.filter(pk=o.pk).update(**{ext.fk: new})
+        setattr(o, ext.fk + '_id', new.pk if new else None)
+    for x in {new, p, P.objects.filter(pk=prev).first() if prev else None}:
+        if x is not None:
+            refresh_used_in(x)
+
+
+def by_name(text):
+    """v1.67.4 (masters) the oldest active partner whose name is exactly `text` (case and spaces ignored)."""
+    nm = ' '.join(str(text or '').split())
+    if not nm:
+        return None
+    x = Partner().objects.filter(name__iexact=nm, merged_into__isnull=True).exclude(status='archived').order_by('pk').first()
+    if x is None:   # names saved with double spaces
+        for c in Partner().objects.filter(name__icontains=nm.split(' ')[0], merged_into__isnull=True).exclude(status='archived').order_by('pk')[:200]:
+            if ' '.join(c.name.split()).lower() == nm.lower():
+                return c
+    return x
 
 
 def _fill_from(ext, o, p):
@@ -522,6 +566,8 @@ def link_all(stdout=None):
     guess – records that only share a phone / e-mail get their own partner and appear in Possible duplicates."""
     n = 0
     for ext in EXTS:
+        if not ext.auto:   # v1.67.4 (masters): linked by `manage.py link_partners` only (dry run first)
+            continue
         if ext.ref:
             n += link_refs(ext)
             continue

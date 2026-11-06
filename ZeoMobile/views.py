@@ -229,9 +229,13 @@ class HomeView(APIView):
                                        for p in (st.get('punches') or [])][-6:]
         except Exception as e:
             out['punch'] = {'error': str(getattr(e, 'detail', e))[:200]}
-        try:
-            from ZeoApps.services import is_active
-            out['apps'] = {k: bool(is_active(k)) for k in ('hrms', 'payroll', 'projects')}
+        try:   # v1.67.3 (apps) every app (the phone shows only the active ones); without HR no leave, attendance, payslip or ESS
+            from ZeoApps.services import KEYS, is_active
+            out['apps'] = {k: bool(is_active(k)) for k in KEYS}
+            if not out['apps'].get('hrms'):
+                out.update(leave_balances=[], attendance=None, next_leave=None, payslip=None, ess={}, approvals=0,
+                           punch={'off': True, 'error': tr('HR is not active in this company.')})
+                out['month'] = {}
         except Exception:
             out['apps'] = {}
         try:   # v1.56.1 uploaded files need a login: the phone app's photo address carries the media token (also for older apps)

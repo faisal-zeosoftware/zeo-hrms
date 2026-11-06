@@ -1320,6 +1320,34 @@ def _segregation(approval, user):
         raise PermissionDenied(ex.message)
 
 
+def _mail_approved(approvals, user):
+    """v1.67.5 (bugs) P1: e-mail the payslips that these approvals made Approved (the last step). Errors are returned to the
+    approver and kept in the payslip's log; they never undo the approval."""
+    try:
+        from PayrollPlus import payslip_mail
+    except ImportError:
+        return None
+    seen, slips = set(), []
+    for a in approvals:
+        p = Payslip.objects.select_related('employee', 'employee__users', 'payroll_run').filter(pk=a.request_id).first()
+        if p is not None and p.pk not in seen:
+            seen.add(p.pk)
+            slips.append(p)
+    try:
+        return payslip_mail.after_approval(slips, user)
+    except Exception as e:   # noqa: BLE001
+        logger.exception('payslip e-mails after approval')
+        return {'sent': 0, 'skipped': 0, 'failed': len(slips), 'details': [{'payslip_id': p.pk, 'state': 'failed', 'text': str(e)[:200]} for p in slips]}
+
+
+def _mail_line(mail):
+    try:
+        from PayrollPlus import payslip_mail
+        return payslip_mail.summary(mail)
+    except Exception:   # noqa: BLE001
+        return ''
+
+
 class PayslipApprovalViewSet(viewsets.ModelViewSet):
     queryset = PayslipApproval.objects.all()
     serializer_class = PayslipApprovalSerializer
@@ -1342,7 +1370,8 @@ class PayslipApprovalViewSet(viewsets.ModelViewSet):
             raise ValidationError("This approval has already been processed.")
         _segregation(approval, request.user)
         approval.approve(note=note)
-        return Response({'status': 'approved'}, status=status.HTTP_200_OK)
+        mail = _mail_approved([approval], request.user)   # v1.67.5 (bugs) P1: the payslip is e-mailed once it is approved
+        return Response({'status': 'approved', 'email': mail, 'message': _mail_line(mail)}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
@@ -1369,20 +1398,27 @@ class PayslipApprovalViewSet(viewsets.ModelViewSet):
         # v1.7.0: only steps this user may act on (approver / delegate / admin, not own payslip); count before approving
         approvals, skipped = _actionable(self, request, ids)
         from rest_framework.exceptions import PermissionDenied
-        done, own = 0, 0
+        done, own, own_msg, approved = 0, 0, '', []
         for approval in approvals:
             try:
                 _segregation(approval, request.user)
-            except PermissionDenied:     # v1.18.0: payslips of a run this user prepared are left for another approver
+            except PermissionDenied as ex:     # v1.18.0: payslips of a run this user prepared are left for another approver
                 own += 1
+                own_msg = own_msg or str(ex.detail)
                 continue
             approval.approve(note=note)
+            approved.append(approval)
             done += 1
         if approvals and not done and own:
-            raise PermissionDenied('You prepared this payroll – somebody else must approve its payslips (segregation of duties).')
-
-        return Response({'status': f"{done} requests approved." + (f" {skipped} skipped: not yours to approve." if skipped else '')
-                         + (f" {own} skipped: you prepared the payroll." if own else '')}, status=status.HTTP_200_OK)
+            # v1.67.5 (bugs) P2: the same full message as a single approval – who prepared the run and how to go on
+            # (before, the bulk path – the one the Payslip approvals screen uses – said only the first sentence)
+            raise PermissionDenied(own_msg)
+        mail = _mail_approved(approved, request.user)   # v1.67.5 (bugs) P1
+        line = _mail_line(mail)
+        from Translations.i18n import tr as _tr   # v1.67.5 (bugs): the answer in the approver's language
+        return Response({'status': _tr('{0} requests approved.', done) + ((' ' + _tr('{0} skipped: not yours to approve.', skipped)) if skipped else '')
+                         + ((' ' + _tr('{0} skipped: you prepared the payroll.', own)) if own else '') + (f' {line}' if line else ''),
+                         'email': mail}, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'])
     def bulk_reject(self, request):

@@ -55,7 +55,10 @@ def daily(schema=None):
     from .privacy import daily as retention   # v1.53.0 anonymise employees who left N years ago (when automatic)
     out['retention'] = _each(retention, 'ZeoAdmin_retentionpolicy', schema)
     from .setup_guide import eid_reminder   # v1.56.0 Eid dates to confirm (moon sighting)
-    out['eid'] = _each(eid_reminder, 'ZeoAdmin_setupguide', schema)
+    def _eid():   # v1.67.3 (apps) Eid holidays are for HR (leave, attendance, payroll) – not for a company without HR
+        from ZeoApps.services import is_active
+        return eid_reminder() if is_active('hrms') else 'no HR'
+    out['eid'] = _each(_eid, 'ZeoAdmin_setupguide', schema)
     if schema is None:   # v1.54.0 Active Directory: new users, groups and disabled accounts every night
         try:
             from ZeoCloud.directory import nightly

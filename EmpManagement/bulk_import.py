@@ -65,8 +65,14 @@ COLUMNS = {
     'religion': ['religion'],
     'blood_group': ['blood group'],
     'marital': ['marital status'],
-    'father': ['father name'],
-    'mother': ['mother name'],
+    'father': ['father name', "father's name", 'fathers name'],
+    'mother': ['mother name', "mother's name", 'mothers name'],
+    # v1.67.5 (bugs) I1: title, preferred name, attendance card / barcode and the profile picture
+    'title': ['title', 'salutation', 'name title'],
+    'preferred_name': ['preferred name', 'known as', 'nick name', 'nickname'],
+    'barcode': ['attendance card / barcode', 'attendance card/barcode', 'attendance card', 'attendance card no', 'barcode', 'barcode number',
+                'card id', 'access card', 'punch card'],
+    'picture': ['profile picture', 'profile photo', 'photo', 'picture', 'photo file', 'picture file'],
     'branch': ['branch', 'branch name', 'establishment', 'location'],
     'department': ['department', 'dept'],
     'designation': ['designation', 'job title', 'position'],
@@ -92,7 +98,7 @@ COLUMNS = {
     'salary_card': ['salary card', 'salary card number', 'card number', 'wps card'],
     'payment_mode': ['payment mode', 'pay mode', 'salary payment mode'],
     # identity
-    'arabic_name': ['arabic name', 'name in arabic'],
+    'arabic_name': ['arabic name', 'name in arabic', 'name (arabic)', 'employee name in arabic'],
     'emirates_id': ['emirates id', 'emirates id no', 'eid', 'eid no', 'national id', 'iqama'],
     'emirates_id_issue': ['emirates id issue date', 'eid issue date'],
     'emirates_id_expiry': ['emirates id expiry', 'emirates id expiry date', 'eid expiry', 'eid expiry date'],
@@ -285,8 +291,12 @@ class Masters:
             if _skey(name) in self.states:
                 self.states.setdefault(code, self.states[_skey(name)])
         self.religions = {r.religion.strip().lower(): r for r in M('Core', 'ReligionMaster').objects.all() if r.religion}
-        self.employees = {e.emp_code.strip().upper(): e for e in E.objects.all().only('id', 'emp_code', 'users_id', 'person_id')}
+        self.employees = {e.emp_code.strip().upper(): e for e in E.objects.all().only('id', 'emp_code', 'users_id', 'person_id', 'barcode_number')}
         self.person_ids = {e.person_id: e.emp_code for e in self.employees.values() if e.person_id}
+        # v1.67.5 (bugs) I1: attendance card / barcode numbers in use (unique per company) and the pictures of the upload
+        self.barcodes = {str(e.barcode_number).strip().upper(): e.emp_code for e in self.employees.values() if e.barcode_number}
+        self.barcodes_in_file = {}
+        self.pictures = {}
         U = M('UserManagement', 'CustomUser')
         self.users = {u.username.lower(): u for u in U.objects.filter(tenants__schema_name=connection.schema_name)}
         try:
@@ -532,7 +542,86 @@ def check_row(values, masters, codes_in_file):
     out['passport_no'] = t('passport_no').upper()[:12]
     out['visa_no'] = t('visa_no')[:30]
     out['labour_card_no'] = t('labour_card_no')[:20]
+    # v1.67.5 (bugs) I1 – title, preferred name, attendance card / barcode, profile picture
+    tv = t('title').strip().rstrip('.').lower()
+    titles = {k.lower(): k for k, _ in TITLES}
+    titles.update({'mister': 'Mr', 'missus': 'Mrs', 'doctor': 'Dr', 'engineer': 'Eng', 'eng.': 'Eng', 'professor': 'Prof', 'miss.': 'Miss'})
+    if tv and tv not in titles:
+        err.append(f'Title "{t("title")}" – use one of: {", ".join(k for k, _ in TITLES)}')
+    out['title'] = titles.get(tv, '')
+    out['preferred_name'] = t('preferred_name')[:80]
+    if len(t('arabic_name')) > 150:
+        err.append('Name in Arabic is longer than 150 characters')
+    for k, label, n in (('city', 'City', 50), ('father', 'Father Name', 50), ('mother', 'Mother Name', 50)):
+        if len(t(k)) > n:
+            err.append(f'{label} is longer than {n} characters')
+    bc = t('barcode').replace(' ', '')
+    if bc:
+        if len(bc) > 100:
+            err.append('Attendance Card / Barcode is longer than 100 characters')
+        elif masters.barcodes.get(bc.upper()) not in (None, code):
+            err.append(f'Attendance Card / Barcode {bc} belongs to employee {masters.barcodes[bc.upper()]}')
+        elif masters.barcodes_in_file.get(bc.upper()) not in (None, code):
+            err.append(f'Attendance Card / Barcode {bc} is also on employee {masters.barcodes_in_file[bc.upper()]} in the file')
+        else:
+            masters.barcodes_in_file[bc.upper()] = code
+    out['barcode'] = bc or None
+    pic = t('picture')
+    out['picture'] = None
+    if pic:
+        key = picture_key(pic)
+        if not masters.pictures:
+            err.append(f'Profile Picture "{pic}": add the pictures as a .zip file next to the employee file (the file names as in this column)')
+        elif key not in masters.pictures:
+            err.append(f'Profile Picture "{pic}" is not in the pictures .zip')
+        elif masters.pictures[key][1]:
+            err.append(f'Profile Picture "{pic}": {masters.pictures[key][1]}')
+        else:
+            out['picture'] = key
     return out, err
+
+
+TITLES = [('Mr', 'Mr'), ('Mrs', 'Mrs'), ('Ms', 'Ms'), ('Miss', 'Miss'), ('Dr', 'Dr'), ('Eng', 'Eng'), ('Prof', 'Prof')]   # EmployeeProfile.EmployeeIdentity.TITLES
+PIC_EXT = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
+PIC_MAX = 5 * 1024 * 1024          # one picture
+ZIP_MAX_FILES = 5000
+
+
+def picture_key(name):
+    """'Photos/EMP-0001.JPG' and 'emp-0001.jpg' are the same picture: the file name only, lower case."""
+    return str(name or '').replace('\\', '/').rsplit('/', 1)[-1].strip().lower()
+
+
+def read_pictures(data):
+    """v1.67.5 (bugs) I1: the pictures of a .zip → {file name (lower case): (bytes or None, problem or '')}. Only image files,
+    at most 5 MB each and 5,000 files; each picture is opened (Pillow) so a broken or renamed file is reported on its row."""
+    import zipfile
+    out = {}
+    if not data:
+        return out
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise ValueError('The pictures file is not a .zip file')
+    infos = [i for i in z.infolist() if not i.is_dir() and not picture_key(i.filename).startswith('.') and '__macosx' not in i.filename.lower()]
+    if len(infos) > ZIP_MAX_FILES:
+        raise ValueError(f'The pictures .zip has more than {ZIP_MAX_FILES} files')
+    from PIL import Image
+    for i in infos:
+        key = picture_key(i.filename)
+        if not key.endswith(PIC_EXT):
+            continue
+        if i.file_size > PIC_MAX:
+            out[key] = (None, 'the picture is larger than 5 MB')
+            continue
+        b = z.read(i)
+        try:
+            with Image.open(io.BytesIO(b)) as im:
+                im.verify()
+            out[key] = (b, '')
+        except Exception:   # noqa: BLE001
+            out[key] = (None, 'not a picture that can be opened (JPG, PNG, WebP or GIF)')
+    return out
 
 
 # ------------------------------------------------------------------ saving
@@ -542,7 +631,8 @@ def _identity(emp, r, user):
                  ('passport_no', 'passport_no'), ('passport_issue', 'passport_issue_date'), ('passport_expiry', 'passport_expiry_date'),
                  ('visa_no', 'visa_number'), ('visa_uid', 'visa_uid'), ('visa_issue', 'visa_issue_date'), ('visa_expiry', 'visa_expiry_date'),
                  ('labour_card_no', 'labour_card_no'), ('labour_card_issue', 'labour_card_issue_date'),
-                 ('labour_card_expiry', 'labour_card_expiry_date'), ('arabic_name', 'arabic_name')):
+                 ('labour_card_expiry', 'labour_card_expiry_date'), ('arabic_name', 'arabic_name'),
+                 ('title', 'title'), ('preferred_name', 'preferred_name')):   # v1.67.5 (bugs) I1
         if r.get(k):
             fields[f] = r[k]
     if not fields:
@@ -619,7 +709,7 @@ def _employment(emp, r, user):
         info.save()
 
 
-def run(job, filename, data, mode='partial', dry_run=False, user_id=None, schema=None, own_thread=True):
+def run(job, filename, data, mode='partial', dry_run=False, user_id=None, schema=None, own_thread=True, pictures=None):
     from django.db import close_old_connections
     if own_thread:
         close_old_connections()
@@ -631,6 +721,11 @@ def run(job, filename, data, mode='partial', dry_run=False, user_id=None, schema
         header, rows = read_file(filename, data)
         _job(job, step='Checking', total=len(rows), processed=0)
         masters = Masters()
+        try:   # v1.67.5 (bugs) I1: the profile pictures (.zip) uploaded with the file
+            masters.pictures = read_pictures(pictures)
+        except ValueError as e:
+            _job(job, state='failed', error=str(e))
+            return
         idx, salary, unknown = map_headers(header, masters)
         missing = [lbl for key, lbl in (('code', 'Employee Code'), ('first_name', 'First Name'), ('dob', 'Date of Birth'), ('joined', 'Joining Date'),
                                         ('branch', 'Branch'), ('department', 'Department'), ('designation', 'Designation'), ('category', 'Category'),
@@ -717,6 +812,11 @@ def run(job, filename, data, mode='partial', dry_run=False, user_id=None, schema
                             emp.is_ess = r['ess'] or (emp.is_ess if not is_new else False)
                             emp.attendance_source = r['attendance_source'] or 'manual'
                             emp.person_id = r['person_id'] or emp.person_id
+                            if r.get('barcode'):   # v1.67.5 (bugs) I1
+                                emp.barcode_number = r['barcode']
+                            if r.get('picture'):
+                                from django.core.files.base import ContentFile
+                                emp.emp_profile_pic = ContentFile(masters.pictures[r['picture']][0], name=f"{r['code']}_{r['picture']}"[:90])
                             if r.get('reporting_manager'):
                                 emp.emp_reporting_manager = r['reporting_manager']
                             left = r.get('left')
@@ -773,15 +873,15 @@ def run(job, filename, data, mode='partial', dry_run=False, user_id=None, schema
             close_old_connections()
 
 
-def start(filename, data, mode='partial', dry_run=False, user=None, run_now=False):
+def start(filename, data, mode='partial', dry_run=False, user=None, run_now=False, pictures=None):
     job = uuid.uuid4().hex[:16]
     _job(job, state='running', step='Reading the file', processed=0, total=0, created=0, updated=0, failed=0, filename=filename,
          by=getattr(user, 'pk', None), schema=connection.schema_name)
     args = (job, filename, data, mode, dry_run, getattr(user, 'pk', None), connection.schema_name)
     if run_now:
-        run(*args, own_thread=False)
+        run(*args, own_thread=False, pictures=pictures)
     else:
-        threading.Thread(target=run, args=args, kwargs={'own_thread': True}, daemon=True).start()
+        threading.Thread(target=run, args=args, kwargs={'own_thread': True, 'pictures': pictures}, daemon=True).start()
     return job
 
 
@@ -802,4 +902,8 @@ TEMPLATE_HEADERS = ['Employee Code*', 'First Name*', 'Middle Name', 'Last Name',
                     'Bank Name', 'IBAN', 'Account Number', 'Routing Code', 'Salary Card', 'Payment Mode',
                     'Emirates ID', 'Emirates ID Expiry', 'Passport No', 'Passport Expiry', 'Visa No', 'Visa Expiry',
                     'Labour Card No', 'Labour Card Expiry', 'Basic Salary', 'Housing Allowance', 'Transport Allowance', 'Other Allowance',
-                    'Status', 'Exit Date']
+                    'Status', 'Exit Date',
+                    # v1.67.5 (bugs) I1
+                    'Title', 'Name in Arabic', 'Preferred Name', 'Attendance Card / Barcode', 'Mother Name', 'Father Name',
+                    'Visa Location', 'Work Location', 'City', 'Profile Picture']
+TEMPLATE_SAMPLE_EXTRA = ['Mr', 'أحمد خان', 'Ahmed', 'GD000123', 'Fatima Khan', 'Imran Khan', 'Head Office', 'Head Office', 'Dubai', 'EMP-0001.jpg']

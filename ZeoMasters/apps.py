@@ -19,3 +19,12 @@ class ZeoMastersConfig(AppConfig):
         from . import item_exts  # noqa: F401  v1.43.0 item master
         from .items import item_saved
         post_save.connect(item_saved, sender=_apps.get_model('ZeoMasters', 'Product'), dispatch_uid='mst_item_saved')
+        # v1.67.4 (masters): HR asset types (core table) → their item, shared stores / locations
+        try:
+            from .item_exts import asset_type_saved
+            post_save.connect(asset_type_saved, sender=_apps.get_model('OrganisationManager', 'AssetType'), dispatch_uid='mst_asset_type_saved')
+        except LookupError:
+            pass
+        from . import locations  # noqa: F401
+        from .locations import location_saved
+        post_save.connect(location_saved, sender=_apps.get_model('ZeoMasters', 'Location'), dispatch_uid='mst_location_saved')

@@ -24,6 +24,9 @@ urlpatterns = [
     path('api/ramadan/', V.RamadanView.as_view()),   # v1.67.0 (item 25a)
     path('api/ot-breakdown/', V.OtBreakdownView.as_view()),
     path('api/punch-photos/', V.PunchPhotosView.as_view()),
+    path('api/ess-punch/', V.EssPunchView.as_view()),                      # v1.67.5 (bugs) ESS1 barcode / face punch from self service
+    path('api/ess-punch/face/', V.EssFaceView.as_view()),
+    path('api/ess-punch/settings/', V.EssPunchSettingsView.as_view()),
     path('api/device/push/', V.DevicePushView.as_view()),
     # v1.62.0 people: overtime and late in / early out registers (approval queue, names, h:mm, stage)
     path('api/overtime/', R62.OvertimeView.as_view()),

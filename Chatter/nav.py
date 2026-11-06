@@ -450,6 +450,20 @@ def set_flag(user, key, value):
 
 
 RELEASES = [
+    {'version': '1.67.5', 'date': '2026-11-06', 'title': 'Bug fixes and punch from My profile', 'items': [   # v1.67.5 (bugs)
+        ('mail', 'Payslip e-mail on approval', 'An approved payslip is e-mailed to the employee with its PDF; the approver sees how many were sent, skipped or failed.'),
+        ('event_available', 'Leave fixes', 'Each leave type shows once per employee, maternity leave only for women, Leave Type edit and scrolling fixed, the employee list stays open in the leave request.'),
+        ('schedule', 'Shift fixes', 'Create Shift Pattern scrolls on its own, and the shift pattern and employee shift lists show every record correctly.'),
+        ('upload_file', 'Employee import fields', 'Title, Arabic and preferred name, card / barcode, parents, visa and work location, city and profile picture in the import file.'),
+        ('qr_code_scanner', 'Barcode and face punch', 'Employees can punch in from My profile with their card barcode, the company QR or their registered face.'),
+    ]},
+    {'version': '1.67.4', 'date': '2026-11-06', 'title': 'Companies, sign-up, apps on their own and shared masters', 'items': [   # v1.67.1–1.67.4
+        ('domain_disabled', 'Delete, deactivate and restore', 'Make a company or database inactive, or delete it with a backup download; it is kept 30 days and only the server administrator can restore it.'),
+        ('progress_activity', 'Honest sign-up progress', 'The trial sign-up bar follows the real copy of the company, with time left, Try again and contact person, number and country.'),
+        ('apps', 'Apps work on their own', 'HR is now an app like the others: each app brings only what it needs, for example Payroll needs HR.'),
+        ('badge', 'Employee directory', 'Without HR, employees are kept in Settings › Company › Employee directory and become HR employees when HR is switched on.'),
+        ('inventory_2', 'Shared partners, items and locations', 'Projects, assets, expenses, HSE and maintenance use the shared partners, items and locations, ready for Sales, Purchase, Inventory and Accounting.'),
+    ]},
     {'version': '1.67.0', 'date': '2026-11-03', 'title': 'Leave, air ticket and attendance rules', 'items': [   # v1.63.0–1.67.0
         ('calendar_view_month', 'Roster grid', 'Plan a whole month of shifts in one grid – drag, patterns, copy last month, conflicts and publish.'),
         ('nights_stay', 'Ramadan hours and night shifts', 'Ramadan hours per year, rest-day chips, 24-hour shifts and night-shift window settings.'),

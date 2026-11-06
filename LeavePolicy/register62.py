@@ -352,6 +352,8 @@ class BalanceGridView(APIView):
             pend[k] = pend.get(k, 0) + (r['applied_days'] or r['number_of_days'] or 0)
         cells = {}
         cols = {}
+        from calendars.utils import BalanceView   # v1.67.5 (bugs)
+        _bv = BalanceView()
         for b in BAL.objects.filter(employee_id__in=[e.pk for e in emps]).values('employee_id', 'leave_type_id', 'balance'):
             t = types.get(b['leave_type_id'])
             if t is None:
@@ -359,6 +361,10 @@ class BalanceGridView(APIView):
             emp_branch = next((e.emp_branch_id_id for e in emps if e.pk == b['employee_id']), None)
             # a type of another branch with nothing on it is the per-branch duplicate – left out
             if t.branch_id and emp_branch and t.branch_id != emp_branch and not b['balance']:
+                continue
+            # v1.67.5 (bugs) L5: an empty row on a type for the other gender (maternity for a man) is left out
+            emp_g = next((e.emp_gender for e in emps if e.pk == b['employee_id']), None)
+            if _bv.hidden(emp_branch, emp_g, t.pk, b['balance']):
                 continue
             name = t.name.strip()
             cols.setdefault(name, {'key': name, 'label': name, 'category': t.leave_category, 'unit': t.unit})

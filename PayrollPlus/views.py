@@ -66,6 +66,11 @@ class Base(APIView):
         return E.objects.filter(pk=emp_id, emp_branch_id__in=self.c.branches).exists()
 
 
+def _payslip_mail_public():   # v1.67.5 (bugs) P1
+    from . import payslip_mail
+    return payslip_mail.public()
+
+
 def _payslip_lock_public():   # v1.62.11 (item 230)
     try:
         from . import payslip_lock
@@ -91,6 +96,7 @@ class SettingsView(Base):
                          'pay_weekly': s.pay_weekly, 'pay_biweekly': s.pay_biweekly, 'pay_semimonthly': s.pay_semimonthly,   # v1.55.0
                          **self._net(),   # v1.62.2 (item 51)
                          **_payslip_lock_public(),   # v1.62.11 (item 230) payslip password
+                         **_payslip_mail_public(),   # v1.67.5 (bugs) P1 payslip e-mail on approval
                          'can_edit': self.can({'change_payrollplussettings'})})
 
     @staticmethod
@@ -151,6 +157,9 @@ class SettingsView(Base):
                                                        ('payslip_password_download', 'on_download')) if k1 in d})
             except ValueError as e:
                 raise S.Refused(e.args[1], problems={e.args[0]: e.args[1]})
+        if 'payslip_email_on_approval' in d:   # v1.67.5 (bugs) P1
+            from . import payslip_mail
+            payslip_mail.save(d)
         if 'keep_net_positive' in d or 'max_deduction_pct' in d:   # v1.62.2 (item 51)
             from decimal import Decimal, InvalidOperation
             from PayrollManagement.payroll_guards import save_net_settings

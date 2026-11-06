@@ -416,60 +416,95 @@ def generate_payslip_pdf(request, payslip):
 
 from django.core.mail import EmailMessage
 from django.conf import settings
-from EmpManagement .models import EmailConfiguration
+logger = logging.getLogger(__name__)   # v1.67.5 (bugs)
 
-def send_payslip_email(payslip):
-    config = EmailConfiguration.objects.filter(is_active=True).first()
-    if not config:
-        logger.error("No active email configuration found.")
-        return False
+def payslip_recipient(payslip):
+    """v1.67.5 (bugs): the address a payslip goes to – the personal e-mail, else the company e-mail, else the e-mail of the
+    employee's login. '' when there is none."""
+    e = payslip.employee
+    u = getattr(e, 'users', None)
+    for v in (e.emp_personal_email, e.emp_company_email, getattr(u, 'email', None)):
+        if v and '@' in str(v):
+            return str(v).strip()
+    return ''
 
-    employee_email = payslip.employee.emp_personal_email
-    if not employee_email:
-        logger.warning(f"Skipping email: Employee {payslip.employee.emp_code} has no personal email.")
-        return False  # Skip without raising error
 
-    if not payslip.payslip_pdf:
-        logger.warning(f"Skipping email: No PDF attached for payslip ID {payslip.id}")
-        return False
-
+def _payslip_pdf_bytes(payslip):
+    """v1.67.5 (bugs): the payslip PDF to attach – the company's payslip design, else the PDF saved on the payslip, else the
+    standard PDF made now. Before, a payslip without an uploaded PDF was never e-mailed."""
     try:
-        email = EmailMessage(
-            subject='Your Payslip',
-            body='Please find attached your payslip.',
-            from_email=config.email_host_user,
-            to=[employee_email],
-        )
-        _tpl = None
-        try:   # v1.62.0 print – the company's default payslip design is attached; the uploaded PDF when there is none
-            from PrintTemplates.hooks import payslip_pdf as _tpl_pdf
-            _tpl = _tpl_pdf(payslip)
-        except ImportError:
-            pass
-        _name = f'payslip_{payslip.employee.emp_code}_{payslip.payroll_run.year}{payslip.payroll_run.month:02d}.pdf'
+        from PrintTemplates.hooks import payslip_pdf as _tpl_pdf
+        data = _tpl_pdf(payslip)
+        if data:
+            return data
+    except ImportError:
+        pass
+    except Exception:
+        logger.exception('payslip design PDF of payslip %s', payslip.pk)
+    if payslip.payslip_pdf:
+        try:
+            with payslip.payslip_pdf.open('rb') as fh:
+                return fh.read()
+        except Exception:
+            logger.exception('saved PDF of payslip %s', payslip.pk)
+    try:
+        resp = generate_payslip_pdf(None, payslip)
+    except Exception:   # noqa: BLE001 – e.g. a payslip that was never calculated; the caller reports "could not be made"
+        logger.exception('standard PDF of payslip %s', payslip.pk)
+        return None
+    return getattr(resp, 'content', None) or None
+
+
+def send_payslip_email_detail(payslip, connection=None, sender=None):
+    """v1.67.5 (bugs): e-mail one payslip to its employee. Returns (state, text): state 'sent', 'skipped' (no e-mail address,
+    or a password-protected payslip without a password) or 'failed' (the error). Nothing is swallowed: the caller reports it.
+
+    The company's mail connection is used (Settings › E-mail configuration, else the server's mail settings), as for the
+    sign-in code (ZeoAdmin.schedules.mail_connection). Before: an active e-mail configuration was required but its server was
+    not used (only its user name as the sender), and a payslip without an uploaded PDF was skipped."""
+    emp = payslip.employee
+    to = payslip_recipient(payslip)
+    if not to:
+        from Translations.i18n import tr as _tr
+        return 'skipped', _tr('{0}: no e-mail address', emp.emp_code)
+    run = payslip.payroll_run
+    try:
+        if connection is None:
+            from ZeoAdmin.schedules import mail_connection
+            connection, sender = mail_connection()
+        period = f'{run.get_month_display()} {run.year}' if hasattr(run, 'get_month_display') else f'{run.month:02d}/{run.year}'
+        name = ' '.join(x for x in (emp.emp_first_name, emp.emp_last_name) if x) or emp.emp_code
+        email = EmailMessage(subject=f'Your payslip for {period}',
+                             body=f'Dear {name},\n\nPlease find attached your payslip for {period}.\n\nThis e-mail was sent by ZEO HRMS.',
+                             from_email=sender, to=[to], connection=connection)
+        data = _payslip_pdf_bytes(payslip)
         try:   # v1.62.11 (item 230): password-protected payslip (company setting) – never sent unprotected when the password cannot be made
             from PayrollPlus import payslip_lock as _lock
             if _lock.for_email(payslip):
-                _raw = _tpl or open(payslip.payslip_pdf.path, 'rb').read()
                 try:
-                    _tpl = _lock.protect(payslip, _raw)
+                    data = _lock.protect(payslip, data)
                 except _lock.NoPassword as _np:
-                    logger.warning(f"Skipping email: {_np}")
-                    return False
+                    return 'skipped', f'{emp.emp_code}: {_np}'
                 email.body = email.body + '\n\n' + _lock.email_note(payslip)
         except ImportError:
             pass
-        if _tpl:
-            email.attach(_name, _tpl, 'application/pdf')
-        else:
-            email.attach_file(payslip.payslip_pdf.path)
-        email.send()
-        logger.info(f"Payslip email sent to {employee_email} for employee {payslip.employee.emp_code}")
-        return True
+        if not data:
+            return 'failed', f'{emp.emp_code}: the payslip PDF could not be made'
+        email.attach(f'payslip_{emp.emp_code}_{run.year}{run.month:02d}.pdf', data, 'application/pdf')
+        email.send(fail_silently=False)
+        logger.info('Payslip e-mail sent to %s for employee %s', to, emp.emp_code)
+        return 'sent', f'{emp.emp_code}: sent to {to}'
+    except Exception as e:   # noqa: BLE001 – reported to the caller and logged
+        logger.warning('Payslip e-mail to %s for employee %s failed: %s', to, emp.emp_code, e)
+        return 'failed', f'{emp.emp_code}: {e}'[:300]
 
-    except Exception as e:
-        logger.exception(f"Failed to send payslip email to {employee_email}: {str(e)}")
-        return False
+
+def send_payslip_email(payslip):
+    """Kept for the old callers (PDF upload with "also e-mail it", the Celery task): True when sent."""
+    state, text = send_payslip_email_detail(payslip)   # v1.67.5 (bugs)
+    if state != 'sent':
+        logger.warning('Payslip e-mail not sent: %s', text)
+    return state == 'sent'
 
 def schedule_escalation(approval, level_rule):
     from .tasks import advance_salary_escalate_approval_task

@@ -147,6 +147,33 @@ def clean_phone(v, label='Phone'):
     return s
 
 
+def clean_contact_phone(v, label='Contact number', country_code='AE'):
+    """v1.67.2 (signup) – clean_phone and then the number itself: a UAE number (+971 / 00971 / 0…, or the company in the
+    UAE) is a mobile 5X XXX XXXX or a landline (2, 3, 4, 6, 7, 9 + 7 digits) and is stored as +971 …; any other number is
+    international with its country code (+ and 8 to 15 digits, E.164). Returns the number written in one standard way."""
+    s = clean_phone(v, label)
+    if not s:
+        return ''
+    d = re.sub(r'\D', '', s)
+    plus = s.lstrip().startswith('+')
+    if not plus and d.startswith('00'):
+        d, plus = d[2:], True
+    uae = (plus and d.startswith('971')) or (not plus and (country_code or 'AE').upper() == 'AE')
+    if uae:
+        n = d[3:] if d.startswith('971') else d
+        n = n[1:] if n.startswith('0') else n
+        if len(n) == 9 and n.startswith('5'):
+            return f'+971 {n[:2]} {n[2:5]} {n[5:]}'
+        if len(n) == 8 and n[0] in '234679':
+            return f'+971 {n[0]} {n[1:4]} {n[4:]}'
+        raise ValueError(tr('Enter a UAE number as +971 5X XXX XXXX (mobile) or +971 X XXX XXXX (landline).'))
+    if not plus:
+        raise ValueError(tr('Enter the number with its country code, e.g. +44 20 7946 0958.'))
+    if not (8 <= len(d) <= 15) or d.startswith('0'):
+        raise ValueError(tr('Enter a valid international number: + country code and 8 to 15 digits.'))
+    return '+' + d
+
+
 MAX_VALIDITY_YEARS = 15
 
 

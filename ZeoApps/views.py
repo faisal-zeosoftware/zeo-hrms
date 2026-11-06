@@ -52,7 +52,8 @@ class AppsView(Base):
                 out['bare_login'] = False
             return Response(out)
         return Response({'apps': S.all_states(), 'company_industry': code, 'company_industry_label': label,
-                         'industries': S.company_industries(), 'can_manage': can_manage(request), 'company': connection.schema_name})
+                         'industries': S.company_industries(), 'can_manage': can_manage(request), 'company': connection.schema_name,
+                         'core': S.tr_(S.CORE_TEXT), 'depends': S.DEPENDS})   # v1.67.3 (apps)
 
 
 class ActivateView(Base):

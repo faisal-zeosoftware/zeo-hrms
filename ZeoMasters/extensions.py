@@ -159,6 +159,22 @@ for _model_path, _reg, _label, _plural, _tf, _fk in (
                  fk=_fk, ref=True, plural=_plural))
 
 
+# v1.67.4 (masters): the typed supplier / vendor / customer / buyer / merchant names of the other current apps get a partner link next
+# to the text (the text is kept). On save the text links itself to the partner of exactly that name; existing records are linked
+# by `python manage.py link_partners` (dry run first – it also makes the missing partners). Shown on the partner as one summary row.
+for _app, _title, _model_path, _reg, _label, _plural, _tf, _fk, _role in (
+        ('zeo-projects', 'Projects', 'ZeoProjects.ProjectExpense', 'expense', 'Project expense', 'Project expenses (vendor)', 'vendor', 'vendor_partner', 'supplier'),
+        ('project-control', 'Projects', 'ProjectControl.ProjectFinance', 'finance', 'Project finance', 'Projects (customer)', 'customer_name', 'customer_partner', 'customer'),
+        ('asset-plus', 'HR assets', 'AssetPlus.AssetProfile', 'asset', 'Asset', 'Assets bought (HR assets)', 'vendor', 'vendor_partner', 'supplier'),
+        ('asset-plus', 'HR assets', 'AssetPlus.MaintenanceSchedule', 'schedule', 'Maintenance schedule', 'Maintenance schedules (HR assets)', 'vendor', 'vendor_partner', 'supplier'),
+        ('asset-plus', 'HR assets', 'AssetPlus.MaintenanceRecord', 'maintenance', 'Maintenance', 'Maintenance done (HR assets)', 'vendor', 'vendor_partner', 'supplier'),
+        ('asset-plus', 'HR assets', 'AssetPlus.AssetDisposal', 'disposal', 'Disposal', 'Assets sold (HR assets)', 'buyer', 'buyer_partner', 'customer'),
+        ('expenses', 'Expenses', 'ExpenseManagement.Expense', 'expense', 'Expense', 'Expenses (merchant)', 'merchant', 'merchant_partner', 'supplier'),
+        ('zeo-hse', 'HSE', 'ZeoHSE.Chemical', 'chemicals', 'Chemical', 'Chemicals supplied', 'supplier', 'supplier_partner', 'supplier')):
+    register(Ext(_app, _title, _model_path, _reg, _label, fields=[(_tf, 'name', None)], roles=lambda o, _role=_role: [_role],
+                 fk=_fk, ref=True, plural=_plural, by_name=True, auto=False))
+
+
 # v1.43.0: the preferred supplier of an item
 register(Ext('zeo-masters', 'Masters', 'ZeoMasters.Product', 'item', 'Item', fields=[], roles=lambda o: ['supplier'],
              fk='preferred_supplier', ref=True, plural='Items supplied'))
@@ -280,6 +296,8 @@ def attach(app):
 
         reg.check = block_check
     attach_credit(app)   # v1.44.0
+    from . import locations as _loc   # v1.67.4 (masters): the shared store / location on the app's location form
+    _loc.attach(app)
 
 
 # ------------------------------------------------------------------ v1.44.0 credit control on new business

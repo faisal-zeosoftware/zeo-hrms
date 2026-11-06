@@ -1,6 +1,6 @@
 """v1.12.0 – shift reminders: the day before a published shift every employee gets a notice (in-app + e-mail).
 Celery beat entry (zeo/settings.py, see INTEGRATION.md): 'shift-reminders-daily' → ShiftPlanner.tasks.shift_reminders."""
-from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
+from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 import logging
 from datetime import date, timedelta
 

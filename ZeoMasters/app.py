@@ -26,6 +26,14 @@ class MastersApp(App):
     def code(self, role):
         return role
 
+    def activated(self):
+        """v1.67.4 (masters) Masters are always on: a company where no Masters page was opened yet (no settings row) answered
+        409 "not activated" – the partner suggestions of the typed supplier fields and Stores and locations need it."""
+        try:
+            return MasterSettings.get().activated_at is not None
+        except Exception:
+            return False
+
     def has(self, request, role):
         c = ctx(request)
         if not c:
@@ -416,6 +424,42 @@ app.reg(Reg('item_category', ProductCategory, 'Item category', 'Item categories'
 app.reg(Reg('tax_code', TaxCode, 'Tax code', 'Tax codes', 'Items', cols=('code', 'name', 'kind', 'rate', 'inclusive', 'is_default', 'is_active'),
             form=('code', 'name', 'kind', 'rate', 'inclusive', 'is_default', 'is_active'), manage=EDIT, view=VIEW, search=('code', 'name'),
             filters=('kind', 'is_active'), title='name', subtitle='code', files=False))
+
+
+# ------------------------------------------------------------------ v1.67.4 (masters) shared stores and locations
+from .models import Location as SharedLocation   # noqa: E402
+from . import locations as LOC   # noqa: E402
+
+app.option('locations', lambda: SharedLocation.objects.filter(is_active=True), lambda x: x.path() + (f' ({x.code or x.number})'), ('number', 'code', 'name'),
+           SharedLocation)
+app.option('stores', lambda: SharedLocation.objects.filter(is_active=True, kind='store'), lambda x: x.path() + (f' ({x.code or x.number})'), ('number', 'code', 'name'))
+app.provide('masters.locations', lambda: SharedLocation.objects.filter(is_active=True), lambda x: x.path(), ('number', 'code', 'name'))
+app.provide('masters.stores', lambda: SharedLocation.objects.filter(is_active=True, kind='store'), lambda x: x.path(), ('number', 'code', 'name'))
+
+
+def location_check(o, request, old):
+    need(o.name.strip(), 'Enter the name.')
+    x, guard = o.parent, 0
+    while x is not None and guard < 12:
+        need(not o.pk or x.pk != o.pk, 'A place cannot be inside itself.')
+        x, guard = x.parent, guard + 1
+
+
+def location_saver(o, request, creating, old):
+    LOC.save_shared(o)
+    LOC.refresh_used_in(o)
+    return o
+
+
+app.reg(Reg('location', SharedLocation, 'Store / location', 'Stores and locations', 'Places',
+            cols=('number', 'code', 'name', 'kind', 'parent', 'branch', 'apps_text', 'is_active'),
+            form=('name', 'code', 'kind', 'parent', 'branch', 'address', 'is_active'), manage=EDIT, view=VIEW, create='manage',
+            search=('number', 'code', 'name', 'address'), filters=('kind', 'is_active', 'branch'), title='name', subtitle='number',
+            check=location_check, saver=location_saver, files=False,
+            tables={'used_in': [('app', 'App', 'text'), ('record', 'Record', 'text'), ('number', 'Number', 'text'), ('name', 'Name', 'text')]},
+            info=('used_in', 'updated_at'),
+            help='Sites, buildings, rooms and stores of the company – one list for every app. Asset Management and Maintenance keep '
+                 'their own location records linked here; the Inventory app will keep its stock per store on these records.'))
 
 
 # ------------------------------------------------------------------ dashboard / my work / daily

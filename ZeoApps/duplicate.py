@@ -87,9 +87,9 @@ def _run(job, source_id, name, schema, neutralize, user_id):
             # v1.62.1: the % of the copy is estimated in that database too (before: no % until the copy ended)
             with P.copy(src.schema_name, 'Copying every table and row', db=db_key), pin(db_key):
                 CloneSchema().clone_schema(src.schema_name, schema, clone_mode='DATA')
-        else:
-            with P.copy(src.schema_name, 'Copying every table and row'):
-                CloneSchema().clone_schema(src.schema_name, schema, clone_mode='DATA')
+        else:   # v1.67.2 (signup): real progress (locks of the copy) and a clear message on too little lock room
+            from ZeoApps.job_progress import clone_watched
+            clone_watched(P, src.schema_name, schema, 'Copying every table and row')
         # 2. the company row (no automatic schema: it exists already, and no "new company" defaults)
         P.begin('register', 'Settings, address, logo and WPS details of the original')
         skip = {'id', 'schema_name', 'name', 'created_on', 'paid_until'}

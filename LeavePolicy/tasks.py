@@ -1,5 +1,5 @@
 """Scheduled leave jobs (v1.11.0) – Celery beat entries are in zeo/settings.py; `manage.py run_leave_jobs` does the same by hand / cron."""
-from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
+from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 import logging
 from datetime import date, timedelta
 

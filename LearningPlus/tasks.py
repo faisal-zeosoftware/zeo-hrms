@@ -2,7 +2,7 @@
     'learning-certificate-expiry-alerts': {'task': 'LearningPlus.tasks.certificate_expiry_alerts', 'schedule': crontab(hour=7, minute=5)},
     'learning-nomination-escalations':    {'task': 'LearningPlus.tasks.nomination_escalations', 'schedule': crontab(hour=8, minute=5)},
 """
-from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
+from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 import logging
 
 from celery import shared_task

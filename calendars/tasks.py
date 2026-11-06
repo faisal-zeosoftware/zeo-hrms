@@ -645,7 +645,8 @@ def deduct_expired_carry_forward_leaves():
 def get_all_tenant_schemas(): 
     # Implement this function based on your tenant management system 
     TenantModel = get_tenant_model() 
-    return TenantModel.objects.values_list('schema_name', flat=True)
+    from ZeoApps.scheduling import hr_off   # v1.67.3 (apps) no leave jobs for companies without HR (and not for inactive companies)
+    return TenantModel.objects.exclude(schema_name__in=hr_off()).values_list('schema_name', flat=True)
 
 @shared_task
 def escalate_approval_task(approval_id, schema_name):

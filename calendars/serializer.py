@@ -1,3 +1,4 @@
+from Translations.i18n import tr   # v1.67.5 (bugs) L2 messages
 from zeo.workflow_utils import replace_existing_workflows
 from EmpManagement.email_utils import warn_if_email_not_configured
 from rest_framework import serializers
@@ -411,8 +412,27 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         # v1.62.4 (item 81): short leave requests take hours (leave_duration), so a type may be counted in hours.
         return value
 
+    def validate(self, attrs):
+        # v1.67.5 (bugs) L2: no second leave type of the same name (or code) for the same branch – "every branch" (no branch)
+        # included, which the database constraint does not cover (NULL is never equal), so loading defaults or typing a type
+        # twice made Annual Leave twice
+        attrs = super().validate(attrs)
+        inst = getattr(self, 'instance', None)
+        name = (attrs.get('name', getattr(inst, 'name', '')) or '').strip()
+        code = (attrs.get('code', getattr(inst, 'code', '')) or '').strip()
+        br = attrs['branch'] if 'branch' in attrs else getattr(inst, 'branch', None)
+        qs = leave_type.objects.filter(branch=br) if br is not None else leave_type.objects.filter(branch__isnull=True)
+        if inst is not None:
+            qs = qs.exclude(pk=inst.pk)
+        if name and qs.filter(name__iexact=name).exists():
+            raise serializers.ValidationError({'name': tr('A leave type "{0}" already exists for {1}.', name, br.branch_name if br is not None else tr('every branch'))})
+        if code and qs.filter(code__iexact=code).exists():
+            raise serializers.ValidationError({'code': tr('The code {0} is already used for {1}.', code, br.branch_name if br is not None else tr('every branch'))})
+        return attrs
+
     def to_representation(self, instance):
         rep = super(LeaveTypeSerializer, self).to_representation(instance)
+        rep['branch_id'] = instance.branch_id   # v1.67.5 (bugs) L4: the edit form needs the id (`branch` is shown as the name)
         if instance.branch:
             rep['branch'] = instance.branch.branch_name
         return rep
@@ -1045,6 +1065,12 @@ class ShiftOverrideSerializer(serializers.ModelSerializer):
 
 
 class EmployeeShiftScheduleSerializer(serializers.ModelSerializer):
+    # v1.67.5 (bugs) S3: the pattern's name / type / rotation with each row (the list no longer needs the pattern list)
+    shift_pattern_name = serializers.CharField(source='shift_pattern.name', read_only=True, default='')
+    shift_pattern_type = serializers.CharField(source='shift_pattern.pattern_type', read_only=True, default='')
+    shift_pattern_config = serializers.JSONField(source='shift_pattern.pattern_config', read_only=True, default=None)
+    shift_pattern_work_days = serializers.IntegerField(source='shift_pattern.work_days', read_only=True, default=None)
+    shift_pattern_off_days = serializers.IntegerField(source='shift_pattern.off_days', read_only=True, default=None)
     branch_names = serializers.SerializerMethodField(read_only=True)
     department_names = serializers.SerializerMethodField(read_only=True)
     designation_names = serializers.SerializerMethodField(read_only=True)

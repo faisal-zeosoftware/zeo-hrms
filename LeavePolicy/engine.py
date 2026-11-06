@@ -304,6 +304,11 @@ def leave_type_problems(req):
             return True
         if not any(fits(c) for c in crit):
             out.append(f'{lt.name} does not apply to {emp.emp_first_name} (see the leave type\'s applicability: gender, branch, department, designation, category).')
+    else:   # v1.67.5 (bugs) L5: the gender rule of the type (policy line, or maternity = women) also without a policy line for the employee
+        from calendars.utils import leave_gender
+        g = leave_gender(lt)
+        if g and (emp.emp_gender or '').upper()[:1] != g:
+            out.append(tr('{0} is only for {1} employees.', lt.name, tr('female') if g == "F" else tr('male')))
     return out
 
 
@@ -347,7 +352,9 @@ def validate_request(req):
     if _sp is not None:   # v1.65.0 (items 86, 87): sandwich rule / calendar days except public holidays
         days = float(len(_sp))
     if line.gender != 'B' and (emp.emp_gender or '') != line.gender:
-        errors.append(tr('{0} is only for {1} employees.', lt.name, "female" if line.gender == "F" else "male"))
+        _gm = tr('{0} is only for {1} employees.', lt.name, tr('female') if line.gender == "F" else tr('male'))   # v1.67.5 (bugs): the word translated too
+        if _gm not in errors:   # v1.67.5 (bugs): not twice when the type's own rule said it already
+            errors.append(_gm)
     svc = months_of_service(emp, req.start_date)
     if line.min_service_months and svc < line.min_service_months:
         errors.append(tr('{0} needs {1} months of service; {2} will have {3} on {4:%d/%m/%Y}.', lt.name, line.min_service_months, emp.emp_first_name, svc, req.start_date))

@@ -324,7 +324,19 @@ def working_days_per_month(emp):
     return 30
 
 
+def salary_cost_available():
+    """v1.67.3 (apps) the salary cost of an hour comes from HR (the Projects ↔ HR link): a company with Projects and without HR
+    has no salary cost – the screens show "not available"; a cost rate typed on the project member still counts."""
+    try:
+        from ZeoApps.services import is_active
+        return bool(is_active('hrms'))
+    except Exception:
+        return True
+
+
 def salary_hour_rate(emp, on_date=None, setting=None):
+    if not salary_cost_available():   # v1.67.3 (apps)
+        return D0
     setting = setting or _models()[4].get()
     hpd = Decimal(setting.hours_per_day or 8) or Decimal(8)
     monthly = monthly_fixed_pay(emp.pk, on_date, setting)
@@ -536,6 +548,7 @@ def project_summary(project, date_from=None, date_to=None):
     hour_base = budget_hours or planned
     return {
         'project_id': project.pk, 'project': project.title, 'status': project.status,
+        'salary_cost_available': salary_cost_available(),   # v1.67.3 (apps) False: cost counts typed member rates only
         'billing_type': billing_type, 'currency': fin.currency if fin else 'AED', 'customer': fin.customer_name if fin else '',
         'contract_value': contract, 'budget_amount': budget_amount, 'budget_hours': budget_hours,
         'planned_hours': q2(planned), 'actual_hours': q2(tot['hours']),

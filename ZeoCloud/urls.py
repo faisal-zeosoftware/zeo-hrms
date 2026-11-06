@@ -7,6 +7,7 @@ urlpatterns = [
     path('api/signup/plans/', V.SignupPlansView.as_view()),
     path('api/signup/', V.SignupView.as_view()),
     path('api/jobs/<str:job>/', V.JobView.as_view()),
+    path('api/jobs/<str:job>/retry/', V.JobRetryView.as_view()),   # v1.67.2 (signup)
     path('api/status/', V.StatusView.as_view()),
     path('api/notices/seen/', V.NoticesSeenView.as_view()),
     path('api/accounts/<int:pk>/subscription/', V.SubscriptionView.as_view()),

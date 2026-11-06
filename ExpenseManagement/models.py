@@ -20,6 +20,8 @@ class ExpenseCategory(models.Model):
     code = models.CharField(max_length=30, unique=True)
     kind = models.CharField(max_length=20, choices=KINDS, default='general')
     gl_account = models.CharField(max_length=50, blank=True, default='', help_text='Expense account code in the books')
+    item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='item (item master)')   # v1.67.4 (masters)
     receipt_required_above = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
                                                  help_text='A receipt is needed when the amount (AED) is above this; empty = never')
     description_required = models.BooleanField(default=False)
@@ -193,6 +195,8 @@ class Expense(models.Model):
     date = models.DateField()
     category = models.ForeignKey(ExpenseCategory, on_delete=models.PROTECT, related_name='expenses')
     merchant = models.CharField(max_length=150, blank=True, default='')
+    merchant_partner = models.ForeignKey('ZeoMasters.Partner', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+        verbose_name='merchant (business partner)')   # v1.67.4 (masters)
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
     currency = models.CharField(max_length=3, default='AED')
     exchange_rate = models.DecimalField(max_digits=12, decimal_places=6, default=Decimal('1'))

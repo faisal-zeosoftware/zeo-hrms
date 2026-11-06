@@ -145,8 +145,13 @@ def check_payslip_approver(payslip, user):
     if not settings().segregation or user is None:
         return
     c = control_for(payslip.payroll_run) if payslip and payslip.payroll_run_id else None
-    if c and c.prepared_by_id == user.pk:
-        raise Refused(tr('You prepared this payroll – somebody else must approve its payslips (segregation of duties).') + _sod_hint(), status=403)
+    if c and c.prepared_by_id and c.prepared_by_id == user.pk:
+        # v1.67.5 (bugs) P2: correct behaviour (the approver is the user recorded as the preparer of the run), but the
+        # message now says who prepared which run and when, and how to go on (another approver, or the setting)
+        run = payslip.payroll_run
+        when = timezone.localtime(c.prepared_at).strftime('%d/%m/%Y') if c.prepared_at else ''
+        raise Refused(tr('You ({0}) prepared the payroll run "{1}" on {2}, so you cannot approve its payslips (segregation of duties).',
+                         user_name(c.prepared_by_id), run.name or f'{run.month:02d}/{run.year}', when) + _sod_hint(), status=403)
 
 
 # ------------------------------------------------------------------ leave encashment steps

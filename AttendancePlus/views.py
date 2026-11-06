@@ -1146,3 +1146,86 @@ class RamadanView(_V149):
                         d += timedelta(days=1)
             out['recalculated'] = n
         return Response(out)
+
+
+# ----------------------------------------------------------------------------- v1.67.5 (bugs) ESS1 self-service punch
+class EssPunchView(_V149):
+    """GET my state (methods on / off, card, face registered, next punch); POST {method: barcode|face, code | descriptor,
+    kind, lat, lng, photo} → the punch (own punches only)."""
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get(self, request):
+        from . import ess_punch as EP
+        e = me(request)
+        if e is None:
+            return Response({'detail': tr('Your login is not linked to an employee.')}, status=404)
+        return Response(EP.status(e))
+
+    def post(self, request):
+        from . import ess_punch as EP
+        e = me(request)
+        if e is None:
+            return Response({'detail': tr('Your login is not linked to an employee.')}, status=403)
+        try:
+            p, created, extra = EP.punch(request, e, str(request.data.get('method') or '').lower(), request.data)
+        except (S.Refused, E.PunchError) as exc:
+            return refused(exc)
+        day = M.AttendanceDay.objects.filter(employee_id=e.id, date=p.work_date).first()
+        return Response({'detail': tr('{0} recorded at {1:%H:%M}.', tr(dict(M.PUNCH_KINDS).get(p.resolved_kind or p.kind) or ''), E.local(p.ts)),
+                         'punch': SER.PunchSerializer(p).data, 'day': SER.DaySerializer(day).data if day else None, **extra},
+                        status=201 if created else 200)
+
+
+class EssFaceView(_V149):
+    """POST {descriptors: [[128]…], consent: true} registers my face; DELETE removes it (HR: ?employee=<id>)."""
+    parser_classes = [JSONParser]
+
+    def post(self, request):
+        from . import ess_punch as EP
+        e = me(request)
+        target = request.data.get('employee')
+        if target and (e is None or str(target) != str(e.id)):
+            if not hr_for_employee(request, target):   # HR registers with the employee present (the consent is the employee's)
+                raise PermissionDenied(tr('You can only register your own face.'))
+            e = _emp(target)
+        if e is None:
+            return Response({'detail': tr('Your login is not linked to an employee.')}, status=403)
+        if not EP.settings()['face']:
+            return Response({'detail': tr('This way of punching is switched off by your company.')}, status=403)
+        try:
+            fp = EP.register(e, request.data.get('descriptors'), str(request.data.get('consent')).lower() in ('1', 'true', 'yes', 'on'), request.user)
+        except S.Refused as exc:
+            return refused(exc)
+        return Response({'detail': tr('Your face is registered. You can now punch with your face.'), 'samples': len(fp.descriptors)}, status=201)
+
+    def delete(self, request):
+        from . import ess_punch as EP
+        e = me(request)
+        target = request.query_params.get('employee')
+        if target and (e is None or str(target) != str(e.id)):
+            if not hr_for_employee(request, target):
+                raise PermissionDenied(tr('You can only remove your own face data.'))
+            e = _emp(target)
+        if e is None:
+            return Response({'detail': tr('Your login is not linked to an employee.')}, status=403)
+        EP.remove(e.id)
+        return Response({'detail': tr('Your face data was removed.')})
+
+
+class EssPunchSettingsView(_V149):
+    """GET / PUT the company switches (HR / administrator)."""
+    def get(self, request):
+        from . import ess_punch as EP
+        if not self.hr(request):
+            raise PermissionDenied(tr('Only HR can change the attendance settings.'))
+        return Response({**EP.settings(), 'faces_registered': M.FaceProfile.objects.count(), 'consent_text': tr(EP.CONSENT_TEXT)})
+
+    def put(self, request):
+        from . import ess_punch as EP
+        x = c(request)
+        if not (x.admin or {'change_attendancerule', 'add_attendancerule'} & x.codes):
+            raise PermissionDenied(tr('Only HR can change the attendance settings.'))
+        try:
+            return Response(EP.save_settings(request.data))
+        except S.Refused as exc:
+            return refused(exc)

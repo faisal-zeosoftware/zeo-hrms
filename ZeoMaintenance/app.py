@@ -690,3 +690,7 @@ app.dashboard, app.my_work, app.daily = dashboard, my_work, daily
 # v1.42.0 business partners: partner picker and checks on vendors
 from ZeoMasters.extensions import attach as _attach_partners  # noqa: E402
 _attach_partners(app)
+
+# v1.67.4 (masters) item master: item picker on work order cost lines (picking an item fills the description and the rate)
+from ZeoMasters.item_exts import attach as _attach_items  # noqa: E402
+_attach_items(app)

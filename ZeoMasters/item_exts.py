@@ -32,6 +32,48 @@ AST_MODEL = register(IExt(
     fk='model_item', ref=True, plural='Assets of this model'))
 
 
+# v1.67.4 (masters): the items of the other current apps. Existing records are linked by `python manage.py link_items` (dry run first);
+# a new or changed record links itself on save like a spare part.
+COST_KIND = {'labour': 'service', 'material': 'spare_part', 'vendor': 'service', 'other': 'goods'}
+
+EXP_CATEGORY = register(IExt(
+    'expenses', 'Expenses', 'ExpenseManagement.ExpenseCategory', 'category', 'Expense category',
+    fields=[('code', 'code', None, None, 'both'), ('name', 'name', None, None, 'both'), ('gl_account', 'expense_account', None, None, 'both')],
+    kind=lambda o: 'service', match_code='code', auto=False, new={'is_sold': False, 'is_purchased': True},
+    url=lambda o: '/main-sidebar/expense-options'))
+
+HR_ASSET_TYPE = register(IExt(
+    'asset-plus', 'HR assets', 'AssetPlus.AssetTypeConfig', 'asset_type', 'Asset type', fields=[],
+    kind=lambda o: 'asset_model', auto=False, new={'is_sold': False}, url=lambda o: '/main-sidebar/asset-options/asset-type'))
+
+MNT_COST = register(IExt(
+    'zeo-maintenance', 'Maintenance', 'ZeoMaintenance.CostLine', 'cost', 'Cost line', fields=[],
+    kind=lambda o: COST_KIND.get(o.kind, 'goods') if o is not None else 'goods', ref=True, plural='Work order cost lines', auto=False,
+    fill={'description': lambda it: it.name, 'rate': lambda it: it.cost_price or it.purchase_price or 0}))
+
+
+def asset_type_saved(sender, instance, created, raw=False, **kw):
+    """v1.67.4 (masters) an HR asset type (core table OrganisationManager.AssetType) is saved: its side record in AssetPlus
+    (AssetTypeConfig, the same one asset numbering makes) gets its item; a rename renames the item (one way – the core table
+    is never written from the item)."""
+    if raw:
+        return
+    try:
+        from django.apps import apps as _apps
+        from AssetPlus.services import type_config
+        cfg = type_config(instance.pk)
+        cfg.refresh_from_db(fields=['item'])
+        if not cfg.item_id:
+            cfg.save()   # the item link is made by the item sync (post_save of AssetTypeConfig)
+        else:
+            it = _apps.get_model('ZeoMasters', 'Product').objects.filter(pk=cfg.item_id).first()
+            if it and instance.name and it.name != instance.name[:150]:
+                it.name = instance.name[:150]
+                IT.save_item(it)
+    except Exception:   # noqa: BLE001 – never stops saving the asset type
+        IT.log.exception('HR asset type → item failed for %s', instance.pk)
+
+
 def attach(app):
     """Item picker on the app's own forms; choosing an item fills the record's name, code, unit…"""
     from .models import Product
@@ -47,6 +89,19 @@ def attach(app):
         if ext.fk not in reg.form:
             reg.form = (ext.fk,) + tuple(reg.form)
         if ext.ref:
+            if ext.fill:   # v1.67.4 (masters): picking an item fills the empty fields of the line (description, rate)
+                prev = reg.defaults
+
+                def ref_defaults(o, request, ext=ext, prev=prev):
+                    iid = getattr(o, ext.fk + '_id')
+                    it = Product.objects.filter(pk=iid).first() if iid else None
+                    if it is not None:
+                        for af, fn in ext.fill.items():
+                            if IT._empty(getattr(o, af)) or getattr(o, af) == 0:
+                                setattr(o, af, IT._fit(ext.model, af, fn(it)))
+                    if prev:
+                        prev(o, request)
+                reg.defaults = ref_defaults
             continue
         orig = reg.defaults
 

@@ -4,7 +4,7 @@ For every company: open probations ending in 30, 14, 7 or 1 days, today, or over
 the reporting manager and to the HR users of the employee's branch (company admins and users with change_emp_master
 whose branch access includes the branch). Employees on notice whose last working day has passed get their final status.
 """
-from ZeoCloud.lifecycle import off_schemas as _zeo_off   # v1.67.1 (companies)
+from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 import logging
 from datetime import date, timedelta
 

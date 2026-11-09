@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
 """v1.14.0 – Country packs: captions, features and defaults per country.
 
 AE is the reference (= the behaviour and captions ZEO HRMS had before country packs). The other packs only carry facts we
@@ -276,8 +277,8 @@ STATUTORY = {
     'AE': [
         {'code': 'gpssa', 'name': 'GPSSA pension (UAE nationals)', 'authority': 'GPSSA', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
          'min_base': 3000, 'max_base': 70000, 'employee_rate': 11, 'employer_rate': 12.5,
-         'law_reference': 'Federal Decree-Law 57/2023 (employees registered from 31 Oct 2023: 11 % employee, 15 % employer of which 2.5 % paid by the government); older registrations 5 % / 12.5 %',
-         'notes': 'The formula variable pension_employee_rate already applies 5 % to employees registered before 31 Oct 2023.'},
+         'law_reference': 'Federal Decree-Law 57/2023 (employees registered from 31/10/2023: 11 % employee, 15 % employer of which 2.5 % paid by the government); older registrations 5 % / 12.5 %',
+         'notes': 'The formula variable pension_employee_rate already applies 5 % to employees registered before 31/10/2023.'},
         {'code': 'iloe', 'name': 'ILOE unemployment insurance', 'authority': 'ILOE', 'kind': 'slab', 'applies_to': 'all', 'base': 'basic',
          'slabs': [{'to': 16000, 'employee': 5, 'employer': 0}, {'to': None, 'employee': 10, 'employer': 0}],
          'law_reference': 'Federal Decree-Law 13/2022: AED 5 / month (basic ≤ 16,000) or AED 10 / month; paid by the employee (often by the employer on their behalf)'},

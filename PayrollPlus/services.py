@@ -326,6 +326,15 @@ def _add_years(d, n):
         return d.replace(year=d.year + n, day=28)
 
 
+def _gratuity_rows_on(on=None):
+    """v1.67.12 (effective, item 64): the active gratuity bands in force on `on` (the last working day)."""
+    try:
+        from .effective import gratuity_rows
+        return gratuity_rows(on)
+    except ImportError:
+        return list(M('OrganisationManager', 'GratuityTable').objects.filter(is_active=True).order_by('minimum_value'))
+
+
 def _gratuity_steps(eos, res, basic, daily_mode=None):
     """(basis, [steps]) – years × days × basic ÷ 30 per slab of the gratuity table (or the UAE law), and the cap.
     v1.62.11 (EOS settings): daily_mode 'basic_365' – the daily wage is basic × 12 ÷ 365."""
@@ -338,7 +347,7 @@ def _gratuity_steps(eos, res, basic, daily_mode=None):
         GT = M('OrganisationManager', 'GratuityTable')
         rules = [(Decimal(str(r.minimum_value)), Decimal(str(r.maximum_value)) if r.maximum_value else None,
                   Decimal(str(r.termination_days if res.termination_type in ('termination', 'retirement', 'death_or_disablement') else r.resignation_days)))
-                 for r in GT.objects.filter(is_active=True).order_by('minimum_value')]
+                 for r in _gratuity_rows_on(getattr(res, 'last_working_date', None))]   # v1.67.12 (effective): the table of the last working day
         if not rules:
             rules = [(Decimal(0), Decimal(5), Decimal(21)), (Decimal(5), None, Decimal(30))]
         steps, got = [], Decimal(0)
@@ -402,8 +411,20 @@ def _home_countries(emp):
     return ids
 
 
-def ticket_policy(emp):
-    """The active air ticket policy of the employee (country, then department / designation / category / branch if the policy limits them)."""
+def ticket_policy(emp, on=None):
+    """The active air ticket policy of the employee (country, then department / designation / category / branch if the policy limits them).
+    v1.67.12 (effective, item 64): as in force on `on` (default: the rule day) – amount, frequency, class, kind."""
+    p = _ticket_policy(emp)
+    if p is None:
+        return None
+    try:
+        from .effective import as_of
+        return as_of('air_ticket_policy', p, on)
+    except ImportError:
+        return p
+
+
+def _ticket_policy(emp):
     P = M('PayrollManagement', 'AirTicketPolicy')
     best = None
     try:   # v1.66.0 (item 123): "most specific wins" / "refuse" – the policy that wins for the employee (default 'first': as below)
@@ -483,7 +504,7 @@ def _v1660_accrued_at_exit(emp, lwd, add, info):
     """v1.66.0 (item 121): a policy with monthly accrual – the value accrued in the running cycle up to the last working day (pro-rata,
     unpaid days left out) is paid at exit; a ticket-only policy that is not paid in cash at exit (decision 261) shows it only."""
     from . import air_policy as _AP
-    p = ticket_policy(emp)
+    p = ticket_policy(emp, lwd)   # v1.67.12 (effective)
     if p is None or not emp.emp_joined_date or _AP.policy_rules(p.pk)['accrual'] != 'monthly':
         return
     amt, lines = _AP.accrued(emp, p, lwd)
@@ -498,7 +519,7 @@ def _v1660_accrued_at_exit(emp, lwd, add, info):
 
 def _air_ticket_due(emp, lwd, allocs, add, info, due_policy):
     """v1.62.3 (item 106): part 2 of _air_tickets (unchanged) – the ticket earned on exit; notes the policy when it is paid."""
-    p = ticket_policy(emp)
+    p = ticket_policy(emp, lwd)   # v1.67.12 (effective): the policy as in force on the last working day
     if p is None or not emp.emp_joined_date:
         return
     freq = int(p.frequency_years or 1) or 1
@@ -803,6 +824,11 @@ def compute(st, user=None):
     AS = M('PayrollManagement', 'AdvanceSalaryRequest')
     for a in AS.objects.filter(employee=emp, status__iexact='approved'):
         left = a.requested_amount
+        try:   # v1.67.11 (loans, item 115): an advance repaid in instalments – only what is not deducted yet
+            from .lending import advance_left as _v16711_left
+            left = _v16711_left(a)
+        except ImportError:
+            pass
         if left:
             add(f'advance_{a.pk}', tr('Salary advance {0} – not yet deducted', a.document_number or a.pk), 'deduction', left,
                 tr('approved advance, not deducted by payroll'), 'advance')   # v1.62.0 EOS
@@ -830,6 +856,11 @@ def compute(st, user=None):
         kind = 'deduction' if o.get('kind') == 'deduction' else 'earning'
         add(f"other_{o.get('id')}", o.get('label') or tr('Other'), kind, o.get('amount') or 0, o.get('note') or '', 'other',
             by=o.get('by') or '', at=o.get('at'), manual=True, **({'account': o['account']} if o.get('account') else {}))   # v1.62.11 (EOS settings): own account
+    try:   # v1.67.11 (loans, item 116): loans / advances / recoveries recovered in the company's order up to the recovery limit
+        from .lending import settlement_cap as _v16711_cap
+        _v16711_cap(lines)
+    except ImportError:
+        pass
     earn = sum((Decimal(str(l['amount'])) for l in lines if l['kind'] == 'earning'), Decimal('0'))
     ded = sum((Decimal(str(l['amount'])) for l in lines if l['kind'] == 'deduction'), Decimal('0'))
     st.lines = lines
@@ -1024,6 +1055,11 @@ def close_recovered(st, user=None):
     for loan in LA.objects.filter(employee_id=st.employee_id, status__in=L.ACTIVE).exclude(pk__in=seen):
         if L.balance(loan) <= 0:   # nothing left to pay – a running loan with no balance is closed with the exit
             _close(loan, Decimal('0'))
+    try:   # v1.67.11 (loans, item 116): what the recovery limit left owed – advance receivable, loan history line
+        from .lending import settlement_closed as _v16711_closed
+        _v16711_closed(st, user)
+    except Exception:
+        log.exception('settlement receivables of %s', st.pk)
     try:   # v1.63.0 (item 28): recovery schedules – the balance deducted in the settlement, or written off at exit
         from .recoveries import close_exit as _v1630_rec_close
         out['recoveries'] = _v1630_rec_close(st, user)
@@ -1153,8 +1189,11 @@ def _patterns():
                 continue
             plain = re.sub(r'\{(\d+):[^}]*\}', r'{\1}', t)
             rx = '^' + re.sub(r'\\\{(\d+)\\\}', r'(?P<g\1>.+?)', re.escape(plain)) + '$'
+            # v1.67.8 (fixes) item 3: a placeholder at the very end may be empty ("… was not given{3}" with {3} = '') –
+            # before, such a text never matched its own template and fell to a shorter one without Arabic
+            rx = re.sub(r'\(\?P<(g\d+)>\.\+\?\)\$$', r'(?P<\1>.*?)$', rx)
             try:
-                out.append((re.compile(rx, re.S), plain))
+                out.append((re.compile(rx, re.S), plain, t))
             except re.error:
                 pass
         out.sort(key=lambda x: -len(x[1]))
@@ -1175,16 +1214,57 @@ def localize(text, lang=None):
     t = tr(text, lang=lang)
     if t != text:
         return t
-    for rx, plain in _patterns():
+    for rx, plain, orig in _patterns():
         m = rx.match(text)
         if m:
             vals = m.groupdict()
-            args = [localize(vals.get(f'g{i}', ''), lang) for i in range(len(vals))]
+            args = [_ar_list(localize(vals.get(f'g{i}', ''), lang), lang) for i in range(len(vals))]
             try:
-                return tr(plain, *args, lang=lang)
+                out = tr(plain, *args, lang=lang)
+                if out == plain.format(*args) and orig != plain:
+                    # v1.67.8 (fixes) item 3: the Arabic term is kept under the template WITH its formats ({2:%d/%m/%Y});
+                    # the values here are already text, so the formats are taken off the translated template
+                    import re as _re
+                    from Translations.i18n import _lookup
+                    tpl = _lookup(orig, lang)
+                    if tpl != orig:
+                        out = _re.sub(r'\{(\d+):[^}]*\}', r'{\1}', tpl).format(*args)
+                return out
             except Exception:
                 return text
     return text
+
+
+def _ar_list(text, lang):
+    """v1.67.8 (fixes) item 3: a list of salary components with amounts ("Basic 6,000.00, Housing Allowance 2,000.00") in Arabic:
+    the component names translated (the company's own Arabic name, else the usual Arabic name) and the Arabic comma "،"."""
+    import re
+    if not text or not str(lang or '').startswith('ar') or not isinstance(text, str):
+        return text
+    items = text.split(', ')
+    rx = re.compile(r'^(?P<n>[^\d،]*?[A-Za-z][^\d،]*?) (?P<a>-?[\d,]+\.\d{2})$')
+    if not items or not all(rx.match(x) for x in items):
+        return text
+    names = {}
+    try:
+        from Translations.services import value_map
+        names = value_map('PayrollManagement.SalaryComponent', 'ar') or {}
+    except Exception:
+        pass
+    out = []
+    for x in items:
+        mm = rx.match(x)
+        n = mm.group('n').strip()
+        a = names.get(n) or ''
+        if not a:
+            try:
+                from Translations.payslip_bi import COMPONENTS
+                low = n.lower()
+                a = next((ar_ for pat, ar_ in COMPONENTS if re.search(pat, low)), '')
+            except Exception:
+                a = ''
+        out.append(f"{a or n} {mm.group('a')}")
+    return '، '.join(out)
 
 
 def localize_lines(lines):

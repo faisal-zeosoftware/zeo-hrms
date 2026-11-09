@@ -19,4 +19,5 @@ urlpatterns = [
     path('api/branding/file/', V.BrandingFileView.as_view()),
     path('api/branding/file/<str:kind>/', V.BrandingImageView.as_view()),
     path('api/print/<str:doc_type>/<int:pk>/', V.PrintView.as_view()),
+    path('api/printable/', V.PrintableView.as_view()),   # v1.67.7 (admin) the Print buttons
 ]

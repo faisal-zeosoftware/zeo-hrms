@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.62.0 – export control (README-UPDATE 83.6): every export written down, a right to export, a row limit, a watermark.
 
 An export is an Excel / CSV answer of the API, or a PDF asked for as a list export (?file=pdf, ?format=pdf, /export…).
@@ -192,7 +193,7 @@ class ExportGuardMiddleware:
         from ZeoCloud.netguard import client_ip
         u = getattr(request, 'user', None)
         who = (getattr(u, 'email', '') or getattr(u, 'username', '') or getattr(u, 'name', '') or '').strip()
-        when = timezone.localtime().strftime('%d %b %Y %H:%M')
+        when = timezone.localtime().strftime('%d/%m/%Y %H:%M')
         text = f'ZEO - {who} - {when} - {client_ip(request)}'
         new, ok = watermark(content, text)
         if ok:

@@ -170,15 +170,22 @@ def may_open(user, path):
         return None if v == 'n' else v == 'y'
     with schema_context('public'):
         rows = list(MediaFile.objects.filter(path=path).values_list('schema', 'model', 'object_id')[:20])
-        mine = set(user.tenants.values_list('schema_name', flat=True)) if not user.is_superuser else None
+        mine = set(user.tenants.values_list('schema_name', flat=True))
     if not rows:
         cache.set(k, 'n', 60)
         return None
+    from .companyadmin import sysadmin_in   # v1.67.8 (fixes) item 11: a system administrator – except where switched off
     ok = False
     for schema, label, oid in rows:
-        if mine is not None and schema not in mine:
+        su = sysadmin_in(user, schema)
+        if schema not in mine and not su:
             continue
-        if user.is_superuser or record_ok(user, schema, label, oid):
+        ru = user
+        if getattr(user, 'is_superuser', False) and not su:   # v1.67.8 (fixes) item 11: the record check as the masked user
+            import copy as _copy
+            ru = _copy.copy(user)
+            ru.is_superuser = False
+        if su or record_ok(ru, schema, label, oid):
             ok = True
             break
     cache.set(k, 'y' if ok else 'x', 60)

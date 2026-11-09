@@ -330,6 +330,7 @@ DATABASES = {
         'PORT': '5432',
     }
 }
+
 # v1.24.0 ZEO Cloud: a company can live in the own database of its account ('control' = this main database)
 from ZeoCloud.dbsettings import with_cloud_databases   # noqa: E402
 DATABASES = with_cloud_databases(DATABASES)
@@ -550,7 +551,8 @@ MIDDLEWARE.insert(MIDDLEWARE.index('django.middleware.security.SecurityMiddlewar
 MIDDLEWARE.insert(MIDDLEWARE.index('ZeoCloud.netguard.IPAllowMiddleware') + 1, 'ZeoCloud.geo.CountryMiddleware')
 MIDDLEWARE.append('zeo.exportguard.ExportGuardMiddleware')
 MIDDLEWARE.append('ZeoCloud.stepup.StepUpMiddleware')
-MIDDLEWARE.append('ZeoAdmin.setup_gate.SetupGateMiddleware')   # v1.62.1 a new company finishes the required setup steps before HR transactions
+MIDDLEWARE.append('ZeoAdmin.setup_gate.SetupGateMiddleware')
+MIDDLEWARE.append('ZeoApps.appsetup.AppSetupGateMiddleware')   # v1.67.6 (setup) item 5 the setup wizard of every app   # v1.62.1 a new company finishes the required setup steps before HR transactions
 # v1.62.0 uploads: a real-type check of every file; ClamAV when installed (ZEO_CLAMAV=auto | off | the clamd socket path)
 ZEO_CLAMAV = env('ZEO_CLAMAV', 'auto')
 ZEO_MEDIA_RANDOM_NAMES = env_bool('ZEO_MEDIA_RANDOM_NAMES', True)   # new uploads get a random part in the file name

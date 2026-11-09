@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.27.0 – copy settings to sister companies, and move an employee to a sister company.
 
 Copy settings: leave types, leave policies (with their lines), salary components, letter templates and form designs
@@ -347,14 +348,14 @@ def transfer(group, user, source_schema, emp_id, target_schema, opts):
                 if login is not None:
                     E.objects.filter(pk=new.pk).update(users=login, is_ess=bool(login.is_ess))
                 M('Chatter', 'Message').objects.create(model='empmanagement.emp_master', object_id=str(new.pk), author=user,
-                                                       body=f'Transferred from {src.name} ({code}) on {eff:%d %b %Y}.'
+                                                       body=f'Transferred from {src.name} ({code}) on {eff:%d/%m/%Y}.'
                                                             + (' Service date kept.' if keep else ''))
                 new_id = new.pk
         # close in the source
         with schema_context(src.schema_name):
             E.objects.filter(pk=emp_id).update(is_active=False, emp_status=False, users=None)
             M('Chatter', 'Message').objects.create(model='empmanagement.emp_master', object_id=str(emp_id), author=user,
-                                                   body=f'Transferred to {tgt.name} ({new_code}) on {eff:%d %b %Y}.')
+                                                   body=f'Transferred to {tgt.name} ({new_code}) on {eff:%d/%m/%Y}.')
         if login is not None:
             tcomp = Company.objects.get(schema_name=tgt.schema_name)
             login.tenants.add(tcomp)

@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """
 AssetPlus signals (v1.12.0) on the existing tables – no change to their models:
 
@@ -111,7 +112,7 @@ def _allocation_after(sender, instance, created, **kwargs):
                 ack_status='pending' if AssetPlusSettings.get().require_acknowledgement else 'not_required'))
             S.ensure_profile(instance.asset)
             S.log_event(instance.asset_id, 'allocated', f'Given to {S.person(instance.employee)}'
-                        + (f' on {instance.assigned_date:%d %b %Y}' if hasattr(instance.assigned_date, 'strftime') else ''),
+                        + (f' on {instance.assigned_date:%d/%m/%Y}' if hasattr(instance.assigned_date, 'strftime') else ''),
                         employee_id=instance.employee_id, ref=('allocation', instance.pk))
             return
         if S.is_quiet():

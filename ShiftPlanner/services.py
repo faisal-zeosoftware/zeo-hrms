@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.12.0 – shift planner rules: rights, leave look-ups, roster generation / copy / checks and applying approved changes."""
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -144,7 +145,7 @@ def refuse_if_leave(emp, *days):
     for d in days:
         lv = leave_on(emp.pk, d)
         if lv:
-            raise PlanError(tr('{0} has {1} leave ({2}) on {3:%d %b %Y}. Cancel or change the leave first.', person(emp), lv["status"], lv["type"], d))
+            raise PlanError(tr('{0} has {1} leave ({2}) on {3:%d/%m/%Y}. Cancel or change the leave first.', person(emp), lv["status"], lv["type"], d))
 
 
 def availability_index(emp_ids):
@@ -214,7 +215,7 @@ def check_editable(p):
 def upsert_entry(p, emp, day, shift_id, off, source, user=None, note=None, notify_after_publish=True):
     """Set one roster cell. On a published roster the change is marked and the employee is told."""
     if day < p.date_from or day > p.date_to:
-        raise PlanError(tr('{0:%d %b %Y} is outside this roster ({1:%d %b} – {2:%d %b %Y}).', day, p.date_from, p.date_to))
+        raise PlanError(tr('{0:%d/%m/%Y} is outside this roster ({1:%d/%m/%Y} – {2:%d/%m/%Y}).', day, p.date_from, p.date_to))
     if shift_id is None and not off:
         RosterEntry.objects.filter(period=p, employee_id=emp.pk, date=day).delete()
         return None
@@ -233,7 +234,7 @@ def upsert_entry(p, emp, day, shift_id, off, source, user=None, note=None, notif
     if p.status == 'published' and notify_after_publish and (created or before != (e.shift_id, e.off)):
         sh = shifts_by_id().get(e.shift_id) if e.shift_id else None
         notify.send(employee=emp, kind='changed', title=tmsg('Your shift was changed'),
-                    message=tmsg('Your shift on {0:%a %d %b %Y} is now: {1}.', day, shift_label(sh)) + (f' Note: {e.note}' if e.note else ''))
+                    message=tmsg('Your shift on {0:%d/%m/%Y} is now: {1}.', day, shift_label(sh)) + (f' Note: {e.note}' if e.note else ''))
     return e
 
 
@@ -369,7 +370,7 @@ def check_period(p, emp_ids=None):
     for (eid, wk), h in week.items():
         if p.max_week_hours and h > Decimal(p.max_week_hours):
             out.append({'employee_id': eid, 'employee': person(emps.get(eid)), 'date': wk, 'kind': 'week_hours', 'level': 'warning',
-                        'message': f'{h:.1f} h planned in the week of {wk:%d %b} (limit {Decimal(p.max_week_hours):.0f} h).'})
+                        'message': f'{h:.1f} h planned in the week of {wk:%d/%m/%Y} (limit {Decimal(p.max_week_hours):.0f} h).'})
     return out
 
 

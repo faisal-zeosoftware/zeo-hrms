@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.47.0 – global search, quick create, company wall, My team hub with 1:1 notes, user flags and "What's new".
 
 GET  search/?q=                    employees and records of every active app the user may open
@@ -146,7 +147,7 @@ class OneOnOnesView(Base):
         if o.shared and e.users_id and e.users_id != request.user.id:
             try:
                 from . import collab as C
-                C._bell(e.users, f'1:1 with {N.uname(request.user)} on {o.date:%d %b %Y}', (o.agenda or '')[:200],
+                C._bell(e.users, f'1:1 with {N.uname(request.user)} on {o.date:%d/%m/%Y}', (o.agenda or '')[:200],
                         '/main-sidebar/my-one-on-ones', 'Chatter.oneonone', o.id)
             except Exception:
                 pass

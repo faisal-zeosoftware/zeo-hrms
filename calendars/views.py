@@ -163,6 +163,19 @@ class HolidayCalendarViewset(viewsets.ModelViewSet):
     serializer_class = HolidayCalandarSerializer
     permission_classes = [HolidayCalendarPermission]
 
+    def get_queryset(self):   # v1.67.8 (fixes) item 1: ?active=1 – only the active calendars (pickers)
+        qs = super().get_queryset()
+        if self.request.query_params.get('active') in ('1', 'true'):
+            from calendars.holiday_active import inactive_ids
+            qs = qs.exclude(pk__in=inactive_ids())
+        return qs
+
+    def perform_destroy(self, instance):   # v1.67.8 (fixes) item 1: the inactive store forgets a deleted calendar
+        pk = instance.pk
+        super().perform_destroy(instance)
+        from calendars.holiday_active import forget
+        forget(pk)
+
 class HolidayAssignViewset(viewsets.ModelViewSet):
     queryset = assign_holiday.objects.all()
     serializer_class = HolidayAssignSerializer

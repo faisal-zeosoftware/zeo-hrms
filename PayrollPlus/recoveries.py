@@ -572,14 +572,13 @@ def on_payslip(run, payslip, employee, skip_events=False):
     from PayrollManagement import payroll_guards as G
     st = G.net_settings()
     room = None
-    if st['keep_net_positive']:
+    _v16711_lim = G.limit_of(st)   # v1.67.11 (loans, item 51): the legal deduction limit counts too
+    if st['keep_net_positive'] or _v16711_lim['legal_pct'] is not None:
         lines = list(PC.objects.filter(payslip=payslip).select_related('component'))
         gross = sum((q2(x.amount) for x in lines if x.component.show_in_payslip and x.component.component_type == 'addition'), ZERO)
         ded = sum((q2(x.amount) for x in lines if x.component.show_in_payslip and x.component.component_type == 'deduction' and q2(x.amount) > 0), ZERO)
         carry = sum((q2(x.get('amount')) for x in G._carries(employee.pk) if x.get('status') == 'pending' and x.get('from_payslip') != payslip.pk), ZERO)
-        lim = max(gross, ZERO)
-        if st['max_deduction_pct'] is not None:
-            lim = min(lim, (gross * st['max_deduction_pct'] / 100).quantize(Q2, rounding=ROUND_HALF_UP))
+        lim, _v16711_why = G.room_of(gross, st, _v16711_lim)
         room = max(lim - ded - carry, ZERO)
     out = []
     comps = {c.pk: c for c in SC.objects.filter(pk__in=[r.component_id for r in recs])}
@@ -702,7 +701,11 @@ def close_exit(st, user=None):
             r.save(update_fields=['history'])
             _close_if_done(r)
             r.refresh_from_db()
-            if balance(r) > 0:   # HR changed the line: the rest is written off with the exit
+            if balance(r) > 0 and q2(ln.get('receivable') or 0) > 0:   # v1.67.11 (loans, item 116): over the settlement recovery limit –
+                _note(r, 'exit', user, tr('Still owed by the employee after final settlement {0}', st.number or st.pk),   # the rest stays owed
+                      amount=str(balance(r)))
+                r.save(update_fields=['history'])
+            elif balance(r) > 0:   # HR changed the line: the rest is written off with the exit
                 rest = balance(r)
                 RecoveryEntry.objects.create(recovery=r, kind='exit_write_off', month=when.replace(day=1), due=rest, amount=rest, settlement_id=st.pk,
                                              note=tr('Rest written off at exit'), created_by_id=getattr(user, 'pk', None))

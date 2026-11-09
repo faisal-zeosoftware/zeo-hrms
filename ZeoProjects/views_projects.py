@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Projects API – delivery side: ZEO projects with customer, type, milestones, change requests, risks, expenses,
 task details and profitability (/zeo-projects/api/projects/...)."""
 from datetime import date
@@ -357,7 +358,7 @@ class ProjectTaskView(Base):
 
 def check_within_parent(parent, start, end):
     if parent.start_date and start and start < parent.start_date or parent.end_date and end and end > parent.end_date:
-        raise S.ProjectsError(f'A sub-task must lie within its main task ({parent.start_date:%d %b %Y} – {parent.end_date:%d %b %Y}). '
+        raise S.ProjectsError(f'A sub-task must lie within its main task ({parent.start_date:%d/%m/%Y} – {parent.end_date:%d/%m/%Y}). '
                               'Change the main task dates first.', 'end_date')
 
 

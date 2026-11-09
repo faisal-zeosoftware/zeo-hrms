@@ -241,7 +241,13 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
         logging.getLogger(__name__).exception('Standard masters could not be linked to the new branch')
 
     with transaction.atomic():
+        try:   # v1.67.6 (setup) item 4: the company-wide series of the other apps live on the head office only
+            from ZeoApps.numbering import COMPANY_WIDE as _cw
+        except Exception:
+            _cw = {}
         for doc_type, _ in DocumentNumbering.DOCUMENT_TYPES:
+            if doc_type in _cw:
+                continue
 
             # v1.10.0: a prefix of its own per branch (all branches used "BR-…" and produced the same numbers)
             prefix = branch_doc_prefix(instance, doc_type)
@@ -256,7 +262,9 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
                     'total_length': 12,
                     'created_by': getattr(instance, 'br_created_by', None),
                     'start_date': timezone.now().date(),
-                    'end_date': timezone.now().date() + timedelta(days=365),
+                    # v1.67.8 (fixes) item 6: no end date unless one is entered (was today + 365 – the numbering of the branch
+                    # stopped after a year: "Document number cannot be generated outside the valid date range")
+                    'end_date': None,
                 }
             )
 

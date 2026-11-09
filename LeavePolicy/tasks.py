@@ -32,6 +32,12 @@ def daily_jobs(today=None, dry=False):
     except Exception:
         log.exception('leave accrual catch-up failed')
     out['comp_off_lapsed'] = len(compoff.expire(today, preview=dry))
+    if not dry:   # v1.67.12 (effective, item 62): employees with a probation end but no confirmation date get it
+        try:
+            from EmployeeProfile.services import fill_confirmation_dates
+            out['confirmation_dates'] = fill_confirmation_dates(today)
+        except Exception:
+            log.exception('confirmation dates failed')
     if not dry:   # v1.11.0: scheduled employee transfers whose date has come
         try:
             from HRActions.transfer import due

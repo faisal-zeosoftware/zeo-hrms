@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
 from django.db.models.signals import pre_delete   # v1.62.0 payroll
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -117,6 +118,7 @@ def get_payroll_dates_and_days(instance, branch=None, structure=None):
             .filter(branch=branch)
             .first()
         )
+    pay_structure = _dated_structure(pay_structure, start_date)   # v1.67.12 (effective, item 64): as in force in the pay month
 
     if not pay_structure:
         return start_date, end_date, total_days
@@ -253,7 +255,18 @@ def structure_for(employee):
                 sc += 2
         if ok and sc > score:
             best, score = ps, sc
-    return best
+    return _dated_structure(best)   # v1.67.12 (effective, item 64): as in force on the rule day (payroll: the 1st of the pay period)
+
+
+def _dated_structure(ps, on=None):
+    """v1.67.12 (effective, item 64): the pay structure as in force on `on` (default: the rule day); itself without dated versions."""
+    if ps is None or getattr(ps, '_v16712_from', None) is not None:
+        return ps
+    try:
+        from PayrollPlus.effective import as_of
+        return as_of('pay_structure', ps, on)
+    except Exception:
+        return ps
 
 
 def last_working_day(employee):
@@ -331,7 +344,7 @@ def pension_variables(employee, start_date=None, end_date=None, rows=None):
     """v1.18.0 – GPSSA figures for payroll formulas:
        is_national            1 for an Emirati employee of a UAE company, else 0
        pension_salary         contribution salary: basic + housing + transport of the active salary (min 3,000, max 70,000)
-       pension_employee_rate  0.11 when the employee joined on / after 31 Oct 2023 (new law), else 0.05
+       pension_employee_rate  0.11 when the employee joined on / after 31/10/2023 (new law), else 0.05
        pension_employer_rate  0.125 (employer share net of the government's 2.5 %)"""
     nat = is_uae_national(employee)
     out = {'is_national': Decimal('1' if nat else '0'), 'pension_salary': Decimal('0.00'),
@@ -2546,13 +2559,20 @@ def _process_payroll(
         # LOANS
         # ====================================================
 
+        _v16711_end = end_date.date() if isinstance(end_date, datetime) else end_date
         active_loans = (
             LoanRequest.objects
             .filter(
+                Q(status__in=LOAN_DEDUCTED)   # v1.62.3 (item 108): Disbursed / In Progress loans too (only Approved before)
+                # v1.67.11 (loans, item 60): a pause that starts after this period does not stop this month's instalment
+                | Q(status="Paused", pause_start_date__isnull=False, pause_start_date__gt=_v16711_end),
                 employee=employee,
-                status__in=LOAN_DEDUCTED   # v1.62.3 (item 108): Disbursed / In Progress loans too (only Approved before)
             )
         )
+        try:
+            from PayrollPlus import lending as _v16711_lend
+        except ImportError:
+            _v16711_lend = None
         if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
             active_loans = LoanRequest.objects.none()
 
@@ -2581,6 +2601,16 @@ def _process_payroll(
             if emi_amount <= 0:
 
                 continue
+
+            # v1.67.11 (loans): a month skipped (item 113), a loan paid out after the period / not paid out (item 60) – no instalment,
+            # a payslip note says why; an instalment cut by the deduction limit last month is added to this one (item 51)
+            if _v16711_lend is not None:
+                _v16711_why = _v16711_lend.loan_deductible(loan, instance, _v16711_end)
+                if _v16711_why:
+                    _v16711_lend.note(payslip.pk, "loan_info", {"loan": loan.document_number or str(loan.pk), "text": _v16711_why})
+                    continue
+                emi_amount = _v16711_lend.loan_with_carry(loan, payslip, emi_amount,
+                                                          Decimal(str(loan.amount_requested or "0.00")) - Decimal(str(_paid_so_far)))
 
             # -----------------------------------------------
             # Find loan component using payroll_category
@@ -2714,8 +2744,10 @@ def _process_payroll(
         approved_advances = (
             AdvanceSalaryRequest.objects
             .filter(
+                Q(status="Approved")
+                # v1.67.11 (loans, item 60): a pause that starts after this period does not stop this month's deduction
+                | Q(status="Paused", pause_start_date__isnull=False, pause_start_date__gt=_v16711_end),
                 employee=employee,
-                status="Approved"
             )
         )
         if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
@@ -2731,6 +2763,10 @@ def _process_payroll(
                     or "0.00"
                 )
             )
+            # v1.67.11 (loans, item 115): an advance repaid in instalments – this month's instalment (+ what the deduction limit cut
+            # last month); the advance is Deducted when its last instalment is taken
+            if _v16711_lend is not None:
+                requested_amount = _v16711_lend.advance_due(advance, payslip)
 
             if (
                 not advance_component
@@ -2743,6 +2779,14 @@ def _process_payroll(
             # last one was deducted while all were marked Deducted (700 + 300 → 300)
             _v1622_put_line(PayslipComponent, payslip, advance_component, requested_amount, add=_adv_line)
             _adv_line = True
+
+            _v16711_done = True
+            if _v16711_lend is not None:
+                _v16711_done = _v16711_lend.take_advance(advance, payslip, instance, requested_amount)
+                if not _v16711_done:
+                    _v16711_lend.note(payslip.pk, "advance_info", {"advance": advance.document_number or str(advance.pk),
+                                                                   "amount": str(requested_amount), "left": str(_v16711_lend.advance_left(advance))})
+                    continue
 
             advance.status = "Deducted"
 
@@ -3224,6 +3268,11 @@ def restore_consumed_items(payslip):
         row = CO.objects.filter(key=_v1622_consumed_key(payslip.pk)).first()
         used = (row.value if row else None) or {}
     except LookupError:
+        pass
+    try:   # v1.67.11 (loans): advance instalments and deduction-limit cuts of the payslip come back
+        from PayrollPlus.lending import give_back_payslip as _v16711_back
+        _v16711_back(payslip.pk, delete=False)   # a deleted payslip's rows are removed by PayrollPlus.lending_signals
+    except ImportError:
         pass
     if used.get("given_back"):   # v1.62.11 (item 256): the payslip was rejected and gave everything back then – never twice
         row.delete()

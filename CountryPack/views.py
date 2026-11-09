@@ -82,6 +82,7 @@ def settings_payload(row=None):
         'label_titles': [{'key': k, 'title': LABEL_TITLES[k]} for k in LABEL_KEYS],
         'feature_titles': [{'key': k, 'title': FEATURE_TITLES[k][0], 'help': FEATURE_TITLES[k][1]} for k in FEATURE_KEYS],
         'packs': S.packs_list(),
+        'locked': S.locked() or None,   # v1.67.6 (setup) item 3
     }
 
 
@@ -103,6 +104,11 @@ class SettingsView(_Admin):
             if v and v not in PACKS:
                 return Response({'detail': tr('Unknown pack "{0}". Use one of {1} or leave it empty for the company country.', v, ", ".join(PACKS)),
                                  'field': 'pack_override'}, status=status.HTTP_400_BAD_REQUEST)
+            refused = S.lock_refusal(v)   # v1.67.6 (setup) item 3
+            if refused:
+                return Response({'detail': refused, 'field': 'pack_override', 'locked': True}, status=status.HTTP_409_CONFLICT)
+            if S.locked() and not v:
+                v = row.pack_override   # "from the company country" while locked = the locked pack
             row.pack_override = v
         # validate first, compare with the pack defaults after the (possibly new) pack is known
         lo = fo = None
@@ -172,7 +178,12 @@ class ApplyDefaultsView(_Admin):
             if v and v not in PACKS:
                 return Response({'detail': tr('Unknown pack "{0}". Use one of {1} or leave it empty for the company country.', v, ", ".join(PACKS)),
                                  'field': 'pack_override'}, status=status.HTTP_400_BAD_REQUEST)
+            refused = S.lock_refusal(v)   # v1.67.6 (setup) item 3
+            if refused:
+                return Response({'detail': refused, 'field': 'pack_override', 'locked': True}, status=status.HTTP_409_CONFLICT)
             row = CountryPackSettings.get()
+            if S.locked() and not v:
+                v = row.pack_override
             if (row.pack_override or '') != v:
                 row.pack_override = v
                 row.updated_by_id = request.user.pk

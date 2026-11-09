@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Read-only dashboard aggregations for ESS users and managers (all modules).
 
 Everything here is computed from the existing models; the app has no tables of its own.
@@ -384,7 +385,7 @@ def ess_summary(user, d_from=None, d_to=None):
     Att = M('calendars.Attendance')
     ta = Att.objects.filter(employee=emp, date=today).first()
     data['attendance'] = {
-        'month_label': f"{d_from:%d %b} – {min(d_to, today):%d %b %Y}" if d_from != min(d_to, today) else f"{d_from:%d %b %Y}",
+        'month_label': f"{d_from:%d/%m/%Y} – {min(d_to, today):%d/%m/%Y}" if d_from != min(d_to, today) else f"{d_from:%d/%m/%Y}",
         'working_days': len([r for r in lst if r['status'] not in ('Weekly off', 'Holiday', 'Worked on rest day', 'Not marked yet')]),
         'present': int(c_['Present'] + c_['Missing punch'] + c_['Half day']), 'late': int(c_['late_count']),
         'leave': int(c_['Leave']), 'absent': int(c_['Absent']),
@@ -1209,7 +1210,7 @@ def drill(user, metric, params, request=None):
             q = q.filter(employee_id=params['employee'])
         rows = [{'_m': o._meta.label, '_id': o.id, 'employee_id': o.employee_id, 'code': o.employee.emp_code, 'name': emp_name(o.employee), 'date': o.date,
                  'type': o.get_ot_type_display(), 'hours': float(o.hours or 0), 'approved': 'Approved' if o.approved else 'Pending'} for o in q]
-        return {'title': f"Overtime · {p_from:%d %b} – {p_to:%d %b %Y}", 'columns': [col('code', 'Code'), col('name', 'Employee'), col('date', 'Date', 'date'), col('type', 'Type'),
+        return {'title': f"Overtime · {p_from:%d/%m/%Y} – {p_to:%d/%m/%Y}", 'columns': [col('code', 'Code'), col('name', 'Employee'), col('date', 'Date', 'date'), col('type', 'Type'),
                                                                  col('hours', 'Hours', 'number'), col('approved', 'Status', 'status')], 'rows': rows}
     if metric == 'goal_progress':
         AC = M('PerformanceManagement.AppraisalCycle')

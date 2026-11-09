@@ -192,6 +192,8 @@ class WorkflowViewSet(Base):
             qs = qs.filter(state__in=st.split(','))
         if self.request.GET.get('module'):
             qs = qs.filter(module=self.request.GET['module'])
+        elif self.request.GET.get('all') not in ('1', 'true') and getattr(self, 'action', '') == 'list':   # v1.67.6 (setup) item 7
+            qs = qs.filter(module__in=R.active_modules())
         if self.request.GET.get('model'):
             qs = qs.filter(model=self.request.GET['model'])
         q = self.request.GET.get('q')

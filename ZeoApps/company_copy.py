@@ -89,7 +89,8 @@ def can_administer(user, comp):
         from django_tenants.utils import schema_context
         from tenant_users.tenants.models import UserTenantPermissions
         with schema_context(comp.schema_name):
-            return UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists()
+            from ZeoCloud.companyadmin import is_admin as _ca   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+            return _ca(user, comp.schema_name)
     except Exception:
         log.exception('admin check of %s', getattr(comp, 'schema_name', '?'))
         return False

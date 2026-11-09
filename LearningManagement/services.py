@@ -42,7 +42,8 @@ def ld_users(employee=None):
                 out.append(u)
         users = out
     if not users:
-        users = [p.profile for p in _company_perms().filter(is_superuser=True, profile__is_active=True,
+        from ZeoCloud.companyadmin import admin_q   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+        users = [p.profile for p in _company_perms().filter(admin_q(schema), profile__is_active=True,
                                                                           profile__tenants__schema_name=schema).select_related('profile').distinct()]
     seen, out = set(), []
     for u in users:

@@ -147,9 +147,7 @@ def is_company_admin(user, comp):
     from .models import CompanyAccess
     if not user.tenants.filter(pk=comp.pk).exists() and not CompanyAccess.objects.filter(user=user, company=comp).exists():
         return False
-    if user.is_superuser:
-        return True
-    try:
+    try:   # v1.67.7 (admin): per company – a system administrator too, unless switched off in this company
         from .rights import is_admin
         return bool(is_admin(user, comp.schema_name))
     except Exception:

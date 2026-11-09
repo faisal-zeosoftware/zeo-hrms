@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Work history (v1.15.0): everything done for a customer, project or AMC contract in a period – time on support
 tickets (AMC covered / chargeable) and on project tasks, the tickets handled and the state of the project tasks.
 
@@ -123,7 +124,7 @@ def collect(request, p):
             u = S.contract_usage(c)
             amc = {'number': c.number, 'included': 'Unlimited' if c.unlimited_hours else float(u['included_hours']),
                    'used': float(u['used_hours']), 'remaining': None if u['remaining_hours'] is None else float(u['remaining_hours']),
-                   'period': f'{c.start_date:%d %b %Y} – {c.end_date:%d %b %Y}'}
+                   'period': f'{c.start_date:%d/%m/%Y} – {c.end_date:%d/%m/%Y}'}
     return {'entries': entries, 'tickets': tickets, 'tasks': tasks, 'amc': amc,
             'summary': {k: round(v, 2) for k, v in summary.items()}, 'total_hours': round(sum(summary.values()), 2),
             'subject': ' · '.join(b for b in title_bits if b) or 'All customers',

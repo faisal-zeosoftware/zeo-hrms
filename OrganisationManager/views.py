@@ -744,17 +744,19 @@ class permissionviewset(viewsets.ModelViewSet):
         d = request.data
         plain = {k: d.get(k) for k in d.keys() if k != 'groups'} if hasattr(d, 'getlist') else {k: v for k, v in dict(d).items() if k != 'groups'}
         others = list(instance.profile.tenants.exclude(schema_name__in=[sch, 'public']).values_list('schema_name', flat=True))
-        if 'is_superuser' in plain and others and not groupscope.is_platform_admin(request.user):
-            want = str(plain.get('is_superuser')).lower() in ('1', 'true', 'yes')
-            if want != bool(UTP.objects.filter(pk=instance.pk).values_list('is_superuser', flat=True).first()):
+        if 'is_superuser' in plain:
+            # v1.67.7 (admin): administrator rights are per company now (ZeoCloud/companyadmin.py) – the change is for THIS
+            # company only (before 1.67.7 a login of other companies could not be changed here: the flag was shared). Refused
+            # when it would leave the company without an administrator, or by someone who is not its owner / administrator.
+            want = str(plain.pop('is_superuser')).lower() in ('1', 'true', 'yes')
+            from ZeoCloud import companyadmin as CA
+            if want != CA.is_admin(instance.profile_id, sch):
                 try:
-                    from ZeoCloud.rights import is_admin
-                    allowed = all(request.user.tenants.filter(schema_name=s).exists() and is_admin(request.user, s) for s in others)
-                except ImportError:
-                    allowed = False
-                if not allowed:
-                    return Response({'is_superuser': [tr('This login is also a user of other companies. Only an administrator of all its companies can change its administrator flag – give it permission groups of this company instead.')]},
-                                    status=status.HTTP_400_BAD_REQUEST)
+                    CA.set_admin(instance.profile_id, sch, want, by=request.user, request=request)
+                except CA.AdminError as e:
+                    return Response({'is_superuser': [e.msg], 'code': e.code}, status=e.status)
+            instance.is_superuser = want
+        _ = others
         new_groups = None
         if 'groups' in d:
             raw = d.getlist('groups') if hasattr(d, 'getlist') else d.get('groups')
@@ -802,7 +804,14 @@ class permissionviewset(viewsets.ModelViewSet):
             ids = groupscope.substitute([int(i) for i in ids if str(i).isdigit() and int(i) in ok])
             ca.groups = list(Group.objects.filter(id__in=ids).values_list('name', flat=True))
         if 'is_superuser' in request.data:
-            ca.admin = str(request.data.get('is_superuser')).lower() in ('1', 'true', 'yes')
+            _want = str(request.data.get('is_superuser')).lower() in ('1', 'true', 'yes')
+            if _want != bool(ca.admin):   # v1.67.7 (admin): never the last administrator; only the owner / an administrator
+                from ZeoCloud import companyadmin as CA
+                try:
+                    CA.check_change(instance.profile_id, connection.schema_name, _want, by=request.user)
+                except CA.AdminError as e:
+                    return Response({'is_superuser': [e.msg], 'code': e.code}, status=e.status)
+            ca.admin = _want
         ca.save()
         overlay.forget()
         fresh = UserTenantPermissions.objects.get(pk=instance.pk)
@@ -1027,6 +1036,17 @@ class DocNumberingviewset(BranchAccessMixin,viewsets.ModelViewSet):
     queryset = DocumentNumbering.objects.all()
     serializer_class = DocumentNumberingSerializer
     permission_classes = [DocumentNumberingPermission]
+
+    def get_queryset(self):
+        """v1.67.6 (setup) item 4: only the series of the active apps (?all=1: every series kept)."""
+        qs = super().get_queryset()
+        if self.request.query_params.get('all') in ('1', 'true'):
+            return qs
+        try:
+            from ZeoApps.numbering import active_types
+            return qs.filter(type__in=active_types())
+        except Exception:
+            return qs
     # def get_queryset(self):
     #     queryset = super().get_queryset()
 

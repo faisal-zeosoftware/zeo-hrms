@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """AttendancePlus engine (v1.12.0): rules, shift resolution, punch → work day, the daily result and
 the one overtime path.
 
@@ -87,8 +88,9 @@ def emp(employee_or_id):
 SCOPE_RANK = {'employee': 5, 'category': 4, 'department': 3, 'branch': 2, 'company': 1}
 
 
-def rule_for(employee):
-    """Most specific active rule: employee > category > department > branch > company, then priority."""
+def rule_for(employee, on=None):
+    """Most specific active rule: employee > category > department > branch > company, then priority.
+    v1.67.12 (effective, item 64): the rule as in force on `on` (the attendance day; default the rule day / today)."""
     best, best_key = None, None
     # v1.16.0 (D15): the active rules are read once per payroll run (PayrollManagement.perf); outside a run as before
     try:
@@ -107,6 +109,12 @@ def rule_for(employee):
         key = (SCOPE_RANK.get(r.scope, 0), r.priority, -r.id)
         if best_key is None or key > best_key:
             best, best_key = r, key
+    if best is not None:
+        try:
+            from PayrollPlus.effective import as_of
+            best = as_of('attendance_rule', best, on)
+        except ImportError:
+            pass
     return best or M.AttendanceRule(name='Default rules', id=None)
 
 
@@ -152,7 +160,7 @@ def shift_info(employee, day, rule=None, book=None):
     'min_hours','max_hours','half_day_hours','ot_after_minutes','source'} or None (no shift planned).
     v1.16.0 (D15): `book` = a ShiftPlanner resolver.Book covering the day (book.get == shift_for) – callers that look at many
     days pass one instead of the resolver building a new book for every day."""
-    rule = rule or rule_for(employee)
+    rule = rule or rule_for(employee, day)   # v1.67.12 (effective)
     res = _resolver()
     if res is not None:
         try:
@@ -463,7 +471,7 @@ def _dec(v, default=0):
 
 def compute(employee, day, rule=None, at=None):
     """The daily result as a dict (not saved)."""
-    rule = rule or rule_for(employee)
+    rule = rule or rule_for(employee, day)   # v1.67.12 (effective): the rule of that day
     at = at or now()
     sh = shift_info(employee, day, rule)
     off_kind, off_label = is_off_day(employee, day, sh)
@@ -831,7 +839,7 @@ class _busy:
 
 def recompute_day(employee, day, rule=None, at=None, sync_calendar=True):
     employee = emp(employee)
-    rule = rule or rule_for(employee)
+    rule = rule or rule_for(employee, day)   # v1.67.12 (effective): the rule of that day
     with _busy():
         r = compute(employee, day, rule, at)
         old = M.AttendanceDay.objects.filter(employee_id=employee.id, date=day).first()
@@ -1060,7 +1068,7 @@ def notify_missing_punches():
         try:
             from zeo.module_helpers import notify
             notify(employee=e, title=tmsg('Missing punch – please request a correction'),
-                   message=tmsg('You have a clock-in without a clock-out on {0:%d %b %Y}. Open My attendance and request a correction.', d.date),
+                   message=tmsg('You have a clock-in without a clock-out on {0:%d/%m/%Y}. Open My attendance and request a correction.', d.date),
                    notification_type='attendance')
         except Exception:
             pass

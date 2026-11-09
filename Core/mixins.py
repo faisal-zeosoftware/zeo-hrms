@@ -16,8 +16,11 @@ class BranchAccessMixin:
         if not tenant:
             return qs.none()
 
-        # 🟢 SUPERUSER → ALL BRANCHES
-        if user.is_superuser:
+        # 🟢 SUPERUSER → ALL BRANCHES; v1.67.6 (setup) item 12: company administrators and the "Company administrators" group too
+        with schema_context(tenant.schema_name):
+            from ZeoApps.adminbranches import every_branch as _every
+            _all = user.is_superuser or _every(user)
+        if _all:
             with schema_context(tenant.schema_name):
                 user_branch_ids = list(
                     brnch_mstr.objects.values_list("id", flat=True)

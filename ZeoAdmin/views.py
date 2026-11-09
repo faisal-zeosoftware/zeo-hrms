@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.52.0 – ZEO administration API (/zeo-admin/api/…)."""
 import json
 from datetime import date, timedelta   # v1.62.11 (item 95) timedelta
@@ -1132,5 +1133,5 @@ class ExportCheckView(Base):
                    tr('This export has {0} rows – more than the limit of {1}. Filter the list, or ask for the right "Can export large lists".', rows, pol['export_row_limit']))
             return Response({'detail': msg, 'code': 'export_refused'}, status=403)
         u = request.user
-        label = f'ZEO - {u.email or u.username} - {tz.localtime():%d %b %Y %H:%M} - {client_ip(request)}'
+        label = f'ZEO - {u.email or u.username} - {tz.localtime():%d/%m/%Y %H:%M} - {client_ip(request)}'
         return Response({'ok': True, 'watermark': bool(pol['export_watermark']), 'label': label})

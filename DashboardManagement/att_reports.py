@@ -108,7 +108,8 @@ def r_attendance_register(run):
             'wo': drill('attendance', dict(who, status='Weekly off'), **per), 'late': drill('attendance', dict(who, late_in='Yes'), **per),
             'early': drill('attendance', dict(who, early_out='Yes'), **per), 'ot': drill('overtime', who, **per), 'hours': drill('attendance', who, **per)})
         rows.append(row)
-    cols = EMP_COLS + [('d' + x.strftime('%Y%m%d'), x.strftime('%d %a'), 'text') for x in dates] + [
+    from Translations.i18n import tr   # v1.67.9 (screens) item 19: the weekday in the reader's language (was "01 Sun" in Arabic)
+    cols = EMP_COLS + [('d' + x.strftime('%Y%m%d'), f"{x:%d} {tr(x.strftime('%a'))}", 'text') for x in dates] + [
         ('p', 'Present days', 'number'), ('a', 'Absent days', 'number'), ('l', 'Leave days', 'number'), ('h', 'Holidays', 'number'),
         ('wo', 'Weekly off', 'number'), ('late', 'Late days', 'number'), ('early', 'Early out days', 'number'), ('ot', 'OT hours', 'number'),
         ('hours', 'Hours worked', 'number')]

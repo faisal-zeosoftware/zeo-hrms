@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """
 v1.12.0 – Shift planner API (mounted at /shift-planner/api/, every call with ?schema=<company>).
 
@@ -670,7 +671,7 @@ class PeriodAction(Base):
             if was == 'published':
                 for emp in S.E().objects.filter(pk__in=p.entries.values('employee_id')):
                     notify.send(employee=emp, kind='unpublished', title=tmsg('Schedule withdrawn'),
-                                message=tmsg('Your schedule {0:%d %b} – {1:%d %b %Y} was taken back for changes. You will be told when it is published again.', p.date_from, p.date_to))
+                                message=tmsg('Your schedule {0:%d/%m/%Y} – {1:%d/%m/%Y} was taken back for changes. You will be told when it is published again.', p.date_from, p.date_to))
             return Response(period_row(p, r=self.r))
         raise PlanError(tr('Unknown action.'), status=404)
 
@@ -689,9 +690,9 @@ class PeriodAction(Base):
             by_emp.setdefault(e.employee_id, []).append(e)
         for emp in S.E().objects.filter(pk__in=list(by_emp)):
             work = [e for e in by_emp[emp.pk] if not e.off and e.shift_id]
-            lines = '; '.join(f'{e.date:%a %d %b} {S.shift_label(shifts.get(e.shift_id))}' for e in work[:14])
+            lines = '; '.join(f'{e.date:%a %d/%m/%Y} {S.shift_label(shifts.get(e.shift_id))}' for e in work[:14])
             notify.send(employee=emp, kind='published', title=tmsg('Your schedule is published'),
-                        message=tmsg('Your schedule {0:%d %b} – {1:%d %b %Y}: {2} shift day(s). {3}', p.date_from, p.date_to, len(work), lines))
+                        message=tmsg('Your schedule {0:%d/%m/%Y} – {1:%d/%m/%Y}: {2} shift day(s). {3}', p.date_from, p.date_to, len(work), lines))
             sent += 1
         return period_row(p) | {'notified': sent, 'problems': probs}
 
@@ -703,7 +704,7 @@ class PeriodAction(Base):
 
     def _tell_approvers(self, p):
         if p.approver_id:
-            self._tell_user(p.approver_id, 'Roster waiting for approval', f'The roster “{p.name}” ({p.date_from:%d %b} – {p.date_to:%d %b}) waits for your approval.')
+            self._tell_user(p.approver_id, 'Roster waiting for approval', f'The roster “{p.name}” ({p.date_from:%d/%m/%Y} – {p.date_to:%d/%m/%Y}) waits for your approval.')
 
 
 # ------------------------------------------------------------------ roster grid + cells
@@ -1008,7 +1009,7 @@ class OpenShiftsView(Base):
             for emp in qs[:300]:
                 if emp.users_id:
                     notify.send(employee=emp, kind='open_shift', title=tmsg('Open shift available'),
-                                message=tmsg('An open shift {0} on {1:%a %d %b %Y} needs {2} person(s). Claim it in My schedule.', S.shift_label(sh), o.date, o.slots))
+                                message=tmsg('An open shift {0} on {1:%d/%m/%Y} needs {2} person(s). Claim it in My schedule.', S.shift_label(sh), o.date, o.slots))
                     told += 1
         return Response(open_row(o, self.r, S.shifts_by_id(), names()) | {'notified': told}, status=201)
 
@@ -1031,7 +1032,7 @@ class OpenShiftAction(Base):
                 S.stamp(c, request.user, 'rejected', 'The open shift was cancelled.')
                 c.save()
                 notify.send(employee=S.emp_by_id(c.employee_id), kind='open_shift', title=tmsg('Open shift cancelled'),
-                            message=tmsg('The open shift on {0:%d %b %Y} you claimed was cancelled.', o.date))
+                            message=tmsg('The open shift on {0:%d/%m/%Y} you claimed was cancelled.', o.date))
             return Response(open_row(o, self.r, S.shifts_by_id(), names()))
         if action != 'claim':
             raise PlanError(tr('Unknown action.'), status=404)
@@ -1047,12 +1048,12 @@ class OpenShiftAction(Base):
         S.refuse_if_leave(emp, o.date)
         sid, off = S.current_shift(emp, o.date)
         if sid and not off:
-            raise PlanError(tr('You already work {0} on {1:%d %b %Y}. Ask for a shift change instead.', S.shift_label(S.shifts_by_id().get(sid)), o.date), status=409)
+            raise PlanError(tr('You already work {0} on {1:%d/%m/%Y}. Ask for a shift change instead.', S.shift_label(S.shifts_by_id().get(sid)), o.date), status=409)
         c = OpenShiftClaim.objects.create(open_shift=o, employee_id=emp.pk, note=(request.data.get('note') or '')[:255])
         mgr = emp.emp_reporting_manager
         if mgr is not None:
             notify.send(user=mgr, kind='open_shift', title=tmsg('Open shift claimed'),
-                        message=tmsg('{0} claimed the open shift on {1:%a %d %b %Y}. Approve or reject it in Shift planner → Requests.', person(emp), o.date))
+                        message=tmsg('{0} claimed the open shift on {1:%d/%m/%Y}. Approve or reject it in Shift planner → Requests.', person(emp), o.date))
         return Response({'id': c.id, 'status': c.status, 'status_label': c.get_status_display()}, status=201)
 
 
@@ -1082,7 +1083,7 @@ class ClaimAction(Base):
             S.stamp(c, request.user, 'rejected', note)
             c.save()
             notify.send(employee=emp, kind='open_shift', title=tmsg('Open shift claim rejected'),
-                        message=tmsg('Your claim for the open shift on {0:%d %b %Y} was rejected.', o.date) + (f' {note}' if note else ''))
+                        message=tmsg('Your claim for the open shift on {0:%d/%m/%Y} was rejected.', o.date) + (f' {note}' if note else ''))
             return Response({'status': c.status})
         if o.status != 'open':
             raise PlanError(tr('This open shift is no longer open.'), status=409)
@@ -1098,10 +1099,10 @@ class ClaimAction(Base):
                     S.stamp(other, request.user, 'rejected', 'All places were filled.')
                     other.save()
                     notify.send(employee=S.emp_by_id(other.employee_id), kind='open_shift', title=tmsg('Open shift filled'),
-                                message=tmsg('The open shift on {0:%d %b %Y} was filled by others.', o.date))
+                                message=tmsg('The open shift on {0:%d/%m/%Y} was filled by others.', o.date))
         sh = S.shifts_by_id().get(o.shift_id)
         notify.send(employee=emp, kind='open_shift', title=tmsg('Open shift approved'),
-                    message=tmsg('You work {0} on {1:%a %d %b %Y}.', S.shift_label(sh), o.date))
+                    message=tmsg('You work {0} on {1:%d/%m/%Y}.', S.shift_label(sh), o.date))
         return Response({'status': c.status, 'open_shift_status': o.status})
 
 
@@ -1215,7 +1216,7 @@ class RequestsView(Base):
             pass   # colleagues see it under "Shifts offered by colleagues"; the manager decides once someone takes it
         elif q.kind == 'swap':
             notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title=tmsg('Shift swap request'),
-                        message=tmsg('{0} asks to swap: their {1:%a %d %b} ({2}) for your {3:%a %d %b} ({4}). Accept or decline in My schedule.', person(emp), day, shift_txt, q.swap_date, S.shift_label(shifts.get(q.swap_shift_id)) if q.swap_shift_id else "Off"))
+                        message=tmsg('{0} asks to swap: their {1:%a %d/%m/%Y} ({2}) for your {3:%a %d/%m/%Y} ({4}). Accept or decline in My schedule.', person(emp), day, shift_txt, q.swap_date, S.shift_label(shifts.get(q.swap_shift_id)) if q.swap_shift_id else "Off"))
         else:
             self._tell_approver(emp, q)
         return Response(req_row(q, self.r, shifts, names()), status=201)
@@ -1225,7 +1226,7 @@ class RequestsView(Base):
         mgr = emp.emp_reporting_manager
         if mgr is not None:
             notify.send(user=mgr, kind='request', title=tmsg('{0} waiting for approval', q.get_kind_display()),
-                        message=tmsg('{0} asks for a {1} on {2:%a %d %b %Y}. Approve or reject it in Shift planner → Requests.', person(emp), q.get_kind_display().lower(), q.date))
+                        message=tmsg('{0} asks for a {1} on {2:%d/%m/%Y}. Approve or reject it in Shift planner → Requests.', person(emp), q.get_kind_display().lower(), q.date))
 
 
 def apply_request(q, user):
@@ -1271,13 +1272,13 @@ class RequestAction(Base):
             if action == 'decline':
                 q.status, q.decision_note = 'declined', note
                 q.save()
-                notify.send(employee=emp, kind='swap', title=tmsg('Swap declined'), message=tmsg('{0} declined your swap for {1:%d %b %Y}.', person(self.r.emp), q.date) + (f' {note}' if note else ''))
+                notify.send(employee=emp, kind='swap', title=tmsg('Swap declined'), message=tmsg('{0} declined your swap for {1:%d/%m/%Y}.', person(self.r.emp), q.date) + (f' {note}' if note else ''))
             else:
                 for x, dd in ((emp, q.date), (self.r.emp, q.swap_date or q.date)):
                     S.refuse_if_leave(x, dd)
                 q.status = 'pending'
                 q.save()
-                notify.send(employee=emp, kind='swap', title=tmsg('Swap accepted'), message=tmsg('{0} accepted your swap for {1:%d %b %Y}. It now waits for approval.', person(self.r.emp), q.date))
+                notify.send(employee=emp, kind='swap', title=tmsg('Swap accepted'), message=tmsg('{0} accepted your swap for {1:%d/%m/%Y}. It now waits for approval.', person(self.r.emp), q.date))
                 RequestsView._tell_approver(emp, q)
             return Response(req_row(q, self.r, shifts, n))
         if action == 'take':   # v1.49.0 a colleague takes an offered shift
@@ -1292,7 +1293,7 @@ class RequestAction(Base):
             q.swap_employee_id, q.swap_date, q.status, q.peer_decided_at = self.r.emp.pk, q.date, 'pending', timezone.now()
             q.save()
             notify.send(employee=emp, kind='swap', title=tmsg('Your shift was taken'),
-                        message=tmsg('{0} takes your shift of {1:%a %d %b}. It now waits for approval.', person(self.r.emp), q.date))
+                        message=tmsg('{0} takes your shift of {1:%a %d/%m/%Y}. It now waits for approval.', person(self.r.emp), q.date))
             RequestsView._tell_approver(emp, q)
             return Response(req_row(q, self.r, shifts, n))
         if action == 'withdraw':
@@ -1301,7 +1302,7 @@ class RequestAction(Base):
             q.status = 'withdrawn'
             q.save()
             if q.swap_employee_id:
-                notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title=tmsg('Swap withdrawn'), message=tmsg('{0} withdrew the swap for {1:%d %b %Y}.', person(emp), q.date))
+                notify.send(employee=S.emp_by_id(q.swap_employee_id), kind='swap', title=tmsg('Swap withdrawn'), message=tmsg('{0} withdrew the swap for {1:%d/%m/%Y}.', person(emp), q.date))
             return Response(req_row(q, self.r, shifts, n))
         if action not in ('approve', 'reject'):
             raise PlanError(tr('Unknown action.'), status=404)
@@ -1322,7 +1323,7 @@ class RequestAction(Base):
         word = 'approved' if action == 'approve' else 'rejected'
         for x in filter(None, [emp, S.emp_by_id(q.swap_employee_id) if q.swap_employee_id else None]):
             notify.send(employee=x, kind='request', title=f'{q.get_kind_display()} {word}',
-                        message=tmsg('The {0} for {1:%a %d %b %Y} was {2}.', q.get_kind_display().lower(), q.date, word) + (f' {note}' if note else ''))
+                        message=tmsg('The {0} for {1:%d/%m/%Y} was {2}.', q.get_kind_display().lower(), q.date, word) + (f' {note}' if note else ''))
         return Response(req_row(q, self.r, shifts, n))
 
 

@@ -380,11 +380,19 @@ def _share(table, years):
     return 0.0
 
 
+def _dated_gratuity_rows():
+    try:
+        from PayrollPlus.effective import gratuity_rows
+        return gratuity_rows()
+    except ImportError:
+        return list(M('OrganisationManager', 'GratuityTable').objects.filter(is_active=True).order_by('minimum_value'))
+
+
 def _table_rules():
     try:
         return [{'from_year': float(r.minimum_value) + 1, 'to_year': float(r.maximum_value) if r.maximum_value else None,
                  'days': float(r.termination_days), 'resign_days': float(r.resignation_days)}
-                for r in M('OrganisationManager', 'GratuityTable').objects.filter(is_active=True).order_by('minimum_value')]
+                for r in _dated_gratuity_rows()]   # v1.67.12 (effective, item 64): the table in force on the rule day
     except Exception:
         return []
 
@@ -636,6 +644,19 @@ def apply_defaults(user=None, schema_name=None):
     p = current_pack(schema)
     added, kept = [], []
 
+    def _hr_on():   # v1.67.8 (fixes) item 5
+        try:
+            from ZeoApps.services import is_active
+            return bool(is_active('hrms'))
+        except Exception:   # noqa: BLE001
+            return True
+    if not _in_schema(schema, _hr_on):
+        # v1.67.8 (fixes) item 5: every default here is HR's or Payroll's (leave types, holidays, weekend, document types, the
+        # labour-law rule set, salary components) – none without HR; they are loaded when HR is activated (ZeoApps.hrdefaults)
+        return {'pack': p['pack'], 'added': [], 'kept': [], 'hr_off': True,
+                'message': 'HR is not active in this company – the country defaults (leave types, public holidays, weekend, document '
+                           'types) are loaded when HR is activated.'}
+
     def run():
         from django.db import transaction
         with transaction.atomic():
@@ -777,8 +798,76 @@ def apply_defaults(user=None, schema_name=None):
                         kept.append({'kind': 'Weekend', 'name': w.description, 'detail': 'changed by the company – not touched'})
     _in_schema(schema, run)
     clear_cache(schema)
+    try:   # v1.67.6 (setup) item 3: the pack is fixed once its settings were applied
+        _in_schema(schema, lambda: lock(p['pack'], user))
+    except Exception:
+        pass
     return {'pack': p['pack'], 'added': added, 'kept': kept,
             'message': (f'{len(added)} default(s) added.' if added else 'Nothing to add – the company already has the country defaults.')}
+
+
+# ------------------------------------------------------------------ v1.67.6 (setup) item 3: the pack is locked
+LOCK_KEY = 'country_pack_lock'
+
+
+def lock(pack, user=None):
+    """Record that the settings of `pack` were applied (leave types, the labour-law rule set, document types, the weekend): from
+    now on the pack cannot be switched. The pack is written on the settings row too, so a later change of the company country
+    does not move it either."""
+    from django.utils import timezone
+    CO = M('ZeoApps', 'CompanyOption')
+    if CO.objects.filter(key=LOCK_KEY).exists():
+        return False
+    CO.objects.create(key=LOCK_KEY, value={'pack': pack, 'at': timezone.now().isoformat(), 'by': getattr(user, 'pk', None)})
+    from .models import CountryPackSettings
+    row = CountryPackSettings.get()
+    if not row.pack_override:
+        row.pack_override = pack
+        row.save(update_fields=['pack_override', 'updated_at'])
+    return True
+
+
+def locked():
+    """{pack, at} when the pack is locked, else None. A company whose defaults were applied before 1.67.6 (the labour-law rule
+    set of the pack is there) counts as locked from now on."""
+    try:
+        CO = M('ZeoApps', 'CompanyOption')
+        row = CO.objects.filter(key=LOCK_KEY).first()
+        if row is not None:
+            return row.value or {}
+        CP = M('OrgStructure', 'CountryPolicy')
+        p = current_pack()
+        cc = p['country_code'] if p['pack'] != 'GEN' else p['_company_country_code']
+        if cc and CP.objects.filter(country_code=cc).exists():
+            lock(p['pack'])
+            return CO.objects.filter(key=LOCK_KEY).first().value or {}
+    except Exception:
+        return None
+    return None
+
+
+def lock_refusal(new_pack_override):
+    """The message when switching to `new_pack_override` is refused, else ''."""
+    lk = locked()
+    if not lk:
+        return ''
+    from .models import CountryPackSettings
+    from .packs import PACKS
+    row = CountryPackSettings.get()
+    cur = (row.pack_override or '') or lk.get('pack', '')
+    want = (new_pack_override or '') or current_pack()['_auto_pack']
+    if want == cur:
+        return ''
+    from Translations.i18n import tr
+    when = (lk.get('at') or '')[:10]
+    try:
+        y, m, d = when.split('-')
+        when = f'{d}/{m}/{y}'
+    except ValueError:
+        pass
+    return tr('The country pack is {0} – its settings were applied on {1} (leave types, the labour-law rule set, document types, weekend). '
+              'It cannot be changed now: leave, payroll and documents of the company follow it. To work under another country, make a '
+              'company for that country.', f"{cur} ({PACKS.get(cur, {}).get('name', cur)})", when)
 
 
 def packs_list():

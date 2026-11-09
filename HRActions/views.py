@@ -197,7 +197,9 @@ def _request_transfer(request):
         from django.db import connection
         from django.db.models import Q as _Q
         from tenant_users.tenants.models import UserTenantPermissions
-        ids = set(UserTenantPermissions.objects.filter(_Q(is_superuser=True) | _Q(groups__permissions__codename__in=TRANSFER)).values_list('profile_id', flat=True))
+        from ZeoCloud.companyadmin import admin_q as _aq   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+        ids = set(UserTenantPermissions.objects.filter(_aq() | _Q(groups__permissions__codename__in=TRANSFER))
+                  .filter(profile__tenants__schema_name=connection.schema_name).values_list('profile_id', flat=True))   # v1.67.6 (setup) this company's HR only
         hr = CustomUser.objects.filter(pk__in=ids, is_active=True)
         who = uname(request.user)
         title = f'Transfer request: {emp} to report to {uname(CustomUser.objects.filter(pk=to_user).first())}'

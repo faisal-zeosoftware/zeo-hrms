@@ -62,5 +62,5 @@ class Command(BaseCommand):
                         if not dry:
                             DocumentNumbering.objects.create(branch_id=b, type=doc_type, prefix=prefix, suffix='', current_number=0,
                                                              total_length=12, start_date=timezone.now().date(),
-                                                             end_date=timezone.now().date() + timedelta(days=365))
+                                                             end_date=None)   # v1.67.8 (fixes) item 6: no end date unless entered
         self.stdout.write(self.style.SUCCESS(f'{made} numbering row(s) {"would be added" if dry else "added"}.'))

@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.13.0 – HR letters: templates with placeholders, request → HR approval → PDF with reference number and verification code."""
 import io
 import logging
@@ -142,17 +143,17 @@ def values(emp, lr):
         'department': getattr(emp.emp_dept_id, 'dept_name', '') if emp.emp_dept_id_id else '',
         'branch': getattr(emp.emp_branch_id, 'branch_name', '') if emp.emp_branch_id_id else '',
         'nationality': getattr(emp.emp_nationality, 'N_name', '') if emp.emp_nationality_id else '',
-        'joining_date': emp.emp_joined_date.strftime('%d %B %Y') if emp.emp_joined_date else '',
+        'joining_date': emp.emp_joined_date.strftime('%d/%m/%Y') if emp.emp_joined_date else '',
         'passport_no': passport or '', 'emirates_id': getattr(ident, 'emirates_id', '') if ident is not None else '',
         'basic_salary': _money(fig['basic']), 'housing_allowance': _money(fig['housing']), 'transport_allowance': _money(fig['transport']),
         'other_allowances': _money(fig['other']), 'gross_salary': _money(fig['gross']), 'net_salary': _money(fig['net']), 'currency': cur,
         'bank_name': lr.bank_name or (bank.bank_name if bank else '') or '', 'iban': (bank.iban_number if bank else '') or '',
         'account_number': (bank.account_number if bank else '') or '', 'addressee': lr.addressee or 'To whom it may concern',
         'purpose': lr.purpose or 'personal use', 'destination': lr.destination or '',
-        'travel_from': lr.travel_from.strftime('%d %B %Y') if lr.travel_from else '', 'travel_to': lr.travel_to.strftime('%d %B %Y') if lr.travel_to else '',
-        'company_name': company_name(), 'today': date.today().strftime('%d %B %Y'),
+        'travel_from': lr.travel_from.strftime('%d/%m/%Y') if lr.travel_from else '', 'travel_to': lr.travel_to.strftime('%d/%m/%Y') if lr.travel_to else '',
+        'company_name': company_name(), 'today': date.today().strftime('%d/%m/%Y'),
         'reference_no': lr.reference_no or '', 'verification_code': lr.verification_code or '',
-        'last_working_date': leave.strftime('%d %B %Y') if leave else 'date',
+        'last_working_date': leave.strftime('%d/%m/%Y') if leave else 'date',
     }
     if lr.language == 'ar' and not lr.addressee:
         v['addressee'] = 'إلى من يهمه الأمر'
@@ -294,7 +295,7 @@ def render_pdf(emp, lr, tpl, vals):
     y = yy - 9 * mm
     # reference and date
     ref = f'Ref: {lr.reference_no}' if not rtl else f'المرجع: {lr.reference_no}'
-    dt = f'Date: {date.today():%d %B %Y}' if not rtl else f'التاريخ: {date.today():%d/%m/%Y}'
+    dt = f'Date: {date.today():%d/%m/%Y}' if not rtl else f'التاريخ: {date.today():%d/%m/%Y}'
     if rtl:
         txt(right, y, ref, font, 9.5, 'right')
         txt(left, y, dt, font, 9.5)

@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """
 v1.55.0 – pay calendars, off-cycle runs and arrears.
 
@@ -386,7 +387,7 @@ def run_period(cal, start, user=None, employee_ids=None):
     PR = M('PayrollManagement', 'PayrollRun')
     E = M('EmpManagement', 'emp_master')
     with transaction.atomic():
-        run = PR.objects.create(name=f'{cal.name} · {a:%d %b} – {b:%d %b %Y}'[:100], month=b.month, year=b.year, attendance_start_date=a,
+        run = PR.objects.create(name=f'{cal.name} · {a:%d/%m/%Y} – {b:%d/%m/%Y}'[:100], month=b.month, year=b.year, attendance_start_date=a,
                                 attendance_end_date=b, payment_date=b + timedelta(days=cal.pay_days_after), status='pending')
         cr = CalendarRun.objects.create(calendar=cal, period_start=a, period_end=b, pay_date=b + timedelta(days=cal.pay_days_after),
                                         payroll_run_id=run.pk, closes_month=closes_month(cal, a, b), factor=factor(cal.frequency).quantize(Decimal('0.000001')),

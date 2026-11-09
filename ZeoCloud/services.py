@@ -473,6 +473,17 @@ def grant_admin(user, comp):
         if not utp.is_superuser:
             utp.is_superuser = True
             utp.save(update_fields=['is_superuser'])
+        try:   # v1.67.7 (admin): stored for this company (kept when the account owner changes later)
+            from . import companyadmin as _CA
+            if _CA.explicit(user.pk, comp.schema_name) is None:
+                _CA.write(user.pk, comp.schema_name, True)
+        except Exception:
+            log.exception('administrator row of %s', comp.schema_name)
+        try:   # v1.67.6 (setup) item 12: linked to the company's "Company administrators" group (every branch)
+            from ZeoApps.adminbranches import ensure_group
+            ensure_group()
+        except Exception:
+            pass
 
 
 def _make_company(job, acc_id, name, schema, industry, apps, user_id, extra, country_id, own_thread=True, grant_creator=True, db=''):

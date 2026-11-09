@@ -361,6 +361,11 @@ for _k, _extra in (('salary_certificate', {'employee': ('Employee details', EMP_
         'bilingual': ['header', 'refline', 'addressee', 'title', 'body'] + _mid + ['sign', 'verify', 'footer'],
     }, 'letter')
 
+# v1.67.6 (setup) item 6: every app document draws with the same record blocks (party, details, lines, totals, notes, terms)
+from . import appdocs as _AD   # noqa: E402
+for _d in _AD.APP_DOCS:
+    DOCS[_d[0]] = (_AD.RECORD, _AD.ORDERS, 'form')
+
 COMMON_BLOCKS = {'header': 'Letterhead / header', 'title': 'Document title', 'signatures': 'Signatures', 'footer': 'Footer (every page)'}
 
 # ------------------------------------------------------------------ the looks
@@ -376,7 +381,7 @@ LOOKS = {
     'arabic': {'name': 'Arabic', 'header': 'letterhead', 'font': 'Cairo', 'heading_font': 'Cairo', 'font_size': 8.8,
                'description': 'The whole document in Arabic, right to left.'},
 }
-ARABIC_DOCS = ('payslip', 'final_settlement', 'salary_certificate', 'experience_letter', 'noc', 'salary_transfer')
+ARABIC_DOCS = ('payslip', 'final_settlement', 'salary_certificate', 'experience_letter', 'noc', 'salary_transfer') + _AD.CUSTOMER_FACING   # v1.67.6 (setup)
 
 
 def tint(hex_color, f):

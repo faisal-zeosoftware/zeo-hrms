@@ -1814,6 +1814,11 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
         out = {k: v for k, v in st.items() if k not in ('by',)}
         if request.query_params.get('brief'):
             out['errors'] = (out.get('errors') or [])[:200]
+        try:   # v1.67.8 (fixes) item 14: the row messages in the user's language
+            from Translations.i18n import current_lang
+            out = bulk_import.localize_status(out, current_lang(request))
+        except Exception:
+            pass
         return Response(out)
 
     @action(detail=False, methods=['get'], url_path='import-errors')
@@ -1823,6 +1828,11 @@ class EmpbulkuploadViewSet(viewsets.ModelViewSet):
         st = bulk_import.status(request.query_params.get('job', ''))
         if not st:
             return Response({"detail": "Unknown or expired job."}, status=404)
+        try:   # v1.67.8 (fixes) item 14: the error file in the user's language too
+            from Translations.i18n import current_lang
+            st = bulk_import.localize_status(st, current_lang(request))
+        except Exception:
+            pass
         resp = HttpResponse(bulk_import.error_csv(st), content_type='text/csv; charset=utf-8')
         resp['Content-Disposition'] = 'attachment; filename="employee_upload_errors.csv"'
         return resp
@@ -2201,13 +2211,14 @@ class DocumentViewSet(viewsets.ModelViewSet):
     serializer_class = Document_typeSerializer
     # permission_classes = [DocTypePermission,] 
     def get_queryset(self):
-        """Return only active document types by default."""
-        return document_type.objects.filter(is_active=True)
+        """v1.67.9 (screens) item 17: every document type – lists read for new choices leave the inactive ones out
+        (AccessControl.access.active_only); the register (X-Include-Inactive) shows them with the Active / Inactive filter."""
+        return document_type.objects.all()
     def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        instance.is_active = False  # Soft delete instead of actual deletion
-        instance.save()
-        return Response({"message": "Document type deactivated successfully"}, status=status.HTTP_204_NO_CONTENT)
+        # v1.67.9 (screens) item 17: Delete deletes a document type nobody uses (a used one is refused before this runs –
+        # DataTools.usage, 409 "in use" with Make inactive). It used to be switched off silently and then vanished from the
+        # list for good (the list showed active ones only): it could not be made active again and its name stayed taken.
+        return super().destroy(request, *args, **kwargs)
     
 
 #EMP_DOCUMENT 
@@ -2858,8 +2869,11 @@ class NotificationViewset(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        # Admin / staff / superuser → see all notifications
-        if user.is_superuser or user.is_staff:
+        # v1.67.6 (setup) item 14: all notifications only for a company administrator or a user whose permission groups give
+        # the employee-document right (was: anybody with the staff flag – a back-office user saw every employee's documents)
+        from AccessControl.access import ctx as _zctx
+        _c = _zctx(self.request)
+        if _c.admin or 'view_notification' in _c.codes or 'view_emp_documents' in _c.codes:
             return notification.objects.all().order_by('-created_at')
 
         # Normal employee (ESS User) → only notifications related to their documents
@@ -3272,8 +3286,10 @@ class UserNotificationsViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        # v1.67.6 (setup) item 14: every request notification only for a company administrator (was: anybody with the staff
+        # flag saw the approval notifications of all users); everybody else sees the ones addressed to them
+        from AccessControl.access import ctx as _zctx
+        if _zctx(self.request).admin:
             return RequestNotification.objects.all().order_by('-created_at')
         # Normal user → show request notifications assigned directly to them
         qs = RequestNotification.objects.filter(

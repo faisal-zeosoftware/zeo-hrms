@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
 """v1.62.11 (item 229) – the pension / end-of-service scheme of each branch (UAE):
 
     pension  'gpssa' (default)  UAE nationals: GPSSA (federal law)
@@ -28,8 +29,8 @@ TTL = 20
 SCHEMES = {
     'adpf': {'code': 'adpf', 'name': 'ADPF pension (UAE nationals, Abu Dhabi)', 'authority': 'ADPF', 'kind': 'percent', 'applies_to': 'nationals',
              'base': 'gross', 'min_base': 6000, 'max_base': 100000, 'employee_rate': 11, 'employer_rate': 15,
-             'law_reference': 'Abu Dhabi Law No. (2) of 2000 as amended by Law No. (18) of 2023 (Official Gazette 1 Dec 2023): Art. 15 – 11 % employee '
-                              '(first insured from 1 Dec 2023; 5 % before), 15 % employer; Art. 1 – private sector: contract salary, AED 6,000 – 100,000',
+             'law_reference': 'Abu Dhabi Law No. (2) of 2000 as amended by Law No. (18) of 2023 (Official Gazette 01/12/2023): Art. 15 – 11 % employee '
+                              '(first insured from 01/12/2023; 5 % before), 15 % employer; Art. 1 – private sector: contract salary, AED 6,000 – 100,000',
              'notes': 'Used only for employees of branches set to ADPF (Payroll › Branch pension schemes); GPSSA is not deducted for them. '
                       'Rates and limits: Payroll › Legal rates (ae_adpf_*).'},
     'dews': {'code': 'dews', 'name': 'DIFC DEWS (employee workplace savings)', 'authority': 'DIFC', 'kind': 'percent', 'applies_to': 'expats',

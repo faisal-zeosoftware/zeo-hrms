@@ -43,9 +43,7 @@ def get_gratuity_variables(
 
     # v1.16.0 (D15): the table is read once per payroll run / component save (PayrollManagement.perf), as before otherwise
     from .perf import memo as _memo
-    rules = _memo(('gratuity_rules',), lambda: list(GratuityTable.objects.filter(
-        is_active=True
-    ).order_by("minimum_value")))
+    rules = _memo(('gratuity_rules', str(_rule_day())), lambda: _gratuity_rows())   # v1.67.12 (effective): the table of the rule day
 
     if not rules:
         # v1.14.0: another country's rule set (branch / company country pack) → its formula; UAE keeps the code below
@@ -472,11 +470,18 @@ def send_payslip_email_detail(payslip, connection=None, sender=None):
         if connection is None:
             from ZeoAdmin.schedules import mail_connection
             connection, sender = mail_connection()
-        period = f'{run.get_month_display()} {run.year}' if hasattr(run, 'get_month_display') else f'{run.month:02d}/{run.year}'
+        # v1.67.7 (admin): subject and text in the employee's language (the login's own choice, else the company default);
+        # Arabic is right-to-left in the HTML part; a missing term stays English
+        from ZeoCloud.mailtext import T, lang_of, message
+        from django.db import connection as _dbc
+        _L = lang_of(emp.users, _dbc.schema_name) if getattr(emp, 'users_id', None) else lang_of(None, _dbc.schema_name)
+        month = T(run.get_month_display(), _L) if hasattr(run, 'get_month_display') else ''
+        period = f'{month} {run.year}' if month else f'{run.month:02d}/{run.year}'
         name = ' '.join(x for x in (emp.emp_first_name, emp.emp_last_name) if x) or emp.emp_code
-        email = EmailMessage(subject=f'Your payslip for {period}',
-                             body=f'Dear {name},\n\nPlease find attached your payslip for {period}.\n\nThis e-mail was sent by ZEO HRMS.',
-                             from_email=sender, to=[to], connection=connection)
+        email = message(T('Your payslip for {0}', _L, period),
+                        T('Dear {0},', _L, name) + '\n\n' + T('Please find attached your payslip for {0}.', _L, period) + '\n\n'
+                        + T('This e-mail was sent by ZEO HRMS.', _L), _L, sender, [to], connection)
+        email._zeo_lang = _L
         data = _payslip_pdf_bytes(payslip)
         try:   # v1.62.11 (item 230): password-protected payslip (company setting) – never sent unprotected when the password cannot be made
             from PayrollPlus import payslip_lock as _lock
@@ -485,7 +490,14 @@ def send_payslip_email_detail(payslip, connection=None, sender=None):
                     data = _lock.protect(payslip, data)
                 except _lock.NoPassword as _np:
                     return 'skipped', f'{emp.emp_code}: {_np}'
-                email.body = email.body + '\n\n' + _lock.email_note(payslip)
+                try:   # v1.67.7 (admin) the note in the employee's language (email_note uses the request language)
+                    _note = T(_lock.HINT[_lock.settings()['rule']], _L)
+                except Exception:
+                    _note = _lock.email_note(payslip)
+                email.body = email.body + '\n\n' + _note
+                from ZeoCloud.mailtext import html_of   # v1.67.7 (admin) the HTML part follows the text
+                email.alternatives = []
+                email.attach_alternative(html_of(email.body, _L), 'text/html')
         except ImportError:
             pass
         if not data:
@@ -568,7 +580,7 @@ def get_ot_rate(employee, ot_type):
     # v1.16.0 (D15): the active policies of the type are read once per run and matched here – same rule as the query in
     # _get_ot_rate (a target list that is empty or holds the employee's value; the first matching policy by id)
     vals = (employee.emp_branch_id_id, employee.emp_dept_id_id, employee.emp_desgntn_id_id, employee.emp_ctgry_id_id)
-    for rate, targets in memo(('ot_policies', ot_type), lambda: _ot_policy_table(ot_type)):
+    for rate, targets in memo(('ot_policies', ot_type, str(_rule_day())), lambda: _ot_policy_table(ot_type)):   # v1.67.12 (effective): per rule day
         if all(not ids or (v is not None and v in ids) for ids, v in zip(targets, vals)):
             return rate
     return Decimal('0.00')
@@ -580,8 +592,34 @@ def _ot_policy_table(ot_type):
     out = []
     for p in OvertimePolicy.objects.filter(ot_type=ot_type, is_active=True).order_by('pk').prefetch_related(
             'branch', 'department', 'designation', 'category'):
-        out.append((p.rate_multiplier, tuple({x.pk for x in getattr(p, f).all()} for f in ('branch', 'department', 'designation', 'category'))))
+        out.append((_dated_ot(p).rate_multiplier, tuple({x.pk for x in getattr(p, f).all()} for f in ('branch', 'department', 'designation', 'category'))))
     return out
+
+
+def _gratuity_rows(on=None):
+    """v1.67.12 (effective, item 64): the active gratuity bands in force on `on` (default: the rule day)."""
+    try:
+        from PayrollPlus.effective import gratuity_rows
+        return gratuity_rows(on)
+    except ImportError:
+        return list(GratuityTable.objects.filter(is_active=True).order_by('minimum_value'))
+
+
+def _rule_day():
+    try:
+        from CountryPack.services import rule_date
+        return rule_date()
+    except Exception:
+        return None
+
+
+def _dated_ot(p):
+    """v1.67.12 (effective, item 64): the overtime policy as in force on the rule day (payroll: the 1st of the pay period)."""
+    try:
+        from PayrollPlus.effective import as_of
+        return as_of('overtime_policy', p)
+    except Exception:
+        return p
 
 
 def _get_ot_rate(employee, ot_type):
@@ -600,7 +638,7 @@ def _get_ot_rate(employee, ot_type):
     )
 
     policy = qs.first()
-    return policy.rate_multiplier if policy else Decimal('0.00')
+    return _dated_ot(policy).rate_multiplier if policy else Decimal('0.00')   # v1.67.12 (effective)
 
 def get_unused_annual_leave_balance(employee, as_of_date):
     from calendars .models import emp_leave_balance
@@ -703,12 +741,7 @@ def get_employee_benefit_liability(employee, as_of_date):
 
     gratuity_bands = []
 
-    rules = (
-        GratuityTable.objects.filter(
-            is_active=True
-        )
-        .order_by("minimum_value")
-    )
+    rules = _gratuity_rows(as_of_date)   # v1.67.12 (effective, item 64): the table in force on the day
 
     for rule in rules:
 

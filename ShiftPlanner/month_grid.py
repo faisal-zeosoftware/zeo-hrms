@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.67.0 (item 21, roster part) – the month roster grid: employees × days of a month for a branch (and department).
 
 It uses the EXISTING roster model (ShiftPlanner.RosterPeriod / RosterEntry, v1.12.0): one roster period per branch / department /
@@ -324,7 +325,7 @@ def _write(r, data, cells, source, user, note_of=None):
             bad.append({'row': i + 1, 'employee': eid, 'date': d, 'message': tr('This employee is not part of the roster (branch / department).')})
             continue
         if d < a or d > b:
-            bad.append({'row': i + 1, 'employee': eid, 'date': d, 'message': tr('{0:%d %b %Y} is outside this roster ({1:%d %b} – {2:%d %b %Y}).', d, a, b)})
+            bad.append({'row': i + 1, 'employee': eid, 'date': d, 'message': tr('{0:%d/%m/%Y} is outside this roster ({1:%d/%m/%Y} – {2:%d/%m/%Y}).', d, a, b)})
             continue
         if sid is not None and sid not in shifts:
             bad.append({'row': i + 1, 'employee': eid, 'date': d, 'message': tr('Choose a shift from the list.')})
@@ -567,7 +568,7 @@ def import_xlsx(r, data, f, user):
             v = str(vals[j] if j < len(vals) and vals[j] is not None else '').strip()
             if d < a or d > b:
                 if v:
-                    errs.append(tr('{0:%d %b %Y} is outside this roster ({1:%d %b} – {2:%d %b %Y}).', d, a, b))
+                    errs.append(tr('{0:%d/%m/%Y} is outside this roster ({1:%d/%m/%Y} – {2:%d/%m/%Y}).', d, a, b))
                 continue
             if emp is None:
                 continue

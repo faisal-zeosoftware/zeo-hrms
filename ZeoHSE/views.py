@@ -399,6 +399,11 @@ class PackView(Base):
         if ind not in PACKS:
             raise S.HSEError('Unknown industry.', 'industry')
         primary = f.b('primary')   # v1.17.0 – also make it HSE's own industry (add-only, nothing removed)
+        if primary:   # v1.67.6 (setup) item 8: HSE with records keeps its industry
+            from ZeoApps.industrylock import refusal
+            msg = refusal('hse', ind)
+            if msg:
+                return Response({'detail': msg, 'locked': True}, status=409)
         added = install(ind, request.user, primary=primary)
         if primary:
             s = HSESettings.get()

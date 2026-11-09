@@ -50,22 +50,101 @@ def _schemas_of(user, schema=''):
 
 
 def admins_of(schema):
-    """E-mail addresses of the company's administrators (company superusers)."""
-    from django_tenants.utils import schema_context
+    """E-mail addresses of the company's administrators."""
+    # v1.67.7 (admin): the administrators OF THIS COMPANY (ZeoCloud/companyadmin.py – per company, the owner by default)
     try:
-        from tenant_users.tenants.models import UserTenantPermissions
-        with schema_context(schema):
-            ids = list(UserTenantPermissions.objects.filter(is_superuser=True).values_list('profile_id', flat=True))
+        from .companyadmin import admin_emails
+        return admin_emails(schema)
     except Exception:
+        log.exception('administrators of %s', schema)
         return []
-    from django.contrib.auth import get_user_model
-    return sorted({e for e in get_user_model().objects.filter(pk__in=ids, is_active=True).values_list('email', flat=True) if e})
+
+
+def admin_people(schema):
+    """v1.67.7 (admin): the administrators of the company as logins (each gets the e-mail in their own language)."""
+    try:
+        from .companyadmin import admin_users
+        return [u for u in admin_users(schema) if u.email]
+    except Exception:
+        log.exception('administrators of %s', schema)
+        return []
 
 
 def _policy_on(schema):
     from .models import SecurityPolicy
     p = SecurityPolicy.objects.filter(schema=schema).values_list('alert_admins', flat=True).first()
     return True if p is None else bool(p)
+
+
+# v1.67.8 (fixes) item 10: every security event sentence (stored filled in, in English). For each reader the stored sentence is
+# matched against these templates and the template is translated with the same values (the values translated too where they
+# are standard words) – older events are translated the same way.
+SENTENCES = [
+    '{0} was made an administrator of the company.',
+    '{0} is no longer an administrator of the company.',
+    'Permission group(s) given: {0}.',
+    'Permission group(s) taken away: {0}.',
+    'API key "{0}" created (read only).',
+    'API key "{0}" created (read and write).',
+    'Single sign-on "{0}" added (domains: {1}).',
+    'Single sign-on "{0}" changed (domains: {1}).',
+    'sign-in of {0} used on another device',
+    'a spent sign-in token of {0} was used again from {1} – the sign-in was ended',
+    'Sign-in refused: address {0} is in {1}.',
+    'Sign-in with the right password refused: address {0} is in {1}.',
+    'The authenticator app of {0} was reset by {1}.',
+    '{0} wrong passwords / codes for the users of the company in the last {1} minutes (last from {2}).',
+    'Bank-detail change for {0} ({1}) waits for a second person.',
+    'Export of "{0}" refused: {1}.',
+    'Export of {0} refused: {1}.',
+    '{0} rows – more than the limit of {1}',
+    '{0} other sign-in(s) ended',
+    # logs and history cleaned (ZeoAdmin.history._sentence)
+    'Removed {0} – {1} (archive {2}, {3} rows) – stopped at the time limit, the rest goes next time',
+    'Removed {0} – {1} – stopped at the time limit, the rest goes next time',
+    'Removed {0} – {1} (archive {2}, {3} rows)',
+    'Removed {0} – {1}',
+    '{0} {1} older than {2} days',
+]
+_RX = None
+
+
+def _compiled():
+    global _RX
+    if _RX is None:
+        import re
+        out = []
+        for t in SENTENCES:
+            rx = '^' + re.sub(r'\\\{(\d+)\\\}', r'(.+?)', re.escape(t)) + '$'
+            if t.startswith('Removed {0}'):   # the cleaned categories contain " – " themselves: the last " – " ends the list
+                rx = rx.replace('(.+?)', '(.+)', 1)
+            out.append((re.compile(rx, re.S), t))
+        out.sort(key=lambda x: -len(x[1]))
+        _RX = out
+    return _RX
+
+
+def sentence(text, lang, depth=0):
+    """v1.67.8 (fixes) item 10: a stored event sentence in `lang` (names and values filled in as stored)."""
+    from .mailtext import T
+    if not text or not lang or str(lang).startswith('en') or depth > 3:
+        return text
+    t = T(text, lang)
+    if t != text:
+        return t
+    if text[:1].islower():   # a standard word written in lower case inside the sentence ("bell notifications – read")
+        up = text[:1].upper() + text[1:]
+        t = T(up, lang)
+        if t != up:
+            return t
+    ar = str(lang).startswith('ar')
+    for rx, tpl in _compiled():
+        m = rx.match(text)
+        if m:
+            return T(tpl, lang, *[sentence(g, lang, depth + 1) for g in m.groups()])
+    if '; ' in text:   # a list of parts ("x older than 90 days; y older than 30 days")
+        return ('؛ ' if ar else '; ').join(sentence(x, lang, depth + 1) for x in text.split('; '))
+    return text
 
 
 def _name(u):
@@ -80,30 +159,35 @@ def _mail(ev, schema):
     key = f'zeo:secmail:{schema}:{ev.kind}:{ev.user_id or 0}'
     if cache.get(key):
         return False
-    to = admins_of(schema)
-    if not to:
+    people = admin_people(schema)   # v1.67.7 (admin): this company's administrators, each in their own language
+    if not people:
         return False
-    from django.core.mail import send_mail
+    from .mailtext import T, lang_of, message
     from UserManagement.models import company
     cname = getattr(company.objects.filter(schema_name=schema).first(), 'name', schema)
-    when = timezone.localtime(ev.created_at).strftime('%d %b %Y %H:%M')
-    lines = [f'Company: {cname}', f'When: {when}']
-    if ev.user_id:
-        lines.append(f'User: {_name(ev.user)} ({getattr(ev.user, "email", "") or getattr(ev.user, "username", "")})')
-    if ev.by_id and ev.by_id != ev.user_id:
-        lines.append(f'Done by: {_name(ev.by)}')
-    if ev.ip:
-        lines.append(f'Address: {ev.ip}')
-    if ev.detail:
-        lines.append('')
-        lines.append(ev.detail)
-    lines += ['', 'Open Settings › Sign-in security › Security dashboard in ZEO to see the details.',
-              'You get this e-mail because you are an administrator of the company. It can be switched off in Settings › Sign-in security.']
-    try:
-        send_mail(f'ZEO security: {SUBJECTS.get(ev.kind, ev.get_kind_display())}', '\n'.join(lines),
-                  getattr(settings, 'DEFAULT_FROM_EMAIL', None), to, fail_silently=False)
-    except Exception:
-        log.exception('security mail')
+    when = timezone.localtime(ev.created_at).strftime('%d/%m/%Y %H:%M')
+    sent = False
+    for p in people:
+        L = lang_of(p, schema)
+        lines = [T('Company: {0}', L, cname), T('When: {0}', L, when)]
+        if ev.user_id:
+            lines.append(T('User: {0} ({1})', L, _name(ev.user), getattr(ev.user, "email", "") or getattr(ev.user, "username", "")))
+        if ev.by_id and ev.by_id != ev.user_id:
+            lines.append(T('Done by: {0}', L, _name(ev.by)))
+        if ev.ip:
+            lines.append(T('Address: {0}', L, ev.ip))
+        if ev.detail:
+            lines.append('')
+            lines.append(sentence(ev.detail, L))   # v1.67.8 (fixes) item 10: the event sentence in the reader's language too
+        lines += ['', T('Open Settings › Sign-in security › Security dashboard in ZEO to see the details.', L),
+                  T('You get this e-mail because you are an administrator of the company. It can be switched off in Settings › Sign-in security.', L)]
+        subject = T('ZEO security: {0}', L, T(SUBJECTS.get(ev.kind, ev.get_kind_display()), L))
+        try:
+            message(subject, '\n'.join(lines), L, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [p.email]).send()
+            sent = True
+        except Exception:
+            log.exception('security mail')
+    if not sent:
         return False
     cache.set(key, 1, 3600)
     return True
@@ -145,4 +229,13 @@ def _burst(user, ip):
 
 def event_json(e):
     return {'id': e.id, 'kind': e.kind, 'kind_text': e.get_kind_display(), 'user': _name(e.user), 'user_email': getattr(e.user, 'email', '') if e.user_id else '',
-            'by': _name(e.by), 'ip': e.ip, 'detail': e.detail, 'emailed': e.emailed, 'at': e.created_at, 'schema': e.schema}
+            'by': _name(e.by), 'ip': e.ip, 'detail': _detail_for_screen(e.detail), 'emailed': e.emailed, 'at': e.created_at, 'schema': e.schema}
+
+
+def _detail_for_screen(text):
+    """v1.67.8 (fixes) item 10: the security dashboard shows the sentence in the user's language too."""
+    try:
+        from Translations.i18n import current_lang
+        return sentence(text, current_lang())
+    except Exception:   # noqa: BLE001
+        return text

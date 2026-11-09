@@ -30,6 +30,30 @@ ROLE_LABELS = {
     'insurer': 'Insurer', 'employee': 'Employee', 'other': 'Other',
 }
 ROLE_CHOICES = '|'.join(f'{k}={v}' for k, v in ROLE_LABELS.items())
+# v1.67.8 (fixes) item 7: the apps that give a partner each role (from the app records that set it – extensions.py, CRM contact
+# types); None = the company core (always offered). Roles no app sets (student, guardian, patient, insurer) are offered only
+# where they are already stored.
+ROLE_APPS = {
+    'customer': None, 'supplier': None, 'other': None,
+    'prospect': ('crm',), 'tenant': ('property', 'crm'), 'buyer': ('property', 'crm'), 'owner': ('property', 'crm'),
+    'broker': ('property', 'crm'), 'contractor': ('hse',), 'employee': ('hrms',),
+    'student': (), 'guardian': (), 'patient': (), 'insurer': (),
+}
+
+
+def active_roles():
+    """v1.67.8 (fixes) item 7: the role codes of the active apps (every role when the active apps cannot be read)."""
+    try:
+        from ZeoApps.services import is_active
+        on = {k for k in ('hrms', 'crm', 'property', 'hse') if is_active(k)}
+    except Exception:   # noqa: BLE001
+        return list(ROLE_LABELS)
+    return [r for r in ROLE_LABELS if ROLE_APPS.get(r) is None or any(a in on for a in ROLE_APPS.get(r) or ())]
+
+
+def role_choices_active():
+    """v1.67.8 (fixes) item 7: the role choices of the partner form (Business partners › Roles) – the active apps' roles."""
+    return '|'.join(f'{k}={ROLE_LABELS[k]}' for k in active_roles())
 
 # master fields an app record may carry (partner field names); everything else belongs to the app
 MASTER_FIELDS = ('kind', 'name', 'first_name', 'middle_name', 'last_name', 'arabic_name', 'legal_name', 'company_name', 'job_title',

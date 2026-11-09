@@ -261,7 +261,10 @@ def settings_row(s):
               'approval_hours_limit': RW.num(s.approval_hours_limit)})
     try:
         from calendars.models import holiday_calendar
-        r['holiday_calendars'] = [{'id': c.id, 'name': f'{c.calendar_title} {c.year}'} for c in holiday_calendar.objects.order_by('-year')]
+        from calendars.holiday_active import inactive_ids   # v1.67.8 (fixes) item 1: inactive calendars only when already chosen
+        _off, _chosen = inactive_ids(), set(s.holiday_calendar_ids or [])
+        r['holiday_calendars'] = [{'id': c.id, 'name': f'{c.calendar_title} {c.year}'} for c in holiday_calendar.objects.order_by('-year')
+                                  if c.id not in _off or c.id in _chosen]
     except Exception:
         r['holiday_calendars'] = []
     return r

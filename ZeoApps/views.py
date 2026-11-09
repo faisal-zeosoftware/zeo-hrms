@@ -71,6 +71,61 @@ class ActivateView(Base):
         return Response(out)
 
 
+class NumberingView(Base):
+    """v1.67.6 (setup) item 4 – GET the document types of the active apps and the series still missing;
+    POST adds the missing series (administrator or the add right of Document numbering). Existing series never change."""
+
+    def _can(self, request, verb):
+        c = _ctx(request)
+        return bool(c is not None and (c.admin or f'{verb}_documentnumbering' in c.codes))
+
+    def get(self, request):
+        from . import numbering as N
+        if not self._can(request, 'view'):
+            return Response({'detail': S.tr_('You may not see the document numbering.')}, status=status.HTTP_403_FORBIDDEN)
+        if request.query_params.get('list'):   # the choices of the form (the active apps only)
+            return Response(N.types_json())
+        return Response({'types': N.types_json(), 'missing': N.ensure(apply=False)})
+
+    def post(self, request):
+        from . import numbering as N
+        if not self._can(request, 'add'):
+            return Response({'detail': S.tr_('You may not add document numbering.')}, status=status.HTTP_403_FORBIDDEN)
+        made = N.ensure(apply=True, user=request.user)
+        return Response({'added': made, 'detail': S.tr_('{0} numbering series added.', len(made))})
+
+
+class AppSetupView(Base):
+    """v1.67.6 (setup) item 5 – GET the setup wizard of an app; POST {step, status: done|skipped|open} or {allow: true|false}."""
+
+    def get(self, request, key):
+        from . import appsetup as A
+        if key not in A.APPS_WITH_WIZARD:
+            return Response({'detail': S.tr_('This app has no setup wizard (HR and Payroll use the setup guide).')}, status=404)
+        out = A.full(key)
+        out['can_manage'] = can_manage(request)
+        out['title'] = S.tr_(S.BY_KEY[key][2])
+        return Response(out)
+
+    def post(self, request, key):
+        from . import appsetup as A
+        if key not in A.APPS_WITH_WIZARD:
+            return Response({'detail': S.tr_('This app has no setup wizard (HR and Payroll use the setup guide).')}, status=404)
+        if not can_manage(request):
+            return Response({'detail': S.tr_('Only a company administrator can change the setup of an app.')}, status=status.HTTP_403_FORBIDDEN)
+        d = request.data or {}
+        try:
+            if 'allow' in d:
+                out = A.set_allow(key, str(d.get('allow')).lower() in ('1', 'true'), request.user)
+            else:
+                out = A.mark(key, d.get('step'), d.get('status'), request.user)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+        out['can_manage'] = True
+        out['title'] = S.tr_(S.BY_KEY[key][2])
+        return Response(out)
+
+
 class DeactivateView(Base):
     def post(self, request, key):
         if not can_manage(request):

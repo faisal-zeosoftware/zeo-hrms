@@ -53,7 +53,25 @@ def seed(refresh=False):
             t.save()
             upd += 1
     PrintBranding.get()
+    ensure_defaults()   # v1.67.6 (setup) item 6
     return made, upd
+
+
+def ensure_defaults():
+    """v1.67.6 (setup) item 6: every document of an active app has a default design (the Classic sample) – before, every document
+    said "Old layout (no default yet)" until somebody chose one. A default chosen by the company is never changed. Returns the
+    document types that got one."""
+    from .appdocs import app_active
+    have = set(PrintDefault.objects.filter(branch_id__isnull=True, language='').values_list('doc_type', flat=True))
+    out = []
+    for key, *_ in C.DOC_TYPES:
+        if key in have or not app_active(key):
+            continue
+        t = PrintTemplate.objects.filter(doc_type=key, is_sample=True, sample_key='classic').first()
+        if t is not None:
+            PrintDefault.objects.create(doc_type=key, template=t)
+            out.append(key)
+    return out
 
 
 _SEEDED = set()

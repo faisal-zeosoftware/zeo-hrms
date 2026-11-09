@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """HSE business rules: numbering, history, notifications, risk scoring, approvals, permit control, incident workflow,
 inspections and the central action register."""
 import logging
@@ -52,6 +53,13 @@ PREFIX = {'incident': 'incident_prefix', 'permit': 'permit_prefix', 'risk': 'ris
 
 def next_number(kind):
     s = settings()
+    try:   # v1.67.6 (setup) item 4: the series of Settings › Document numbering, when the company has one
+        from ZeoApps.numbering import take
+        num = take('hse', kind)
+        if num:
+            return num
+    except Exception:
+        pass
     with transaction.atomic():
         seq, _ = Sequence.objects.select_for_update().get_or_create(kind=kind)
         seq.last += 1
@@ -140,7 +148,8 @@ def users_with_role(role):
     out = [u.profile for u in _company_perms().filter(groups__in=groups).select_related('profile').distinct()
            if u.profile and u.profile.is_active]
     if not out:
-        out = [u.profile for u in _company_perms().filter(is_superuser=True).select_related('profile')
+        from ZeoCloud.companyadmin import admin_q   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+        out = [u.profile for u in _company_perms().filter(admin_q()).select_related('profile')
                if u.profile and u.profile.is_active]
     return out
 
@@ -404,7 +413,7 @@ def submit_permit(p, request):
 
 def permit_text(p):
     return (f'{p.number} – {p.permit_type.name}\nSite: {p.site.name}{" / " + p.area.name if p.area_id else ""} {p.location}\n'
-            f'Work: {p.description[:800]}\nValid: {timezone.localtime(p.valid_from):%d %b %H:%M} – {timezone.localtime(p.valid_to):%d %b %H:%M}')
+            f'Work: {p.description[:800]}\nValid: {timezone.localtime(p.valid_from):%d/%m/%Y %H:%M} – {timezone.localtime(p.valid_to):%d/%m/%Y %H:%M}')
 
 
 def decide_permit(p, request, approve, note=''):

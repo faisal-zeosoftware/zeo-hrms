@@ -263,6 +263,15 @@ def state(key):
     nb = needed_by_active(key) if out['active'] else []
     out['needed_by'] = [{'key': d, 'title': BY_KEY[d][2]} for d in nb]
     out['needed_message'] = needs_message(key, nb) if nb else ''
+    if out['active']:   # v1.67.6 (setup) item 5: the app's setup wizard (HR and Payroll: the setup guide)
+        try:
+            from .appsetup import APPS_WITH_WIZARD, state as _setup
+            if key in APPS_WITH_WIZARD:
+                st = _setup(key, fresh=True)
+                out['setup'] = {'enforced': st['enforced'], 'open': len(st['open']), 'blocked': st['blocked'], 'allow': st['allow'],
+                                'link': f'/main-sidebar/settings/app-setup/{key}'}
+        except Exception:
+            pass
     return out
 
 
@@ -402,6 +411,11 @@ def activate(key, industry=None, user=None):
         raise AppsError('Unknown app.')
     if not installed(key):
         raise AppsError(f'{BY_KEY[key][2]} is not installed on this server.')
+    if industry:   # v1.67.6 (setup) item 8: an app with records keeps its industry
+        from .industrylock import refusal
+        msg = refusal(key, industry)
+        if msg:
+            raise AppsError(msg, 409)
     # v1.67.3 (apps): what the app needs is switched on first (each with its own industry default and licence check)
     need = [d for d in requires(key) if not is_active(d)]
     for d in need:
@@ -411,6 +425,7 @@ def activate(key, industry=None, user=None):
     _cloud_check(key)
     for d in need:
         activate(d, None, user)
+    first_time = _never_set_up(key)   # v1.67.6 (setup) item 5
     inds, sug = industries_of(key)
     ind = industry or previous_industry(key) or sug
     if ind not in dict(inds):
@@ -427,6 +442,13 @@ def activate(key, industry=None, user=None):
             s.save()
             if key == 'hrms':
                 _hr_on(first_hr)
+                try:   # v1.67.8 (fixes) item 5: the HR defaults of a company made without HR
+                    from .hrdefaults import ensure as _hr_defaults
+                    r = _hr_defaults(user)
+                    if r:
+                        added = {'hr_defaults': r}
+                except Exception:
+                    log.exception('HR defaults when HR is activated')
             if key == 'projects':   # v1.22.0: SLA policy, teams, categories … when Projects was not chosen at company set-up
                 try:
                     from ZeoProjects.models import SLAPolicy
@@ -469,9 +491,42 @@ def activate(key, industry=None, user=None):
         log.exception('role groups for %s', key)
     # v1.67.3 (apps): HR no longer comes with every app (v1.23.0 switched it on here) – only what the app needs (above)
     _forget()
+    try:   # v1.67.6 (setup) item 4: the app's document numbering series (and those of what came with it) – never renumbered
+        from . import numbering as _N
+        made = _N.ensure([key] + need, apply=True, user=user if getattr(user, 'pk', None) else None)
+        if made:
+            added = dict(added or {}, numbering=len(made))
+    except Exception:
+        log.exception('numbering series for %s', key)
+    try:   # v1.67.6 (setup) item 5: a first activation waits for the app's setup wizard (like HR); apps in use count as complete
+        from .appsetup import on_activate
+        on_activate(key, first_time, user)
+        for d in need:
+            on_activate(d, True, user)
+    except Exception:
+        log.exception('setup wizard for %s', key)
+    try:   # v1.67.6 (setup) item 6: the app's print designs and their defaults (samples are made for every document once)
+        from PrintTemplates.services import seed as _print_seed
+        _print_seed()
+    except Exception:
+        log.exception('print templates for %s', key)
     if need:
         added = dict(added or {}, **{'with': [BY_KEY[d][2] for d in need]})
     return added
+
+
+def _never_set_up(key):
+    """v1.67.6 (setup) item 5: the app was never activated in this company (no industry pack, no activation date)."""
+    try:
+        if key in CORE:
+            r = core_state(key)
+            return r is None or r.activated_at is None
+        if key == 'hse':
+            from ZeoHSE.models import HSESettings
+            return not HSESettings.get().packs_installed
+        return not kit(key).settings().packs_installed
+    except Exception:
+        return False
 
 
 def _hr_on(first):
@@ -553,11 +608,21 @@ def setup_new_company(tenant, keys, user=None, progress=None):
     done, failed = [], {}
     with schema_context(tenant.schema_name):
         set_core_default(keys, getattr(tenant, 'industry_type', '') or '')
+        try:   # v1.67.8 (fixes) item 6: a copy of the template carries its automatic one-year end dates – a new company has none
+            from .enddates import clear as _clear_end_dates
+            _clear_end_dates(apply=True)
+        except Exception:
+            log.exception('numbering end dates of %s', tenant.schema_name)
         if 'hrms' not in keys:   # v1.67.3 (apps) the Business partners role groups belong to the core (made with HR before)
             try:
                 make_core_roles()
             except Exception:
                 log.exception('core role groups of %s', tenant.schema_name)
+            try:   # v1.67.8 (fixes) item 5: no HR defaults without HR (leave types, holidays, weekend …) – loaded when HR is activated
+                from .hrdefaults import strip
+                strip(user)
+            except Exception:
+                log.exception('HR defaults of %s', tenant.schema_name)
         if 'hrms' in keys:
             try:   # v1.62.1 (user request 2 Nov): a new company finishes the required setup steps before HR transactions
                 from ZeoAdmin.setup_gate import enforce_new
@@ -580,6 +645,19 @@ def setup_new_company(tenant, keys, user=None, progress=None):
                     make_roles(k)
                 except Exception:
                     log.exception('role groups for %s', k)
+                if k == 'projects':   # v1.67.6 (setup) item 5: the SLA policy, teams and categories, as when activated later
+                    try:
+                        from ZeoProjects.models import SLAPolicy
+                        if not SLAPolicy.objects.exists():
+                            from ZeoProjects.management.commands.zeoprojects_setup import Command as _PC
+                            _PC().defaults()
+                    except Exception:
+                        log.exception('Projects defaults of %s', tenant.schema_name)
+                try:   # v1.67.6 (setup) item 5: Projects of a new company waits for its setup wizard
+                    from .appsetup import on_activate
+                    on_activate(k, True, user)
+                except Exception:
+                    log.exception('setup wizard for %s', k)
                 done.append(k)
                 continue
             try:
@@ -588,6 +666,26 @@ def setup_new_company(tenant, keys, user=None, progress=None):
             except Exception as e:   # the company is made anyway; the app can be activated in Settings → Apps
                 log.exception('activate %s for %s', k, tenant.schema_name)
                 failed[k] = str(getattr(e, 'message', e))[:200]
+        try:   # v1.67.6 (setup) item 4: every chosen app has its numbering series from the first day
+            from . import numbering as _N
+            _N.ensure(keys, apply=True)
+        except Exception:
+            log.exception('numbering series of %s', tenant.schema_name)
+        try:   # v1.67.6 (setup) item 2: the default branch takes the company master's logo, address, contact, TRN / licence, year
+            from .branchinherit import inherit
+            inherit(user)
+        except Exception:
+            log.exception('default branch of %s', tenant.schema_name)
+        try:   # v1.67.6 (setup) item 12: the "Company administrators" group (every branch), linked to the administrators
+            from .adminbranches import ensure_group
+            ensure_group()
+        except Exception:
+            log.exception('administrators group of %s', tenant.schema_name)
+        try:   # v1.67.6 (setup) item 6: the print designs of every chosen app, a default for each document
+            from PrintTemplates.services import seed as _print_seed
+            _print_seed()
+        except Exception:
+            log.exception('print templates of %s', tenant.schema_name)
     return done, failed
 
 

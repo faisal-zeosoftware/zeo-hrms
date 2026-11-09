@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """ZEO CRM on the app kit: registers, workflow, packs, links (to Property and Maintenance), dashboard, daily jobs.
 v1.33.0: sales management (leads, accounts, products, quotations, sales orders, targets, forecast) in sales.py."""
 from datetime import timedelta
@@ -658,7 +659,7 @@ def dashboard(request):
             {'title': 'Quotations waiting for approval', 'kind': 'quotation', 'rows': [{'id': q.pk, 'title': f'{q.number} {q.account.name if q.account_id else (q.contact.name if q.contact_id else "")}', 'sub': q.approval_note, 'badge': f'{cur} {float(q.total):,.0f}'} for q in approvals.select_related('account', 'contact')[:10]]} if approvals.exists() else
             {'title': 'Hot leads', 'kind': 'lead', 'rows': [{'id': l.pk, 'title': f'{l.number} {l.name}', 'sub': f'{l.company_name} · {emp_name(l.owner) or "unassigned"}', 'badge': f'score {l.score}'} for l in new_leads.filter(rating='hot').select_related('owner')[:10]]},
             {'title': 'First contact overdue', 'kind': 'opportunity', 'rows': [{'id': o.pk, 'title': f'{o.number} {o.title}', 'sub': f'{o.contact.name} · {emp_name(o.owner) or "unassigned"}', 'badge': 'late'} for o in late.select_related('contact', 'owner')[:10]]},
-            {'title': 'Upcoming viewings', 'kind': 'viewing', 'rows': [{'id': v.pk, 'title': f'{v.number} {v.opportunity.contact.name}', 'sub': local(v.scheduled_at).strftime('%d %b %Y, %H:%M'), 'badge': emp_name(v.agent)} for v in views.select_related('opportunity__contact', 'agent').order_by('scheduled_at')[:10]]},
+            {'title': 'Upcoming viewings', 'kind': 'viewing', 'rows': [{'id': v.pk, 'title': f'{v.number} {v.opportunity.contact.name}', 'sub': local(v.scheduled_at).strftime('%d/%m/%Y, %H:%M'), 'badge': emp_name(v.agent)} for v in views.select_related('opportunity__contact', 'agent').order_by('scheduled_at')[:10]]},
         ],
     }
 

@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Asset Management screens that are not a plain register: scan, labels, counting, floor plans, journal export."""
 from io import BytesIO
 
@@ -305,7 +306,7 @@ class JournalView(Base):
         ws = wb.active
         ws.title = 'Journal'
         cur = self.app.settings().currency
-        ws.append([f'Depreciation {o.number}', f'{o.period_from:%d %b %Y} – {o.period_to:%d %b %Y}', o.get_status_display()])
+        ws.append([f'Depreciation {o.number}', f'{o.period_from:%d/%m/%Y} – {o.period_to:%d/%m/%Y}', o.get_status_display()])
         ws.append([])
         ws.append(['Date', 'Account', 'Description', f'Debit ({cur})', f'Credit ({cur})'])
         for c in ws[3]:

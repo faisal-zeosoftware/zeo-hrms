@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Business rules of Projects: numbering, tickets and their SLA clock, AMC coverage and hours, renewals and billing,
 development requests, project milestones / change requests, notifications (e-mail + ZEO To-do)."""
 import logging
@@ -51,6 +52,13 @@ def local_today():
 def next_number(kind):
     """TKT-00001 style numbers; kind = ticket / amc / dev / cr / project / customer."""
     s = settings()
+    try:   # v1.67.6 (setup) item 4: the series of Settings › Document numbering, when the company has one
+        from ZeoApps.numbering import take
+        num = take('projects', kind)
+        if num:
+            return num
+    except Exception:
+        pass
     prefix = (getattr(s, f'{kind}_prefix', '') or kind.upper()).strip()
     with transaction.atomic():
         seq, _ = Sequence.objects.select_for_update().get_or_create(key=kind)
@@ -104,7 +112,8 @@ def manager_users():
     from tenant_users.tenants.models import UserTenantPermissions
     groups = Group.objects.filter(permissions__codename='assign_ticket', permissions__content_type__app_label='ZeoProjects')
     users = []
-    for utp in _company_perms().filter(Q(groups__in=groups) | Q(is_superuser=True)).select_related('profile').distinct():
+    from ZeoCloud.companyadmin import admin_q   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+    for utp in _company_perms().filter(Q(groups__in=groups) | admin_q()).select_related('profile').distinct():
         if utp.profile and utp.profile.is_active and not hasattr_contact(utp.profile):
             users.append(utp.profile)
     return users
@@ -544,9 +553,9 @@ def fmt(dt):
         return ''
     try:
         from zoneinfo import ZoneInfo
-        return dt.astimezone(ZoneInfo(settings().timezone or 'Asia/Dubai')).strftime('%d %b %Y %H:%M')
+        return dt.astimezone(ZoneInfo(settings().timezone or 'Asia/Dubai')).strftime('%d/%m/%Y %H:%M')
     except Exception:
-        return dt.strftime('%d %b %Y %H:%M')
+        return dt.strftime('%d/%m/%Y %H:%M')
 
 
 def ticket_text(t):
@@ -937,7 +946,7 @@ def build_billing(c):
     for i, d in enumerate(dates):
         amt = part if i < len(dates) - 1 else q2(left - part * (len(dates) - 1))
         end = min(add_months(d, step) - timedelta(days=1), c.end_date)
-        rows.append(AMCBilling(contract=c, due_date=d, amount=amt, period_label=f'{d:%d %b %Y} – {end:%d %b %Y}'))
+        rows.append(AMCBilling(contract=c, due_date=d, amount=amt, period_label=f'{d:%d/%m/%Y} – {end:%d/%m/%Y}'))
     return AMCBilling.objects.bulk_create(rows)
 
 
@@ -993,8 +1002,8 @@ def renewal_reminders(today=None):
         if key is None:
             continue
         owner = c.renewal_owner or c.account_manager
-        text = (f'{c.number} of {c.customer.name} ' + (f'expires in {left} day(s) on {c.end_date:%d %b %Y}.' if left > 0 else
-                (f'expires today.' if left == 0 else f'expired {-left} day(s) ago on {c.end_date:%d %b %Y}.')) +
+        text = (f'{c.number} of {c.customer.name} ' + (f'expires in {left} day(s) on {c.end_date:%d/%m/%Y}.' if left > 0 else
+                (f'expires today.' if left == 0 else f'expired {-left} day(s) ago on {c.end_date:%d/%m/%Y}.')) +
                 f'\nValue: {c.currency} {q2(c.value)}. Follow up the renewal quotation.')
         if owner is not None:
             notify_emp(owner, f'AMC renewal: {c.number} – {c.customer.name}', text, c, f'/main-sidebar/zeo-projects/contracts/{c.pk}',
@@ -1046,7 +1055,8 @@ def users_with(codename, admins_if_none=True):
     out = [u.profile for u in _company_perms().filter(groups__in=groups).select_related('profile').distinct()
            if u.profile and u.profile.is_active]
     if not out and admins_if_none:
-        out = [u.profile for u in _company_perms().filter(is_superuser=True).select_related('profile')
+        from ZeoCloud.companyadmin import admin_q   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+        out = [u.profile for u in _company_perms().filter(admin_q()).select_related('profile')
                if u.profile and u.profile.is_active and not hasattr_contact(u.profile)]
     return out
 

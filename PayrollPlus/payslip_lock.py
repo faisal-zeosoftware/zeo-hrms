@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
 """v1.62.11 (item 230) – password-protected payslips.
 
 When the company switches it on (Payroll › Payroll controls › Payslip password), the payslip PDF that is e-mailed to the employee
@@ -30,7 +31,7 @@ RULES = [('dob', 'Date of birth as DDMMYYYY'),
          ('code_passport4', 'Employee code + last 4 characters of the passport number'),
          ('code_eid4', 'Employee code + last 4 digits of the Emirates ID')]
 RULE_KEYS = {k for k, _ in RULES}
-HINT = {'dob': 'The password is your date of birth as DDMMYYYY (for example 05031990 for 5 March 1990).',
+HINT = {'dob': 'The password is your date of birth as DDMMYYYY (for example 05031990 for 05/03/1990).',
         'code_passport4': 'The password is your employee code followed by the last 4 characters of your passport number (for example GD-00057K21).',
         'code_eid4': 'The password is your employee code followed by the last 4 digits of your Emirates ID (for example GD-00054321).'}
 DEFAULT = {'enabled': False, 'rule': 'dob', 'on_email': True, 'on_download': True}

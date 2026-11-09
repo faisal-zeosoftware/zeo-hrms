@@ -159,10 +159,35 @@ class HolidayCalandarSerializer(serializers.ModelSerializer):
     year = serializers.ChoiceField(choices=[(year, year) for year in range(2000, 2040)])
     holiday_list = serializers.SerializerMethodField()   # v1.15.1: sorted by date
     holidays=HolidaySerializer(many=True,read_only=True,source="holiday_set")
+    # v1.67.8 (fixes) item 1: active / inactive (kept in ZeoApps.CompanyOption – calendars is core, no new column)
+    is_active = serializers.BooleanField(required=False)
     # holiday = HolidaySerializer(many=True,)
     class Meta:
         model = holiday_calendar
         fields = '__all__'
+    def to_representation(self, instance):   # v1.67.8 (fixes)
+        d = super().to_representation(instance)
+        from calendars.holiday_active import inactive_ids
+        if not hasattr(self, '_zeo_inactive'):
+            self._zeo_inactive = inactive_ids()
+        d['is_active'] = instance.pk not in self._zeo_inactive
+        return d
+    def create(self, validated_data):   # v1.67.8 (fixes)
+        act = validated_data.pop('is_active', None)
+        obj = super().create(validated_data)
+        if act is False:
+            from calendars.holiday_active import set_active
+            set_active(obj.pk, False)
+        return obj
+    def update(self, instance, validated_data):   # v1.67.8 (fixes)
+        act = validated_data.pop('is_active', None)
+        obj = super().update(instance, validated_data)
+        if act is not None:
+            from calendars.holiday_active import set_active
+            set_active(obj.pk, bool(act))
+            if hasattr(self, '_zeo_inactive'):
+                del self._zeo_inactive
+        return obj
     def get_holiday_list(self, obj):
         return HolidaySerializer(obj.holiday_list.all().order_by('start_date', 'id'), many=True).data
     def validate(self, attrs):

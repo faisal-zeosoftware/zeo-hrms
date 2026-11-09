@@ -24,7 +24,7 @@ app = App(
     links=(('ZeoProperty', 'Property', 'Work on Property units; tenant and buyer requests from the portal; owner approval above the '
             'agreement limit; costs charged to the tenant or the owner as billing records; move-in / move-out / unit-ready / snag inspections.'),
            ('ZeoCRM', 'CRM', 'Service requests and complaints sent from CRM contacts and opportunities.'),
-           ('ZeoAssets', 'Asset Management', 'v1.33.0: assets registered in Asset Management are sent here (critical ones or all); '
+           ('ZeoAssets', 'Asset Management', 'Assets registered in Asset Management are sent here (critical ones or all); '
             '"Report a fault" on an asset opens a work order on it.')),
     page=PAGE,
 )

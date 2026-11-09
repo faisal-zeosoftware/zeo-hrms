@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
 """v1.31.0 – Statutory payroll schemes per country.
 
 `seed(pack, user)`        loads the pack's schemes (CountryPack.packs.STATUTORY) that the company does not have yet
@@ -155,7 +156,7 @@ def compute(scheme, employee, rows=None, national=None):
     if scheme.max_base is not None and base > _d(scheme.max_base):
         base = _d(scheme.max_base)
     if scheme.kind == 'percent' and _is_gpssa(scheme):
-        # v1.62.3: old law (joined before 31 Oct 2023) 5 % / 12.5 %, salary 1,000–50,000; new law the scheme's rates, the
+        # v1.62.3: old law (joined before 31/10/2023) 5 % / 12.5 %, salary 1,000–50,000; new law the scheme's rates, the
         # employer 15 % from a contribution salary of AED 20,000 (Payroll › Legal rates)
         from .legal import gpssa_terms, _on
         t = gpssa_terms(employee, base_amount(rows, scheme.base), _on(None), _d(scheme.employee_rate) / 100, _d(scheme.employer_rate) / 100,

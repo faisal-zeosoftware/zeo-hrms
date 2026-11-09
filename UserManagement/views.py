@@ -168,6 +168,10 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         user = self.get_object()
+        if 'is_active' in request.data and str(request.data.get('is_active')).lower() in ('false', '0', 'no', 'off'):
+            refused = self._refuse_last_admin(request, user)   # v1.67.7 (admin) switching off the only administrator
+            if refused is not None:
+                return refused
         if self._foreign(request, user):
             def same(a, b):
                 return str(a if a is not None else '').strip().lower() == str(b if b is not None else '').strip().lower()
@@ -179,8 +183,31 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
                                  'shared_login': True, 'fields': touched}, status=status.HTTP_403_FORBIDDEN)
         return super().update(request, *args, **kwargs)
 
+    def _last_admin_of(self, request, user):
+        """v1.67.7 (admin): the companies (of the requester) where this login is the only administrator – it may not be
+        deleted, switched off or taken out of them (a company always keeps an administrator)."""
+        try:
+            from ZeoCloud import companyadmin as CA
+            mine = self._managed_ids(request)
+            comps = user.tenants.all() if mine is None else user.tenants.filter(id__in=mine)
+            return [c for c in comps if CA.admin_ids(c.schema_name) == {user.pk}]
+        except Exception:
+            return []
+
+    def _refuse_last_admin(self, request, user):
+        comps = self._last_admin_of(request, user)
+        if not comps:
+            return None
+        from Translations.i18n import tr
+        names = ', '.join(c.name for c in comps)
+        return Response({'detail': tr('{0} is the only administrator of {1}. Make another user administrator first.', user.username, names),
+                         'code': 'last_admin'}, status=status.HTTP_409_CONFLICT)
+
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()
+        refused = self._refuse_last_admin(request, user)   # v1.67.7 (admin)
+        if refused is not None:
+            return refused
         if self._foreign(request, user):
             from Translations.i18n import tr
             comps = self._remove_access(request, user)
@@ -191,6 +218,9 @@ class RegisterUserAPIView(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def deactivate_user(self, request, pk=None):
         user = self.get_object()
+        refused = self._refuse_last_admin(request, user)   # v1.67.7 (admin)
+        if refused is not None:
+            return refused
         if self._foreign(request, user):   # v1.26.0: switching off a shared login would lock the person out of their own account
             from Translations.i18n import tr
             comps = self._remove_access(request, user)
@@ -301,6 +331,21 @@ class CompanyViewSet(viewsets.ModelViewSet):
         except Exception:
             return qs
 
+    def update(self, request, *args, **kwargs):
+        """v1.67.6 (setup) item 8: the industry type stays while active apps that follow it have records."""
+        if 'industry_type' in (request.data or {}):
+            obj = self.get_object()
+            try:
+                from django_tenants.utils import schema_context
+                from ZeoApps.industrylock import company_refusal
+                with schema_context(obj.schema_name):
+                    msg = company_refusal(request.data.get('industry_type') or '')
+            except Exception:   # noqa: BLE001
+                msg = ''
+            if msg:
+                return Response({'detail': msg, 'industry_type': [msg], 'locked': True}, status=status.HTTP_409_CONFLICT)
+        return super().update(request, *args, **kwargs)
+
     def destroy(self, request, *args, **kwargs):
         """v1.67.1 (companies): a plain DELETE never removes a company (before, it deleted the company row at once – no
         check, no backup). Delete company on Choose a company makes a backup, keeps it 30 days and asks for the name."""
@@ -388,6 +433,27 @@ class CompanyJobView(APIView):
 class DomainViewset(viewsets.ModelViewSet):
     queryset=Domain.objects.all()
     serializer_class = DomainSerializer
+
+    def get_queryset(self):
+        """v1.67.6 (setup) item 14: the domains of the user's own companies only (the list named every company of the server)."""
+        qs = super().get_queryset()
+        u = self.request.user
+        if getattr(u, 'is_superuser', False):
+            return qs
+        try:
+            from ZeoCloud.services import is_platform_admin
+            if is_platform_admin(u):
+                return qs
+        except Exception:
+            pass
+        if not getattr(u, 'is_authenticated', False):
+            return qs.none()
+        return qs.filter(tenant__in=u.tenants.exclude(schema_name='public'))
+
+    def create(self, request, *args, **kwargs):   # v1.67.6 (setup) domains are made with the company, never by hand
+        if not request.user.is_superuser:
+            return Response({'detail': 'Only a system administrator can add domains.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().create(request, *args, **kwargs)
 
 
 
@@ -493,8 +559,12 @@ class SendOTPView(APIView):
                 from django.core.mail import get_connection
                 from django.conf import settings as _s
                 conn, sender = get_connection(), _s.DEFAULT_FROM_EMAIL
-            EmailMessage("Your ZEO sign-in code", f"Your sign-in code is {otp}. It is valid for 5 minutes. Do not share it.",
-                         from_email=sender, to=[user.email], connection=conn).send()
+            # v1.67.7 (admin): in the user's own language (Arabic right-to-left in the HTML part), English as the fallback
+            from ZeoCloud.mailtext import T, lang_of, message
+            from django.db import connection as _dbc
+            _L = lang_of(user, getattr(_dbc, 'schema_name', '') if getattr(_dbc, 'schema_name', 'public') != 'public' else '')
+            message(T('Your ZEO sign-in code', _L), T('Your sign-in code is {0}. It is valid for 5 minutes. Do not share it.', _L, otp),
+                    _L, sender, [user.email], conn).send()
         except Exception as e:
             import logging
             logging.getLogger(__name__).exception('sign-in code e-mail')
@@ -971,7 +1041,11 @@ class MyCompaniesView(APIView):
             _states = _life.state_map()
         except Exception:
             _life, _states = None, {}
-        for c in u.tenants.exclude(schema_name='public').select_related('country').order_by('name'):
+        _cos = u.tenants.exclude(schema_name='public').select_related('country').order_by('name')
+        _a = getattr(request, 'auth', None)   # v1.67.6 (setup) item 14: "view as" – only the company it was started in
+        if _a is not None and hasattr(_a, 'get') and _a.get('imp') and _a.get('isch'):
+            _cos = _cos.filter(schema_name=_a.get('isch'))
+        for c in _cos:
             _st = _states.get(c.schema_name, 'active')
             _mng = bool(_life and _st != 'deleted' and _life.can_manage(u, c))
             if _st == 'deleted' or (_st == 'inactive' and not _mng):

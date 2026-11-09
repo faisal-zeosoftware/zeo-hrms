@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
 """
 Salary component formulas (v1.11.0): one place that checks and calculates them.
 
@@ -87,7 +88,7 @@ VARIABLES = {
     'on_call_callout_hours': 'Hours called in to work during on-call duty',
     'is_national': '1 for a UAE national (Emirati) of a UAE company – GPSSA pension, no gratuity; else 0',
     'pension_salary': 'GPSSA contribution salary: basic + housing + transport (min 3,000, max 70,000)',
-    'pension_employee_rate': 'GPSSA employee share: 0.11 (joined on / after 31 Oct 2023) or 0.05',
+    'pension_employee_rate': 'GPSSA employee share: 0.11 (joined on / after 31/10/2023) or 0.05',
     'pension_employer_rate': 'GPSSA employer share 0.125',
 }
 

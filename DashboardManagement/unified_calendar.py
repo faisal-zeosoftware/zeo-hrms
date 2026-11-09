@@ -188,7 +188,9 @@ class Cal:
                     per[d['date']]['leave'] += 1
         for d in sorted(per):
             c = per[d]
-            parts = [f"{c['present']} present"] + [f"{c[k]} {k}" for k in ('late', 'absent', 'leave') if c[k]] + ([f"{c['missing']} missing punch"] if c['missing'] else [])
+            # v1.67.9 (screens) item 19: in the reader's language (was English on Arabic screens)
+            from Translations.i18n import tr
+            parts = [tr('{0} present', c['present'])] + [tr('{0} ' + k, c[k]) for k in ('late', 'absent', 'leave') if c[k]] + ([tr('{0} missing punch', c['missing'])] if c['missing'] else [])
             self.add('attendance', d.isoformat(), ' · '.join(parts), d, status='bad' if c['absent'] or c['missing'] else 'good',
                      link=rpt('attendance', **{'from': d, 'to': d}), extra={'counts': dict(c)})
 
@@ -323,7 +325,7 @@ class Cal:
                 if self.in_range(d):
                     # day and month only – never the year of birth or the age
                     self.add('birthday', f'{e.id}-{y}', f'Birthday · {S.emp_name(e)}', d, employee={'id': e.id if links else None, 'name': S.emp_name(e)},
-                             link=None, extra={'day': d.strftime('%d %b')})
+                             link=None, extra={'day': d.strftime('%d/%m/%Y')})
 
     def company(self):
         A = _m('OrganisationManager.Announcement')

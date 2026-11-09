@@ -186,6 +186,15 @@ def _schema(request):
     return schema
 
 
+def _adm_here(uid, schema):
+    """v1.67.8 (fixes) item 11: the dashboard's "administrator" mark of a sign-in = administrator of THIS company."""
+    try:
+        from .companyadmin import is_admin
+        return bool(is_admin(uid, schema))
+    except Exception:   # noqa: BLE001
+        return False
+
+
 def _company_admin(request):
     schema = _schema(request)
     if not schema:
@@ -214,7 +223,8 @@ POLICY_FIELDS = ('min_length', 'need_upper', 'need_lower', 'need_digit', 'need_s
                  'idle_minutes', 'admin_session_hours', 'admin_idle_minutes', 'bind_device', 'country_scope', 'country_allow', 'alert_admins',
                  'step_up', 'step_up_minutes', 'step_up_actions', 'mask_sensitive', 'export_control', 'export_row_limit', 'export_watermark',
                  'bank_two_person', 'upload_scan', 'signin_id', 'signin_id_categories', 'link_hours', 'hr_types_password', 'default_password_on',
-                 'default_password_days', 'default_password_set_at')
+                 'default_password_days', 'default_password_set_at',
+                 'alert_rule', 'alert_admin_signin')   # v1.67.6 (setup) item 13
 BOOL62 = ('bind_device', 'alert_admins', 'step_up', 'mask_sensitive', 'export_control', 'export_watermark', 'bank_two_person', 'upload_scan',
           'hr_types_password')
 INT62 = {'idle_minutes': (0, 1440), 'admin_session_hours': (0, 720), 'admin_idle_minutes': (0, 1440), 'step_up_minutes': (1, 120),
@@ -320,6 +330,8 @@ def _policy_put62(p, d, schema, request):
         p.default_password_hash = make_password(pw)
         p.default_password_set_at = timezone.now()
     S.forget_rules(list(_company_users(schema).values_list('pk', flat=True)[:5000]))
+    from django.core.cache import cache as _c
+    _c.delete(f'zeo:sadm:{schema}')   # v1.67.8 (fixes) item 11: the company's administrator limits are read again
     try:
         from zeo import exportguard
         from AccessControl import respfilter
@@ -365,9 +377,11 @@ class PolicyView(APIView):
                 setattr(p, f, str(d[f]).lower() in ('1', 'true'))
         if d.get('require_2fa') in ('off', 'admins', 'staff', 'all'):
             p.require_2fa = d['require_2fa']
-        for f in ('alert_new_signin', 'alert_lock'):   # v1.61.0
+        for f in ('alert_new_signin', 'alert_lock', 'alert_admin_signin'):   # v1.61.0; v1.67.6 (setup) alert_admin_signin
             if f in d:
                 setattr(p, f, str(d[f]).lower() in ('1', 'true'))
+        if d.get('alert_rule') in ('any', 'both'):   # v1.67.6 (setup) item 13
+            p.alert_rule = d['alert_rule']
         if 'ip_scope' in d or 'ip_allowlist' in d:
             from . import netguard as NG
             scope = d.get('ip_scope', p.ip_scope)
@@ -390,6 +404,28 @@ def _company_users(schema):
     return U.objects.filter(tenants__schema_name=schema).distinct().order_by('email', 'username')
 
 
+# v1.67.6 (setup) item 14: a company administrator sees the sign-ins, alerts and events of THIS company only. A login can
+# belong to several companies (django-tenant-users keeps the users in the shared public schema): its sign-ins in another
+# company – address, device, time – are that company's business. A sign-in belongs to this company when it opened it
+# (LoginSession.companies / schema); a sign-in that opened no company yet only when the user belongs to no other company.
+def _solo_ids(schema, ids):
+    other = set(U.tenants.through.objects.filter(customuser_id__in=ids).exclude(company__schema_name__in=(schema, 'public'))
+                .values_list('customuser_id', flat=True))
+    return [i for i in ids if i not in other]
+
+
+def sessions_q(schema, ids):
+    from django.db.models import Q
+    return Q(user_id__in=ids) & (Q(schema=schema) | Q(companies__contains=[schema]) | Q(user_id__in=_solo_ids(schema, ids)))
+
+
+def alerts_q(schema, ids):
+    from django.db.models import Q
+    from .models import LoginSession
+    sids = LoginSession.objects.filter(sessions_q(schema, ids)).values_list('sid', flat=True)
+    return Q(user_id__in=ids) & (Q(schema=schema) | Q(sid__in=sids) | Q(schema='', user_id__in=_solo_ids(schema, ids)))
+
+
 class SignInAlertsView(APIView):
     """v1.61.0 GET my sign-in alerts (?company=1: the company's users, administrators only); POST {id, answer: was_me | not_me}.
     "Not me" ends every sign-in of the user and asks for a new password at the next sign-in."""
@@ -402,7 +438,8 @@ class SignInAlertsView(APIView):
             schema = _company_admin(request)
             if not schema:
                 return bad(tr('Company administrators only.'), 403)
-            qs = SignInAlert.objects.filter(user__in=_company_users(schema), created_at__gte=timezone.now() - timedelta(days=90)).select_related('user')[:300]
+            ids = list(_company_users(schema).values_list('id', flat=True))
+            qs = SignInAlert.objects.filter(alerts_q(schema, ids), created_at__gte=timezone.now() - timedelta(days=90)).select_related('user')[:300]   # v1.67.6 (setup)
             return Response({'rows': [NG.alert_json(a, True) for a in qs]})
         qs = SignInAlert.objects.filter(user=request.user)[:100]
         return Response({'rows': [NG.alert_json(a) for a in qs], 'open': SignInAlert.objects.filter(user=request.user, status='open').count()})
@@ -441,7 +478,8 @@ class CompanyUsersView(APIView):
         secs = {s.user_id: s for s in LoginSecurity.objects.filter(user__in=users)}
         now = timezone.now()
         act = {}
-        for uid in LoginSession.objects.filter(user__in=users, revoked_at__isnull=True, created_at__gte=now - timedelta(days=14)).values_list('user_id', flat=True):
+        for uid in LoginSession.objects.filter(sessions_q(schema, [u.pk for u in users]), revoked_at__isnull=True,   # v1.67.6 (setup)
+                                               created_at__gte=now - timedelta(days=14)).values_list('user_id', flat=True):
             act[uid] = act.get(uid, 0) + 1
         out = []
         q = (request.query_params.get('q') or '').lower()
@@ -468,7 +506,7 @@ class CompanyUsersView(APIView):
             LoginSecurity.objects.filter(user=u).update(failed=0, locked_until=None)
             return Response({'detail': 'Unlocked.'})
         if act == 'end_sessions':
-            n = S.revoke(LoginSession.objects.filter(user=u), f'signed out by the administrator ({request.user.get_full_name() or request.user.username})')
+            n = S.revoke(LoginSession.objects.filter(sessions_q(schema, [u.pk])), f'signed out by the administrator ({request.user.get_full_name() or request.user.username})')
             return Response({'detail': f'{n} sign-in(s) ended.'})
         if act == 'reset_2fa':
             if u.tenants.exclude(schema_name=schema).exists() and not request.user.is_superuser:
@@ -575,7 +613,7 @@ class SecurityDashboardView(APIView):
         no_2fa = [{'id': u.pk, 'name': u.get_full_name() or u.username, 'email': u.email, 'admin': S.is_company_admin(u)}
                   for u in staff if not (secs.get(u.pk) and secs[u.pk].totp_on)]
         week = now - timedelta(days=7)
-        failed = SecurityEvent.objects.filter(kind__in=('failed_password', 'failed_code'), user_id__in=ids, created_at__gte=week)
+        failed = SecurityEvent.objects.filter(models_q(schema, ids), kind__in=('failed_password', 'failed_code'), created_at__gte=week)   # v1.67.6 (setup)
         by_user = {}
         for uid, ip in failed.values_list('user_id', 'ip'):
             r = by_user.setdefault(uid, {'count': 0, 'ips': set()})
@@ -585,9 +623,9 @@ class SecurityDashboardView(APIView):
         failed_rows = sorted([{'user': names.get(k, ''), 'count': v['count'], 'addresses': sorted(x for x in v['ips'] if x)[:5]}
                               for k, v in by_user.items()], key=lambda r: -r['count'])[:30]
         life = timedelta(days=14)
-        active = LoginSession.objects.filter(user_id__in=ids, revoked_at__isnull=True, created_at__gte=now - life).select_related('user')
+        active = LoginSession.objects.filter(sessions_q(schema, ids), revoked_at__isnull=True, created_at__gte=now - life).select_related('user')   # v1.67.6 (setup)
         sess = [{'user': names.get(x.user_id, ''), 'ip': x.ip, 'country': x.country, 'device': S.session_json(x)['device'],
-                 'since': x.created_at, 'last_seen': x.last_seen, 'admin': x.admin} for x in active.order_by('-last_seen')[:100]]
+                 'since': x.created_at, 'last_seen': x.last_seen, 'admin': _adm_here(x.user_id, schema)} for x in active.order_by('-last_seen')[:100]]
         locked = [names.get(s.user_id, '') for s in secs.values() if s.locked_until and s.locked_until > now]
         keys, exports, admins = [], [], []
         with schema_context(schema):
@@ -604,7 +642,8 @@ class SecurityDashboardView(APIView):
                 pass
             try:
                 from tenant_users.tenants.models import UserTenantPermissions
-                for t in UserTenantPermissions.objects.filter(is_superuser=True).select_related('profile')[:100]:
+                from .companyadmin import admin_q as _aq
+                for t in UserTenantPermissions.objects.filter(_aq(schema), profile__tenants__schema_name=schema).select_related('profile').distinct()[:100]:   # v1.67.6 (setup) this company's only; # v1.67.7 (admin) administrators of THIS company (was the shared flag)
                     u = t.profile
                     admins.append({'name': u.get_full_name() or u.username, 'email': u.email,
                                    'authenticator': bool(secs.get(u.pk) and secs[u.pk].totp_on)})
@@ -620,7 +659,8 @@ class SecurityDashboardView(APIView):
 
 def models_q(schema, ids):
     from django.db.models import Q
-    return Q(schema=schema) | Q(schema='', user_id__in=ids)
+    # v1.67.6 (setup) item 14: an event without a company (a wrong password at the sign-in) only for users of this company alone
+    return Q(schema=schema) | Q(schema='', user_id__in=_solo_ids(schema, ids))
 
 
 # ------------------------------------------------------------------ v1.62.0 activation without e-mail, the default password's first check
@@ -681,3 +721,96 @@ class FirstCheckView(APIView):
         out = login_payload(user, request, 'start password')
         out['must_change_password'] = True
         return Response(out)
+
+
+# ------------------------------------------------------------------ v1.67.6 (setup) item 13: sign-in history and location
+def signin_json(x, cur='', own=True, schema=''):
+    from . import netguard as NG
+    j = S.session_json(x, cur)
+    g = x.geo or {}
+    j.update(country=x.country or '', location=x.location or x.country or '',
+             geo={'lat': g.get('lat'), 'lon': g.get('lon'), 'acc': g.get('acc'), 'at': g.get('at')} if g.get('lat') is not None else None,
+             )
+    if own:
+        try:
+            from UserManagement.models import company
+            names = dict(company.objects.filter(schema_name__in=x.companies or []).values_list('schema_name', 'name'))
+        except Exception:
+            names = {}
+        j['companies'] = [names.get(c, c) for c in (x.companies or [])]
+    else:   # an administrator: never the user's other companies
+        j['companies'] = []
+        u = x.user
+        j['user'], j['email'], j['user_id'] = (u.get_full_name() or u.username), u.email, u.pk
+    a = getattr(x, '_alert', None)
+    if a is not None:
+        j['new'] = NG.why_text(a.why, True) or tr(a.get_kind_display())
+    return j
+
+
+class SignInsView(APIView):
+    """GET   my sign-in history (90 days): when, address, approximate place, device, how, ended – and what was new;
+             ?company=1[&user=<id>] the company's sign-ins (administrators – only sign-ins that opened this company, item 14).
+       PUT   {share_location: true|false} – my consent to add the browser location to my sign-ins.
+       POST  {lat, lon, acc} – the browser location of THIS sign-in (only with the consent; the browser asks the person too)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import LoginSecurity, LoginSession, SignInAlert
+        cur = _sid(request)
+        since = timezone.now() - timedelta(days=90)
+        if request.query_params.get('company') in ('1', 'true'):
+            schema = _company_admin(request)
+            if not schema:
+                return bad(tr('Company administrators only.'), 403)
+            ids = list(_company_users(schema).values_list('id', flat=True))
+            uid = request.query_params.get('user')
+            if uid:
+                ids = [i for i in ids if str(i) == str(uid)]
+            qs = list(LoginSession.objects.filter(sessions_q(schema, ids), created_at__gte=since, impersonator__isnull=True)
+                      .select_related('user', 'impersonator').order_by('-created_at')[:300])
+            al = {a.sid: a for a in SignInAlert.objects.filter(sid__in=[x.sid for x in qs], kind='new_signin')}
+            for x in qs:
+                x._alert = al.get(x.sid)
+            return Response({'rows': [signin_json(x, '', False, schema) for x in qs]})
+        qs = list(LoginSession.objects.filter(user=request.user, created_at__gte=since).select_related('impersonator').order_by('-created_at')[:200])
+        al = {a.sid: a for a in SignInAlert.objects.filter(user=request.user, sid__in=[x.sid for x in qs], kind='new_signin')}
+        for x in qs:
+            x._alert = al.get(x.sid)
+        sec = LoginSecurity.objects.filter(user=request.user).first()
+        from . import geo
+        return Response({'rows': [signin_json(x, cur) for x in qs], 'share_location': bool(sec and sec.share_location),
+                         'country_db': bool(geo.status().get('ready'))})
+
+    def put(self, request):
+        on = str(request.data.get('share_location')).lower() in ('1', 'true')
+        s = S.sec(request.user)
+        s.share_location = on
+        s.save(update_fields=['share_location', 'updated_at'])
+        if not on:   # consent withdrawn: the browser locations already kept are removed
+            from .models import LoginSession
+            LoginSession.objects.filter(user=request.user).exclude(geo={}).update(geo={})
+        return Response({'share_location': on})
+
+    def post(self, request):
+        from .models import LoginSession
+        s = S.sec(request.user)
+        if not s.share_location:
+            return bad(tr('Switch on "Add my device location to my sign-ins" in My account first.'), 409)
+        cur = _sid(request)
+        if not cur:
+            return bad(tr('No sign-in to add the location to.'))
+        try:
+            lat, lon = float(request.data.get('lat')), float(request.data.get('lon'))
+            acc = float(request.data.get('acc') or 0)
+        except (TypeError, ValueError):
+            return bad(tr('Give the latitude and longitude.'))
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180) or acc < 0:
+            return bad(tr('Give the latitude and longitude.'))
+        g = {'lat': round(lat, 4), 'lon': round(lon, 4), 'acc': round(min(acc, 100000)), 'at': timezone.now().isoformat()}   # ~11 m – enough for "where"
+        row = LoginSession.objects.filter(sid=cur, user=request.user).first()
+        if row is None:
+            return bad(tr('No sign-in to add the location to.'))
+        loc = f"{g['lat']:.4f}, {g['lon']:.4f}" + (f" ({row.country})" if row.country else '')
+        LoginSession.objects.filter(pk=row.pk).update(geo=g, location=loc[:120])
+        return Response({'location': loc, 'geo': g})

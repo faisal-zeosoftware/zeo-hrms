@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.47.0 – navigation and the social side of the product:
 
 * search()        global search (Ctrl+K): employees and the records of every active app, with the user's rights
@@ -390,7 +391,7 @@ def team_hub(request, include_indirect=False):
         a = st['att'].get(e.id)
         lv = st['leave_rows'].get(e.id)
         if lv is not None:
-            state, label = 'out', f"On leave{(' – ' + lv.leave_type.name) if lv.leave_type_id else ''} until {lv.end_date:%d %b}"
+            state, label = 'out', f"On leave{(' – ' + lv.leave_type.name) if lv.leave_type_id else ''} until {lv.end_date:%d/%m/%Y}"
         elif a is not None:
             late = e.id in st['late']
             t = getattr(a, 'check_in_time', None) or getattr(a, 'check_in', None)
@@ -450,6 +451,49 @@ def set_flag(user, key, value):
 
 
 RELEASES = [
+    {'version': '1.67.12', 'date': '2026-11-09', 'title': 'Effective dates and GPSSA first insured', 'items': [   # v1.67.12 (effective)
+        ('event', 'Changes from a date', 'Leave policies, leave types, overtime, gratuity, air tickets, pay structures and attendance rules can change from a set date, with a history of changes.'),
+        ('account_balance', 'GPSSA old or new law', 'Enter the date an Emirati was first insured. The payroll uses the old or new pension law from that date.'),
+        ('beach_access', 'First-year leave and negative balance', 'First-year leave is worked out again from the joining date. Leave types can set how far below zero a balance may go.'),
+        ('flight', 'Probation and air tickets', 'The confirmation date follows the probation. End of service shows only the unused part of the air ticket.'),
+    ]},
+    {'version': '1.67.11', 'date': '2026-11-09', 'title': 'Loans, advances and deduction limits', 'items': [   # v1.67.11 (loans)
+        ('account_balance', 'Monthly deduction limit', 'For UAE companies, total deductions in a month stop at 50% of the wage. Anything above that moves to next month, with the reason on the payslip.'),
+        ('rule', 'Loan type rules', 'Loan types set the highest amount and months, who may ask, and how many open loans an employee can have.'),
+        ('payments', 'Pay out, prepay, skip and write off', 'Loans can be paid out, partly prepaid, moved by a month or written off with a second approval.'),
+        ('savings', 'Advance limits and settlement recovery', 'Advances have a limit, one a month and instalments. Open balances are recovered from the final settlement in a set order.'),
+    ]},
+    {'version': '1.67.10', 'date': '2026-11-09', 'title': 'Regression tests and payroll fixes', 'items': [   # v1.67.10 (regression)
+        ('calculate', 'Payroll runs can be recalculated', 'Recalculate and Delete on a calculated payroll run work again and give back loans, advances and inputs.'),
+        ('payments', 'Payslip currency', "Payslips use the company's currency, not the employee's home country."),
+        ('event', 'Expiry notices', 'Document expiry notices show dates as dd/mm/yyyy.'),
+        ('translate', 'Leave balances in Arabic', 'My leave › How my balances work is fully in Arabic.'),
+    ]},
+    {'version': '1.67.9', 'date': '2026-11-09', 'title': 'Cleaner screens across every app', 'items': [   # v1.67.9 (screens)
+        ('add_box', 'One New button and row actions', 'Every register has one New button at the top right, Edit and Delete on each row, and a selection bar for several rows.'),
+        ('toggle_off', 'Inactive instead of delete', 'A record that is in use cannot be deleted; make it inactive instead. Lists filter Active, Inactive or All.'),
+        ('view_sidebar', 'New forms', 'Branches, company, departments, designations, categories, users, leave and document types and e-mail templates open in a side panel.'),
+        ('calendar_month', 'Dates and Arabic', 'Dates show as dd/mm/yyyy everywhere, list text no longer wraps, and many more screens are fully in Arabic.'),
+    ]},
+    {'version': '1.67.8', 'date': '2026-11-08', 'title': 'Fixes for calendars, settlements, apps without HR and Arabic screens', 'items': [   # v1.67.8 (fixes)
+        ('event_busy', 'Holiday calendars', 'A calendar in use can be made inactive instead of deleted; unused calendars can be deleted.'),
+        ('receipt_long', 'Final settlement', 'Your own settlement page sits below the top bar, and the Arabic print uses Arabic wording throughout.'),
+        ('apps', 'Companies without HR', 'Accounting settings, partner roles and set-up wizards follow the apps that are active, without HR errors.'),
+        ('translate', 'Arabic screens and e-mails', 'Security e-mails, app settings, imports and printed dates are shown in Arabic with dd/mm/yyyy dates.'),
+        ('smartphone', 'Phones and dialogs', 'The phone top bar no longer overlaps, and long dialogs scroll properly.'),
+    ]},
+    {'version': '1.67.7', 'date': '2026-11-08', 'title': 'Administrators per company, Arabic e-mails and Print buttons', 'items': [   # v1.67.7 (admin)
+        ('admin_panel_settings', 'Administrator per company', 'The owner is administrator in every company; other users can be made administrator of one company only, and the last administrator cannot be removed.'),
+        ('translate', 'E-mails in your language', 'Sign-in, sign-in code, security and payslip e-mails are sent in each person\'s language, Arabic right to left.'),
+        ('print', 'Print buttons', 'Tickets, AMC contracts, permits, incidents, quotations, leases, invoices, receipts and work orders can be printed from their lists and pages.'),
+    ]},
+    {'version': '1.67.6', 'date': '2026-11-08', 'title': 'Company set-up, app wizards and sign-in security', 'items': [   # v1.67.6 (setup)
+        ('shield_lock', 'Sign-in security', 'Each company sees only its own sign-ins and users; sign-in history of 90 days and an e-mail when a sign-in comes from a new place, address or device.'),
+        ('tag', 'Numbering for every app', 'Every app with documents gets its numbering series when it is activated; existing numbers are never changed.'),
+        ('print', 'Printed documents for every app', 'Tickets, AMC contracts, quotations, leases, invoices, work orders, permits and more have a default printed design.'),
+        ('checklist', 'Set-up wizard for every app', 'Projects, CRM, Property, Maintenance, Asset Management, People and HSE are set up step by step before the first transaction.'),
+        ('domain', 'Company and branches', 'The first branch takes the company details, logo and financial year; administrators get every branch; one branch is chosen for you.'),
+    ]},
     {'version': '1.67.5', 'date': '2026-11-06', 'title': 'Bug fixes and punch from My profile', 'items': [   # v1.67.5 (bugs)
         ('mail', 'Payslip e-mail on approval', 'An approved payslip is e-mailed to the employee with its PDF; the approver sees how many were sent, skipped or failed.'),
         ('event_available', 'Leave fixes', 'Each leave type shows once per employee, maternity leave only for women, Leave Type edit and scrolling fixed, the employee list stays open in the leave request.'),
@@ -514,7 +558,7 @@ RELEASES = [
         ('timer', 'Short leave in hours', 'Apply for a few hours on one working day; approved paid short leave covers late or early minutes.'),
     ]},
     {'version': '1.62.3', 'date': '2026-11-02', 'title': 'Recommended settings, air ticket and loan fixes', 'items': [   # v1.62.3
-        ('account_balance', 'GPSSA by the law of each employee', 'Nationals who joined before 31 Oct 2023: 5 % employee, 12.5 % employer, salary 1,000–50,000; from that date 11 %, employer 12.5 % (15 % from AED 20,000), salary 3,000–70,000 – all in Payroll › Legal rates.'),
+        ('account_balance', 'GPSSA by the law of each employee', 'Nationals who joined before 31/10/2023: 5 % employee, 12.5 % employer, salary 1,000–50,000; from that date 11 %, employer 12.5 % (15 % from AED 20,000), salary 3,000–70,000 – all in Payroll › Legal rates.'),
         ('undo', 'Leave pay corrected after a closed payslip', 'Salary paid for leave days that became half or no pay later is recovered with the next payrolls, at most 20 % of the wage a month.'),
         ('shield', 'Net pay kept at 0 or above', 'Recommended: switch on in Payroll controls with deductions at most 50 % of gross; the rest is carried to next month.'),
         ('flight', 'Air tickets paid once', 'No cash payout on a ticket already approved, on another employee\'s or a pending / expired allocation; "every 2 years" respected; one open ticket paid at exit.'),

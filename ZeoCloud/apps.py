@@ -15,3 +15,5 @@ class ZeoCloudConfig(AppConfig):
         mediareg.install()
         from . import hardening   # v1.62.0 uploads checked, masked values never saved, password change ends other sign-ins, rights events
         hardening.install()
+        from . import companyadmin   # v1.67.7 (admin) administrator rights per company
+        companyadmin.install()

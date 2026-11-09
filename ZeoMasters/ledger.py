@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.44.0 – partner balances, statements and credit control (Odoo: partner ledger, follow-up, credit limit).
 
 ZEO does not keep a general ledger of its own: the invoices, receipts and bills are the apps' records. This module reads them
@@ -88,7 +89,7 @@ def property_rows(ids):
     OS = M('ZeoProperty', 'OwnerStatement')
     if OS is not None:
         for s in OS.objects.filter(status__in=('issued', 'paid'), owner__partner_id__in=ids).select_related('owner'):
-            out.append(_row(s.period_to, 'Property', s.number, f'Owner statement {s.period_from:%d %b} – {s.period_to:%d %b %Y}', credit=s.net, side='payable',
+            out.append(_row(s.period_to, 'Property', s.number, f'Owner statement {s.period_from:%d/%m/%Y} – {s.period_to:%d/%m/%Y}', credit=s.net, side='payable',
                             url=P + f'statement/{s.pk}', partner_id=s.owner.partner_id, kind='bill'))
             if s.status == 'paid':
                 out.append(_row(s.paid_on or s.period_to, 'Property', s.number, 'Paid out to the owner', debit=s.net, side='payable',

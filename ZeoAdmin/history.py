@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.62.0 – log and history cleaning (README-UPDATE 83.8; proposal "History cleaning and security", section 2).
 
 Three kinds of data, three rules – there is no "delete history" button:
@@ -469,7 +470,7 @@ def clean(keys, how='manual', by=None, seconds=None, test=False):
             counts[key] = res
     finally:
         if zf is not None:
-            zf.writestr('README.txt', f'ZEO history archive – company {schema()} – {timezone.localtime():%d %b %Y %H:%M}\n'
+            zf.writestr('README.txt', f'ZEO history archive – company {schema()} – {timezone.localtime():%d/%m/%Y %H:%M}\n'
                                       'One JSON object per line; file names: <category>-<table>-<first id>-<last id>.jsonl\n')
             zf.close()
             if not arc_rows:

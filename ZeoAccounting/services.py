@@ -370,7 +370,10 @@ def build_payroll(run_id, user=None):
             elif c.component_type == 'deduction':
                 if not c.show_in_payslip:
                     continue
-                acct, lvl = b.accts.find('component', c.pk, 'credit', e.pk, dept, branch, st.default_deduction_account)
+                # v1.67.11 (loans, item 117): a loan / advance instalment repays the receivable (Payroll › Loan and advance settings ›
+                # accounts) unless the component has its own account
+                _v16711_def = _v16711_default(getattr(c, 'payroll_category', '')) or st.default_deduction_account
+                acct, lvl = b.accts.find('component', c.pk, 'credit', e.pk, dept, branch, _v16711_def)
                 b.add(acct, c.name, amt, 'credit', e.pk, dept, branch, cost=False, level=lvl, group=f'c{c.pk}')
                 deds += amt
             elif c.pk in acc_of:   # v1.62.7 (item 18): accrued this month (accrue now – pay later): Dr expense, Cr the accrual account
@@ -394,6 +397,22 @@ def build_payroll(run_id, user=None):
     if _air_used:   # v1.66.0 (item 118): taken off ProvisionBalance when the journal is posted / exported
         b.extra['air_provision_used'] = _air_used
     return b.save(user)
+
+
+def _v16711_default(category):
+    try:
+        from PayrollPlus.lending import component_default_account
+        return component_default_account(category)
+    except Exception:
+        return None
+
+
+def _v16711_settle_default(key):
+    try:
+        from PayrollPlus.lending import settlement_default_account
+        return settlement_default_account(key)
+    except Exception:
+        return None
 
 
 def _accrual_accounts():
@@ -593,7 +612,8 @@ def build_settlement(settlement_id, user=None):
                 acct, lvl = b.accts.find('settlement', key, 'debit', e and e.pk, dept, branch, default)
                 b.add(acct, label, rest, 'debit', e and e.pk, dept, branch, cost=True, level=lvl, group=key)
         else:
-            acct, lvl = b.accts.find('settlement', key, 'credit', e and e.pk, dept, branch, st.default_deduction_account)
+            # v1.67.11 (loans, item 117): a loan / advance recovered at exit repays its receivable unless a settlement mapping says otherwise
+            acct, lvl = b.accts.find('settlement', key, 'credit', e and e.pk, dept, branch, _v16711_settle_default(key) or st.default_deduction_account)
             b.add(acct, label, amt, 'credit', e and e.pk, dept, branch, cost=False, level=lvl, group=key)
     acct, lvl = b.accts.find('payable', 'settlement', 'credit', e and e.pk, dept, branch, st.settlement_payable_account)
     b.add(acct, 'Final settlement payable', q2(s.net), 'credit', e and e.pk, dept, branch, cost=False, level=lvl, group='net')

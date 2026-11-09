@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Asset Management release 2 (v1.34.0) rules: work orders, preventive plans, helpdesk SLA and escalation, spare parts stock."""
 import calendar
 import logging
@@ -315,7 +316,7 @@ def run_plans(on=None, user=None):
         while p.next_due and p.next_due - timedelta(days=p.lead_days) <= on and guard < 24:
             guard += 1
             for c in plan_cards(p):
-                title = f'{p.name} – due {p.next_due:%d %b %Y}'
+                title = f'{p.name} – due {p.next_due:%d/%m/%Y}'
                 if not WorkOrder.objects.filter(plan=p, card=c, title=title).exists():
                     make_wo(card=c, title=title, kind=p.activity.kind, activity=p.activity, plan=p, team=p.team, technician=p.technician,
                             vendor=p.vendor, scheduled_on=p.next_due, due_date=p.next_due, estimate=p.estimate, user=user)

@@ -263,7 +263,12 @@ class ProvisionLine(models.Model):
 class LoanEvent(models.Model):
     """A change to an approved loan outside payroll: top-up, early settlement, new instalment, pause / resume."""
     KINDS = [('topup', 'Top-up'), ('settle', 'Early settlement'), ('reschedule', 'New instalment'), ('pause', 'Paused'), ('resume', 'Resumed'),
-             ('exit', 'Settled at exit')]
+             ('exit', 'Settled at exit'),
+             # v1.67.11 (loans): the kinds of 1.62.11 (carry) and 1.67.11 – partial prepayment, a month skipped, write-off, an approver's
+             # lower amount, payout, an instalment cut by the deduction limit, a balance left as a receivable at exit
+             ('carry', 'Balance carried on'), ('prepay', 'Partial prepayment'), ('skip', 'Month skipped'), ('writeoff', 'Written off'),
+             ('lower', 'Approved for a lower amount'), ('payout', 'Paid out'), ('cut', 'Instalment cut by the deduction limit'),
+             ('receivable', 'Left as a receivable at exit')]
     loan_id = models.IntegerField(db_index=True)
     kind = models.CharField(max_length=10, choices=KINDS)
     date = models.DateField()
@@ -627,3 +632,127 @@ class RecoveryEntry(models.Model):
 
     class Meta:
         ordering = ['month', 'id']
+
+
+
+# ------------------------------------------------------------------ v1.67.11 (loans) – items 51, 110–117
+class LoanTypeRule(models.Model):
+    """v1.67.11 (loans): the rules of a loan type (PayrollManagement.LoanType is core – no new column there): eligibility (item 111),
+    profit (item 112, never for a UAE company – Decree-Law 33/2021 Art. 25(1)(a): loans repaid from the wage without interest) and
+    the guarantor (item 112)."""
+    OPEN = [('type', 'One open loan of this type'), ('any', 'No other open loan of any type')]
+    INTEREST = [('none', 'None'), ('flat', 'Flat profit')]
+    GUARANTOR = [('none', 'Not asked'), ('optional', 'Optional'), ('required', 'Required')]
+    loan_type_id = models.IntegerField(unique=True)
+    min_service_months = models.PositiveSmallIntegerField(default=0, help_text='months of service before a loan can be asked')
+    not_in_probation = models.BooleanField(default=False)
+    max_times_basic = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True, help_text='amount at most N × monthly basic')
+    max_instalment_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True,
+                                             help_text='instalment at most this % of the monthly wage (basic + fixed allowances)')
+    no_leavers = models.BooleanField(default=True, help_text='not for employees who resigned / are on notice / leaving')
+    open_loans = models.CharField(max_length=4, choices=OPEN, default='type')
+    interest = models.CharField(max_length=5, choices=INTEREST, default='none')
+    interest_rate = models.DecimalField(max_digits=6, decimal_places=3, default=0, help_text='flat % a year on the amount')
+    guarantor = models.CharField(max_length=8, choices=GUARANTOR, default='none')
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class LoanTerms(models.Model):
+    """v1.67.11 (loans): what a loan has besides its core row – the amount asked and approved (item 114), principal and profit (112),
+    guarantor (112), months skipped (113), write-off (112), payout (117)."""
+    loan_id = models.IntegerField(unique=True)
+    requested_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    requested_months = models.PositiveIntegerField(null=True, blank=True)
+    approved_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    approved_by_id = models.IntegerField(null=True, blank=True)
+    approved_note = models.CharField(max_length=255, blank=True, default='')
+    principal = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    interest = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    guarantor_id = models.IntegerField(null=True, blank=True, help_text='EmpManagement.emp_master')
+    consent = models.BooleanField(default=False, help_text='the employee agreed in writing to the monthly deduction (Art. 25(1)(a))')
+    skipped = models.JSONField(default=list, blank=True, help_text='["YYYY-MM", …] months without an instalment')
+    written_off = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    writeoff = models.JSONField(default=dict, blank=True, help_text='{status: pending|approved|rejected, amount, reason, by_id, by, at, decided_by_id, decided_by, decided_at, note}')
+    payout = models.JSONField(default=dict, blank=True, help_text='{date, ref, by, at, journal}')
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class AdvanceTerms(models.Model):
+    """v1.67.11 (loans): an advance salary request – instalments (item 115), the amount asked and approved (114), payout (117), what was
+    left as a receivable at exit (116)."""
+    advance_id = models.IntegerField(unique=True)
+    instalments = models.PositiveSmallIntegerField(default=1)
+    requested_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    approved_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    approved_by_id = models.IntegerField(null=True, blank=True)
+    approved_note = models.CharField(max_length=255, blank=True, default='')
+    payout = models.JSONField(default=dict, blank=True)
+    exit_recovered = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    exit_receivable = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class AdvanceInstalment(models.Model):
+    """v1.67.11 (loans): an advance instalment taken by a payslip (given back when the payslip is rejected / deleted)."""
+    advance_id = models.IntegerField(db_index=True)
+    payslip_id = models.IntegerField(db_index=True)
+    month = models.DateField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=10, default='taken', db_index=True, help_text='taken / given_back')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['month', 'id']
+
+
+class DeductionCut(models.Model):
+    """v1.67.11 (loans, item 51): a loan / advance instalment that did not fit inside the monthly deduction limit – the part cut is
+    carried to the next payslip of the employee (taken_by_payslip_id); a cut of a deleted payslip is gone with it."""
+    payslip_id = models.IntegerField(db_index=True)
+    employee_id = models.IntegerField(db_index=True)
+    kind = models.CharField(max_length=8)
+    ref_id = models.IntegerField()
+    month = models.DateField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=255, blank=True, default='')
+    taken_by_payslip_id = models.IntegerField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['month', 'id']
+
+
+# ------------------------------------------------------------------ v1.67.12 (effective): dated versions of setup records (item 64)
+class RuleVersion(models.Model):
+    """v1.67.12 (effective, item 64): one dated version of a setup record – leave policy (with its lines), leave type (with its pay
+    rules), overtime policy, gratuity table (the whole table: object_id 0), air ticket policy, pay structure, attendance rule. `data` holds
+    the record as it is from `effective_from` (until the next version); calculations of an earlier period use the older version.
+    The first dated change of a record also keeps the rule before it ("before the first dated change", effective_from 01/01/1900)."""
+    KINDS = [('leave_policy', 'Leave policy'), ('leave_type', 'Leave type'), ('overtime_policy', 'Overtime policy'),
+             ('gratuity', 'Gratuity table'), ('air_ticket_policy', 'Air ticket policy'), ('pay_structure', 'Pay structure'),
+             ('attendance_rule', 'Attendance rule')]
+    kind = models.CharField(max_length=20, choices=KINDS, db_index=True)
+    object_id = models.IntegerField(db_index=True)
+    effective_from = models.DateField()
+    data = models.JSONField(default=dict, blank=True)
+    note = models.CharField(max_length=255, blank=True, default='')
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['kind', 'object_id', 'effective_from']
+        unique_together = ('kind', 'object_id', 'effective_from')
+
+
+class EmployeePension(models.Model):
+    """v1.67.12 (effective, item 249): the day an employee was first insured with GPSSA (or the Abu Dhabi Pension Fund / another GCC
+    scheme). It decides old law / new law (Federal Decree-Law 57/2023: those first insured from 31/10/2023); empty = the joining date
+    decides, as before."""
+    SCHEMES = [('gpssa', 'GPSSA'), ('adpf', 'Abu Dhabi Pension Fund'), ('gcc', 'Another GCC pension scheme')]
+    employee_id = models.IntegerField(unique=True)
+    first_insured = models.DateField(null=True, blank=True)
+    scheme = models.CharField(max_length=10, choices=SCHEMES, default='gpssa')
+    note = models.CharField(max_length=255, blank=True, default='')
+    updated_by_id = models.IntegerField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)

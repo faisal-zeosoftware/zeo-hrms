@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Projects reports (/zeo-projects/api/reports/ and /reports/<key>/).
 
 Every report returns the same shape so one screen shows them all:
@@ -586,7 +587,7 @@ def weekly_summary(request=None):
     avg = rated.aggregate(a=__import__('django.db.models', fromlist=['Avg']).Avg('satisfaction'))['a']
     a = amc_block(None, frm, to)
     pend = A.in_branches(WorkLog.objects.all(), request).filter(status='submitted').count()
-    lines = [f'Projects – weekly summary {frm:%d %b} – {to:%d %b %Y}', '',
+    lines = [f'Projects – weekly summary {frm:%d/%m/%Y} – {to:%d/%m/%Y}', '',
              'SUPPORT',
              f"  Open tickets: {open_qs.count()} ({open_qs.filter(priority='critical').count()} critical, "
              f"{open_qs.filter(assigned_to__isnull=True).count()} not assigned)",

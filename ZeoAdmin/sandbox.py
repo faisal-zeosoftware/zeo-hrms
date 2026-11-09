@@ -198,7 +198,8 @@ def _run(source_schema, pk, src_id, name, kinds, user_id):
                 from django_tenants.utils import schema_context as sc
                 from tenant_users.permissions.models import UserTenantPermissions
                 with sc(src.schema_name):
-                    adm = UserTenantPermissions.objects.filter(profile=u, is_superuser=True).exists()
+                    from ZeoCloud.companyadmin import is_admin as _ca   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+                    adm = _ca(u, src.schema_name)
                 if adm or u.is_superuser:
                     from ZeoCloud.services import grant_admin
                     grant_admin(u, new)

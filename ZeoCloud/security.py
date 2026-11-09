@@ -167,6 +167,48 @@ def session_rules(user_id):
     return v
 
 
+def _company_admin_limits(schema):
+    """v1.67.8 (fixes) item 11: the administrator limits of one company (Settings › Sign-in security), cached a minute."""
+    if not schema:
+        return {'admin_session_hours': 0, 'admin_idle_minutes': 0}
+    k = f'zeo:sadm:{schema}'
+    v = cache.get(k)
+    if v is None:
+        from .models import SecurityPolicy
+        p = SecurityPolicy.objects.filter(schema=schema).first()
+        v = {'admin_session_hours': getattr(p, 'admin_session_hours', 0) or 0, 'admin_idle_minutes': getattr(p, 'admin_idle_minutes', 0) or 0}
+        cache.set(k, v, 60)
+    return v
+
+
+def rules_here(user_id, schema):
+    """v1.67.8 (fixes) item 11: (rules, admin) of a request to `schema`. The idle time for everybody stays the shortest of the
+    user's companies (as since 1.62.0); the administrator limits (idle, session length) apply only when the user is an
+    administrator OF THIS company by the per-company rule (ZeoCloud/companyadmin.py), with this company's values. Before,
+    the sign-in marked the session "admin" when the user administered ANY company, and the strictest admin limits of all
+    the user's companies were applied everywhere."""
+    r = dict(session_rules(user_id))
+    admin = False
+    if schema:
+        try:
+            from .companyadmin import is_admin
+            admin = bool(is_admin(user_id, schema))
+        except Exception:
+            admin = False
+    lim = _company_admin_limits(schema) if admin else {'admin_session_hours': 0, 'admin_idle_minutes': 0}
+    r.update(lim)
+    return r, admin
+
+
+def _session_schema(row, request=None):
+    """The company a session works in now: the request's, else the last company it opened, else its sign-in company."""
+    s = _req_schema(request) if request is not None else ''
+    if not s:
+        cos = list(getattr(row, 'companies', None) or [])
+        s = cos[-1] if cos else (getattr(row, 'schema', '') or '')
+    return s
+
+
 def forget_rules(user_ids=None):
     for uid in (user_ids or []):
         cache.delete(f'zeo:srules:{uid}')
@@ -310,8 +352,8 @@ def device_hash(request):
 
 def start_session(user, request=None, how='password', impersonator=None, read_only=False, schema=''):
     from .models import LoginSession
-    try:
-        admin = bool(impersonator is None and is_company_admin(user))
+    try:   # v1.67.8 (fixes) item 11: administrator of the company signed in to (was: of any company); the limits are per request
+        admin = bool(impersonator is None and schema and is_company_admin(user, schema))
     except Exception:
         admin = False
     try:
@@ -322,7 +364,8 @@ def start_session(user, request=None, how='password', impersonator=None, read_on
     s = LoginSession.objects.create(user=user, sid=uuid.uuid4().hex, ip=client_ip(request),
                                     agent=(request.META.get('HTTP_USER_AGENT', '') if request is not None else '')[:255], how=how,
                                     impersonator=impersonator, read_only=read_only, schema=schema, last_seen=timezone.now(),
-                                    device_hash=device_hash(request), admin=admin, country=country)
+                                    device_hash=device_hash(request), admin=admin, country=country,
+                                    location=country, companies=[schema] if schema else [])   # v1.67.6 (setup) item 13 / 14
     try:
         from django.contrib.auth.models import update_last_login
         update_last_login(None, user)
@@ -350,7 +393,7 @@ def tokens(user, request=None, how='password', otp=False, impersonator=None, rea
         r['ro'] = bool(read_only)
         r['isch'] = schema
     if not lifetime and s.admin:   # v1.62.0 administrators sign in again after the company's admin session hours
-        hrs = session_rules(user.pk).get('admin_session_hours') or 0
+        hrs = _company_admin_limits(schema).get('admin_session_hours') or 0   # v1.67.8 (fixes) item 11: that company's value
         if hrs:
             lifetime = timedelta(hours=hrs)
     if lifetime:
@@ -402,21 +445,22 @@ def _idle_limit(rules, admin):
     return lim
 
 
-def check_live(row, request=None, rules=None):
+def check_live(row, request=None, rules=None, admin=None):
     """Raise RefreshRefused when the session must end now: idle too long, the admin session is over, another device."""
-    rules = rules or session_rules(row.user_id)
+    if rules is None or admin is None:   # v1.67.8 (fixes) item 11: administrator of the company the session works in
+        rules, admin = rules_here(row.user_id, _session_schema(row, request))
     now = timezone.now()
-    lim = _idle_limit(rules, row.admin)
+    lim = _idle_limit(rules, admin)
     if lim and row.last_seen and row.last_seen < now - timedelta(minutes=lim):
         revoke(type(row).objects.filter(pk=row.pk), f'signed out after {lim} minutes without use')
         raise RefreshRefused('You were signed out after {0} minutes without use. Sign in again.', 'session_ended', lim)
-    if row.admin and rules.get('admin_session_hours') and row.created_at < now - timedelta(hours=rules['admin_session_hours']):
+    if admin and rules.get('admin_session_hours') and row.created_at < now - timedelta(hours=rules['admin_session_hours']):
         revoke(type(row).objects.filter(pk=row.pk), 'the administrator session ended')
         raise RefreshRefused('Administrators sign in again every {0} hours. Sign in again.', 'session_ended', rules['admin_session_hours'])
     if rules.get('bind_device') and row.device_hash and request is not None and device_hash(request) and device_hash(request) != row.device_hash:
         revoke(type(row).objects.filter(pk=row.pk), 'used on another device')
         event('device_changed', user=row.user, ip=client_ip(request), schema=row.schema,
-              detail=f'sign-in of {row.created_at:%d %b %Y %H:%M} used on another device')
+              detail=f'sign-in of {timezone.localtime(row.created_at):%d/%m/%Y %H:%M} used on another device')   # v1.67.8 (fixes) item 10: dd/mm/yyyy
         raise RefreshRefused('This sign-in belongs to another device. Sign in again.')
 
 
@@ -445,7 +489,7 @@ def refresh(raw, request=None):
     if row.rjti and jti != row.rjti and row.rotated_at and iat <= int(row.rotated_at.timestamp()):
         revoke(LoginSession.objects.filter(pk=row.pk), 'a used sign-in token came back')
         event('refresh_reuse', user=row.user, ip=client_ip(request), schema=row.schema,
-              detail=f'a spent sign-in token of {row.created_at:%d %b %Y %H:%M} was used again from {client_ip(request) or "?"} – the sign-in was ended')
+              detail=f'a spent sign-in token of {timezone.localtime(row.created_at):%d/%m/%Y %H:%M} was used again from {client_ip(request) or "?"} – the sign-in was ended')   # v1.67.8 (fixes)
         raise RefreshRefused('This sign-in was ended for safety (an old sign-in token was used again). Sign in again.')
     check_live(row, request)
     if not row.user.is_active:
@@ -504,9 +548,10 @@ def idle_of(request):
         return 0
 
 
-def _should_end(st, rules, request):
-    """Quick test on the cached session state – the full check (which ends the session) runs only when this says so."""
-    uid, admin, created, last, dev = st
+def _should_end(st, rules, request, admin=False):
+    """Quick test on the cached session state – the full check (which ends the session) runs only when this says so.
+    v1.67.8 (fixes) item 11: `admin` = administrator of the request's company (was the sign-in's "any company" marker)."""
+    uid, _stored_admin, created, last, dev = st
     now = timezone.now()
     lim = _idle_limit(rules, admin)
     if lim and last and last < now - timedelta(minutes=lim):
@@ -541,6 +586,109 @@ def revoke(qs, reason='signed out'):
 
 
 SAFE = ('GET', 'HEAD', 'OPTIONS')
+# v1.67.6 (setup) item 14: the own security data of a login – never shown while an administrator views as that user
+IMP_PRIVATE = ('/users/2fa/', '/users/sessions/', '/users/security/alerts/', '/users/sign-ins/', '/users/change-password/',
+               '/zeo-admin/api/history/mine/')
+
+
+def _req_schema(request):
+    """The company a request works on (the open schema, else ?schema= / X-Schema for the public /users/ endpoints)."""
+    from django.db import connection
+    s = getattr(connection, 'schema_name', '') or ''
+    if s and s != 'public':
+        return s
+    try:
+        s = request.GET.get('schema') or request.META.get('HTTP_X_SCHEMA') or ''
+    except Exception:
+        s = ''
+    return '' if s == 'public' else s
+
+
+def _member_or_refuse(user, request):
+    """v1.67.6 (setup) item 14: the safety net for every API call with a sign-in token. Views that check rights themselves
+    (`zeo_access = False`: print templates, apps, setup screens …) used the shared rights table, where a company administrator is
+    an administrator everywhere – the administrator of one company could read another company's print designs and print its
+    records. A request to a company's schema now needs a login of that company (system administrators and ZEO Cloud staff
+    excepted), whatever the view does."""
+    from django.db import connection
+    sch = getattr(connection, 'schema_name', '') or ''
+    if not sch or sch == 'public' or getattr(user, 'is_superuser', False):
+        return
+    k = f'zeo:member:{user.pk}:{sch}'
+    v = cache.get(k)
+    if v is None:
+        v = user.tenants.filter(schema_name=sch).exists()
+        if not v:
+            try:
+                from .services import is_platform_admin
+                v = is_platform_admin(user)
+            except Exception:
+                v = False
+        if v:   # only a "yes" is remembered (a minute): a login just given access is never refused
+            cache.set(k, v, 60)
+    if not v:
+        from Translations.i18n import tr
+        raise exceptions.PermissionDenied(tr('You do not have access to this company.'), code='not_member')
+
+
+def opened(sid, schema):
+    """v1.67.6 (setup) item 14: remember that the sign-in `sid` opened `schema` (only a company the user belongs to – the
+    access check refuses the others before any data is read; written once per sign-in and company)."""
+    if not sid or not schema:
+        return
+    k = f'zeo:sid-co:{sid}:{schema}'
+    if cache.get(k):
+        return
+    cache.set(k, 1, 6 * 3600)
+    try:
+        from .models import LoginSession
+        row = LoginSession.objects.filter(sid=sid).only('id', 'companies', 'schema', 'user_id').first()
+        if row is None or schema in (row.companies or []):
+            return
+        if not row.user.tenants.filter(schema_name=schema).exists() and not row.user.is_superuser:
+            return
+        LoginSession.objects.filter(pk=row.pk).update(companies=(row.companies or []) + [schema])
+        _tell_admins(row, sid, schema)
+    except Exception:
+        pass
+
+
+def _tell_admins(row, sid, schema):
+    """v1.67.6 (setup) item 13: a new sign-in (new place, address or device) that opens a company whose sign-in rules ask for it
+    ("Also e-mail the administrators") is e-mailed to that company's administrators – only the company it opened."""
+    from .models import SecurityPolicy, SignInAlert
+    if not SecurityPolicy.objects.filter(schema=schema, alert_admin_signin=True).exists():
+        return
+    a = SignInAlert.objects.filter(sid=sid, kind='new_signin').first()
+    if a is None:
+        return
+    from .admin_alerts import admin_people
+    from .mailtext import T, device_text, lang_of
+    from .netguard import send_mail_for, why_text
+    u = row.user
+    # v1.67.7 (admin): this company's administrators (per company), each in their own language
+    people = [p for p in admin_people(schema) if p.email and p.email.lower() != (u.email or '').lower()]
+    if not people:
+        return
+    from UserManagement.models import company
+    cname = getattr(company.objects.filter(schema_name=schema).first(), 'name', schema)
+    when = timezone.localtime(a.created_at).strftime('%d/%m/%Y %H:%M')
+    uname_ = u.get_full_name() or u.username
+    for p in people:
+        L = lang_of(p, schema)
+        body = (T('Company: {0}', L, cname) + '\n' + T('User: {0} ({1})', L, uname_, u.email or u.username) + '\n'
+                + T('When: {0}', L, when) + '\n' + T('Device: {0}', L, device_text(a.device, L)) + '\n'
+                + T('Address: {0}', L, a.ip + (f' ({row.country})' if row.country else ''))
+                + ('\n' + T('New: {0}.', L, why_text(a.why, lang=L)) if a.why else '') + '\n\n'
+                + T('Open Settings › Sign-in security › Sign-in history in ZEO to see the sign-ins of the company.', L) + '\n'
+                + T('You get this e-mail because the sign-in rules of the company ask to tell the administrators about new sign-ins.', L))
+        try:
+            send_mail_for(u, T('ZEO security: a new sign-in of {0}', L, uname_), body, [p.email], schema, lang=L)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('admin sign-in mail')
+
+
 RO_ALLOWED = ('/users/impersonate/stop/', '/users/token/refresh/', '/chatter/api/flags/')
 
 
@@ -558,17 +706,34 @@ class SessionJWTAuthentication(JWTAuthentication):
                 raise exceptions.AuthenticationFailed('You were signed out. Sign in again.', code='session_ended')
             st = _live_state(sid)
             if st:   # v1.62.0 idle sign-out, the admin session end, device binding
-                rules = session_rules(st[0])
-                if _should_end(st, rules, request):
+                rules, adm = rules_here(st[0], _req_schema(request))   # v1.67.8 (fixes) item 11: per company
+                if _should_end(st, rules, request, adm):
                     from .models import LoginSession
                     row = LoginSession.objects.filter(sid=sid).first()
                     if row is not None:
                         try:
-                            check_live(row, request._request if hasattr(request, '_request') else request, rules)
+                            check_live(row, request._request if hasattr(request, '_request') else request, rules, adm)
                         except RefreshRefused as e:
                             cache.delete(f'zeo:sid-live:{sid}')
                             raise exceptions.AuthenticationFailed(e.msg, code='session_ended')
             seen(sid, idle_of(request))
+            opened(sid, _req_schema(request))   # v1.67.6 (setup) item 14: which companies this sign-in opened
+        try:   # v1.67.7 (admin): a system administrator switched off as administrator of this company is not one here
+            from .companyadmin import mask_request_user
+            mask_request_user(user, _req_schema(request))
+        except Exception:
+            pass
+        _member_or_refuse(user, request)   # v1.67.6 (setup) item 14: a company's API only for the users of that company
+        if token.get('imp'):   # v1.67.6 (setup) item 14: "view as" stays inside its company and out of the user's own security data
+            from Translations.i18n import tr
+            sch = _req_schema(request)
+            isch = token.get('isch') or ''
+            if isch and sch and sch != isch:
+                raise exceptions.PermissionDenied(tr('You are viewing as this user in another company. Stop viewing as the user first.'), code='impersonation_scope')
+            if request.path.startswith(IMP_PRIVATE) and not (request.path.startswith('/users/security/alerts/')
+                                                              and request.method in SAFE and request.GET.get('company') in ('1', 'true')):
+                raise exceptions.PermissionDenied(tr("Not while viewing as another user: the user's sign-ins, devices and authenticator stay private."),
+                                                  code='impersonation_private')
         if token.get('imp') and token.get('ro') and request.method not in SAFE and not any(request.path.startswith(p) for p in RO_ALLOWED):
             raise exceptions.PermissionDenied('You are viewing as this user (read only) – nothing can be changed.')
         if getattr(user, 'must_change_password', False) and not token.get('imp') and not any(request.path.startswith(p) for p in MUST_CHANGE_OK):
@@ -592,16 +757,15 @@ def session_json(s, current_sid=''):
             'impersonator': (s.impersonator.get_full_name() or s.impersonator.username) if s.impersonator_id else ''}
 
 
-def is_company_admin(user):
-    if getattr(user, 'is_superuser', False):
+def is_company_admin(user, schema=None):
+    """Administrator of `schema`, or (no company given – the sign-in) of any of the user's companies."""
+    if getattr(user, 'is_superuser', False) and not schema:
         return True
-    try:
-        from tenant_users.tenants.models import UserTenantPermissions
-        from django_tenants.utils import schema_context
-        for t in user.tenants.all():
-            with schema_context(t.schema_name):
-                if UserTenantPermissions.objects.filter(profile=user, is_superuser=True).exists():
-                    return True
+    try:   # v1.67.7 (admin): per company (ZeoCloud/companyadmin.py) – was the shared flag
+        from .companyadmin import is_admin
+        if schema:
+            return is_admin(user, schema)
+        return any(is_admin(user, t.schema_name) for t in user.tenants.all())
     except Exception:
         pass
     return False
@@ -616,6 +780,12 @@ def required_for(user, rules=None):
         return True
     if need == 'staff':
         return not getattr(user, 'is_ess', False)
+    try:   # v1.67.7 (admin): "administrators" = administrators of a company whose rule asks it (not of any company)
+        schemas = [p.schema for p in policies_for(user) if p.require_2fa == 'admins']
+        if schemas:
+            return any(is_company_admin(user, s) for s in schemas)
+    except Exception:
+        pass
     return is_company_admin(user)
 
 

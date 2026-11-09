@@ -44,6 +44,34 @@ def _lr():
     return leave_rules
 
 
+def _eff():
+    """v1.67.12 (effective, item 64): dated versions of the leave policy / leave type (PayrollPlus.effective), or None."""
+    try:
+        from PayrollPlus import effective
+        return effective
+    except Exception:   # pragma: no cover – PayrollPlus not installed
+        return None
+
+
+def dated_policy(p, on=None):
+    """v1.67.12 (effective, item 64): the policy (and its lines) as in force on `on` (default: the rule day – the accrual month, the
+    leave start, else today); the policy itself when it has no dated versions."""
+    E = _eff()
+    return E.as_of('leave_policy', p, on) if (E is not None and p is not None) else p
+
+
+def dated_type(lt, on=None):
+    """v1.67.12 (effective, item 64): the leave type (and its pay rules) as in force on `on`."""
+    E = _eff()
+    return E.as_of('leave_type', lt, on) if (E is not None and lt is not None) else lt
+
+
+def policy_lines(p):
+    """v1.67.12 (effective): the lines of the policy – of its dated version when `p` came from dated_policy()."""
+    E = _eff()
+    return E.children(p, 'lines') if E is not None else list(p.lines.all())
+
+
 # ------------------------------------------------------------------ policy lookup
 def managed_type_ids():
     """Leave types handled by an active policy (the old accrual / reset jobs skip them).
@@ -104,7 +132,7 @@ def emp_lines(emp, p, lines=None):
     """The policy lines as they apply to this employee: a line whose leave type belongs to another branch is given on the
     copy of the employee's branch (a copy of the line object with that leave_type_id, never saved; `_twin_of` = the line's
     own type); it is left out when the policy has a line of its own for that copy. Lines without a copy stay as they are."""
-    allp = list(p.lines.all())
+    allp = policy_lines(p)   # v1.67.12 (effective): the lines of the dated version
     own = {l.leave_type_id for l in allp}
     out = []
     for l in (allp if lines is None else lines):
@@ -140,6 +168,11 @@ def policy_for(emp):
     Policy, _, EmpPolicy, _ = _models()
     if emp is None:
         return None
+    return dated_policy(_policy_for(emp))   # v1.67.12 (effective, item 64): as in force on the rule day
+
+
+def _policy_for(emp):
+    Policy, _, EmpPolicy, _ = _models()
     maps = getattr(_run, 'maps', None)
     if maps is not None:
         return maps['over'].get(emp.pk) or (maps['by_cat'].get(emp.emp_ctgry_id_id) if emp.emp_ctgry_id_id else None) or maps['default']
@@ -158,7 +191,7 @@ def line_for(emp, leave_type_id):
     p = policy_for(emp)
     if p is None:
         return None
-    line = p.lines.filter(leave_type_id=leave_type_id).first()
+    line = next((l for l in policy_lines(p) if l.leave_type_id == leave_type_id), None)   # v1.67.12 (effective): the dated lines
     if line is None:   # v1.62.1: the employee's branch copy of a type the policy has
         line = next((l for l in emp_lines(emp, p) if l.leave_type_id == leave_type_id), None)
     return line
@@ -313,9 +346,15 @@ def leave_type_problems(req):
 
 
 def validate_request(req):
-    """Raise ValidationError with every rule the request breaks. Runs when a request is created or its dates / type change."""
+    """Raise ValidationError with every rule the request breaks. Runs when a request is created or its dates / type change.
+    v1.67.12 (effective, item 64): the policy and leave type as in force on the leave's first day."""
+    with _rules_day(getattr(req, 'start_date', None)):
+        return _validate_request(req)
+
+
+def _validate_request(req):
     errors = []
-    emp, lt = req.employee, req.leave_type
+    emp, lt = req.employee, dated_type(req.leave_type)
     if req.end_date < req.start_date:
         raise ValidationError(tr('The end date is before the start date.'))
     LR = M('calendars', 'employee_leave_request')
@@ -387,6 +426,8 @@ def validate_request(req):
             errors.append(tr('{0} can be taken {1} time(s) in service; already taken.', lt.name, line.max_times_in_service))
     if _lr().document_needed(req, line, days) and not req.lv_document:   # v1.65.0 (item 92): only above N days when the type says so
         errors.append(tr('{0} needs a supporting document (e.g. medical report, certificate) – attach it to the request.', lt.name))
+    if line.accrual in ('monthly', 'yearly', 'earned') and lt.type != 'unpaid' and (line.allow_negative or lt.negative):
+        errors += negative_limit_problems(emp, lt, req, days, hourly)   # v1.67.12 (effective, item 62): the limit below zero, when set
     if line.accrual in ('monthly', 'yearly', 'earned') and lt.type != 'unpaid' and not (line.allow_negative or lt.negative):
         bal = float(balance_row(emp.pk, lt.pk).balance or 0)
         if _lr().allow_projected(lt) and not hourly:   # v1.65.0 (item 88): the days earned before the leave starts count
@@ -399,6 +440,31 @@ def validate_request(req):
             errors.append(tr('Not enough {0}: balance {1:g} days', lt.name, bal) + (tr(' (projected to {0:%d/%m/%Y})', req.start_date) if _lr().allow_projected(lt) else '') + (tr(', {0:g} days waiting for approval', pending) if pending else '') + tr(', this request {0:g} days.', days))
     if errors:
         raise ValidationError(errors)
+
+
+def negative_limit(lt):
+    """v1.67.12 (effective, item 62): how far below zero the balance of this leave type may go (None = no limit, as before) – the
+    leave type rule (Leave › Setup › Leave rules) of the type or of its head-office copy."""
+    try:
+        r = _lr().rule_for(lt)
+        v = getattr(r, 'negative_limit', None) if r is not None else None
+        return None if v is None else max(float(v), 0.0)
+    except Exception:
+        return None
+
+
+def negative_limit_problems(emp, lt, req, days, hourly=False):
+    lim = negative_limit(lt)
+    if lim is None:
+        return []
+    bal = float(balance_row(emp.pk, lt.pk).balance or 0)
+    pending = used_in(emp.pk, lt.pk, date(1900, 1, 1), date(2999, 12, 31), exclude_id=req.pk, statuses=('pending',))
+    after = round(bal - pending - days, 2)
+    if after < -lim - 1e-9:
+        unit = tr('hours') if hourly else tr('days')
+        return [tr('{0} may go at most {1:g} {2} below zero: balance {3:g}, waiting for approval {4:g}, this request {5:g} – the balance would be {6:g}.',
+                   lt.name, lim, unit, bal, pending, days, after)]
+    return []
 
 
 # ------------------------------------------------------------------ v1.62.4 leave request checks (items 71, 77, 81)
@@ -449,8 +515,11 @@ def slabs_for(emp, lt):
     line = line_for(emp, lt.pk)
     if line and line.pay_slabs:
         return [(float(d), float(p)) for d, p in line.pay_slabs]
+    lt = dated_type(lt)   # v1.67.12 (effective, item 64): the type's pay rules as in force on the rule day
     if getattr(lt, 'enable_leave_pay_rule', False):
-        return [(float(r.days), float(r.pay_percentage)) for r in lt.pay_rules.all().order_by('sequence')]
+        E = _eff()
+        rules = E.children(lt, 'pay_rules', lambda: lt.pay_rules.all()) if E is not None else list(lt.pay_rules.all())
+        return [(float(r.days), float(r.pay_percentage)) for r in sorted(rules, key=lambda r: (r.sequence, r.pk or 0))]
     return []
 
 
@@ -837,6 +906,45 @@ def monthly_amount(line, emp, m_start, m_end, left=None, y0=None, projected=Fals
     return _month_days(rate, frac, m_end, y0), ' · '.join(x for x in (step, why) if x)
 
 
+FIRST_YEAR_KINDS = ('accrual', 'opening', 'adjustment')
+
+
+def first_year_due(emp, line, m_end, left=None):
+    """v1.67.12 (effective, item 61): days the first-year rule gives from the joining date up to the month ending `m_end`
+    (12 when 6 months are completed, then 2 a month by the line's prorate method, up to 12 months of service)."""
+    j = emp.emp_joined_date
+    if not j:
+        return 0.0
+    total, ms = 0.0, j.replace(day=1)
+    while ms <= m_end:
+        me = (ms.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        if months_of_service(emp, me) > 12:
+            break
+        if not (left and left < ms):
+            got = monthly_amount(line, emp, ms, me, left, None)
+            if got:
+                total += got[0]
+        ms = me + timedelta(days=1)
+    return round(total, 2)
+
+
+def first_year_true_up(emp, line, m_start, m_end, left, normal):
+    """v1.67.12 (effective, item 61): (days, note) for the month when what was credited in the first year so far differs from what
+    the rule gives from the (corrected) joining date – a month the accrual skipped for the employee (the 12-day credit at 6 months
+    lost), or a joining date corrected after credits were made. Credited = earned / opening / adjustment lines of the leave type from
+    the joining month to the month before. None = nothing to correct (the month's normal amount)."""
+    _, _, _, Ledger = _models()
+    j = emp.emp_joined_date
+    types = [line.leave_type_id] + ([line._twin_of] if getattr(line, '_twin_of', None) else [])
+    credited = round(float(Ledger.objects.filter(employee_id=emp.pk, leave_type_id__in=types, kind__in=FIRST_YEAR_KINDS,
+                                                 date__gte=j.replace(day=1), date__lt=m_start).aggregate(s=Sum('days'))['s'] or 0), 2)
+    due = first_year_due(emp, line, m_end, left)
+    amt = round(due - credited, 2)
+    if abs(amt - normal) < 0.005:
+        return None
+    return amt, tr('first-year rule recomputed from the joining date {0:%d/%m/%Y}: {1:g} days due to {2:%d/%m/%Y}, {3:g} credited before', j, due, m_end, credited)
+
+
 def to_earn_by_year_end(emp, line, today=None, ye=None):
     """v1.62.4 (item 74): days of a monthly line still to be credited up to the leave-year end `ye` – each month not credited
     yet (last month while the accrual has not run, this month and the months after), with the first-year rule, joining /
@@ -908,8 +1016,14 @@ def run_accrual(on=None, user_id=None, preview=False):
 
 
 def _run_accrual(on=None, user_id=None, preview=False):
-    _, Line, _, Ledger = _models()
     on = on or (date.today().replace(day=1) - timedelta(days=1))
+    m_end = (on.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    with _rules_day(m_end):   # v1.67.12 (effective, item 64): the policy lines as in force in the accrual month
+        return _run_accrual_month(on, user_id, preview)
+
+
+def _run_accrual_month(on=None, user_id=None, preview=False):
+    _, Line, _, Ledger = _models()
     m_end = (on.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     m_start = m_end.replace(day=1)
     tag = f'{m_end:%Y-%m}'
@@ -946,6 +1060,10 @@ def _run_accrual(on=None, user_id=None, preview=False):
                 amt, why = got
                 if why:
                     note = f'{tag} · {why}'
+                if line.first_year_uae and 6 <= svc <= 12:   # v1.67.12 (effective, item 61): the first year recomputed from the joining date
+                    fy = first_year_true_up(emp, line, m_start, m_end, left, amt)
+                    if fy is not None:
+                        amt, note = fy[0], f'{tag} · {fy[1]}'
             else:   # yearly: the year's entitlement once per leave year, in the first month the employee is eligible
                 if line.min_service_months and svc < line.min_service_months:
                     continue
@@ -1132,13 +1250,30 @@ def encash_room(emp, line):
 
 def run_year_end(year_end=None, user_id=None, preview=False, policy_ids=None):
     """Leave-year end: days above the carry-forward limit are kept (flagged), sent for encashment or lapse, per policy line."""
+    with _rules_day(year_end):   # v1.67.12 (effective, item 64): the policy as in force at the year end
+        return _run_year_end(year_end, user_id, preview, policy_ids)
+
+
+def _rules_day(d):
+    """v1.67.12 (effective): rules_on(d) unless an outer caller (payroll run, end of service) fixed the rule day already."""
+    from contextlib import nullcontext
+    try:
+        from CountryPack.services import rules_on, rule_date_set
+    except ImportError:
+        return nullcontext()
+    if d is None or rule_date_set():
+        return nullcontext()
+    return rules_on(d)
+
+
+def _run_year_end(year_end=None, user_id=None, preview=False, policy_ids=None):
     rows = []
     for emp in _active_employees():
         p = policy_for(emp)
         if p is None or (policy_ids is not None and p.pk not in policy_ids):
             continue
         ye = year_end or (leave_year(p, date.today())[0] - timedelta(days=1))
-        for line in emp_lines(emp, p, p.lines.filter(accrual__in=('monthly', 'yearly'))):   # v1.62.1 branch copies
+        for line in emp_lines(emp, p, [l for l in policy_lines(p) if l.accrual in ('monthly', 'yearly')]):   # v1.62.1 branch copies; v1.67.12 dated lines
             if not (line.gender == 'B' or (emp.emp_gender or '') == line.gender):
                 continue
             row = close_line(emp, line, ye, user_id=user_id, preview=preview)

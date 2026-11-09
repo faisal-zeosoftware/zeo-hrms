@@ -1,4 +1,5 @@
 from ZeoCloud import security_views as _SV   # v1.52.0
+from ZeoCloud import admin_views as _AV   # v1.67.7 (admin) administrators per company
 from ZeoCloud import sso_views as _SSO   # v1.54.0
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -45,6 +46,8 @@ urlpatterns = [
     path("security/policy/", _SV.PolicyView.as_view()),
     path("security/users/", _SV.CompanyUsersView.as_view()),
     path("security/alerts/", _SV.SignInAlertsView.as_view()),   # v1.61.0
+    path("sign-ins/", _SV.SignInsView.as_view()),   # v1.67.6 (setup) item 13 sign-in history and location
+    path("company-admins/", _AV.CompanyAdminsView.as_view()),   # v1.67.7 (admin) administrators per company
     path("security/dashboard/", _SV.SecurityDashboardView.as_view()),   # v1.62.0
     path("step-up/", _SV.StepUpView.as_view()),                        # v1.62.0 password asked again
     path("activate/send/", _SV.ActivateSendView.as_view()),            # v1.62.0 code to the mobile (no e-mail)

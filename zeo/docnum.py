@@ -52,6 +52,8 @@ TYPE_LABELS = [
     ('attendance_correction', 'Attendance Correction'), ('employee_transfer', 'Employee Transfer'),
     ('exit_settlement', 'Final Settlement'), ('shift_request', 'Shift Request'),
 ]
+# v1.67.6 (setup) item 4: the series of Projects, CRM, Property, Maintenance, Asset Management, People and HSE (company-wide)
+TYPE_LABELS += __import__('ZeoApps.numbering', fromlist=['TYPE_LABELS']).TYPE_LABELS
 
 
 def branch_of(obj):

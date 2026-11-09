@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.62.0 print – the document types and their data (the template context).
 
 Every context is plain data (dicts, lists, text) – never a model – so a template can only show what is listed here.
@@ -42,6 +43,9 @@ DOC_TYPES = [
     ('leave_approval', 'Leave approval letter', 'خطاب الموافقة على الإجازة', 'letter', {'view_employee_leave_request', 'change_employee_leave_request'}, 'event_available'),
     ('asset_handover', 'Asset handover form', 'نموذج تسليم الأصول', 'form', {'view_assethandover', 'change_assethandover'}, 'devices'),
 ]
+# v1.67.6 (setup) item 6: the documents of the other apps (Projects, CRM, Property, Maintenance, Asset Management, HSE, People)
+from . import appdocs as _AD   # noqa: E402
+DOC_TYPES += [d[:6] for d in _AD.APP_DOCS]
 BY_KEY = {d[0]: d for d in DOC_TYPES}
 # HR letter types of Self service → print document type
 LETTER_DOC = {'salary_certificate': 'salary_certificate', 'salary_transfer': 'salary_transfer', 'bank_account': 'salary_transfer',
@@ -72,7 +76,7 @@ def d(v, lang='en'):
         v = timezone.localtime(v).date() if timezone.is_aware(v) else v.date()
     if lang == 'ar':
         return f'{v.day} {AR_MONTHS[v.month - 1]} {v.year}'
-    return v.strftime('%d %b %Y')
+    return v.strftime('%d/%m/%Y')
 
 
 def period(y, m, lang):
@@ -113,9 +117,16 @@ def _tr(obj, field, lang):
         return v or ''
     try:
         from Translations.services import translated
-        return translated(obj, field, 'ar') or v or ''
+        t = translated(obj, field, 'ar') or v or ''
     except Exception:   # noqa: BLE001
-        return v or ''
+        t = v or ''
+    if t == v and v:   # v1.67.8 (fixes) item 3: no Arabic name entered – the language pack's term for a standard name ("Human Resources")
+        try:
+            from Translations.i18n import tr as _t
+            t = _t(v, lang='ar') or v
+        except Exception:   # noqa: BLE001
+            pass
+    return t
 
 
 def _file_uri(f):
@@ -169,7 +180,9 @@ def company_ctx(branch=None, lang='en', b=None):
     email = getattr(prof, 'email', '') or (getattr(branch, 'br_branch_mail', '') if branch is not None else '')
     po = getattr(prof, 'po_box', '') or ''
     web = getattr(prof, 'website', '') or ''
-    contact = ' · '.join(x for x in [f'P.O. Box {po}' if po else '', f'Tel {phone}' if phone else '', email or '', web] if x)
+    _ar = lang == 'ar'   # v1.67.8 (fixes) item 3: "P.O. Box" / "Tel" in Arabic on Arabic prints
+    contact = ' · '.join(x for x in [(f'ص.ب {po}' if _ar else f'P.O. Box {po}') if po else '', (f'هاتف {phone}' if _ar else f'Tel {phone}') if phone else '',
+                                     email or '', web] if x)
     return {
         'name': name, 'name_ar': name_ar, 'initials': initials(name), 'logo': logo, 'address': addr or '', 'address_ar': '', 'contact_line': contact,
         'po_box': getattr(prof, 'po_box', '') or '', 'phone': phone or '', 'email': email or '', 'website': getattr(prof, 'website', '') or '',
@@ -211,7 +224,8 @@ def doc_ctx(doc_type, lang, number='', when=None, status='', subtitle='', code='
     _, en, ar = BY_KEY[doc_type][:3]
     title, title_ar = (ar, '') if lang == 'ar' else ((en, ar) if lang == 'bi' else (en, ''))
     return {'title': title, 'title_ar': title_ar, 'subtitle': subtitle, 'number': number or '', 'date': d(when or date.today(), 'ar' if lang == 'ar' else 'en'),
-            'status': status or '', 'verification_code': code or '', 'generated': timezone.localtime().strftime('%d %b %Y %H:%M')}
+            'status': status or '', 'verification_code': code or '',
+            'generated': timezone.localtime().strftime('%d/%m/%Y %H:%M')}   # v1.67.8 (fixes) items 3 / 9: dd/mm/yyyy (was "08 Nov 2026" – English month on Arabic prints)
 
 
 def base(doc_type, lang, emp=None, branch=None, b=None):
@@ -295,7 +309,8 @@ def settlement_ctx(case, lang='en'):
     c = base('final_settlement', lang, emp)
     svc = case.get('service') or {}
     yy, mm_, dd_ = svc.get('years', 0), svc.get('months', 0), svc.get('days', 0)
-    service = T(lang, f'{yy} years, {mm_} months, {dd_} days', f'{yy} سنة و{mm_} شهر و{dd_} يوم')
+    from PayrollPlus.eos_pdf import ymd   # v1.67.8 (fixes) item 3: one wording with the statement PDF (Arabic comma "،", no zero parts)
+    service = ymd(svc, 'ar' if lang == 'ar' else 'en')
 
     def lines(kind):
         out = []
@@ -581,6 +596,8 @@ SOURCES = {
 
 def queryset(doc_type, c):
     """Records of the document type the user may print (c: AccessControl ctx). Employees: their own (released payslips only)."""
+    if doc_type in _AD.BY_KEY:   # v1.67.6 (setup) item 6
+        return _AD.queryset(doc_type, c)
     label, ef, is_id = SOURCES[doc_type]
     try:
         qs = M(label).objects.all()
@@ -608,6 +625,8 @@ def queryset(doc_type, c):
 
 
 def label_of(doc_type, o):
+    if doc_type in _AD.BY_KEY:   # v1.67.6 (setup) item 6
+        return _AD.label_of(doc_type, o)
     try:
         if doc_type == 'payslip':
             return f'{o.employee.emp_code} {o.employee.emp_first_name} {o.employee.emp_last_name or ""} – {period(o.payroll_run.year, o.payroll_run.month, "en")}'
@@ -637,6 +656,8 @@ def records(doc_type, c, q='', limit=40):
 
 
 def _search(doc_type, qs, q):
+    if doc_type in _AD.BY_KEY:   # v1.67.6 (setup) item 6: by number
+        return qs.filter(**{_AD.BY_KEY[doc_type][8].get('number', 'number') + '__icontains': q})
     label, ef, is_id = SOURCES[doc_type]
     if doc_type == 'offer_letter':
         return qs.filter(Q(document_number__icontains=q) | Q(application__candidate__full_name__icontains=q))
@@ -647,6 +668,8 @@ def _search(doc_type, qs, q):
 
 def build(doc_type, obj, lang, request=None):
     """Context of a record."""
+    if doc_type in _AD.BY_KEY:   # v1.67.6 (setup) item 6
+        return _AD.record_ctx(doc_type, obj, lang)
     if doc_type == 'payslip':
         return payslip_ctx(obj, lang)
     if doc_type == 'final_settlement':
@@ -658,7 +681,7 @@ def build(doc_type, obj, lang, request=None):
 
 
 def employee_of(doc_type, obj):
-    if isinstance(obj, dict):
+    if isinstance(obj, dict) or doc_type in _AD.BY_KEY:
         return None
     label, ef, is_id = SOURCES[doc_type]
     return getattr(obj, ef, None) if is_id else getattr(obj, ef + '_id', None)

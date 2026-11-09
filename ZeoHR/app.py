@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """ZEO HR operations (v1.48.0) on the app kit: disciplinary and grievance cases, exit interviews, document renewals,
 PRO / government services and asset handovers. Always on; the HR officers of the company work here with their HR rights.
 
@@ -121,7 +122,7 @@ def a_investigate(o, request, f):
 
 
 def _day(v):
-    return v.strftime('%d %b %Y') if v else ''
+    return v.strftime('%d/%m/%Y') if v else ''
 
 
 def show_cause_text(o):

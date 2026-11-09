@@ -231,6 +231,15 @@ def _cell(v):
     return v
 
 
+def _sysadmin_in(user, schema):
+    """v1.67.8 (fixes) item 11: a system administrator not switched off in this company."""
+    try:
+        from ZeoCloud.companyadmin import sysadmin_in
+        return sysadmin_in(user, schema)
+    except Exception:   # noqa: BLE001
+        return bool(getattr(user, 'is_superuser', False))
+
+
 # ------------------------------------------------------------------ approval inbox and notifications
 def inbox(group, user):
     """The person's own approvals in every company of the group they work in (their own rights in each)."""
@@ -238,7 +247,7 @@ def inbox(group, user):
     items, errors = [], []
     mine = set(user.tenants.values_list('schema_name', flat=True))
     for comp in group['companies']:
-        if comp.schema_name not in mine and not user.is_superuser:
+        if comp.schema_name not in mine and not _sysadmin_in(user, comp.schema_name):   # v1.67.8 (fixes) item 11
             continue
         try:
             with schema_context(comp.schema_name):

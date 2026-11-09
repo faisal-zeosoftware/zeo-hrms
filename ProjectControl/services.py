@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """
 Project control rules in one place: who sees what, timesheet validation, hours, billable default,
 hourly cost rate from the salary structure, approval and the project / employee summaries.
@@ -221,7 +222,7 @@ def validate_entry(employee, project, task, day, hours, exclude_id=None):
     elif day and hours is not None:
         total = day_hours(employee.pk, day, exclude_id) + Decimal(hours)
         if total > MAX_DAY_HOURS:
-            err['time_spent'] = f'More than 24 hours on {day:%d %b %Y} ({total} h in total).'
+            err['time_spent'] = f'More than 24 hours on {day:%d/%m/%Y} ({total} h in total).'
     return err
 
 

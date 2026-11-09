@@ -582,12 +582,21 @@ class App:
         out = [u.profile for u in _company_perms().filter(groups__in=groups).select_related('profile').distinct()
                if u.profile and u.profile.is_active]
         if not out:
-            out = [u.profile for u in _company_perms().filter(is_superuser=True).select_related('profile')
+            from ZeoCloud.companyadmin import admin_q   # v1.67.7 (admin) administrators of THIS company (was the shared flag)
+            out = [u.profile for u in _company_perms().filter(admin_q()).select_related('profile')
                    if u.profile and u.profile.is_active]
         return out
 
     # numbering, history, files
     def next_number(self, kind, default_prefix):
+        try:   # v1.67.6 (setup) item 4: the series of Settings › Document numbering, when the company has one
+            from ZeoApps.numbering import LABEL_KEY, take
+            if self.label in LABEL_KEY:
+                num = take(LABEL_KEY[self.label], kind)
+                if num:
+                    return num
+        except Exception:
+            pass
         with transaction.atomic():
             seq, _ = self.sequence_model.objects.select_for_update().get_or_create(kind=kind)
             seq.last += 1
@@ -903,7 +912,10 @@ def fmeta(r, name):
     if t in ('bool', 'choice', 'decimal', 'int') and f.default is not M.NOT_PROVIDED and not callable(f.default) and f.default not in (None, ''):
         m['default'] = str(f.default) if t == 'decimal' else f.default
     if t == 'json' and name in getattr(r, 'tables', {}):   # v1.40.0 table editor: columns = [(key, label, type[, options])]
-        m['columns'] = [{'key': c[0], 'label': c[1], 'type': c[2], 'options': c[3] if len(c) > 3 else None} for c in r.tables[name]]
+        # v1.67.8 (fixes) item 7: options may be worked out per request (a callable – e.g. the active apps' partner roles); a 5th
+        # item is every option, so a stored value outside the list keeps its label (the screen offers it on that row)
+        m['columns'] = [{'key': c[0], 'label': c[1], 'type': c[2], 'options': (c[3]() if callable(c[3]) else c[3]) if len(c) > 3 else None,
+                         **({'all_options': c[4]} if len(c) > 4 else {})} for c in r.tables[name]]
     return m
 
 
@@ -931,6 +943,33 @@ def value(r, obj, name, hide=False):
     return v, None
 
 
+def tr_cell(value):
+    """v1.67.8 (fixes) item 14: a stored English word / list shown in the reader's language – "Asset Management", "Yes",
+    "Customer, Supplier" (each item), "3 record(s)". Unknown text stays as it is."""
+    if not isinstance(value, str) or not value:
+        return value
+    try:
+        from Translations.i18n import current_lang, tr
+        lang = current_lang()
+        if not lang or str(lang).startswith('en'):
+            return value
+        t = tr(value, lang=lang)
+        if t != value:
+            return t
+        if ', ' in value:
+            parts = value.split(', ')
+            out = [tr(x, lang=lang) for x in parts]
+            if out != parts:
+                return ('، ' if str(lang).startswith('ar') else ', ').join(out)
+        import re
+        m = re.fullmatch(r'(\d+) record\(s\)', value)
+        if m:
+            return tr('{0} record(s)', m.group(1), lang=lang)
+    except Exception:   # noqa: BLE001
+        pass
+    return value
+
+
 def ser(r, obj, request, cols=None):
     hide = not r.show_restricted(request, obj)
     out = {'id': obj.pk, 'kind': r.kind}
@@ -938,6 +977,8 @@ def ser(r, obj, request, cols=None):
         if r.link_off(n):
             continue
         v, lbl = value(r, obj, n, hide)
+        if n in getattr(r, 'translate_cols', ()):   # v1.67.8 (fixes) item 14: stored English app names / roles in the reader's language
+            v = tr_cell(v)
         out[n] = v
         if lbl is not None:
             out[n + '_label'] = lbl
@@ -964,6 +1005,13 @@ def detail(r, obj, request):
     out['can_edit'] = r.can_edit(obj, request)
     if r.pdf:   # v1.40.0 printed document
         out['pdf'] = r.pdf
+    try:   # v1.67.6 (setup) item 6: printed with the company's design (Settings › Print templates)
+        from PrintTemplates.appdocs import print_doc_for   # v1.67.7 (admin): only when the user may print it
+        dt = print_doc_for(type(obj), request)
+        if dt:
+            out['print_doc'] = dt
+    except Exception:
+        pass
     if r.tables:   # v1.40.0 table fields shown as tables on the record page (option labels resolved)
         out['tables'] = []
         for n, cols in r.tables.items():
@@ -976,6 +1024,8 @@ def detail(r, obj, request):
                     continue
                 rr = dict(row)
                 for c in cols:
+                    if c[2] == 'text' and c[0] in (getattr(r, 'translate_tables', {}) or {}).get(n, ()):   # v1.67.8 (fixes) item 14
+                        rr[c[0]] = tr_cell(row.get(c[0]))
                     if c[2] == 'opt' and len(c) > 3 and row.get(c[0]):
                         o = r.app.options.get(c[3])
                         try:

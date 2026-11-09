@@ -48,16 +48,35 @@ def schedule(loan, today=None):
     today = today or date.today()
     reps = list(M('LoanRepayment').objects.filter(loan=loan).order_by('repayment_date', 'id').select_related('payslip__payroll_run'))
     rows, run = [], Decimal(str(loan.amount_requested or 0))
+    # v1.67.11 (loans): a write-off is recorded as a repayment outside payroll – shown as "written off"; months skipped (item 113)
+    try:
+        from .lending import terms_of as _v16711_terms
+        _t = _v16711_terms(loan.pk)
+        _wo_ids = set((_t.writeoff or {}).get('repayments') or [])
+        _skips = set(_t.skipped or [])
+    except Exception:
+        _wo_ids, _skips = set(), set()
     for r in reps:
         run -= Decimal(str(r.amount_paid))
         pr = getattr(r.payslip, 'payroll_run', None) if r.payslip_id else None
         rows.append({'n': len(rows) + 1, 'month': (date(pr.year, pr.month, 1) if pr else (r.repayment_date or today).replace(day=1)),
                      'amount': str(Decimal(str(r.amount_paid)).quantize(Q2)), 'balance': str(max(run, Decimal(0)).quantize(Q2)),
-                     'state': 'paid' if r.payslip_id else 'paid outside payroll'})
+                     'state': 'paid' if r.payslip_id else ('written off' if r.pk in _wo_ids else 'paid outside payroll')})
     bal = balance(loan)
     emi = Decimal(str(loan.emi_amount or 0))
-    start = (rows[-1]['month'] if rows else (loan.disbursement_date or (loan.approved_on.date() if loan.approved_on else today)).replace(day=1))
+    # v1.67.11 (loans): the plan goes on after the LATEST month paid (a prepayment / write-off recorded today comes after the payroll
+    # months in the list but is not the latest month when payroll already ran ahead); months skipped before it are shown in place
+    _pay_months = [r['month'] for r in rows if r['state'] == 'paid']
+    start = (max([r['month'] for r in rows]) if rows else (loan.disbursement_date or (loan.approved_on.date() if loan.approved_on else today)).replace(day=1))
     nxt = add_months(start, 1) if rows else start
+    _past_skips = sorted(m for m in (date(int(k[:4]), int(k[5:7]), 1) for k in _skips) if m < max(nxt, today.replace(day=1)) and m not in _pay_months)
+    if _past_skips:
+        for m in _past_skips:   # after the last row of an earlier month (the list stays in the order the money moved)
+            at = max([i for i, r in enumerate(rows) if r['month'] < m and r['state'] in ('paid', 'skipped')], default=-1)
+            rows.insert(at + 1, {'n': 0, 'month': m, 'amount': '0.00', 'state': 'skipped',
+                                 'balance': rows[at]['balance'] if at >= 0 else str(Decimal(str(loan.amount_requested or 0)).quantize(Q2))})
+        for i, r in enumerate(rows):
+            r['n'] = i + 1
     if nxt < today.replace(day=1):
         nxt = today.replace(day=1)
     if loan.status == 'Paused' and loan.resume_date and loan.resume_date.replace(day=1) > nxt:
@@ -65,6 +84,11 @@ def schedule(loan, today=None):
     if loan.status in ACTIVE and emi > 0:
         guard = 0
         while bal > 0 and guard < 240:
+            if f'{nxt.year}-{nxt.month:02d}' in _skips:   # v1.67.11 (loans, item 113): no instalment this month, the plan moves
+                rows.append({'n': len(rows) + 1, 'month': nxt, 'amount': '0.00', 'balance': str(bal.quantize(Q2)), 'state': 'skipped'})
+                nxt = add_months(nxt, 1)
+                guard += 1
+                continue
             amt = min(emi, bal)
             bal -= amt
             rows.append({'n': len(rows) + 1, 'month': nxt, 'amount': str(amt.quantize(Q2)), 'balance': str(bal.quantize(Q2)),
@@ -77,15 +101,22 @@ def schedule(loan, today=None):
 def summary(loan):
     rows = schedule(loan)
     planned = [r for r in rows if r['state'] in ('planned', 'paused')]
+    try:   # v1.67.11 (loans): asked / approved amount, principal and profit, guarantor, months skipped, write-off, payout
+        from .lending import loan_terms_public as _v16711_pub, rule_dict as _v16711_rule
+        _v16711_t, _v16711_r = _v16711_pub(loan), _v16711_rule(loan.loan_type_id)
+    except Exception:
+        _v16711_t, _v16711_r = {}, {}
+    _wo = Decimal(str(_v16711_t.get('written_off') or 0))
     # v1.62.11 (item 259): a 'carry' event (loan balance carried on after the last planned instalment) is labelled
     return {'id': loan.pk, 'number': loan.document_number or str(loan.pk), 'employee_id': loan.employee_id,
             'employee': ' '.join(x for x in (loan.employee.emp_first_name, loan.employee.emp_last_name) if x), 'code': loan.employee.emp_code,
             'type': str(loan.loan_type), 'status': loan.status, 'amount': str(Decimal(str(loan.amount_requested or 0)).quantize(Q2)),
-            'paid': str(paid(loan).quantize(Q2)), 'balance': str(balance(loan)), 'emi': str(Decimal(str(loan.emi_amount or 0)).quantize(Q2)),
-            'period': loan.repayment_period, 'months_paid': len(rows) - len(planned), 'months_left': len(planned),
+            'paid': str((paid(loan) - _wo).quantize(Q2)), 'balance': str(balance(loan)), 'emi': str(Decimal(str(loan.emi_amount or 0)).quantize(Q2)),
+            'period': loan.repayment_period, 'months_paid': len([r for r in rows if r['state'] not in ('planned', 'paused', 'skipped')]),
+            'months_left': len(planned), 'terms': _v16711_t, 'rule': _v16711_r,   # v1.67.11 (loans)
             'last_month': planned[-1]['month'] if planned else None, 'pause_start': loan.pause_start_date, 'resume_date': loan.resume_date,
             'schedule': rows,
-            'events': [{'kind': ('Balance carried on' if e.kind == 'carry' else e.get_kind_display()), 'date': e.date, 'amount': str(e.amount), 'new_emi': str(e.new_emi) if e.new_emi is not None else '',
+            'events': [{'kind': e.get_kind_display(), 'code': e.kind, 'date': e.date,   # v1.67.11 (loans): 'carry' is a kind of the model now 'amount': str(e.amount), 'new_emi': str(e.new_emi) if e.new_emi is not None else '',
                         'balance_after': str(e.balance_after) if e.balance_after is not None else '', 'note': e.note, 'by': e.user_name}
                        for e in LoanEvent.objects.filter(loan_id=loan.pk)]}
 

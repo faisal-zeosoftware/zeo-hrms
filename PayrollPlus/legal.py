@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
 """v1.59.0 – date-versioned legal rules.
 
 * LegalRate              – a legal figure used by the code (KNOWN_RATES) with a value from a date; without a row the
@@ -17,39 +18,40 @@ from django.apps import apps
 M = apps.get_model
 
 KNOWN_RATES = {
+    # v1.67.12 (effective, item 249): "first insured" (the employee's date first insured, else the joining date) instead of "joined"
     'ae_gpssa_employee_new': {'country': 'AE', 'default': Decimal('0.11'),
-                              'label': 'GPSSA employee rate – joined on / after 31 Oct 2023 (fraction, 0.11 = 11 %)'},
+                              'label': 'GPSSA employee rate – first insured on / after 31/10/2023 (fraction, 0.11 = 11 %)'},
     'ae_gpssa_employee_old': {'country': 'AE', 'default': Decimal('0.05'),
-                              'label': 'GPSSA employee rate – joined before 31 Oct 2023 (fraction)'},
+                              'label': 'GPSSA employee rate – first insured before 31/10/2023 (fraction)'},
     'ae_gpssa_employer': {'country': 'AE', 'default': Decimal('0.125'),
                           'label': 'GPSSA employer rate, net of the government share (fraction)'},
     'ae_gpssa_salary_min': {'country': 'AE', 'default': Decimal('3000'), 'label': 'GPSSA contribution salary – minimum (AED / month)'},
     'ae_gpssa_salary_max': {'country': 'AE', 'default': Decimal('70000'), 'label': 'GPSSA contribution salary – maximum (AED / month)'},
-    # v1.62.3: the figures that differ for nationals insured before 31 Oct 2023 (old law, Federal Law 7/1999) and for new-law
+    # v1.62.3: the figures that differ for nationals insured before 31/10/2023 (old law, Federal Law 7/1999) and for new-law
     # employees with a contribution salary of AED 20,000 or more (no government share – the employer pays 15 %)
     'ae_gpssa_salary_min_old': {'country': 'AE', 'default': Decimal('1000'),
-                                'label': 'GPSSA contribution salary – minimum, joined before 31 Oct 2023 (AED / month)'},
+                                'label': 'GPSSA contribution salary – minimum, first insured before 31/10/2023 (AED / month)'},
     'ae_gpssa_salary_max_old': {'country': 'AE', 'default': Decimal('50000'),
-                                'label': 'GPSSA contribution salary – maximum, joined before 31 Oct 2023 (AED / month)'},
+                                'label': 'GPSSA contribution salary – maximum, first insured before 31/10/2023 (AED / month)'},
     'ae_gpssa_employer_full': {'country': 'AE', 'default': Decimal('0.15'),
-                               'label': 'GPSSA employer rate without the government share – joined on / after 31 Oct 2023 with a contribution salary at or above the limit below (fraction)'},
+                               'label': 'GPSSA employer rate without the government share – joined on / after 31/10/2023 with a contribution salary at or above the limit below (fraction)'},
     'ae_gpssa_subsidy_salary_limit': {'country': 'AE', 'default': Decimal('20000'),
-                                      'label': 'GPSSA – the government pays 2.5 % of the employer share below this contribution salary, joined on / after 31 Oct 2023 (AED / month)'},
+                                      'label': 'GPSSA – the government pays 2.5 % of the employer share below this contribution salary, joined on / after 31/10/2023 (AED / month)'},
     # v1.62.11 (item 229) ADPF – Abu Dhabi Pension Fund (UAE nationals employed in Abu Dhabi, instead of GPSSA).
-    # Sources: Abu Dhabi Law No. (18) of 2023 amending Law No. (2) of 2000, Official Gazette of Abu Dhabi 1 Dec 2023 (abudhabi.gov.ae):
-    # Art. 15 – existing members 5 % / employer 15 %, members first covered from 1 Dec 2023 11 % / 15 %; Art. 1 – private sector pensionable
+    # Sources: Abu Dhabi Law No. (18) of 2023 amending Law No. (2) of 2000, Official Gazette of Abu Dhabi 01/12/2023 (abudhabi.gov.ae):
+    # Art. 15 – existing members 5 % / employer 15 %, members first covered from 01/12/2023 11 % / 15 %; Art. 1 – private sector pensionable
     # salary = the contract salary, minimum AED 6,000, maximum AED 100,000; Art. 4 Second (4) – in-service members AED 150,000. Confirmed by
     # u.ae (pensions and social security for UAE citizens: 11 % / 15 %, AED 100,000 for new entrants), Zoho Payroll UAE (ADPF 11 % / 15 %,
-    # AED 100,000, from 1 Dec 2023) and Sovereign Group (ADPF: 11 % / 5 %, AED 100,000 / 150,000).
+    # AED 100,000, from 01/12/2023) and Sovereign Group (ADPF: 11 % / 5 %, AED 100,000 / 150,000).
     'ae_adpf_employee_new': {'country': 'AE', 'default': Decimal('0.11'),
-                             'label': 'ADPF employee rate – first insured on / after 1 Dec 2023 (fraction, 0.11 = 11 %)'},
-    'ae_adpf_employee_old': {'country': 'AE', 'default': Decimal('0.05'), 'label': 'ADPF employee rate – insured before 1 Dec 2023 (fraction)'},
+                             'label': 'ADPF employee rate – first insured on / after 01/12/2023 (fraction, 0.11 = 11 %)'},
+    'ae_adpf_employee_old': {'country': 'AE', 'default': Decimal('0.05'), 'label': 'ADPF employee rate – insured before 01/12/2023 (fraction)'},
     'ae_adpf_employer': {'country': 'AE', 'default': Decimal('0.15'), 'label': 'ADPF employer rate (fraction)'},
     'ae_adpf_salary_min': {'country': 'AE', 'default': Decimal('6000'), 'label': 'ADPF pensionable salary – minimum, private sector (AED / month)'},
     'ae_adpf_salary_max': {'country': 'AE', 'default': Decimal('100000'),
-                           'label': 'ADPF pensionable salary – maximum, first insured on / after 1 Dec 2023 (AED / month)'},
+                           'label': 'ADPF pensionable salary – maximum, first insured on / after 01/12/2023 (AED / month)'},
     'ae_adpf_salary_max_old': {'country': 'AE', 'default': Decimal('150000'),
-                               'label': 'ADPF pensionable salary – maximum, insured before 1 Dec 2023 (AED / month)'},
+                               'label': 'ADPF pensionable salary – maximum, insured before 01/12/2023 (AED / month)'},
     # v1.62.11 (item 229) DIFC DEWS – DIFC Employment Law No. 2 of 2019 (as amended by DIFC Law No. 4 of 2020 and DIFC Law Amendment Law
     # No. 1 of 2024), Art. 66(7): from the Qualifying Scheme Commencement Date (1 Feb 2020; the start date for later joiners) the employer
     # pays monthly 5.83 % of the Monthly Basic Wage for the first 5 years of service (service before the date included) and 8.33 % for each
@@ -71,15 +73,65 @@ KNOWN_RATES = {
                                        'label': 'DIFC DEWS – the contribution of the days the final settlement pays as salary (no payroll ran for them) is paid to the employee (1 = yes, 0 = no; to be confirmed)'},
 }
 
-ADPF_NEW_LAW = __import__('datetime').date(2023, 12, 1)   # v1.62.11 (item 229): Law 18/2023 in force from its publication on 1 Dec 2023
+ADPF_NEW_LAW = __import__('datetime').date(2023, 12, 1)   # v1.62.11 (item 229): Law 18/2023 in force from its publication on 01/12/2023
+GPSSA_NEW_LAW = __import__('datetime').date(2023, 10, 31)  # v1.67.12 (effective, item 249): Federal Decree-Law 57/2023 – first insured from 31/10/2023
+PENSION_KEY = 'v16712_pension_settings'                       # v1.67.12 (effective): ZeoApps.CompanyOption
+PENSION_DEFAULTS = {'gcc_counts': False}   # legal rule to confirm: insurance in another GCC scheme before 31/10/2023 keeps the old law
+
+
+def pension_settings():
+    """v1.67.12 (effective, item 249): {'gcc_counts': bool} – whether an earlier insurance in another GCC scheme (entered on the employee)
+    counts as "first insured" for the GPSSA old / new law. Legal rule to confirm – off by default (the joining date / GPSSA date decides)."""
+    out = dict(PENSION_DEFAULTS)
+    try:
+        o = M('ZeoApps', 'CompanyOption').objects.filter(key=PENSION_KEY).first()
+        if o is not None and isinstance(o.value, dict):
+            out.update({k: bool(o.value[k]) for k in PENSION_DEFAULTS if k in o.value})
+    except Exception:
+        pass
+    return out
+
+
+def save_pension_settings(data):
+    cur = pension_settings()
+    cur.update({k: bool(data[k]) for k in PENSION_DEFAULTS if k in (data or {})})
+    M('ZeoApps', 'CompanyOption').objects.update_or_create(key=PENSION_KEY, defaults={'value': cur})
+    return cur
+
+
+def pension_row(employee):
+    try:
+        return M('PayrollPlus', 'EmployeePension').objects.filter(employee_id=employee.pk).first()
+    except Exception:   # table not migrated yet
+        return None
+
+
+def insured_from(employee, scheme='gpssa'):
+    """v1.67.12 (effective, item 249): (day, basis) that decides old / new pension law – the day first insured with this scheme (or with
+    another GCC scheme when the company counts it), entered on the employee; else the joining date (as before 1.67.12).
+    basis: 'first_insured' / 'gcc' / 'joined'."""
+    row = pension_row(employee)
+    if row is not None and row.first_insured:
+        if row.scheme == scheme:
+            return row.first_insured, 'first_insured'
+        if row.scheme == 'gcc' and pension_settings()['gcc_counts']:
+            return row.first_insured, 'gcc'
+    return getattr(employee, 'emp_joined_date', None), 'joined'
+
+
+def pension_law(employee, scheme='gpssa'):
+    """{'law': 'old'|'new', 'from': day, 'basis': …, 'cut_off': day} for the employee form and the payslip basis."""
+    cut = GPSSA_NEW_LAW if scheme != 'adpf' else ADPF_NEW_LAW
+    d, basis = insured_from(employee, scheme)
+    return {'law': 'old' if (d and d < cut) else 'new', 'from': d, 'basis': basis, 'cut_off': cut}
 DEWS_START = __import__('datetime').date(2020, 2, 1)       # v1.62.11 (item 229): Qualifying Scheme Commencement Date (DIFC Law No. 4 of 2020)
 
 
 def adpf_terms(employee, base, on=None):
     """v1.62.11 (item 229) – the ADPF figures for one national: {'law': 'old'|'new', 'emp', 'er', 'base'} (base = contract salary,
-    kept between the minimum and the maximum of Payroll › Legal rates). 'New' = joined on / after 1 Dec 2023 (first insured from then;
+    kept between the minimum and the maximum of Payroll › Legal rates). 'New' = joined on / after 01/12/2023 (first insured from then;
     a national insured in the Fund before keeps the old rate – see the open points: no flag for an earlier registration yet)."""
-    joined = getattr(employee, 'emp_joined_date', None)
+    joined = insured_from(employee, 'adpf')[0]   # v1.67.12 (effective, item 249): first insured in the Fund when entered, else the joining date
     old = bool(joined and joined < ADPF_NEW_LAW)
     emp = rate('ae_adpf_employee_old' if old else 'ae_adpf_employee_new', on)
     er = rate('ae_adpf_employer', on)
@@ -116,13 +168,13 @@ def dews_terms(employee, basic, wage, on=None):
 
 def gpssa_terms(employee, base, on=None, scheme_emp=None, scheme_er=None, scheme_min=None, scheme_max=None):
     """v1.62.3 – the GPSSA figures for one national: {'law': 'old'|'new', 'emp': fraction, 'er': fraction, 'base': capped base}.
-    Joined before 31 Oct 2023 → old law: employee 5 %, employer 12.5 %, salary 1,000–50,000. On / after → new law: employee
+    Joined before 31/10/2023 → old law: employee 5 %, employer 12.5 %, salary 1,000–50,000. On / after → new law: employee
     11 %, employer 12.5 % (the government pays 2.5 %) below AED 20,000 and 15 % from 20,000, salary 3,000–70,000. Every
     figure comes from Payroll › Legal rates (built-in values otherwise); a statutory scheme's own rates are its new-law
     figures (scheme_*), so a company that entered different new-law rates keeps them."""
     from datetime import date as _date
-    joined = getattr(employee, 'emp_joined_date', None)
-    old = bool(joined and joined < _date(2023, 10, 31))
+    joined = insured_from(employee, 'gpssa')[0]   # v1.67.12 (effective, item 249): first insured with GPSSA when entered, else the joining date
+    old = bool(joined and joined < GPSSA_NEW_LAW)
     D = lambda v: Decimal(str(v))
     if old:
         emp = rate('ae_gpssa_employee_old', on)

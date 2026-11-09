@@ -170,6 +170,16 @@ def case(res, c, user):
     out['deleted_settlements'] = _ES.deleted_for(res.pk)
     out['eos_rules'] = {k: v for k, v in _ES.settings().items() if k in _ES.DEFAULTS}
     out['rights'] = rights(st, c, user)
+    try:   # v1.67.8 (fixes) items 3 / 14: department, designation and branch names in Arabic for an Arabic reader (screen and print)
+        from Translations.i18n import current_lang
+        if str(current_lang() or '').startswith('ar'):
+            from PrintTemplates.contexts import employee_ctx
+            ec = employee_ctx(e, 'ar')
+            for k in ('designation', 'department', 'branch'):
+                if ec.get(k):
+                    out[k] = ec[k]
+    except Exception:   # noqa: BLE001
+        pass
     return out
 
 

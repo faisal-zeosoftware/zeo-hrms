@@ -301,7 +301,7 @@ preg = app.reg(Reg(
     search=('number', 'name', 'arabic_name', 'legal_name', 'mobile', 'phone', 'email', 'tax_id', 'licence_no', 'search_keys', 'used_in'),
     filters=('kind', 'status', 'contact_type', 'nationality', 'country', 'credit_hold', 'einvoice_channel'),
     title='name', subtitle='number', check=partner_check, saver=partner_saver,
-    tables={'roles': [('role', 'Role', 'choice', PT.ROLE_CHOICES)],
+    tables={'roles': [('role', 'Role', 'choice', PT.role_choices_active, PT.ROLE_CHOICES)],   # v1.67.8 (fixes) item 7: the active apps' roles
             'other_phones': [('label', 'Label', 'text'), ('number', 'Number', 'text')],
             'addresses': [('label', 'Label', 'text'), ('address', 'Address', 'text'), ('country', 'Country', 'text')],
             'used_in': [('app', 'App', 'text'), ('record', 'Record', 'text'), ('number', 'Number', 'text'), ('name', 'Name', 'text'),
@@ -402,7 +402,7 @@ ITEM_FORM = ('kind', 'code', 'name', 'arabic_name', 'category', 'uom', 'barcode'
              'track_stock', 'min_qty', 'reorder_qty', 'valuation', 'standard_cost', 'hs_code', 'country_of_origin', 'weight_kg',
              'income_account', 'expense_account', 'stock_account', 'tax_category', 'exemption_reason', 'tags', 'description', 'is_active')
 
-app.reg(Reg('item', Product, 'Item', 'Items', 'Items',
+ireg = app.reg(Reg('item', Product, 'Item', 'Items', 'Items',
             cols=('number', 'code', 'name', 'kind', 'category', 'uom', 'sale_price', 'preferred_supplier', 'apps_text', 'is_active'),
             form=ITEM_FORM, manage=EDIT, view=VIEW, create=('any_app',), restricted=('cost_price', 'purchase_price', 'standard_cost', 'stock_value'),
             can_restricted=lambda request, obj=None: app.any(request, *EDIT),
@@ -451,7 +451,7 @@ def location_saver(o, request, creating, old):
     return o
 
 
-app.reg(Reg('location', SharedLocation, 'Store / location', 'Stores and locations', 'Places',
+lreg = app.reg(Reg('location', SharedLocation, 'Store / location', 'Stores and locations', 'Places',
             cols=('number', 'code', 'name', 'kind', 'parent', 'branch', 'apps_text', 'is_active'),
             form=('name', 'code', 'kind', 'parent', 'branch', 'address', 'is_active'), manage=EDIT, view=VIEW, create='manage',
             search=('number', 'code', 'name', 'address'), filters=('kind', 'is_active', 'branch'), title='name', subtitle='number',
@@ -491,3 +491,9 @@ def daily():
 
 
 app.dashboard, app.my_work, app.daily = dashboard, my_work, daily
+
+
+# v1.67.8 (fixes) item 14: the "Used in" rows and the apps / roles columns are stored in English – shown in the reader's language
+for _r in (preg, ireg, lreg):
+    _r.translate_tables = {'used_in': ('app', 'record', 'roles', 'active', 'name')}
+    _r.translate_cols = ('apps_text', 'roles_text')

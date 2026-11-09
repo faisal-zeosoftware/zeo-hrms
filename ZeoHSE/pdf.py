@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Printable permit to work (A4) with a QR code that opens the live permit – the paper copy at the work place is
 checked against the system, so a closed or suspended permit cannot be used from an old print."""
 from io import BytesIO
@@ -34,7 +35,7 @@ class QR(Flowable):
 def _t(v):
     if not v:
         return '-'
-    return timezone.localtime(v).strftime('%d %b %Y %H:%M') if hasattr(v, 'hour') else v.strftime('%d %b %Y')
+    return timezone.localtime(v).strftime('%d/%m/%Y %H:%M') if hasattr(v, 'hour') else v.strftime('%d/%m/%Y')
 
 
 def link_for(p, request):

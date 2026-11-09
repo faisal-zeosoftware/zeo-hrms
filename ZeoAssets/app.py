@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """ZEO Asset Management on the app kit (v1.33.0).
 
 One shared register with HR → Assets: every card is an HR asset (OrganisationManager.Asset + AssetPlus profile).
@@ -271,7 +272,7 @@ def a_capitalise(o, request, f):
                                                                          depreciation_start=upd.get('depreciation_start') or o.depreciation_start)
         AssetCard.objects.filter(pk=o.pk).update(**upd)
         uncapitalised(o).update(capitalised=True)
-    SV.S().log_event(o.hr_asset_id, 'capitalised', f'Capitalised in Asset Management on {on:%d %b %Y}: cost {cur()} {cost}', request.user)
+    SV.S().log_event(o.hr_asset_id, 'capitalised', f'Capitalised in Asset Management on {on:%d/%m/%Y}: cost {cur()} {cost}', request.user)
     app.event('asset', o.pk, f'Capitalised on {d(on)} – cost {cur()} {cost:,.2f}' + (f' (added {cur()} {add:,.2f})' if add else ''), request.user)
     return SV.refresh(AssetCard.objects.get(pk=o.pk))
 

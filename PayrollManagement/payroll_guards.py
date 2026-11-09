@@ -74,6 +74,36 @@ def save_net_settings(keep=None, pct='__keep__'):
     return net_settings()
 
 
+def limit_of(st=None):
+    """v1.67.11 (loans, item 51): {'legal_pct', 'loan_pct', 'advance_pct'} – the legal monthly deduction limit (UAE: 50 % of the wage,
+    Decree-Law 33/2021 Art. 25(2); on for UAE companies) and the own shares of loans / advances (company settings)."""
+    try:
+        from PayrollPlus.lending import limits
+        return limits()
+    except Exception:
+        return {'legal_pct': None, 'loan_pct': None, 'advance_pct': None}
+
+
+def room_of(gross, st=None, lim=None):
+    """(how much a payslip may deduct, why) – the least of: the gross (keep net pay at or above 0), the company's maximum %, the legal
+    limit. (gross, 'none') when nothing limits."""
+    st = st or net_settings()
+    lim = lim or limit_of(st)
+    g = max(_d(gross), Decimal('0'))
+    room, why = None, 'none'
+    if st['keep_net_positive']:
+        room, why = g, 'net'
+        if st['max_deduction_pct'] is not None:
+            v = (g * st['max_deduction_pct'] / 100).quantize(Q2, ROUND_HALF_UP)
+            if v < room:
+                room, why = v, 'company'
+    if lim['legal_pct'] is not None:
+        v = (g * lim['legal_pct'] / 100).quantize(Q2, ROUND_HALF_UP)
+        if room is None or v < room:
+            room, why = v, 'legal'
+    return (g if room is None else room), why
+
+
 # ------------------------------------------------------------------ notes of a payslip
 def notes_of(payslip_id):
     return _opt(_NOTES.format(payslip_id), {}) or {}
@@ -104,6 +134,20 @@ def warnings_of(payslip):
         out.append(tr('{0} pays {1} requests: {2}.', r.get('name', ''), len(r.get('refs') or []), ', '.join(r.get('refs') or [])))
     for c in n.get('loan_carry', []):   # v1.62.11 (item 259): a loan balance left after the last planned instalment
         out.append(tr('Loan balance carried on: {0} left', f"{_d(c.get('left')):,.2f}") + f" ({c.get('loan', '')})")
+    for lm in n.get('limit', []):   # v1.67.11 (loans, item 51): what the deduction limit cut, and why
+        why = {'legal': tr('the legal limit of {0} % of the wage (UAE Labour Law, Decree-Law 33/2021 Art. 25(2))', lm.get('pct') or '50'),
+               'net': tr('Keep net pay at or above 0'), 'company': tr('the company\'s maximum deductions %')}.get(lm.get('why'), '')
+        if why:
+            out.append(tr('Deductions are limited to {0} of a gross of {1}: {2}.', f"{_d(lm.get('room')):,.2f}", f"{_d(lm.get('gross')):,.2f}", why))
+        for c in lm.get('lines', []):
+            share = {'share_loan': tr('the loans\' share of the wage'), 'share_advance': tr('the advances\' share of the wage')}.get(c.get('why'))
+            if c.get('kind') in ('loan', 'advance'):
+                out.append(tr('{0} {1}: {2} not deducted – added to next month\'s instalment.', c.get('name', ''), c.get('ref', ''),
+                              f"{_d(c.get('cut')):,.2f}") + (f' ({share})' if share else ''))
+    for c in n.get('loan_info', []):   # v1.67.11 (loans): a loan not deducted this month and why (month skipped, not paid out yet)
+        out.append(c.get('text', ''))
+    for c in n.get('advance_info', []):   # v1.67.11 (loans, item 115): an advance repaid in instalments
+        out.append(tr('Salary advance {0}: instalment {1} deducted, {2} left.', c.get('advance', ''), f"{_d(c.get('amount')):,.2f}", f"{_d(c.get('left')):,.2f}"))
     for r in n.get('recoveries', []):   # v1.63.0 (item 28): each recovery instalment and the balance left
         out.append(tr('Recovery {0} ({1}): {2} deducted, {3} left.', r.get('ref', ''), r.get('name', ''), f"{_d(r.get('amount')):,.2f}",
                       f"{_d(r.get('left')):,.2f}"))
@@ -242,26 +286,46 @@ def apply(payslip, employee):
             for x in pending:
                 x['status'], x['included_payslip'] = 'included', payslip.pk
     carried = None
-    if st['keep_net_positive']:
+    lim = limit_of(st)   # v1.67.11 (loans, item 51): the legal deduction limit (UAE 50 % of the wage) and the shares of loans / advances
+    if st['keep_net_positive'] or lim['legal_pct'] is not None or lim['loan_pct'] is not None or lim['advance_pct'] is not None:
         lines = list(PC.objects.filter(payslip=payslip).select_related('component'))
         gross = sum((_d(x.amount) for x in lines if x.component.show_in_payslip and x.component.component_type == 'addition'), Decimal('0'))
         ded = [x for x in lines if x.component.show_in_payslip and x.component.component_type == 'deduction' and _d(x.amount) > 0]
         total = sum((_d(x.amount) for x in ded), Decimal('0'))
-        room = max(gross, Decimal('0'))
-        if st['max_deduction_pct'] is not None:
-            room = min(room, (gross * st['max_deduction_pct'] / 100).quantize(Q2, ROUND_HALF_UP))
-        if total > room:
+        room, why = room_of(gross, st, lim)
+        share = {k: (max(gross, Decimal('0')) * lim[f'{k}_pct'] / 100).quantize(Q2, ROUND_HALF_UP) for k in ('loan', 'advance') if lim[f'{k}_pct'] is not None}
+        over_share = any(sum((_d(x.amount) for x in ded if _kind(x.component)[1] == k), Decimal('0')) > v for k, v in share.items())
+        if total > room or over_share:
             ded.sort(key=lambda x: (_kind(x.component)[0], x.pk))
-            left, out_lines = room, []
+            left, out_lines, limit_lines = room, [], []
             for x in ded:
                 a = _d(x.amount)
+                k = _kind(x.component)[1]
                 take = min(a, max(left, Decimal('0')))
+                reason = why
+                if k in share and take > share[k]:
+                    take, reason = max(share[k], Decimal('0')), ('share_' + k)
                 left -= take
+                if k in share:
+                    share[k] -= take
                 if take < a:
-                    out_lines.append({'component_id': x.component_id, 'name': x.component.name, 'kind': _kind(x.component)[1],
-                                      'amount': str((a - take).quantize(Q2))})
                     x.amount = take.quantize(Q2)
                     x.save(update_fields=['amount'])
+                    if k in ('loan', 'advance'):
+                        # v1.67.11 (loans): the loan / advance keeps what was not deducted – it is added to its next instalment
+                        try:
+                            from PayrollPlus.lending import cut as _v16711_cut
+                            for c in _v16711_cut(payslip, k, a - take, reason):
+                                limit_lines.append({**c, 'name': x.component.name, 'why': reason})
+                            continue
+                        except ImportError:
+                            pass
+                    out_lines.append({'component_id': x.component_id, 'name': x.component.name, 'kind': k,
+                                      'amount': str((a - take).quantize(Q2)), 'why': reason})
+            if limit_lines or out_lines:
+                _add_note(payslip.pk, 'limit', {'why': why, 'gross': str(gross.quantize(Q2)), 'room': str(room.quantize(Q2)),
+                                                'pct': str(lim['legal_pct']) if lim['legal_pct'] is not None else '',
+                                                'lines': limit_lines + [{**o, 'cut': o['amount']} for o in out_lines]})
             amt = sum((_d(o['amount']) for o in out_lines), Decimal('0')).quantize(Q2)
             if amt > 0:
                 run = payslip.payroll_run

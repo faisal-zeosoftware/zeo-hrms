@@ -15,6 +15,9 @@ def _emp(lang):
 
 
 def sample(doc_type, lang='en'):
+    from . import appdocs as _AD   # v1.67.6 (setup) item 6
+    if doc_type in _AD.BY_KEY:
+        return _AD.sample_ctx(doc_type, lang)
     c = base(doc_type, lang)
     if not c['company'].get('name'):
         c['company'].update(name='Golden Dune Integrated Services LLC', initials='GD')

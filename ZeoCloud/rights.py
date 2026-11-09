@@ -64,16 +64,33 @@ def apply(utp, schema=None):
     ov = access_of(getattr(utp, 'profile_id', None), schema)
     cm = _copies(schema or current_schema())
     if ov is None:
+        # v1.67.7 (admin): the administrator flag of the open company (ZeoCloud.CompanyAdmin) – the stored flag is shared by
+        # all companies of the login and only says "administrator somewhere"
+        sch = schema or current_schema()
+        if sch and getattr(utp, 'profile_id', None):
+            try:
+                from .companyadmin import is_admin as _ca_admin
+                utp.is_superuser = _ca_admin(utp.profile_id, sch)
+            except Exception:
+                pass
         # v1.62.0 isolation: a login of several companies keeps the shared standard group in its (shared) rights row; in a
         # company that has its own copy of that group, the copy's rights apply instead – never in the other companies
-        if cm and getattr(utp, 'pk', None):
+        # v1.67.7 (admin): and the groups OTHER companies gave the login (their "Company administrators" group, their own
+        # roles) give no rights here – the administrator of one company is not an administrator (nor holds its rights) in
+        # the login's other companies
+        try:
+            from ZeoApps.groupscope import foreign_ids
+            fx = foreign_ids() if (schema or current_schema()) == current_schema() else set()
+        except Exception:
+            fx = set()
+        if (cm or fx) and getattr(utp, 'pk', None):
             from django.contrib.auth.models import Group
             ids = list(utp.groups.through.objects.filter(usertenantpermissions_id=utp.pk).values_list('group_id', flat=True))
-            if any(i in cm for i in ids):
+            if any(i in cm or i in fx for i in ids):
                 cache = getattr(utp, '_prefetched_objects_cache', None)
                 if cache is None:
                     cache = utp._prefetched_objects_cache = {}
-                cache['groups'] = Group.objects.filter(pk__in=[cm.get(i, i) for i in ids])
+                cache['groups'] = Group.objects.filter(pk__in=[cm.get(i, i) for i in ids if i not in fx])
         return utp
     from django.contrib.auth.models import Group, Permission
     admin, names = ov
@@ -111,8 +128,6 @@ def install():
 
 def is_admin(user, schema=None):
     """Company administrator in the open company (the overlay included)."""
-    from tenant_users.permissions.models import UserTenantPermissions as UTP
-    ov = access_of(user.pk, schema)
-    if ov is not None:
-        return ov[0]
-    return UTP.objects.filter(profile=user, is_superuser=True).exists()
+    # v1.67.7 (admin): per company (ZeoCloud/companyadmin.py) – was the shared flag, the same in every company of the login
+    from .companyadmin import is_admin as _ca_admin
+    return _ca_admin(user, schema)

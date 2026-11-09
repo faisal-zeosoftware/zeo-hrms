@@ -917,6 +917,11 @@ class LoanApplicationviewset(viewsets.ModelViewSet):
                 document_number = doc_config.next_unused(LoanApplication)   # v1.37.1: skips numbers already used
 
             serializer.save(document_number=document_number)
+            # v1.67.11 (loans, items 112, 114): the amount asked, principal and profit, guarantor and consent of the new loan
+            _v = getattr(serializer, '_v16711', None)
+            if _v and _v.get('principal') is not None:
+                from PayrollPlus.lending import loan_created
+                loan_created(serializer.instance, _v['principal'], _v['months'], _v.get('guarantor'), bool(_v.get('consent')))
 
     def perform_update(self, serializer):
         # v1.62.3 (item 107): an edit of the amount / months that cannot match the instalments already deducted is refused by the
@@ -926,7 +931,19 @@ class LoanApplicationviewset(viewsets.ModelViewSet):
             serializer.save()
         except ValidationError as e:
             raise _DRFValidationError({'detail': ' '.join(e.messages)})
-
+        # v1.67.11 (loans): principal / profit of an edited amount; guarantor and consent
+        _v = getattr(serializer, '_v16711', None)
+        if _v:
+            from PayrollPlus import lending as L
+            t = L.terms_of(serializer.instance.pk)
+            if _v.get('principal') is not None:
+                t.principal = _v['principal']
+                t.interest = L.q2(serializer.instance.amount_requested) - _v['principal']
+            if _v.get('guarantor') is not None:
+                t.guarantor_id = int(_v['guarantor']) or None
+            if _v.get('consent') is not None:
+                t.consent = bool(_v['consent'])
+            t.save()
 
     @action(detail=False, methods=['get'], url_path='paused-loans')
     def paused_loans(self, request):
@@ -998,6 +1015,19 @@ class LoanApprovalviewset(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         approvals = self.get_object()
         note = request.data.get('note')  # Get the note from the request
+        # v1.67.11 (loans, item 114): the approver may approve a lower amount (and fewer months) – recorded, the employee is told
+        amt = request.data.get('approved_amount')
+        if amt not in (None, '') and approvals.loan_request is not None:
+            from PayrollPlus import lending as L
+            from rest_framework.exceptions import ValidationError as _DRFValidationError
+            try:
+                with transaction.atomic():
+                    L.approve_lower_loan(approvals.loan_request, amt, request.data.get('approved_months'), request.user, note or '')
+                    approvals.loan_request.refresh_from_db()
+                    approvals.approve(note=note)
+            except L.LendError as e:
+                raise _DRFValidationError(e.problems and {k: e.message for k in e.problems} or {'detail': e.message})
+            return Response({'status': 'approved', 'note': note, 'approved_amount': str(approvals.loan_request.amount_requested)}, status=status.HTTP_200_OK)
         approvals.approve(note=note)
         return Response({'status': 'approved', 'note': note}, status=status.HTTP_200_OK)
 
@@ -1525,6 +1555,18 @@ class AdvanceSalaryApprovalViewSet(viewsets.ModelViewSet):
         note = request.data.get('note')
         if approval.status != 'Pending':
             raise ValidationError("This approval has already been processed.")
+        amt = request.data.get('approved_amount')   # v1.67.11 (loans, item 114): a lower amount approved – recorded, the employee is told
+        if amt not in (None, ''):
+            from PayrollPlus import lending as L
+            from rest_framework.exceptions import ValidationError as _DRFValidationError
+            try:
+                with transaction.atomic():
+                    L.approve_lower_advance(approval.request, amt, request.user, note or '')
+                    approval.request.refresh_from_db()
+                    approval.approve(note=note)
+            except L.LendError as e:
+                raise _DRFValidationError(e.problems and {k: e.message for k in e.problems} or {'detail': e.message})
+            return Response({'status': 'approved', 'approved_amount': str(approval.request.requested_amount)}, status=status.HTTP_200_OK)
         approval.approve(note=note)
         return Response({'status': 'approved'}, status=status.HTTP_200_OK)
 
@@ -1775,6 +1817,18 @@ class AirticketApprovalViewSet(viewsets.ModelViewSet):
         note = request.data.get('note')
         if approval.status != 'Pending':
             raise ValidationError("This approval has already been processed.")
+        amt = request.data.get('approved_amount')   # v1.67.11 (loans, item 114): a lower amount approved – recorded, the employee is told
+        if amt not in (None, ''):
+            from PayrollPlus import lending as L
+            from rest_framework.exceptions import ValidationError as _DRFValidationError
+            try:
+                with transaction.atomic():
+                    L.approve_lower_advance(approval.request, amt, request.user, note or '')
+                    approval.request.refresh_from_db()
+                    approval.approve(note=note)
+            except L.LendError as e:
+                raise _DRFValidationError(e.problems and {k: e.message for k in e.problems} or {'detail': e.message})
+            return Response({'status': 'approved', 'approved_amount': str(approval.request.requested_amount)}, status=status.HTTP_200_OK)
         approval.approve(note=note)
         return Response({'status': 'approved'}, status=status.HTTP_200_OK)
 

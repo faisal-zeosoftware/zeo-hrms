@@ -85,6 +85,11 @@ class EmpBulkuploadSalaryStructureSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class LoanApplicationSerializer(serializers.ModelSerializer):
+    # v1.67.11 (loans, item 112): the guarantor (an employee) and the employee's written consent to the monthly deduction
+    # (Decree-Law 33/2021 Art. 25(1)(a)) – kept in PayrollPlus.LoanTerms (no new column in this core app)
+    guarantor = serializers.IntegerField(required=False, allow_null=True, write_only=True)
+    consent = serializers.BooleanField(required=False, write_only=True)
+
     class Meta:
         model = LoanApplication
         fields = '__all__'
@@ -96,13 +101,62 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
             rep['loan_type'] =instance.loan_type.loan_type
         if instance.branch:
             rep['branch'] =instance.branch.branch_name
+        try:   # v1.67.11 (loans): principal / profit / asked / approved amount, guarantor, months skipped, write-off, payout
+            from PayrollPlus.lending import loan_terms_public
+            rep['terms'] = loan_terms_public(instance)
+        except Exception:
+            pass
         return rep
+
+    def _v16711_check(self, data):
+        """v1.67.11 (loans, items 110, 111): the loan type's highest amount and months and its eligibility rules; with a flat profit
+        (item 112) the loan amount becomes principal + profit (the principal is what the limits look at)."""
+        try:
+            from PayrollPlus import lending as L
+        except ImportError:
+            return data
+        inst = self.instance
+        loan_type = data.get('loan_type') or getattr(inst, 'loan_type', None)
+        employee = data.get('employee') or getattr(inst, 'employee', None)
+        if not loan_type or not employee:
+            return data
+        months = data.get('repayment_period') if 'repayment_period' in data else getattr(inst, 'repayment_period', 0)
+        guarantor = data.pop('guarantor', None)
+        consent = data.pop('consent', None)
+        if inst is None:
+            principal = data.get('amount_requested') or 0
+            probs = L.check_loan(employee, loan_type, principal, months, data.get('emi_amount'), guarantor_id=guarantor)
+        else:
+            t = L.terms_of(inst.pk)
+            changed = any(k in data and data[k] != getattr(inst, k) for k in ('amount_requested', 'repayment_period', 'loan_type'))
+            if not changed:
+                self._v16711 = {'guarantor': guarantor, 'consent': consent}
+                return data
+            principal = data.get('amount_requested', inst.amount_requested)
+            if 'amount_requested' not in data or data['amount_requested'] == inst.amount_requested:
+                principal = L.d(inst.amount_requested) - L.d(t.interest)
+            probs = {k: v for k, v in L.check_loan(employee, loan_type, principal, months, data.get('emi_amount'), exclude_pk=inst.pk).items()
+                     if k in ('amount_requested', 'repayment_period')}   # the eligibility of a running loan is not asked again
+        if probs:
+            raise serializers.ValidationError(probs)
+        total = L.total_with_profit(loan_type, principal, months)
+        if total != L.q2(principal):
+            data['amount_requested'] = total
+            if data.get('emi_amount') in (None, ''):
+                data['emi_amount'] = L.q2(total / int(months or 1))
+        self._v16711 = {'principal': L.q2(principal), 'months': int(months or 0), 'guarantor': guarantor, 'consent': consent}
+        return data
+
     def validate(self, data):
         # Email is best-effort: the request is saved and the in-app notification is created even when
         # Settings -> Email Configuration is missing or incomplete (it used to block every request).
         warn_if_email_not_configured()
+        data = self._v16711_check(data)   # v1.67.11 (loans, items 110–112)
         loan_type = data.get('loan_type')
         employee = data.get('employee')
+        if self.instance is not None:   # v1.67.11 (loans): a partial edit (PATCH) keeps the loan's own type and employee
+            loan_type = loan_type or self.instance.loan_type
+            employee = employee or self.instance.employee
 
         # ---------------- BASIC CHECKS ----------------
         if not loan_type:
@@ -1312,7 +1366,22 @@ class DetailedPayslipSerializer(
 #                 })
 
 #         return combined
+V16711_RULE_FIELDS = ('min_service_months', 'not_in_probation', 'max_times_basic', 'max_instalment_pct', 'no_leavers', 'open_loans', 'interest',
+                      'interest_rate', 'guarantor')
+
+
 class LoanTypeSerializer(serializers.ModelSerializer):
+    # v1.67.11 (loans, items 111, 112): the loan type's eligibility, profit and guarantor rules – kept in PayrollPlus.LoanTypeRule
+    min_service_months = serializers.IntegerField(required=False, allow_null=True, write_only=True)
+    not_in_probation = serializers.BooleanField(required=False, write_only=True)
+    max_times_basic = serializers.DecimalField(max_digits=7, decimal_places=2, required=False, allow_null=True, write_only=True)
+    max_instalment_pct = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True, write_only=True)
+    no_leavers = serializers.BooleanField(required=False, write_only=True)
+    open_loans = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    interest = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    interest_rate = serializers.DecimalField(max_digits=6, decimal_places=3, required=False, allow_null=True, write_only=True)
+    guarantor = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
     class Meta:
         model = LoanType
         fields = '__all__'
@@ -1324,13 +1393,54 @@ class LoanTypeSerializer(serializers.ModelSerializer):
         if loan.exists():
             raise serializers.ValidationError({ f"{loan_type} is already exists."
         })
+        # v1.67.11 (loans, item 110): the highest amount and the months are limits the loan requests are checked against
+        if 'max_amount' in attrs and (attrs['max_amount'] is None or attrs['max_amount'] <= 0):
+            from Translations.i18n import tr as _tr
+            raise serializers.ValidationError({'max_amount': _tr('Enter the highest amount of a loan of this type (more than 0).')})
+        if 'repayment_period' in attrs and (attrs['repayment_period'] is None or attrs['repayment_period'] <= 0):
+            from Translations.i18n import tr as _tr
+            raise serializers.ValidationError({'repayment_period': _tr('Enter the longest repayment period in months (1 or more).')})
         return attrs
+
+    def _v16711_save(self, instance, rule):
+        if not rule:
+            return
+        try:
+            from PayrollPlus import lending as L
+        except ImportError:
+            return
+        try:
+            L.save_rule(instance.pk, rule)
+        except L.LendError as e:
+            raise serializers.ValidationError(e.problems and {k: e.message for k in e.problems} or {'detail': e.message})
+
+    def create(self, validated_data):
+        from django.db import transaction as _tx
+        rule = {k: validated_data.pop(k) for k in V16711_RULE_FIELDS if k in validated_data}
+        with _tx.atomic():
+            inst = super().create(validated_data)
+            self._v16711_save(inst, rule)
+        return inst
+
+    def update(self, instance, validated_data):
+        from django.db import transaction as _tx
+        rule = {k: validated_data.pop(k) for k in V16711_RULE_FIELDS if k in validated_data}
+        with _tx.atomic():
+            inst = super().update(instance, validated_data)
+            self._v16711_save(inst, rule)
+        return inst
+
     def to_representation(self, instance):
         rep = super(LoanTypeSerializer, self).to_representation(instance)
         rep['branch'] = [
             branch.branch_name
             for branch in instance.branch.all()
         ]
+        try:   # v1.67.11 (loans)
+            from PayrollPlus.lending import rule_dict
+            rep.update(rule_dict(instance.pk))
+        except Exception:
+            pass
         return rep
 
 # class LoanApplicationSerializer(serializers.ModelSerializer):
@@ -1769,9 +1879,50 @@ class SIFSerializer(serializers.Serializer):
     
 class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
     currency_details = serializers.SerializerMethodField()
+    # v1.67.11 (loans, item 115): the number of monthly instalments (PayrollPlus.AdvanceTerms)
+    instalments = serializers.IntegerField(required=False, allow_null=True, write_only=True, min_value=1, max_value=24)
     class Meta:
         model = AdvanceSalaryRequest
         fields = '__all__'
+
+    def _v16711_check(self, data):
+        """v1.67.11 (loans, item 115): % of the wage, one advance a month, instalments, not for leavers (on a new request; the amount
+        of an edit is checked against the % again)."""
+        try:
+            from PayrollPlus import lending as L
+        except ImportError:
+            return data
+        n = data.pop('instalments', None)
+        emp = data.get('employee') or getattr(self.instance, 'employee', None)
+        if emp is None:
+            return data
+        if self.instance is None:
+            probs = L.check_advance(emp, data.get('requested_amount') or 0, n or 1)
+        else:
+            if n is None:
+                n = L.adv_terms(self.instance.pk).instalments or 1
+            probs = {k: v for k, v in L.check_advance(emp, data.get('requested_amount', self.instance.requested_amount), n,
+                                                      exclude_pk=self.instance.pk).items() if k in ('requested_amount', 'instalments')
+                     and not (k == 'requested_amount' and 'One salary advance a month' in v)}
+        if probs:
+            raise serializers.ValidationError(probs)
+        self._v16711 = {'instalments': int(n or 1)}
+        return data
+
+    def save(self, **kwargs):
+        inst = super().save(**kwargs)
+        v = getattr(self, '_v16711', None)
+        if v:
+            try:
+                from PayrollPlus.lending import adv_terms
+                t = adv_terms(inst.pk)
+                if t.requested_amount is None:
+                    t.requested_amount = inst.requested_amount
+                t.instalments = v['instalments']
+                t.save()
+            except ImportError:
+                pass
+        return inst
     def get_currency_details(self, obj):
         request = self.context.get("request")
         if request and hasattr(request, "tenant") and request.tenant.currency:
@@ -1787,7 +1938,8 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
         # Email is best-effort: the request is saved and the in-app notification is created even when
         # Settings -> Email Configuration is missing or incomplete (it used to block every request).
         warn_if_email_not_configured()
-        employee = data.get('employee')
+        data = self._v16711_check(data)   # v1.67.11 (loans, item 115)
+        employee = data.get('employee') or getattr(self.instance, 'employee', None)   # v1.67.11 (loans): a PATCH keeps the employee
 
         if not employee:
             raise serializers.ValidationError({
@@ -1841,6 +1993,15 @@ class AdvanceSalaryRequestSerializer(serializers.ModelSerializer):
             rep['employee'] = instance.employee.emp_code
         if instance.branch:
             rep['branch']=instance.branch.branch_name
+        try:   # v1.67.11 (loans): instalments, what is deducted and left, asked / approved amount, payout
+            from PayrollPlus import lending as L
+            t = L.adv_terms(instance.pk)
+            rep['terms'] = {'instalments': t.instalments or 1, 'deducted': str(L.advance_taken(instance.pk)),
+                            'left': str(L.advance_left(instance)) if instance.status not in ('Deducted', 'Rejected', 'Cancelled') else '0.00',
+                            'requested_amount': str(t.requested_amount) if t.requested_amount is not None else None,
+                            'approved_amount': str(t.approved_amount) if t.approved_amount is not None else None, 'payout': t.payout or {}}
+        except Exception:
+            pass
         return rep
     
 class AdvanceSalaryApprovalSerializer(serializers.ModelSerializer):

@@ -710,6 +710,11 @@ class EmpSerializer(serializers.ModelSerializer):
         import re
         inst = self.instance
         errors = {}
+        # v1.67.6 (setup) item 9: one login – one employee (a login linked to a second employee is refused)
+        u = attrs.get('users')
+        if u is not None and emp_master.objects.filter(users=u).exclude(pk=getattr(inst, 'pk', None)).exists():
+            other = emp_master.objects.filter(users=u).exclude(pk=getattr(inst, 'pk', None)).first()
+            raise serializers.ValidationError({'users': [f'The login {u.username} already belongs to {other.emp_first_name or ""} {other.emp_last_name or ""} ({other.emp_code}).'.replace('  ', ' ')]})
 
         def now(k):
             return attrs[k] if k in attrs else (getattr(inst, k, None) if inst is not None else None)

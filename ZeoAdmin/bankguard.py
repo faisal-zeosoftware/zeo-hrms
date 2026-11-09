@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.62.0 – bank-detail changes need a second person (README-UPDATE 83.6) – the most common payroll fraud is an IBAN quietly
 changed to another account before the salary run.
 
@@ -175,7 +176,7 @@ def tell_employee(emp_id, number, by=None):
             return
         last4 = str(number or '')[-4:]
         who = (by.get_full_name() or by.username) if by is not None else 'HR'
-        when = timezone.localtime().strftime('%d %b %Y %H:%M')
+        when = timezone.localtime().strftime('%d/%m/%Y %H:%M')
         text = (f'Dear {e.emp_first_name or ""},\n\nYour bank details in ZEO were changed on {when} by {who}. Your salary will be paid to '
                 f'the account ending {last4 or "(none)"}.\n\nIf you did not ask for this change, contact HR at once.')
         to = e.emp_personal_email or e.emp_company_email

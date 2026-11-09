@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.16.0 – dashboard periods: one picker for the whole dashboard plus an override per card.
 
 Query parameters every dashboard endpoint accepts:
@@ -66,5 +67,5 @@ def label(a, b, today):
     if hit:
         return LABELS[hit]
     if a == b:
-        return a.strftime('%d %b %Y')
-    return f"{a.strftime('%d %b %Y')} – {b.strftime('%d %b %Y')}"
+        return a.strftime('%d/%m/%Y')
+    return f"{a.strftime('%d/%m/%Y')} – {b.strftime('%d/%m/%Y')}"

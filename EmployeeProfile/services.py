@@ -437,6 +437,8 @@ def ensure_info(emp, today=None):
     days, source, end = probation_plan(emp)
     info = EmploymentInfo(employee_id=emp.pk, probation_days=days, probation_source=source, probation_end_date=end)
     conf = emp.emp_date_of_confirmation
+    if conf and end and source == 'employment_type' and conf < end and conf == _branch_auto(emp):
+        conf = None   # v1.67.12 (effective, item 62): the date the form worked out from the branch, not a decision – the type's probation runs
     if end and end > today and not (conf and conf <= today and conf != end):
         info.probation_status, info.status = 'on_probation', 'probation'
     elif end or conf:
@@ -452,6 +454,7 @@ def ensure_info(emp, today=None):
             info.save()
     except IntegrityError:
         return EmploymentInfo.objects.get(employee_id=emp.pk)
+    fill_confirmation(emp, info)   # v1.67.12 (effective, item 62)
     # leaving already recorded through a resignation / end of service
     try:
         R = M('EmpManagement', 'EmployeeResignation')
@@ -503,6 +506,8 @@ def ensure_info_bulk(emps, today=None):
             end = min(end, emp.emp_joined_date + relativedelta(months=UAE_MAX_PROBATION_MONTHS))
         info = EmploymentInfo(employee_id=emp.pk, probation_days=days, probation_source=source, probation_end_date=end)
         conf = emp.emp_date_of_confirmation
+        if conf and end and source == 'employment_type' and conf < end and conf == _branch_auto(emp):
+            conf = None   # v1.67.12 (effective, item 62)
         if end and end > today and not (conf and conf <= today and conf != end):
             info.probation_status, info.status = 'on_probation', 'probation'
         elif end or conf:
@@ -549,7 +554,65 @@ def refresh_probation(emp, info, today=None):
         changed.append('status')
     if changed:
         info.save(update_fields=changed + ['updated_at'])
+    fill_confirmation(emp, info)   # v1.67.12 (effective, item 62)
     return info
+
+
+def _branch_auto(emp):
+    """The confirmation date emp_master.save() works out by itself: joining date + the branch's probation days (0 by default)."""
+    if not emp.emp_joined_date or not emp.emp_branch_id_id:
+        return None
+    days = getattr(emp.emp_branch_id, 'probation_period_days', None)
+    return emp.emp_joined_date + timedelta(days=days) if days is not None else None
+
+
+def fill_confirmation(emp, info):
+    """v1.67.12 (effective, item 62): the confirmation date follows the probation – an employee with a probation end date (employment
+    type / branch / extension) but no confirmation date, or with only the date the employee form works out from the branch (joining date
+    + branch days, the joining date itself when the branch has 0 days) while the employment type's probation runs longer, gets the
+    probation end date (a confirmed probation: the day it was confirmed). Before, a probation from the employment type left the
+    joining date as the confirmation date, so the "after probation" leave rules and loan checks treated the employee as confirmed from
+    the first day. Returns the date set, or None. A date HR entered (any other date) is never changed."""
+    if info is None or info.probation_status == 'failed':
+        return None
+    d = info.confirmed_on if info.probation_status == 'confirmed' and info.confirmed_on else info.probation_end_date
+    if not d:
+        return None
+    conf = emp.emp_date_of_confirmation
+    if conf == d:
+        return None
+    if conf and not (info.probation_status in ('on_probation', 'extended') and conf < d and conf == _branch_auto(emp)):
+        return None
+    _set_confirmation(emp, d)
+    return d
+
+
+def fill_confirmation_dates(today=None):
+    """v1.67.12 (effective, item 62): the daily leave job – active employees without a confirmation date or on probation."""
+    E = M('EmpManagement', 'emp_master')
+    on_prob = set(EmploymentInfo.objects.filter(probation_status__in=('on_probation', 'extended')).values_list('employee_id', flat=True))
+    qs = E.objects.filter(Q(emp_date_of_confirmation__isnull=True) | Q(pk__in=on_prob)).exclude(is_active=False).select_related('emp_branch_id')
+    n = 0
+    for e in qs:
+        try:
+            before = e.emp_date_of_confirmation
+            info = ensure_info(e, today)
+            fill_confirmation(e, info)
+            if e.emp_date_of_confirmation != before:
+                n += 1
+        except Exception:
+            log.exception('confirmation date of %s', e.pk)
+    return n
+
+
+def confirmation_missing(emp, info):
+    """v1.67.12 (effective, item 62): True when HR must set the confirmation date – no date on the employee and no probation plan
+    (no probation days on the employment type or the branch), or a probation that ended without a decision."""
+    if info is None or info.probation_status == 'failed' or info.status in LEAVING_STATUSES:
+        return False
+    if not emp.emp_date_of_confirmation and info.probation_status != 'confirmed':
+        return True
+    return info.probation_status in ('on_probation', 'extended') and bool(info.probation_end_date) and info.probation_end_date < date.today()
 
 
 def _set_confirmation(emp, d):
@@ -702,7 +765,9 @@ def employment_json(emp, info=None):
         'date_of_leaving': info.date_of_leaving, 'leaving_reason': info.leaving_reason, 'leaving_source': info.leaving_source,
         'unpaid_days_before_golive': info.unpaid_days_before_golive,
         'is_active': bool(emp.is_active), 'extensions': ext, 'limits': used,
-        'can_decide': info.probation_status in ('on_probation', 'extended') and info.status not in LEAVING_STATUSES,
+        'can_decide': (info.probation_status in ('on_probation', 'extended') or (info.probation_status == '' and not emp.emp_date_of_confirmation))
+                      and info.status not in LEAVING_STATUSES,   # v1.67.12 (effective, item 62): also to set a missing confirmation date
+        'confirmation_missing': confirmation_missing(emp, info),   # v1.67.12 (effective, item 62)
     }
 
 

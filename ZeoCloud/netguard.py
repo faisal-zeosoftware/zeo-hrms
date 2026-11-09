@@ -170,49 +170,107 @@ def _rules(user):
     from .security import policies_for
     ps = policies_for(user)
     if not ps:
-        return {'alert_new_signin': True, 'alert_lock': True}
-    return {'alert_new_signin': any(p.alert_new_signin for p in ps), 'alert_lock': any(p.alert_lock for p in ps)}
+        return {'alert_new_signin': True, 'alert_lock': True, 'alert_rule': 'any'}
+    return {'alert_new_signin': any(p.alert_new_signin for p in ps), 'alert_lock': any(p.alert_lock for p in ps),
+            # v1.67.6 (setup) item 13: the stricter rule wins – "any" (a new place, address or device) unless every company chose "both"
+            'alert_rule': 'both' if all(getattr(p, 'alert_rule', 'any') == 'both' for p in ps) else 'any'}
+
+
+def send_mail_for(user, subject, body, to, schema='', lang=None):
+    """v1.67.6 (setup) item 13: e-mail through the company mail connection (ZeoAdmin.schedules.mail_connection – Settings ›
+    E-mail of the company), as the payslip and sign-in code e-mails. A sign-in has no company yet: the company of the
+    sign-in when known, else the first of the user's companies with an active e-mail configuration, else the server's."""
+    from django.core.mail import EmailMessage
+    from django_tenants.utils import schema_context
+    from ZeoAdmin.schedules import mail_connection
+    order = [schema] if schema else []
+    try:
+        order += [c for c in user.tenants.exclude(schema_name='public').order_by('id').values_list('schema_name', flat=True) if c not in order]
+    except Exception:
+        pass
+    conn = sender = None
+    for sch in order:
+        try:
+            with schema_context(sch):
+                from django.apps import apps
+                if apps.get_model('EmpManagement', 'EmailConfiguration').objects.filter(is_active=True).exists():
+                    conn, sender = mail_connection()
+                    break
+        except Exception:
+            continue
+    if conn is None:
+        conn, sender = mail_connection() if not order else _server_connection()
+    if lang:   # v1.67.7 (admin): with an HTML part – right-to-left for Arabic
+        from .mailtext import message
+        message(subject, body, lang, sender, to, conn).send()
+        return True
+    EmailMessage(subject=subject, body=body, from_email=sender, to=list(to), connection=conn).send()
+    return True
+
+
+def _server_connection():
+    from django.conf import settings
+    from django.core.mail import get_connection
+    return get_connection(), getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'EMAIL_HOST_USER', None)
+
+
+WHY_TEXT = {'place': 'a new place', 'address': 'a new address', 'device': 'a new device', 'network': 'a new network'}
+
+
+def why_text(why, translate=False, lang=None):
+    parts = [WHY_TEXT.get(w, w) for w in (why or '').split(',') if w]
+    if translate or lang:   # v1.67.6 (setup) the screens show it in the user's language; v1.67.7 (admin) the e-mails too (lang)
+        try:
+            from Translations.i18n import tr
+            parts = [tr(x, lang=lang) if lang else tr(x) for x in parts]
+        except Exception:
+            pass
+    return ('، ' if lang == 'ar' else ', ').join(parts)
 
 
 def _mail(user, alert):
     if not getattr(user, 'email', ''):
         return False
-    from django.conf import settings
-    from django.core.mail import send_mail
-    when = timezone.localtime(alert.created_at).strftime('%d %b %Y %H:%M')
+    from .mailtext import T, lang_of
+    sch = getattr(alert, 'schema', '') or ''
+    L = lang_of(user, sch)   # v1.67.7 (admin): the user's own language (Arabic …), else the company's, else English
+    when = timezone.localtime(alert.created_at).strftime('%d/%m/%Y %H:%M')
     try:   # v1.62.0 the country, when the server has a country database
         from .geo import country_of
         cc = country_of(alert.ip)
     except Exception:
         cc = ''
     shown = f'{alert.ip} ({cc})' if cc else alert.ip
+    from .mailtext import device_text
+    dev = device_text(alert.device, L)
     if alert.kind == 'new_signin':
-        subj = 'ZEO: new sign-in to your account'
-        body = (f'Your ZEO account {user.email} was signed in to on {when} from {alert.device}, address {shown}.\n\n'
-                'If this was you, there is nothing to do. If it was not you, open My account › Sign-in alerts, choose "This was not me" '
-                '(all sign-ins are ended) and change your password.')
+        subj = T('ZEO: new sign-in to your account', L)
+        what = why_text(getattr(alert, 'why', ''), lang=L)   # v1.67.6 (setup) item 13
+        body = (T('Your ZEO account {0} was signed in to on {1} from {2}, address {3}.', L, user.email, when, dev, shown)
+                + (' ' + T('New: {0}.', L, what) if what else '') + '\n\n'
+                + T('If this was you, there is nothing to do. If it was not you, open My account › Sign-in alerts, choose "This was not me" (all sign-ins are ended) and change your password.', L))
     elif alert.kind == 'locked':
-        subj = 'ZEO: your account was locked after wrong passwords'
-        body = (f'Too many wrong passwords were typed for your ZEO account {user.email} (last from address {shown}, {when}). '
-                'The account is locked for a few minutes.\n\nIf this was not you, change your password after the lock ends.')
+        subj = T('ZEO: your account was locked after wrong passwords', L)
+        body = (T('Too many wrong passwords were typed for your ZEO account {0} (last from address {1}, {2}). The account is locked for a few minutes.', L, user.email, shown, when)
+                + '\n\n' + T('If this was not you, change your password after the lock ends.', L))
     else:
-        subj = 'ZEO: a sign-in from a network your company does not allow'
-        body = (f'Someone signed in with your password on {when} from address {shown} ({alert.device}); your company allows ZEO '
-                'only from its own networks, so the sign-in was refused.\n\nIf this was not you, change your password.')
-    try:
-        send_mail(subj, body, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [user.email], fail_silently=False)
-        return True
+        subj = T('ZEO: a sign-in from a network your company does not allow', L)
+        body = (T('Someone signed in with your password on {0} from address {1} ({2}); your company allows ZEO only from its own networks, so the sign-in was refused.', L, when, shown, dev)
+                + '\n\n' + T('If this was not you, change your password.', L))
+    try:   # v1.67.6 (setup) item 13: the company mail connection (was the server's default)
+        return send_mail_for(user, subj, body, [user.email], sch, lang=L)
     except Exception:
         log.exception('sign-in alert mail')
         return False
 
 
-def _alert(user, kind, ip='', agent='', sid='', schema=''):
+def _alert(user, kind, ip='', agent='', sid='', schema='', why=''):
     from .models import SignInAlert
-    # at most one alert of a kind per user and address a day
-    if SignInAlert.objects.filter(user=user, kind=kind, ip=ip, created_at__gte=timezone.now() - timedelta(days=1)).exists():
+    # at most one alert of a kind per user, address and device a day (v1.67.6: and device – a new phone on a known address)
+    if SignInAlert.objects.filter(user=user, kind=kind, ip=ip, device=device_of(agent)[:80], created_at__gte=timezone.now() - timedelta(days=1)).exists():
         return None
-    a = SignInAlert.objects.create(user=user, kind=kind, ip=ip[:60], agent=(agent or '')[:255], device=device_of(agent)[:80], sid=sid, schema=schema)
+    a = SignInAlert.objects.create(user=user, kind=kind, ip=ip[:60], agent=(agent or '')[:255], device=device_of(agent)[:80], sid=sid, schema=schema,
+                                   why=why[:120])
     if _mail(user, a):
         SignInAlert.objects.filter(pk=a.pk).update(emailed=True)
         a.emailed = True
@@ -227,13 +285,26 @@ def after_signin(user, session):
         return None
     from .models import LoginSession
     prev = list(LoginSession.objects.filter(user=user, created_at__gte=timezone.now() - timedelta(days=KNOWN_DAYS), impersonator__isnull=True)
-                .exclude(pk=session.pk).values_list('ip', 'agent')[:500])
+                .exclude(pk=session.pk).values_list('ip', 'agent', 'country')[:500])
     if not prev:
         return None   # the first sign-in is not "new"
     net, dev = network_of(session.ip), device_of(session.agent)
-    if any(network_of(i) == net for i, _ in prev) or any(device_of(a) == dev for _, a in prev):
+    rule = _rules(user).get('alert_rule', 'any')
+    if rule == 'both':   # before 1.67.6: only a new network AND a new device
+        if any(network_of(i) == net for i, _, _ in prev) or any(device_of(a) == dev for _, a, _ in prev):
+            return None
+        return _alert(user, 'new_signin', session.ip, session.agent, session.sid, session.schema, 'network,device')
+    # v1.67.6 (setup) item 13: a new place (country, when the server has the free country database), address or device
+    why = []
+    if session.country and session.country not in {c for _, _, c in prev if c}:
+        why.append('place')
+    if session.ip and session.ip not in {i for i, _, _ in prev}:
+        why.append('address')
+    if dev not in {device_of(a) for _, a, _ in prev}:
+        why.append('device')
+    if not why:
         return None
-    return _alert(user, 'new_signin', session.ip, session.agent, session.sid, session.schema)
+    return _alert(user, 'new_signin', session.ip, session.agent, session.sid, session.schema, ','.join(why))
 
 
 def after_lock(user):
@@ -258,7 +329,8 @@ def alert_json(a, with_user=False):
     except Exception:
         cc = ''
     out = {'id': a.id, 'kind': a.kind, 'kind_text': dict(a.KINDS).get(a.kind, a.kind), 'ip': a.ip, 'country': cc, 'device': a.device,
-           'created_at': a.created_at, 'emailed': a.emailed, 'status': a.status, 'answered_at': a.answered_at}
+           'created_at': a.created_at, 'emailed': a.emailed, 'status': a.status, 'answered_at': a.answered_at,
+           'why': getattr(a, 'why', ''), 'why_text': why_text(getattr(a, 'why', ''), True)}   # v1.67.6 (setup)
     if with_user:
         u = a.user
         out['user'] = (u.get_full_name() or u.username) if u else ''

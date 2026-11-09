@@ -70,13 +70,21 @@ def send_document_expiry_notifications_for_all_tenants():
         traceback.print_exc()
 
 
+def _dmy(d):
+    """v1.67.10 (regression): the date in a message dd/mm/yyyy (1.67.9 item 19) – the expiry notices said "on 2026-11-13"."""
+    try:
+        return d.strftime('%d/%m/%Y')
+    except AttributeError:
+        return str(d)
+
+
 def send_document_notification(document, expiry_date, status, settings):
     try:
         employee = document.emp_id
 
         message = (
             f"The document '{document.document_type}' of employee "
-            f"{employee.emp_first_name} {employee.emp_last_name} is {status} on {expiry_date}."
+            f"{employee.emp_first_name} {employee.emp_last_name} is {status} on {_dmy(expiry_date)}."   # v1.67.10 (regression): dd/mm/yyyy
         )
 
         context = {
@@ -133,7 +141,7 @@ def send_ess_user_notifications(employee_docs):
             doc_lines = []
             for doc, status in docs:
                 emp = doc.emp_id
-                line = f"{emp.emp_first_name} {emp.emp_last_name} - {doc.document_type} is {status} on {doc.emp_doc_expiry_date}"
+                line = f"{emp.emp_first_name} {emp.emp_last_name} - {doc.document_type} is {status} on {_dmy(doc.emp_doc_expiry_date)}"   # v1.67.10 (regression): dd/mm/yyyy
                 doc_lines.append(line)
             documents_summary = "\n".join(doc_lines)
 
@@ -179,7 +187,7 @@ def send_template_email(template_name, recipient_email, context):
             html_message = (
                 f"Dear {context.get('employee_first_name', 'Employee')},\n\n"
                 f"Your document '{context.get('document_type', '')}' is {context.get('status', '')} "
-                f"on {context.get('expiry_date', '')}.\n\nRegards,\nYour Company"
+                f"on {_dmy(context.get('expiry_date', ''))}.\n\nRegards,\nYour Company"   # v1.67.10 (regression): dd/mm/yyyy
             )
 
     plain_message = strip_tags(html_message)

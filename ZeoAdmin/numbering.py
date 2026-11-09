@@ -149,6 +149,12 @@ def active():
 
 def next_number(doc_type, branch, taken=None):
     """The next number of doc_type from the pattern, or None when the pattern is off."""
+    try:   # v1.67.6 (setup) item 4: the pattern covers the 28 HR / Payroll types; the other apps' series keep their own prefix
+        from ZeoApps.numbering import COMPANY_WIDE
+        if doc_type in COMPANY_WIDE:
+            return None
+    except Exception:
+        pass
     row = active()
     if row is None:
         return None

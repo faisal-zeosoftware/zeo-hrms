@@ -87,8 +87,15 @@ def groups_for(user):
         role = r.role if r else None
     if role:
         feat = server_group_allowed()
+        comps = _server_companies()
+        if role == 'admin':   # v1.67.8 (fixes) item 11: not the companies where this system administrator was switched off
+            try:
+                from ZeoCloud.companyadmin import switched_off
+                comps = [c for c in comps if not switched_off(user, c.schema_name)]
+            except Exception:   # noqa: BLE001
+                pass
         out.append({'key': 'server', 'name': getattr(settings, 'ZEO_SERVER_NAME', '') or _tr('All companies'), 'role': role,
-                    'features': feat, 'account_id': None, 'plan': 'Enterprise', 'companies': _server_companies(),
+                    'features': feat, 'account_id': None, 'plan': 'Enterprise', 'companies': comps,
                     'locked': '' if feat else _tr('Not in this licence')})
     return out
 

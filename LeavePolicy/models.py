@@ -203,6 +203,8 @@ class LeaveTypeRule(models.Model):
     nursing_breaks = models.BooleanField(default=False)
     # item 97 – not refused / warned during the notice period (e.g. sick leave)
     notice_exempt = models.BooleanField(default=False)
+    # v1.67.12 (effective, item 62): how far below zero a balance may go when negative balance is allowed (empty = no limit, as before)
+    negative_limit = models.FloatField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
 

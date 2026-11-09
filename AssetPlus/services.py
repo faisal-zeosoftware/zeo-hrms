@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """AssetPlus business rules (v1.12.0). Views call these; every change writes one AssetEvent."""
 import contextvars
 import logging
@@ -379,8 +380,8 @@ def allocate(asset, user, *, employee_id=None, target_type='employee', branch_id
             x.handover_file = handover_file
             x.save(update_fields=['handover_file'])
         if not transfer:
-            log_event(asset.pk, 'allocated', f'Given to {person(e)} on {assigned_date:%d %b %Y}'
-                      + (f', expected back {expected_return_date:%d %b %Y}' if expected_return_date else ''),
+            log_event(asset.pk, 'allocated', f'Given to {person(e)} on {assigned_date:%d/%m/%Y}'
+                      + (f', expected back {expected_return_date:%d/%m/%Y}' if expected_return_date else ''),
                       user, e.pk, ('allocation', alloc.pk))
         notify(e, tmsg('{0} has been allocated to you. Please confirm you received it in My assets.', asset.name) if settings.require_acknowledgement
                else tmsg('{0} has been allocated to you.', asset.name))
@@ -404,7 +405,7 @@ def allocate(asset, user, *, employee_id=None, target_type='employee', branch_id
         AssetProfile.objects.filter(asset_id=asset.pk).update(branch_id=branch_id, **({'location': location} if location else {}))
     if not transfer:
         h = holder(asset.pk)
-        log_event(asset.pk, 'allocated', f'Given to {s.get_target_type_display().lower()} {h["name"] if h else ""} on {assigned_date:%d %b %Y}',
+        log_event(asset.pk, 'allocated', f'Given to {s.get_target_type_display().lower()} {h["name"] if h else ""} on {assigned_date:%d/%m/%Y}',
                   user, custodian_employee_id, ('shared', s.pk))
     return s
 
@@ -490,7 +491,7 @@ def complete_return(asset, user, *, return_date=None, condition='healthy', acces
             asset.status, asset.condition = 'available', condition
             asset.save(update_fields=['status', 'condition'])
     who = person(a.employee) if a else (holder_label_shared(s))
-    bits = [f'Returned by {who} on {return_date:%d %b %Y}', f'condition {condition.replace("_", " ")}']
+    bits = [f'Returned by {who} on {return_date:%d/%m/%Y}', f'condition {condition.replace("_", " ")}']
     if not accessories_returned:
         bits.append(f'missing: {missing_items}')
     log_event(asset.pk, 'returned', ', '.join(bits), user, r.employee_id, ('return', r.pk))
@@ -624,7 +625,7 @@ def execute_transfer(t, asset, user):
     t.status = 'completed'
     t.completed_at = timezone.now()
     t.save()
-    log_event(asset.pk, 'transferred', f'Transferred {_party("from", t)} → {_party("to", t)} on {t.transfer_date:%d %b %Y} ({t.number})', user,
+    log_event(asset.pk, 'transferred', f'Transferred {_party("from", t)} → {_party("to", t)} on {t.transfer_date:%d/%m/%Y} ({t.number})', user,
               t.to_employee_id or t.from_employee_id, ('transfer', t.pk))
     for eid in {t.from_employee_id, t.to_employee_id} - {None}:
         notify(emp(eid), tmsg('{0} has been transferred ({1}).', asset.name, t.number))
@@ -742,7 +743,7 @@ def close_maintenance(r, user, *, end_date=None, cost=None, downtime_hours=None,
             s.save()
     log_event(asset.pk, 'maintenance_cancelled' if cancel else 'maintenance_done',
               (f'Maintenance {r.number} cancelled' if cancel else
-               f'Maintenance {r.number} completed on {end_date:%d %b %Y}: {r.get_result_display()}, cost {money(r.cost)}, downtime {r.downtime_hours} h'),
+               f'Maintenance {r.number} completed on {end_date:%d/%m/%Y}: {r.get_result_display()}, cost {money(r.cost)}, downtime {r.downtime_hours} h'),
               user, None, ('maintenance', r.pk))
     return r
 
@@ -948,7 +949,7 @@ def report_loss(asset, user, *, employee_id=None, loss_date=None, kind='lost', d
             asset.save(update_fields=['status'])
     prof.extra_status = 'lost'
     prof.save(update_fields=['extra_status'])
-    log_event(asset.pk, 'lost', f'{l.get_kind_display()} on {loss_date:%d %b %Y} ({l.number})' + (f' at {place}' if place else '')
+    log_event(asset.pk, 'lost', f'{l.get_kind_display()} on {loss_date:%d/%m/%Y} ({l.number})' + (f' at {place}' if place else '')
               + (f', police report {police_report_no}' if police_report_no else '') + f': {l.description}', user, employee_id, ('loss', l.pk))
     notify_hr(asset_branch(asset, prof), tmsg('{0} reported {1} ({2}) – waits for approval.', asset.name, kind, l.number))
     return l
@@ -998,7 +999,7 @@ def mark_found(l, user, found_on=None, note=''):
         asset.status = 'available'
         with quiet():
             asset.save(update_fields=['status'])
-    log_event(asset.pk, 'found', f'Found on {l.found_on:%d %b %Y} ({l.number})' + (f', {cancelled} pending deduction(s) cancelled' if cancelled else '')
+    log_event(asset.pk, 'found', f'Found on {l.found_on:%d/%m/%Y} ({l.number})' + (f', {cancelled} pending deduction(s) cancelled' if cancelled else '')
               + (f': {note}' if note else ''), user, l.employee_id, ('loss', l.pk))
     return l
 
@@ -1129,7 +1130,7 @@ def decide_disposal(d, user, approve, note=''):
         asset.save(update_fields=['status'])
     MaintenanceSchedule.objects.filter(asset_id=asset.pk).update(active=False)
     word = 'gain' if d.gain_loss > 0 else ('loss' if d.gain_loss < 0 else 'no gain or loss')
-    log_event(asset.pk, 'disposed', f'Disposed by {d.get_method_display().lower()} on {d.disposal_date:%d %b %Y} ({d.number}): value {d.value}, '
+    log_event(asset.pk, 'disposed', f'Disposed by {d.get_method_display().lower()} on {d.disposal_date:%d/%m/%Y} ({d.number}): value {d.value}, '
               f'book value {d.book_value}, {word} {abs(d.gain_loss) if d.gain_loss else ""}'.rstrip(), user, None, ('disposal', d.pk))
     return d
 
@@ -1141,7 +1142,7 @@ def clearance(employee_id):
     for a in Allocation().objects.filter(employee_id=employee_id, returned_date__isnull=True).select_related('asset'):
         p = AssetProfile.objects.filter(asset_id=a.asset_id).first()
         items.append({'kind': 'asset', 'asset_id': a.asset_id, 'asset': a.asset.name, 'code': p.asset_code if p else '',
-                      'since': a.assigned_date, 'text': f'{a.asset.name} is still with the employee (since {a.assigned_date:%d %b %Y})' if a.assigned_date else f'{a.asset.name} is still with the employee'})
+                      'since': a.assigned_date, 'text': f'{a.asset.name} is still with the employee (since {a.assigned_date:%d/%m/%Y})' if a.assigned_date else f'{a.asset.name} is still with the employee'})
     for s in SharedAllocation.objects.filter(custodian_employee_id=employee_id, returned_date__isnull=True):
         a = Asset().objects.filter(pk=s.asset_id).first()
         items.append({'kind': 'custody', 'asset_id': s.asset_id, 'asset': a.name if a else '', 'since': s.assigned_date,
@@ -1256,7 +1257,7 @@ def daily_reminders(on=None):
         due = schedule_due(s, p, on)
         key = f'{s.next_due_date or s.next_due_reading}'
         if due and s.reminded_for != key:
-            when = f'on {s.next_due_date:%d %b %Y}' if s.next_due_date else f'at {s.next_due_reading} {s.get_interval_type_display().lower()}'
+            when = f'on {s.next_due_date:%d/%m/%Y}' if s.next_due_date else f'at {s.next_due_reading} {s.get_interval_type_display().lower()}'
             notify_hr(asset_branch(a, p), tmsg('Maintenance "{0}" of {1} is {2} ({3}).', s.title, a.name, "overdue" if due == "overdue" else "due", when))
             s.reminded_for = key
             s.save(update_fields=['reminded_for'])
@@ -1266,7 +1267,7 @@ def daily_reminders(on=None):
         if on <= p.warranty_end <= on + timedelta(days=days) and p.warranty_reminded_for != p.warranty_end:
             a = A.objects.filter(pk=p.asset_id).exclude(status='disposed').first()
             if a:
-                notify_hr(asset_branch(a, p), tmsg('Warranty of {0} ({1}) ends on {2:%d %b %Y}.', a.name, p.asset_code, p.warranty_end))
+                notify_hr(asset_branch(a, p), tmsg('Warranty of {0} ({1}) ends on {2:%d/%m/%Y}.', a.name, p.asset_code, p.warranty_end))
                 out['warranty'] += 1
             p.warranty_reminded_for = p.warranty_end
             p.save(update_fields=['warranty_reminded_for'])
@@ -1274,15 +1275,15 @@ def daily_reminders(on=None):
         if on <= p.insurance_expiry <= on + timedelta(days=settings.warranty_reminder_days) and p.insurance_reminded_for != p.insurance_expiry:
             a = A.objects.filter(pk=p.asset_id).exclude(status='disposed').first()
             if a:
-                notify_hr(asset_branch(a, p), tmsg('Insurance of {0} ({1}) expires on {2:%d %b %Y}.', a.name, p.asset_code, p.insurance_expiry))
+                notify_hr(asset_branch(a, p), tmsg('Insurance of {0} ({1}) expires on {2:%d/%m/%Y}.', a.name, p.asset_code, p.insurance_expiry))
                 out['insurance'] += 1
             p.insurance_reminded_for = p.insurance_expiry
             p.save(update_fields=['insurance_reminded_for'])
     for x in AllocationExtra.objects.filter(expected_return_date__lt=on, return_reminded_on__isnull=True):
         a = Allocation().objects.filter(pk=x.allocation_id, returned_date__isnull=True).select_related('asset', 'employee').first()
         if a:
-            notify(a.employee, tmsg('{0} was due back on {1:%d %b %Y}. Please return it.', a.asset.name, x.expected_return_date))
-            notify_hr(asset_branch(a.asset), tmsg('{0} is overdue from {1} (due {2:%d %b %Y}).', a.asset.name, person(a.employee), x.expected_return_date))
+            notify(a.employee, tmsg('{0} was due back on {1:%d/%m/%Y}. Please return it.', a.asset.name, x.expected_return_date))
+            notify_hr(asset_branch(a.asset), tmsg('{0} is overdue from {1} (due {2:%d/%m/%Y}).', a.asset.name, person(a.employee), x.expected_return_date))
             out['overdue_returns'] += 1
         x.return_reminded_on = on
         x.save(update_fields=['return_reminded_on'])

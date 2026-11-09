@@ -136,7 +136,8 @@ SOURCES = (('payroll', 'Payroll run'), ('provision', 'Month-end provisions'), ('
            # v1.40.0 Property app (one journal per Property document; source_id = its id, refunds "R<id>" under prop_receipt)
            ('prop_bill', 'Property invoices / credit notes'), ('prop_receipt', 'Property receipts'), ('prop_payout', 'Owner payouts'),
            ('prop_commission', 'Property commissions'), ('prop_vendor', 'Property vendor bills'),
-           ('cost_allocation', 'Payroll cost allocation'))   # v1.50.0
+           ('cost_allocation', 'Payroll cost allocation'),   # v1.50.0
+           ('loan', 'Loans (payout, write-off)'), ('advance', 'Salary advances (payout)'))   # v1.67.11 (loans, item 117)
 STATUS = (('draft', 'Draft – check it'), ('ready', 'Ready to post'), ('posting', 'Posting'), ('posted', 'Posted'), ('failed', 'Failed'),
           ('exported', 'Exported'), ('reversed', 'Reversed'), ('cancelled', 'Cancelled'))
 

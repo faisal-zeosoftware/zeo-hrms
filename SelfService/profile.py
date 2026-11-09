@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.13.0 – the employee profile as self service sees it: groups, fields, ESS policy, reading and applying changes.
 
 EmployeeProfile (built in parallel by "empmaster") provides profile_groups(), validate_change() and apply_change().
@@ -516,7 +517,7 @@ def expiry_badge(d, warn_days=60):
         return {'state': 'expired', 'label': f'Expired {-days} day{"s" if days != -1 else ""} ago', 'days': days}
     if days <= warn_days:
         return {'state': 'expiring', 'label': f'Expires in {days} day{"s" if days != 1 else ""}', 'days': days}
-    return {'state': 'valid', 'label': f'Valid until {d:%d %b %Y}', 'days': days}
+    return {'state': 'valid', 'label': f'Valid until {d:%d/%m/%Y}', 'days': days}
 
 
 # ------------------------------------------------------------------------------------------------ changes

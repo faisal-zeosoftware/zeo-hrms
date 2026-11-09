@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.13.0 – complaints / grievances.
 
 * Confidential: a case is visible to its assigned grievance officers and to users holding `handle_grievance`
@@ -99,7 +100,7 @@ def submit(request, emp, data, files=()):
     for f in files or ():
         GrievanceMessage.objects.create(grievance=case, author_user_id=None if anon else request.user.pk, from_employee=True, attachment=f, text=getattr(f, 'name', ''))
     for u in recipients(case):
-        S.notify(user=u, title=tmsg('New complaint to handle'), message=tmsg('A {0} complaint {1} was submitted. It is due by {2:%d %b %Y}.', CATS[cat].lower(), case.number, case.due_date))
+        S.notify(user=u, title=tmsg('New complaint to handle'), message=tmsg('A {0} complaint {1} was submitted. It is due by {2:%d/%m/%Y}.', CATS[cat].lower(), case.number, case.due_date))
     return case, token
 
 

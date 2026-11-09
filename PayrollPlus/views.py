@@ -920,6 +920,24 @@ class LoanView(Base):
                 L.pause(l, parse_date(str(d.get('start') or '')), parse_date(str(d.get('resume') or '')), request.user, d.get('note') or '')
             elif action == 'resume':
                 L.resume(l, request.user, d.get('note') or '')
+            elif action in ('prepay', 'skip', 'unskip', 'writeoff', 'writeoff-approve', 'writeoff-reject', 'payout'):   # v1.67.11 (loans)
+                from . import lending as LN
+                try:
+                    if action == 'prepay':
+                        LN.prepay(l, d.get('amount'), d.get('keep') or 'months', request.user, d.get('note') or '', parse_date(str(d.get('date') or '')))
+                    elif action == 'skip':
+                        LN.skip(l, d.get('month'), request.user, d.get('note') or '')
+                    elif action == 'unskip':
+                        LN.unskip(l, d.get('month'), request.user)
+                    elif action == 'writeoff':
+                        LN.writeoff_request(l, d.get('amount'), d.get('reason') or d.get('note') or '', request.user)
+                    elif action in ('writeoff-approve', 'writeoff-reject'):
+                        LN.writeoff_decide(l, action == 'writeoff-approve', request.user, d.get('note') or '')
+                    elif action == 'payout':
+                        LN.payout_loan(l, parse_date(str(d.get('date') or '')), d.get('ref') or '', request.user)
+                except LN.LendError as e:
+                    raise S.Refused(e.message, status=e.status, problems=e.problems)
+                l.refresh_from_db()
             else:
                 raise S.Refused(tr('Unknown action.'), status=404)
         except L.LoanError as e:

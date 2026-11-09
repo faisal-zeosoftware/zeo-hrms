@@ -58,6 +58,7 @@ def is_standard_name(name):
 
 def forget():
     _cache.clear()
+    _foreign.clear()   # v1.67.7 (admin)
     try:
         from ZeoCloud import rights
         rights.forget()
@@ -91,6 +92,42 @@ def rows():
 def copy_map():
     """{template id: id of this company's copy}."""
     return {tid: gid for gid, (tid, dn) in rows().items() if tid}
+
+
+_foreign = {}   # schema -> (until, set of group ids owned by other companies)
+
+
+def foreign_ids():
+    """v1.67.7 (admin): ids of the groups that belong to OTHER companies (registered in their CompanyGroup, or a copy named
+    "<name> [<other schema>]") and not to the open company. The rights row of a login is shared by all its companies:
+    a group one company gave the login (its "Company administrators" group – every right –, its own roles) must not
+    give rights in the login's other companies. Cached 10 s per company."""
+    sch = schema()
+    if not sch:
+        return set()
+    now = time.time()
+    c = _foreign.get(sch)
+    if c and c[0] > now:
+        return c[1]
+    out = set()
+    try:
+        from django.contrib.auth.models import Group
+        mine = set(rows())
+        with connection.cursor() as cur:
+            cur.execute("select table_schema from information_schema.tables where table_name='ZeoApps_companygroup' and table_schema<>%s", [sch])
+            others = [r[0] for r in cur.fetchall()]
+            if others:
+                cur.execute(' union '.join(f'select group_id from "{o}"."ZeoApps_companygroup"' for o in others))
+                out = {r[0] for r in cur.fetchall()}
+        for gid, name in Group.objects.filter(name__regex=SUFFIX_SQL).values_list('pk', 'name'):
+            m = SUFFIX.search(name)
+            if m and m.group(1) != sch:
+                out.add(gid)
+        out -= mine
+    except Exception:
+        out = set()
+    _foreign[sch] = (now + TTL, out)
+    return out
 
 
 def label(g):

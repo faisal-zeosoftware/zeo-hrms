@@ -121,7 +121,16 @@ def loan_row(r, paid_map, wfs, names):
     months_left = 0
     if emi > 0 and bal > 0:
         months_left = int((bal / emi).to_integral_value(rounding='ROUND_CEILING'))
+    asked = None
+    try:   # v1.67.11 (loans, item 114): the amount asked when the approver approved less
+        from .lending import terms_of as _v16711_t
+        _t = _v16711_t(r.pk)
+        if _t.pk and _t.approved_amount is not None:
+            asked = d2(_t.requested_amount)
+    except Exception:
+        pass
     return {
+        'asked': asked,
         'id': r.pk, 'kind': 'loan', 'number': r.document_number or str(r.pk), 'employee_id': e.pk, 'employee': emp_name(e),
         'code': e.emp_code, 'branch': branch_of(r), 'type': str(r.loan_type) if r.loan_type_id else '',
         'amount': d2(amount), 'instalment': d2(emi), 'months': r.repayment_period, 'months_left': months_left,
@@ -151,11 +160,26 @@ def adv_row(r, wfs, names):
     e = r.employee
     steps = list(r.approvals.all())
     amount = Decimal(str(r.requested_amount or 0))
+    # v1.67.11 (loans, item 115): an advance repaid in instalments – the instalment, months, deducted and left
+    n, taken, left, inst, asked, pay = 1, (amount if r.status == 'Deducted' else ZERO), (amount if r.status in ('Approved', 'Paused') else ZERO), amount, None, {}
+    try:
+        from . import lending as LN
+        t = LN.adv_terms(r.pk)
+        n = max(int(t.instalments or 1), 1)
+        if r.status != 'Deducted':
+            taken = LN.advance_taken(r.pk)
+        if r.status in ('Approved', 'Paused'):
+            left = LN.advance_left(r)
+        inst = LN.q2(amount / n)
+        asked = str(t.requested_amount) if t.requested_amount is not None and t.requested_amount != amount else None
+        pay = t.payout or {}
+    except Exception:
+        pass
     return {
         'id': r.pk, 'kind': 'advance', 'number': r.document_number or str(r.pk), 'employee_id': e.pk, 'employee': emp_name(e),
         'code': e.emp_code, 'branch': branch_of(r), 'type': tr('Advance salary'), 'amount': d2(amount),
-        'instalment': d2(amount), 'months': 1, 'months_left': 1 if r.status == 'Approved' else 0,
-        'paid': d2(amount if r.status == 'Deducted' else ZERO), 'remaining': d2(amount if r.status in ('Approved', 'Paused') else ZERO),
+        'instalment': d2(inst), 'months': n, 'months_left': (int((left / inst).to_integral_value(rounding='ROUND_CEILING')) if inst > 0 and left > 0 else 0),
+        'paid': d2(taken), 'remaining': d2(left), 'asked': asked, 'payout': pay,
         'status': r.status, 'stage': adv_stage(r), 'note': r.reason or '', 'reason': r.remarks if r.status == 'Rejected' else '',
         'applied': timezone.localtime(r.created_at).date() if r.created_at else None,
         'progress': progress(steps, adv_workflow(r, wfs), 'advance_levels', names),

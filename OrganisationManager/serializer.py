@@ -265,10 +265,14 @@ class PermissionSerializer(serializers.ModelSerializer):
         groups = []
         for g in instance.groups.all():
             if g.pk not in memo:
-                memo[g.pk] = GroupSerializer(g).data
+                # v1.67.8 (fixes): the group with its permissions and their content types in 3 queries – the 1.67.6 "Company
+                # administrators" group holds every right, and one query per right made this list take 25 s per company
+                from django.contrib.auth.models import Group as _G
+                g2 = _G.objects.prefetch_related('permissions__content_type').filter(pk=g.pk).first() or g
+                memo[g.pk] = GroupSerializer(g2).data
             groups.append(memo[g.pk])
         representation['groups'] = groups
-        representation['user_permissions'] = permserializer(instance.user_permissions.all(), many=True).data
+        representation['user_permissions'] = permserializer(instance.user_permissions.select_related('content_type'), many=True).data   # v1.67.8 (fixes)
         return representation
 
     class Meta:
@@ -853,6 +857,19 @@ class BranchSerializer(serializers.ModelSerializer):
         model = brnch_mstr
         fields = '__all__'
 
+    def validate(self, attrs):   # v1.67.6 (setup) item 2: a branch never gets another currency than the company's
+        attrs = super().validate(attrs)
+        req = self.context.get('request')
+        data = getattr(req, 'data', None) or {}
+        for k in ('br_currency', 'currency', 'br_currency_id'):
+            if k in data and data.get(k) not in (None, ''):
+                from ZeoApps.branchinherit import currency_of_branch
+                cur = currency_of_branch()
+                if str(data.get(k)) not in (str(cur['id']), cur['code'], cur['name']):
+                    from Translations.i18n import tr
+                    raise serializers.ValidationError({k: tr('The branch currency is the company currency ({0}) and cannot be changed here.', cur['code'] or cur['name'])})
+        return attrs
+
     def create(self, validated_data):
         from OrganisationManager.branch_setup import CHOICE, RESULT
         src = validated_data.pop('copy_setup_from', None)
@@ -880,6 +897,12 @@ class BranchSerializer(serializers.ModelSerializer):
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
+        try:   # v1.67.6 (setup) item 2: the branch currency is the company's (read only)
+            from ZeoApps.branchinherit import currency_of_branch
+            c = self.context.setdefault('_zeo_currency', currency_of_branch())
+            data['br_currency'], data['br_currency_name'] = c['id'], (f"{c['name']} ({c['code']})" if c['code'] else c['name'])
+        except Exception:
+            pass
         if getattr(obj, '_setup_copy', None) is not None:
             data['setup_copy'] = obj._setup_copy
         return data

@@ -23,6 +23,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import contexts as C
+from . import appdocs as _AD   # v1.67.6 (setup) items 6 / 7
 from . import designs as D
 from . import services as S
 from .engine import FONT_CHOICES, PrintError, available
@@ -82,6 +83,10 @@ def tpl_json(t, defaults=None, full=False):
 class MetaView(Base):
     def get(self, request):
         from django.apps import apps
+        try:   # v1.67.6 (setup) item 6: an active app's document never stays without a default design
+            S.ensure_defaults()
+        except Exception:   # noqa: BLE001
+            pass
         counts = {}
         for t in PrintTemplate.objects.values('doc_type', 'is_sample'):
             k = counts.setdefault(t['doc_type'], {'samples': 0, 'own': 0})
@@ -92,8 +97,9 @@ class MetaView(Base):
                 defs[r.doc_type] = {'id': r.template_id, 'name': r.template.name}
         Br = apps.get_model('OrganisationManager', 'brnch_mstr')
         return Response({
+            # v1.67.6 (setup) items 6 / 7: the documents of the active apps only, with their app
             'doc_types': [{'key': k, 'label': en, 'label_ar': ar, 'family': fam, 'icon': icon, **counts.get(k, {'samples': 0, 'own': 0}),
-                           'default': defs.get(k)} for k, en, ar, fam, perms, icon in C.DOC_TYPES],
+                           'default': defs.get(k), 'app': _AD.DOC_APP.get(k, 'hrms')} for k, en, ar, fam, perms, icon in C.DOC_TYPES if _AD.app_active(k)],
             'looks': [{'key': k, 'name': v['name'], 'description': v['description']} for k, v in D.LOOKS.items()],
             'fonts': FONT_CHOICES, 'headers': [{'key': 'letterhead', 'label': 'Letterhead'}, {'key': 'band', 'label': 'Colour band'},
                                                {'key': 'line', 'label': 'Compact line'}, {'key': 'bilingual', 'label': 'Bilingual (English | Arabic)'}],
@@ -107,8 +113,12 @@ class TemplatesView(Base):
         self.need_manage()
         dt = request.query_params.get('doc_type') or ''
         qs = PrintTemplate.objects.all()
+        if dt and not _AD.app_active(dt):   # v1.67.6 (setup) item 7: a document of an app that is off
+            return Response([])
         if dt:
             qs = qs.filter(doc_type=dt)
+        else:   # v1.67.6 (setup) item 7: the active apps' documents only
+            qs = qs.filter(doc_type__in=[k for k, *_ in C.DOC_TYPES if _AD.app_active(k)])
         defaults = list(PrintDefault.objects.filter(doc_type=dt) if dt else PrintDefault.objects.all())
         return Response([tpl_json(t, defaults) for t in qs.order_by('-is_sample', 'id')])
 
@@ -390,6 +400,15 @@ class BrandingImageView(Base):
             raise Http404
         import mimetypes
         return HttpResponse(f.open('rb').read(), content_type=mimetypes.guess_type(f.name)[0] or 'image/png')
+
+
+class PrintableView(Base):
+    """v1.67.7 (admin) GET printable/ – the app documents this user may print here (the app is active and the rights allow it):
+    the Print buttons of Projects, HSE … are shown from it."""
+
+    def get(self, request):
+        keys = _AD.printable(request)
+        return Response({'docs': keys, 'labels': {k: _AD.BY_KEY[k][1] for k in keys}})
 
 
 class PrintView(Base):

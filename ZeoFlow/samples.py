@@ -48,8 +48,9 @@ def load(user=None):
     """Create the samples that fit this installation as drafts (skips the ones that exist by name)."""
     from .models import Workflow
     made = []
+    act = R.active_modules()   # v1.67.6 (setup) item 7: samples of the active apps only
     for s in SAMPLES:
-        if R.get_model(s['model']) is None or Workflow.objects.filter(name=s['name']).exists():
+        if s['module'] not in act or R.get_model(s['model']) is None or Workflow.objects.filter(name=s['name']).exists():
             continue
         w = Workflow.objects.create(name=s['name'], description=s.get('description', ''), module=s['module'], model=s['model'], trigger=s['trigger'],
                                     trigger_config=s.get('trigger_config', {}), conditions=s.get('conditions', {'op': 'and', 'items': []}),

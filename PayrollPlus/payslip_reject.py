@@ -141,6 +141,11 @@ def retake(payslip):
         return {}
     out = {}
     out['advances'] = M('PayrollManagement', 'AdvanceSalaryRequest').objects.filter(pk__in=n.get('advances') or [], status='Approved').update(status='Deducted')
+    try:   # v1.67.11 (loans): the advance instalments of the payslip count again
+        from .lending import retake_payslip as _v16711_retake
+        _v16711_retake(payslip.pk)
+    except Exception:
+        pass
     out['requests'] = M('EmpManagement', 'GeneralRequest').objects.filter(pk__in=n.get('requests') or [], is_processed=False).update(is_processed=True)
     ATR, ALL = M('PayrollManagement', 'AirTicketRequest'), M('PayrollManagement', 'AirTicketAllocation')
     out['tickets'] = 0

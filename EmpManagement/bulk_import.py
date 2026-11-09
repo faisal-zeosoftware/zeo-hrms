@@ -371,6 +371,51 @@ def map_headers(header, masters):
     return idx, salary, unknown
 
 
+# v1.67.8 (fixes) item 14: the row messages below as templates – the check runs in a background job (no reader language), so the
+# messages are kept in English and translated when the screen / the error file reads them (localize_status)
+ROW_TEMPLATES = (
+    '{0} is required', 'Employee Code is required', 'Employee Code {0} is twice in the file (row {1})', 'First Name is required',
+    'Date of Birth is required', 'Joining Date is required', 'Date of Birth is in the future',
+    'The employee must be at least 18 years old on the joining date', 'Branch is required',
+    'Branch "{0}" not found (use the branch name or code)', 'Department "{0}" is not linked to branch "{1}"', 'Department is required',
+    'Designation is required', 'Designation "{0}" not found', 'Category is required', 'Category "{0}" not found',
+    '{0} "{1}" is not a branch', 'Nationality "{0}" not found', 'Nationality is required', 'Country "{0}" not found',
+    'State / emirate "{0}" not found – use one of: {1}', 'State / emirate "{0}" not found', 'State "{0}" is not in {1}',
+    'Religion "{0}" not found', 'Gender "{0}" – use Male / Female / Other', 'Marital Status "{0}" – use Married / Single / Divorced / Widowed',
+    'E-mail "{0}" is not valid', 'Attendance Source "{0}" – use manual / biometric', 'Person ID "{0}" must be 14 letters / digits',
+    'Person ID {0} belongs to employee {1}', 'Reports To cannot be the employee', 'Reports To "{0}" is not an employee code',
+    'Reporting Manager user "{0}" not found in this company', 'IBAN "{0}" must be 23 letters / digits (UAE: AE + 21)',
+    'Routing code "{0}" must be 9 digits', 'Salary card "{0}" must be 16 digits',
+    'Emirates ID "{0}" must have 15 digits (784-YYYY-NNNNNNN-N)', 'Title "{0}" – use one of: {1}',
+    'Name in Arabic is longer than 150 characters', '{0} is longer than {1} characters',
+    'Attendance Card / Barcode is longer than 100 characters', 'Attendance Card / Barcode {0} belongs to employee {1}',
+    'Attendance Card / Barcode {0} is also on employee {1} in the file',
+    'Profile Picture "{0}": add the pictures as a .zip file next to the employee file (the file names as in this column)',
+    'Profile Picture "{0}" is not in the pictures .zip', 'Profile Picture "{0}": {1}',
+    '"{0}" is not a date – use dd/mm/yyyy', '"{0}" is not yes / no', '"{0}" is not an amount', 'The pictures file is not a .zip file',
+    'The pictures .zip has more than {0} files', 'Account / card {0} is already on another employee', 'Missing column(s): {0}',
+    '{0}: {1}',
+)
+
+
+def localize_status(st, lang):
+    """v1.67.8 (fixes) item 14: the job status with its row messages (and the job error) in `lang`."""
+    if not st or not lang or str(lang).startswith('en'):
+        return st
+    from Translations.filled import translate_filled as tf
+    out = dict(st)
+    if out.get('error'):
+        out['error'] = tf(out['error'], ROW_TEMPLATES, lang)
+    rows = []
+    for e in out.get('errors') or []:
+        if isinstance(e, dict) and isinstance(e.get('errors'), list):
+            e = dict(e, errors=[tf(x, ROW_TEMPLATES, lang) for x in e['errors']])
+        rows.append(e)
+    if 'errors' in out:
+        out['errors'] = rows
+    return out
+
+
 def check_row(values, masters, codes_in_file):
     """(clean dict, [errors]) for one row (values = {key: raw})."""
     g = lambda k: values.get(k)   # noqa: E731

@@ -379,11 +379,30 @@ class CompanySerializer(serializers.ModelSerializer):
         req = self.context.get('request') if hasattr(self, 'context') else None
         return bool(req is not None and hasattr(req, 'query_params') and req.query_params.get('notifications'))
 
+    def _company_wide_ok(self, obj):
+        """v1.67.6 (setup) item 14: the company-wide pending leave / general requests (names and subjects of other employees)
+        only for the caller's own record and only when the caller administers that company. Before, every user – an
+        employee too – got them with ?notifications=1, and a user list showed them per listed user."""
+        user = self.context.get('user')
+        req = self.context.get('request')
+        me = getattr(req, 'user', None)
+        if user is None or me is None or getattr(user, 'pk', None) != getattr(me, 'pk', None):
+            return False
+        k = ('_zeo_admin_of', obj.schema_name)
+        memo = self.context.setdefault('_zeo_admin_memo', {})
+        if k not in memo:
+            try:
+                from ZeoCloud.companyadmin import is_admin as _ca   # v1.67.7 (admin) administrator of THIS company
+                memo[k] = _ca(me.pk, obj.schema_name)
+            except Exception:
+                memo[k] = False
+        return memo[k]
+
     def get_notification_count(self, obj):
 
         user = self.context.get("user")
 
-        if not user or not self._want_notifications():   # v1.28.1 only when asked (?notifications=1)
+        if not user or not self._want_notifications() or not self._company_wide_ok(obj):   # v1.28.1 only when asked (?notifications=1)
             return 0
 
         total_count = 0
@@ -425,7 +444,7 @@ class CompanySerializer(serializers.ModelSerializer):
 
         user = self.context.get("user")
 
-        if not user or not self._want_notifications():   # v1.28.1 only when asked (?notifications=1)
+        if not user or not self._want_notifications() or not self._company_wide_ok(obj):   # v1.28.1 only when asked (?notifications=1)
             return []
 
         notifications = []
@@ -494,6 +513,9 @@ class Non_EssUserListSerializer(serializers.ModelSerializer):
         model = CustomUser
         fields = ['id', 'username', 'email', 'is_ess', 'is_staff', 'is_superuser', 'tenants']
 
+    def to_representation(self, instance):   # v1.67.6 (setup) item 14: only the caller's companies
+        return _only_my_tenants(self, super().to_representation(instance))
+
 class UserListSerializer(serializers.ModelSerializer):
     # v1.22.0 branch rights: the user's branches ("User branch access", else the linked employee's branch)
     branches = serializers.SerializerMethodField()
@@ -522,6 +544,33 @@ class UserListSerializer(serializers.ModelSerializer):
 
     def get_branch_names(self, obj):
         return ', '.join(n for _, n in self._branches(obj) if n)
+
+    def to_representation(self, instance):   # v1.67.6 (setup) item 14: only the caller's companies
+        d = _only_my_tenants(self, super().to_representation(instance))
+        try:   # v1.67.7 (admin): administrator of THIS company (per company) and the owner badge
+            from django.db import connection as _c
+            sch = self.context.get('schema_name') or (_c.schema_name if _c.schema_name != 'public' else '')
+            if sch:
+                from ZeoCloud import companyadmin as _CA
+                d['company_admin'] = _CA.is_admin(instance.pk, sch)
+                d['owner'] = instance.pk == _CA.owner_id(sch)
+        except Exception:
+            pass
+        return d
+
+
+def _only_my_tenants(ser, d):
+    """v1.67.6 (setup) item 14: `tenants` lists only companies the caller also belongs to (it named the other companies
+    – of other customers – of a shared login)."""
+    req = ser.context.get('request')
+    me = getattr(req, 'user', None)
+    if me is not None and getattr(me, 'is_authenticated', False) and not me.is_superuser and isinstance(d.get('tenants'), list):
+        mine = ser.context.get('_my_tenants')
+        if mine is None:
+            mine = set(me.tenants.values_list('id', flat=True))
+            ser.context['_my_tenants'] = mine
+        d['tenants'] = [t for t in d['tenants'] if t in mine]
+    return d
 
 class DomainSerializer(serializers.ModelSerializer):
     class Meta:
@@ -653,8 +702,9 @@ class UserAllocatedCompanySerializer(CompanySerializer):
 
             with schema_context(obj.schema_name):
 
-                # SUPERUSER -> ALL BRANCHES
-                if user.is_superuser:
+                # SUPERUSER -> ALL BRANCHES; v1.67.6 (setup) item 12: company administrators and the "Company administrators" group too
+                from ZeoApps.adminbranches import every_branch as _every
+                if user.is_superuser or _every(user):
 
                     # v1.62.0 speed: a company's branches once per response (the user list repeated them per user)
                     branches = self._zmemo(('branches', obj.schema_name), lambda: list(brnch_mstr.objects.all()))
@@ -689,6 +739,8 @@ class UserAllocatedCompanySerializer(CompanySerializer):
                 # this call ~20x cheaper (it was 1.3 s on a 22-company login and runs on almost every page)
                 req = self.context.get('request') if hasattr(self, 'context') else None
                 want_notif = bool(req is not None and hasattr(req, 'query_params') and req.query_params.get('notifications'))
+                if want_notif and getattr(user, 'pk', None) != getattr(getattr(req, 'user', None), 'pk', None):
+                    want_notif = False   # v1.67.6 (setup) item 14: a user's inbox only in the user's own record
                 if not want_notif or not self._has_inbox(user, obj.schema_name):   # v1.62.0 nothing in the inbox: the same empty rows without 3 queries per branch
                     return [{"id": b.id, "branch_name": b.branch_name, "notification_count": 0, "notification_summary": [], "notifications": []}
                             for b in branches]

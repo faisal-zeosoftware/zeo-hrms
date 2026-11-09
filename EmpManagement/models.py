@@ -820,7 +820,7 @@ def check_document_expiry_and_notify(document):
     if ess_users:
         doc_message = (
             f"{employee.emp_first_name} {employee.emp_last_name} - "
-            f"{document.document_type} is {status} on {expiry_date}"
+            f"{document.document_type} is {status} on {expiry_date:%d/%m/%Y}"   # v1.67.10 (regression): dd/mm/yyyy (1.67.9 item 19)
         )
         for ess_user in ess_users:
             context = {

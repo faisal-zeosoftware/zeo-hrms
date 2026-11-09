@@ -178,10 +178,21 @@ class OptionsView(Base):
 
 
 # ------------------------------------------------------------------ account map
+def _app_on(key):
+    """v1.67.8 (fixes) item 4: is the app active in this company (unknown → on)."""
+    try:
+        from ZeoApps.services import is_active
+        return bool(is_active(key))
+    except Exception:   # noqa: BLE001
+        return True
+
+
 def account_items():
-    """Everything that needs an account, grouped for the screen."""
+    """Everything that needs an account, grouped for the screen – v1.67.8 (fixes) item 4: only the items of the active apps
+    (salary components, payables, provisions and final settlement with Payroll; expense categories with HR; Property with Property)."""
     st = S.settings()
-    comps = M('PayrollManagement', 'SalaryComponent').objects.select_related('branch').order_by('component_type', 'name')
+    pay = _app_on('payroll')
+    comps = M('PayrollManagement', 'SalaryComponent').objects.select_related('branch').order_by('component_type', 'name') if pay else []
     items = []
     for c in comps:
         side = {'addition': 'debit', 'deduction': 'credit', 'others': 'both'}[c.component_type] if c.component_type in ('addition', 'deduction', 'others') else 'debit'
@@ -189,6 +200,8 @@ def account_items():
                       'group': {'addition': 'Salary additions', 'deduction': 'Salary deductions'}.get(c.component_type, 'Employer contributions / others'),
                       'side': side, 'default_debit': st.default_expense_account if side != 'credit' else '',
                       'default_credit': st.default_deduction_account if side != 'debit' else ''})
+    if not pay:   # v1.67.8 (fixes) item 4
+        return items + _other_items(st)
     items.append({'kind': 'payable', 'key': 'net', 'label': 'Net salaries payable', 'group': 'Payables', 'side': 'credit', 'default_credit': st.payable_account})
     items.append({'kind': 'payable', 'key': 'settlement', 'label': 'Final settlement payable', 'group': 'Payables', 'side': 'credit',
                   'default_credit': st.settlement_payable_account})
@@ -209,8 +222,14 @@ def account_items():
                              ('other', 'Other additions and deductions', 'both')):   # v1.62.11 (EOS gap check): other lines can have their account
         items.append({'kind': 'settlement', 'key': key, 'label': label, 'group': 'Final settlement', 'side': side,
                       'default_debit': st.default_expense_account if side != 'credit' else '', 'default_credit': st.default_deduction_account if side != 'debit' else ''})
+    return items + _other_items(st)
+
+
+def _other_items(st):
+    """v1.67.8 (fixes) item 4: the expense categories (HR) and the Property accounts, each when its app is active."""
+    items = []
     try:
-        for c in M('ExpenseManagement', 'ExpenseCategory').objects.order_by('name'):
+        for c in (M('ExpenseManagement', 'ExpenseCategory').objects.order_by('name') if _app_on('hrms') else []):
             items.append({'kind': 'expense', 'key': str(c.pk), 'label': c.name, 'group': 'Expense categories', 'side': 'debit',
                           'default_debit': c.gl_account or '', 'default_credit': ''})
     except LookupError:
@@ -245,7 +264,9 @@ class AccountsView(Base):
                 raise S.Refused(f'Unknown kind {obj.kind}.')
             obj.save()
             keep.append(obj.pk)
-        AccountMap.objects.exclude(pk__in=keep).delete()
+        # v1.67.8 (fixes) item 4: the screen lists the active apps' items only – the rows of the other apps' items are kept
+        shown = {(i['kind'], i['key']) for i in account_items()}
+        AccountMap.objects.filter(pk__in=[r.pk for r in AccountMap.objects.exclude(pk__in=keep) if (r.kind, r.key) in shown]).delete()
         return self.get(request)
 
 
@@ -388,6 +409,13 @@ class BuildView(Base):
             b = S.build_provisions(date.fromisoformat(d['as_of']) if d.get('as_of') else None, request.user)
         elif src == 'expense':
             b = S.build_expenses(date.fromisoformat(d['from']), date.fromisoformat(d['to']), request.user)
+        elif src in ('loan', 'advance'):   # v1.67.11 (loans, item 117) {source: loan, id, what: payout|prepay|writeoff, event} | {source: advance, id}
+            from PayrollPlus import lending as _L
+            Mdl = M('PayrollManagement', 'LoanApplication' if src == 'loan' else 'AdvanceSalaryRequest')
+            obj = Mdl.objects.filter(pk=d.get('id')).first()
+            if obj is None:
+                raise S.Refused('Not found.', 404)
+            b = _L.build_journal(src, obj, d.get('what') or 'payout', int(d.get('event') or 0), request.user)
         elif src in S.PROP_SOURCES:   # v1.40.0 {source, id} or {source, ids:[…]} – one journal per Property document
             ids = d.get('ids') or [d.get('id')]
             made, errors = [], []

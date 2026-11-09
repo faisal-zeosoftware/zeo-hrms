@@ -163,6 +163,12 @@ class PackView(Base):
         need(can_setup(a, request), 'Only a manager or an administrator can install packs.')
         f = In(request)
         code = f.s('code')
+        if f.b('primary'):   # v1.67.6 (setup) item 8: an app with records keeps its industry
+            from ZeoApps.industrylock import refusal
+            from ZeoApps.numbering import LABEL_KEY
+            msg = refusal(LABEL_KEY.get(a.label, ''), code)
+            if msg:
+                return Response({'detail': msg, 'locked': True}, status=409)
         added = a.install(code, request.user, primary=f.b('primary'))   # v1.33.0: through the app (CRM also seeds the masters)
         if f.b('primary'):
             s = a.settings()
@@ -265,7 +271,16 @@ def reg_meta(r, request):
             'actions': [{'name': a.name, 'label': a.label, 'style': a.style, 'confirm': a.confirm,
                          'fields': [{'name': n, 'label': l, 'type': t, 'required': bool(q)} for n, l, t, q in a.fields]} for a in r.actions],
             'deletable': bool(getattr(r, 'deletable', False)) and r.manages(request),
-            'can_duplicate': r.can_create(request) and r.create != 'none' and not r.child_of}
+            'can_duplicate': r.can_create(request) and r.create != 'none' and not r.child_of,
+            'print_doc': _print_doc(r, request)}   # v1.67.7 (admin): the Print row action (company design)
+
+
+def _print_doc(r, request):
+    try:
+        from PrintTemplates.appdocs import print_doc_for
+        return print_doc_for(r.model, request)
+    except Exception:
+        return None
 
 
 class RegistersView(Base):
@@ -365,6 +380,12 @@ class RegisterDetailView(Base):
         if obj is None:
             raise Http404
         need(r.manages(request) and getattr(r, 'deletable', False), 'This record cannot be deleted – cancel or archive it instead.')
+        # v1.67.9 (screens) item 17: the same "in use" answer as every other screen (409, where it is used, Make inactive)
+        from DataTools.usage import active_field, usage, used_message
+        n, kinds = usage(obj)
+        if n:
+            return Response({'detail': used_message(obj, n, kinds), 'used': n, 'kinds': kinds, 'active_field': active_field(r.model),
+                             'code': 'used'}, status=status.HTTP_409_CONFLICT)
         from django.db.models.deletion import ProtectedError
         try:
             obj.delete()
@@ -655,6 +676,10 @@ class RegisterBulkView(Base):
                     else:
                         if not (r.manages(request) and getattr(r, 'deletable', False)):
                             raise AppError('These records cannot be deleted – cancel or archive them instead.')
+                        from DataTools.usage import usage, used_message   # v1.67.9 (screens) item 17
+                        n_, k_ = usage(obj)
+                        if n_:
+                            raise AppError(used_message(obj, n_, k_))
                         from django.db.models.deletion import ProtectedError
                         try:
                             obj.delete()

@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """Business logic of LearningPlus. Views and tasks call these; LearningManagement.services calls
 sync_attendance / skills_from_course through plus_hook()."""
 import logging
@@ -626,7 +627,7 @@ def certificate_html(cert):
         company = getattr(connection.tenant, 'name', '') or ''
     except Exception:
         pass
-    exp = f"<p class='m'>Valid until {cert.expiry_date:%d %B %Y}</p>" if cert.expiry_date else ''
+    exp = f"<p class='m'>Valid until {cert.expiry_date:%d/%m/%Y}</p>" if cert.expiry_date else ''
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>Certificate {escape(cert.certificate_number or cert.id)}</title>
 <style>@page{{size:A4 landscape;margin:12mm}}body{{font-family:Georgia,serif;margin:0;color:#1f1d3a}}
 .c{{border:6px double #5b4fe0;padding:48px 60px;text-align:center;min-height:150mm;box-sizing:border-box}}
@@ -637,7 +638,7 @@ h1{{font-size:40px;letter-spacing:4px;color:#5b4fe0;margin:8px 0 4px}}.s{{font-s
 <body><div class="c"><div class="s">{escape(company)}</div><h1>CERTIFICATE</h1><div class="s">of completion</div>
 <p class="m" style="margin-top:28px">This is to certify that</p><div class="n">{escape(emp_name(emp))}</div>
 <p class="m">has successfully completed</p><div class="t">{escape(cert.title)}</div>
-<p class="m">Issued on {cert.issued_on:%d %B %Y} by {escape(cert.issued_by or 'Internal')}</p>{exp}
+<p class="m">Issued on {cert.issued_on:%d/%m/%Y} by {escape(cert.issued_by or 'Internal')}</p>{exp}
 <div class="f"><span>Certificate no. {escape(cert.certificate_number or str(cert.id))}</span><span>Learning &amp; Development</span></div>
 </div></body></html>"""
 
@@ -684,9 +685,9 @@ def certificate_pdf(cert):
     c.setFont('Times-Italic', 24)
     c.drawCentredString(w / 2, h - 335, cert.title[:80])
     c.setFont('Helvetica', 12)
-    c.drawCentredString(w / 2, h - 372, f"Issued on {cert.issued_on:%d %B %Y} by {cert.issued_by or 'Internal'}")
+    c.drawCentredString(w / 2, h - 372, f"Issued on {cert.issued_on:%d/%m/%Y} by {cert.issued_by or 'Internal'}")
     if cert.expiry_date:
-        c.drawCentredString(w / 2, h - 390, f"Valid until {cert.expiry_date:%d %B %Y}")
+        c.drawCentredString(w / 2, h - 390, f"Valid until {cert.expiry_date:%d/%m/%Y}")
     c.setFont('Helvetica', 10)
     c.setFillColor(HexColor('#555555'))
     c.drawString(70, 70, f"Certificate no. {cert.certificate_number or cert.id}")

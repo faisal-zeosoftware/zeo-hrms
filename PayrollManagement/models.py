@@ -294,6 +294,27 @@ class PayrollRunBranch(models.Model):
  
     def __str__(self):
         return f"{self.payroll_run_id} - {self.branch.branch_name} - {self.document_number}"
+def _payroll_currency():
+    """v1.67.10 (regression): the currency of a payslip is the company's (the currency set on the company, else the currency
+    of the company's country). It was the currency of the employee's own country – an Indian employee of a UAE company
+    got "Amounts in INR" / "INR 9,385.17" on the payslip (the amount in words said dirhams) and INR in the registers."""
+    try:
+        from django.db import connection
+        comp = getattr(connection, 'tenant', None)
+        if getattr(comp, 'country', None) is None and getattr(comp, 'currency', None) is None:   # set_schema() without the company row
+            from UserManagement.models import company as _Company
+            comp = _Company.objects.filter(schema_name=connection.schema_name).select_related('country', 'currency').first()
+        cur = getattr(comp, 'currency', None)
+        if cur is not None:
+            return cur
+        ctry = getattr(comp, 'country', None)
+        if ctry is not None and hasattr(ctry, 'currency'):
+            return ctry.currency.first()
+    except Exception:
+        return None
+    return None
+
+
 class Payslip(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -386,6 +407,8 @@ class Payslip(models.Model):
     def save(self, *args, **kwargs):
         if not self.employee_id:   # v1.56.1: a payslip without an employee answered 500 (RelatedObjectDoesNotExist)
             raise ValidationError({'employee': 'Choose the employee.'})
+        if not self.currency:   # v1.67.10 (regression): the salary is paid in the company's currency
+            self.currency = _payroll_currency()
         if not self.currency and self.employee and self.employee.emp_country_id:
             if hasattr(self.employee.emp_country_id, 'currency'):
                 self.currency = self.employee.emp_country_id.currency.first()

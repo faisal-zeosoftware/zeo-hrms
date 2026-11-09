@@ -150,6 +150,9 @@ def _utp_pre(sender, instance, raw=False, **kw):
         return
     try:
         old = sender.objects.filter(pk=instance.pk).values_list('is_superuser', flat=True).first() if instance.pk else False
+        if _schema() and getattr(instance, 'profile_id', None):   # v1.67.7 (admin): administrator of THIS company before
+            from .companyadmin import is_admin as _ca_admin
+            old = _ca_admin(instance.profile_id, _schema())
         instance._zeo_new_admin = bool(instance.is_superuser and not old)
     except Exception:
         instance._zeo_new_admin = False
@@ -188,7 +191,8 @@ def _utp_groups(sender, instance, action, pk_set=None, **kw):
         if u is None:
             return
         event('rights_changed', user=u, by=by, schema=_schema(), ip=client_ip(r),
-              detail=f'Permission group(s) {"given" if action == "post_add" else "taken away"}: {names}.')
+              # v1.67.8 (fixes) item 10: one full sentence per case (translated for each administrator by admin_alerts.sentence)
+              detail=(f'Permission group(s) given: {names}.' if action == 'post_add' else f'Permission group(s) taken away: {names}.'))
     except Exception:
         log.exception('rights event')
 
@@ -201,7 +205,8 @@ def _api_key(sender, instance, created=False, raw=False, **kw):
         from .netguard import client_ip
         from .security import event
         event('api_key', user=by, by=by, schema=_schema(), ip=client_ip(r),
-              detail=f'API key "{getattr(instance, "name", "")}" created ({"read only" if getattr(instance, "read_only", False) else "read and write"}).')
+              detail=(f'API key "{getattr(instance, "name", "")}" created (read only).' if getattr(instance, "read_only", False)   # v1.67.8 (fixes) item 10
+                      else f'API key "{getattr(instance, "name", "")}" created (read and write).'))
     except Exception:
         log.exception('api key event')
 
@@ -217,7 +222,8 @@ def _sso(sender, instance, created=False, raw=False, **kw):
         from .security import event
         for sch in (instance.schemas or [])[:10]:
             event('sso_changed', user=by, by=by, schema=sch, ip=client_ip(r),
-                  detail=f'Single sign-on "{instance.name}" {"added" if created else "changed"} (domains: {", ".join(instance.domains or [])}).')
+                  detail=(f'Single sign-on "{instance.name}" added (domains: {", ".join(instance.domains or [])}).' if created   # v1.67.8 (fixes) item 10
+                          else f'Single sign-on "{instance.name}" changed (domains: {", ".join(instance.domains or [])}).'))
     except Exception:
         log.exception('sso event')
 

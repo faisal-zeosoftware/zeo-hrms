@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.12.0 – shift reminders: the day before a published shift every employee gets a notice (in-app + e-mail).
 Celery beat entry (zeo/settings.py, see INTEGRATION.md): 'shift-reminders-daily' → ShiftPlanner.tasks.shift_reminders."""
 from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
@@ -27,7 +28,7 @@ def send_reminders(on=None):
         if emp is None or S.leave_on(emp.pk, on):
             continue
         n = notify.send(employee=emp, kind='reminder', ref=f'reminder:{on.isoformat()}', title=tmsg('Shift reminder'),
-                        message=tmsg('Reminder: tomorrow ({0:%a %d %b}) you work {1}.', on, S.shift_label(shifts.get(e.shift_id))))
+                        message=tmsg('Reminder: tomorrow ({0:%a %d/%m/%Y}) you work {1}.', on, S.shift_label(shifts.get(e.shift_id))))
         sent += 1 if n is not None else 0
     return sent
 

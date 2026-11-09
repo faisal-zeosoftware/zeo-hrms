@@ -270,6 +270,25 @@ class CompanyAccess(models.Model):
         return f'{self.user_id} @ {self.company_id}'
 
 
+class CompanyAdmin(models.Model):
+    """v1.67.7 (admin) – administrator rights per company. Before 1.67.7 the administrator flag sat on the login's one rights
+    record (UserTenantPermissions, shared by all its companies): an administrator of one company was administrator in every
+    company of the login. A row here says whether the login administers THIS company (ZeoCloud/companyadmin.py); no row =
+    the default: the owner of the company (the account owner, or the database creator on a server without accounts) and the
+    system administrators are administrators, everybody else is not. Invited logins keep theirs in CompanyAccess."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='zeo_company_admin')
+    company = models.ForeignKey('UserManagement.company', on_delete=models.CASCADE, related_name='+')
+    admin = models.BooleanField(default=True)
+    by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('user', 'company')]
+
+    def __str__(self):
+        return f'{self.user_id} @ {self.company_id}: {"admin" if self.admin else "not admin"}'
+
+
 # ------------------------------------------------------------------ v1.52.0 sign-in security (public schema: users are shared)
 class LoginSecurity(models.Model):
     """Per user: the authenticator app (TOTP, secret encrypted), recovery codes (hashed), wrong-password / wrong-code lock."""
@@ -282,6 +301,7 @@ class LoginSecurity(models.Model):
     failed = models.PositiveSmallIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
     password_changed_at = models.DateTimeField(null=True, blank=True)
+    share_location = models.BooleanField(default=False, help_text='v1.67.6 (setup) the user agreed to add the browser location to their sign-ins')
     old_passwords = models.JSONField(default=list, blank=True, help_text='hashes of the last passwords (no reuse)')
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -308,6 +328,10 @@ class LoginSession(models.Model):
     admin = models.BooleanField(default=False, help_text='a company administrator – the shorter admin session rules apply')
     country = models.CharField(max_length=2, blank=True, default='')
     step_up_at = models.DateTimeField(null=True, blank=True, help_text='password / code asked again at (sensitive actions)')
+    # v1.67.6 (setup) item 13 / 14: the companies this sign-in opened (a company administrator sees only these), where from
+    companies = models.JSONField(default=list, blank=True, help_text='schemas opened with this sign-in')
+    location = models.CharField(max_length=120, blank=True, default='', help_text='approximate place: country (offline database) or the browser location given with consent')
+    geo = models.JSONField(default=dict, blank=True, help_text='{lat, lon, acc} only when the user agreed in the browser')
 
     class Meta:
         ordering = ['-created_at']
@@ -334,6 +358,9 @@ class SecurityPolicy(models.Model):
                                                                       ('all', 'Everybody')))
     alert_new_signin = models.BooleanField(default=True, help_text='e-mail the user when they sign in from a new network and a new device')
     alert_lock = models.BooleanField(default=True, help_text='e-mail the user when wrong passwords lock the account')
+    # v1.67.6 (setup) item 13: "new" = a new place, address OR device (any), or only a new network AND a new device (both, before)
+    alert_rule = models.CharField(max_length=4, default='any', choices=(('any', 'New place, address or device'), ('both', 'New network and new device')))
+    alert_admin_signin = models.BooleanField(default=False, help_text='also e-mail the company administrators about a new sign-in that opens the company')
     # v1.62.0 sessions
     idle_minutes = models.PositiveIntegerField(default=0, help_text='sign out after this many minutes without use (0 = off)')
     admin_session_hours = models.PositiveIntegerField(default=0, help_text='administrators sign in again after this many hours (0 = like everybody)')
@@ -458,6 +485,7 @@ class SignInAlert(models.Model):
     agent = models.CharField(max_length=255, blank=True)
     sid = models.CharField(max_length=32, blank=True)
     schema = models.CharField(max_length=63, blank=True)
+    why = models.CharField(max_length=120, blank=True, default='', help_text='v1.67.6 (setup) what was new: place, address, device')
     emailed = models.BooleanField(default=False)
     status = models.CharField(max_length=8, default='open', choices=(('open', 'Open'), ('was_me', 'It was me'), ('not_me', 'It was not me')))
     answered_at = models.DateTimeField(null=True, blank=True)

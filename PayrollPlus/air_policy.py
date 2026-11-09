@@ -888,3 +888,33 @@ def employee_check(emp, day):
                      'in_probation': probation_blocks(emp, win, day), 'allocation_due': allocation_due(emp, win, day),
                      'left': AR.employee_left(emp, day)}
     return out
+
+
+# ------------------------------------------------------------------ v1.67.12 (effective, item 63): the unused part at exit
+def unused_at_exit(emp, lwd):
+    """v1.67.12 (effective, item 63): (amount, [allocations]) of the air ticket allocations still owed on the last working day – per
+    policy the newest open allocation after the last one used (as the final settlement pays it, PayrollPlus.services._air_tickets),
+    its remaining amount only. An allocation whose ticket / cash was taken (approved or processed request), or with nothing left,
+    is not shown; a partial-use (family) allocation shows what the family did not use. Before, the end of service record took the
+    newest allocation without a used request – a partly used allocation showed 0 or an older cycle's allocation instead."""
+    A = M('PayrollManagement', 'AirTicketAllocation')
+    R = M('PayrollManagement', 'AirTicketRequest')
+    open_by = {}
+    for a in A.objects.filter(employee=emp, is_active=True).exclude(status='REJECTED').order_by('allocated_date', 'id'):
+        used = R.objects.filter(allocation=a, status__in=USED_REQ).exists()
+        if used and is_partial(a.policy_id):
+            used = partial_taken(a)
+        left = D(a.remaining_amount if a.remaining_amount is not None else a.amount)
+        if used or left <= 0:
+            open_by[a.policy_id] = []
+            continue
+        if a.status != 'APPROVED' or (a.expiry_date and lwd and a.expiry_date < lwd):
+            continue
+        open_by.setdefault(a.policy_id, []).append((a, left))
+    total, got = ZERO, []
+    for pid, lst in open_by.items():
+        if lst:
+            a, left = lst[-1]
+            total += left
+            got.append(a)
+    return q2(total), got

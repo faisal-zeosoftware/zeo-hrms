@@ -86,18 +86,48 @@ def module_of(model):
     return ''
 
 
+# v1.67.6 (setup) item 7: only the apps active in the company (with Projects alone the Workflow app listed HR, Payroll, CRM …).
+# The company core is always there: branches, departments … (OrganisationManager) and business partners / items (ZeoMasters)
+# show under "Company & users" when their app is off.
+CORE_LABELS = {'OrganisationManager', 'ZeoMasters'}
+
+
+def active_modules():
+    try:
+        from ZeoApps.services import is_active
+    except Exception:
+        return set(MODULES)
+    out = {'settings'}
+    for k in MODULES:
+        if k == 'settings':
+            continue
+        try:
+            if is_active(k):
+                out.add(k)
+        except Exception:
+            out.add(k)
+    return out
+
+
 def modules():
     out = []
+    act = active_modules()
     for key, labels in MODULES.items():
-        if any(apps.is_installed(l) for l in labels):
+        if key in act and any(apps.is_installed(l) for l in labels):
             out.append({'key': key, 'label': MODULE_LABELS[key]})
     return out
 
 
 def models_of(module=None):
     out = []
+    act = active_modules()
     for key, labels in MODULES.items():
+        labels = list(labels)
+        if key == 'settings':   # the core masters whose app is off
+            labels += [l for k2, ls in MODULES.items() if k2 not in act for l in ls if l in CORE_LABELS]
         if module and key != module:
+            continue
+        if key not in act:
             continue
         for label in labels:
             if not apps.is_installed(label):

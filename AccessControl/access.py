@@ -177,7 +177,14 @@ class Ctx:
         self.emp = Emp.objects.filter(users=u).first() if self.tenant_schema != 'public' else None
         self.backoffice = self.admin or bool(self.codes)
         self.branches = None
-        if not self.admin and self.tenant_schema != 'public':
+        _every = False
+        if not self.admin and self.tenant_schema != 'public':   # v1.67.6 (setup) item 12: the "Company administrators" group = every branch
+            try:
+                from ZeoApps.adminbranches import every_branch
+                _every = every_branch(u)
+            except Exception:
+                _every = False
+        if not self.admin and not _every and self.tenant_schema != 'public':
             ids = list(UserBranchAccess.objects.filter(user=u).values_list('branch__id', flat=True))
             ids = [i for i in ids if i]
             if not ids and self.emp and self.emp.emp_branch_id_id:
@@ -494,7 +501,9 @@ def scope_queryset(request, view, qs):
 # v1.62.1: inactive masters are left out of lists used for new choices (drop-downs); their own register screens send
 # X-Include-Inactive: 1 and show them with the Active / Inactive filter. Existing records keep showing their (inactive) value.
 ACTIVE_ONLY = {('OrganisationManager', 'dept_master'): 'dept_is_active', ('OrganisationManager', 'desgntn_master'): 'desgntn_is_active',
-               ('OrganisationManager', 'ctgry_master'): 'ctgry_is_active', ('OrganisationManager', 'brnch_mstr'): 'br_is_active'}
+               ('OrganisationManager', 'ctgry_master'): 'ctgry_is_active', ('OrganisationManager', 'brnch_mstr'): 'br_is_active',
+               # v1.67.9 (screens) item 17: document types and document request types (their own registers list them all)
+               ('EmpManagement', 'document_type'): 'is_active', ('EmpManagement', 'docrequesttype'): 'is_active'}
 
 
 def active_only(request, view, qs):
@@ -503,10 +512,15 @@ def active_only(request, view, qs):
         if model is None or getattr(request, 'method', 'GET') != 'GET' or getattr(view, 'action', 'list') not in ('list', None):
             return qs
         f = ACTIVE_ONLY.get((model._meta.app_label, model._meta.model_name))
-        if not f or request.META.get('HTTP_X_INCLUDE_INACTIVE') == '1' or request.GET.get('include_inactive') == '1':
+        from DataTools import virtual_active as VA   # v1.67.9 (screens) item 17: masters whose flag is kept outside the table
+        virtual = not f and VA.handles(model)
+        if (not f and not virtual) or request.META.get('HTTP_X_INCLUDE_INACTIVE') == '1' or request.GET.get('include_inactive') == '1':
             return qs
         if getattr(view, 'kwargs', None) and any(k in view.kwargs for k in ('pk', 'id')):
             return qs   # one record (detail) – always
+        if virtual:
+            off = VA.inactive_ids(model)
+            return qs.exclude(pk__in=off) if off else qs
         return qs.exclude(**{f: False})
     except Exception:
         return qs

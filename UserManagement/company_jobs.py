@@ -206,6 +206,13 @@ def _make(job, data, apps, user_id, own_thread=True, copy=None):
                 log.exception('copy setup into %s', schema)
                 _job(job, copied={'source': copy.get('source_name'), 'branch': copy.get('branch_source_name'), 'items': [],
                                   'counts': {}, 'failed': {'all': str(e)[:200]}})
+            try:   # v1.67.6 (setup) item 2: the copied setup may bring the source's branch values – the company master's win when empty
+                from django_tenants.utils import schema_context
+                from ZeoApps.branchinherit import inherit
+                with schema_context(schema):
+                    inherit(user)
+            except Exception:   # noqa: BLE001
+                log.exception('default branch of %s', schema)
         P.begin('access', 'The creator and the system administrators can open the company', defaults=defaults, failed=failed)
 
         try:   # v1.28.1: the creator AND every system administrator can open the new company at once (before: only the

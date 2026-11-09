@@ -323,9 +323,11 @@ def calculate_progressive_gratuity(years_of_service, daily_wage, termination_typ
     total_gratuity_days = Decimal('0.00')
     remaining_years = Decimal(str(years_of_service))
 
-    rules = list(GratuityTable.objects.filter(
-        is_active=True
-    ).order_by('minimum_value'))
+    try:   # v1.67.12 (effective, item 64): the gratuity table in force on the rule day (end of service: the last working day)
+        from PayrollPlus.effective import gratuity_rows
+        rules = gratuity_rows()
+    except ImportError:
+        rules = list(GratuityTable.objects.filter(is_active=True).order_by('minimum_value'))
 
     if not rules:
         # v1.14.0: another country's rule set (branch / company country pack) → its formula (daily wage = basic / 30)
@@ -565,6 +567,11 @@ def _calculate_settlement(eos, opts=None):
             _Q(expiry_date__isnull=True) | _Q(expiry_date__gte=end_date)
         ).order_by('-allocated_date', '-pk').first()
         _left = (ticket.remaining_amount if ticket.remaining_amount is not None else ticket.amount) if ticket else Decimal('0.00')
+        try:   # v1.67.12 (effective, item 63): only the unused part – the allocations still owed, as the final settlement pays them
+            from PayrollPlus.air_policy import unused_at_exit
+            _left = unused_at_exit(employee, end_date)[0]
+        except ImportError:
+            pass
 
         eos.air_ticket = _left if _left and _left > 0 else Decimal('0.00')
 

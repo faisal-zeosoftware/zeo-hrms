@@ -55,10 +55,29 @@ def _d(v):
     return v.strftime('%d/%m/%Y') if isinstance(v, date) else str(v)
 
 
-def ymd(svc):
+def ymd(svc, lang=None):
     y, m, d = svc.get('years', 0), svc.get('months', 0), svc.get('days', 0)
-    parts = [tr('1 year') if y == 1 else tr('{0} years', y), tr('1 month') if m == 1 else tr('{0} months', m), tr('1 day') if d == 1 else tr('{0} days', d)]
-    return ', '.join(parts)
+    lang = lang or current_lang() or 'en'
+    parts = [tr('1 year', lang=lang) if y == 1 else tr('{0} years', y, lang=lang), tr('1 month', lang=lang) if m == 1 else tr('{0} months', m, lang=lang),
+             tr('1 day', lang=lang) if d == 1 else tr('{0} days', d, lang=lang)]
+    # v1.67.8 (fixes) item 3: the Arabic comma "،" in Arabic ("4 سنوات، 8 أشهر" – was "4 سنوات, 8 أشهر"), and no "0 days" /
+    # "0 months" part (one part is always kept)
+    keep = [p for p, n in zip(parts, (y, m, d)) if n] or [parts[2]]
+    return ('، ' if str(lang).startswith('ar') else ', ').join(keep)
+
+
+def _names(case, rtl):
+    """v1.67.8 (fixes) item 3: in Arabic, the department / designation / branch names in Arabic (the company's own Arabic name, else the
+    language pack's term for a standard name); {} in English or when the employee is not found."""
+    if not rtl:
+        return {}
+    try:
+        from PrintTemplates.contexts import employee_ctx
+        emp = M('EmpManagement', 'emp_master').objects.filter(pk=case.get('employee_id')).first()
+        e = employee_ctx(emp, 'ar') if emp is not None else {}
+        return {k: e[k] for k in ('department', 'designation', 'branch') if e.get(k)}
+    except Exception:   # noqa: BLE001
+        return {}
 
 
 def money(v):
@@ -188,8 +207,9 @@ def render_pdf(ctx):
     story += [t, Spacer(1, 5 * mm)]
     # ---- employee and exit
     svc = case.get('service') or {}
-    facts = [(tr('Employee'), f"{case['employee']} ({case['employee_code']})"), (tr('Designation'), case.get('designation', '')),
-             (tr('Department'), case.get('department', '')), (tr('Branch'), case.get('branch', '')),
+    _nm = _names(case, rtl)   # v1.67.8 (fixes) item 3: the Arabic names of the department, designation and branch in Arabic
+    facts = [(tr('Employee'), f"{case['employee']} ({case['employee_code']})"), (tr('Designation'), _nm.get('designation', case.get('designation', ''))),
+             (tr('Department'), _nm.get('department', case.get('department', ''))), (tr('Branch'), _nm.get('branch', case.get('branch', ''))),
              (tr('Joined'), _d(case.get('joined'))), (tr('Last working day'), _d(case.get('last_working_date'))),
              (tr('Exit type'), case.get('exit_type_label', '')), (tr('Total service'), ymd(svc)),
              (tr('Unpaid days'), f"{float(case.get('unpaid_days') or 0):g}"), (tr('Basic salary'), 'AED ' + money(case.get('basic'))),

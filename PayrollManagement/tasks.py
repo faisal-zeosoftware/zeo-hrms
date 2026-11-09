@@ -83,6 +83,11 @@ def allocate_air_tickets(today=None):
     today = today or timezone.now().date()
     policies = list(AirTicketPolicy.objects.filter(is_active=True).prefetch_related(
         'rules', 'eligible_departments', 'eligible_designations', 'eligible_categories', 'branch').order_by('id'))
+    try:   # v1.67.12 (effective, item 64): each policy as in force on the allocation day (amount, frequency, class)
+        from PayrollPlus.effective import as_of as _as_of
+        policies = [_as_of('air_ticket_policy', p, today) for p in policies]
+    except ImportError:
+        pass
     count = 0
     for employee in emp_master.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_nationality'):
         if not employee.emp_joined_date or employee.emp_joined_date > today:

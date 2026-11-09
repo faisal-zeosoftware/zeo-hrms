@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """v1.62.0 – Give access: logins for employees, with and without e-mail (README-UPDATE 83.5; proposal section 3.3).
 
 Many GCC employees have no e-mail address. HR gives access to one employee or to many at once and chooses how the password is
@@ -539,7 +540,7 @@ def slip_pdf(slips):
         c.line(w - 190, 70, w - 28, 70)
         c.setFont(reg, 8)
         c.drawString(28, 58, 'Received by (signature) / ' + shape('استلمه (التوقيع)'))
-        c.drawString(w - 190, 58, f'Given by / date  {timezone.localtime():%d %b %Y}')
+        c.drawString(w - 190, 58, f'Given by / date  {timezone.localtime():%d/%m/%Y}')
         c.drawString(28, 36, 'This slip works once. A new slip cancels this one. HR never asks for your password.')
         c.showPage()
         # back – the picture guide

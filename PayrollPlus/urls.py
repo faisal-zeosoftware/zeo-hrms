@@ -7,6 +7,8 @@ from . import workspace as WS   # v1.62.0 payroll
 from . import air_tickets as AT   # v1.62.0 air ticket
 from . import air_rules_views as ATR   # v1.66.0 (items 118–123) air ticket rules
 from . import loan_desk as LD   # v1.62.0 talent-ops
+from . import lending_views as LNV   # v1.67.11 (loans)
+from . import effective_views as EFV   # v1.67.12 (effective)
 from . import accrual_views as AC   # v1.62.7 (item 18) accrue now – pay later
 from . import monthly_input_views as MIV   # v1.62.11 (item 18b) monthly inputs grid, bulk opening balances
 from . import payctl_views as PCV   # v1.62.11 (items 228, 231) payroll controls
@@ -22,6 +24,9 @@ router.register(r'statutory', V.StatutoryViewSet, basename='statutory')   # v1.3
 urlpatterns = [
     path('api/', include(router.urls)),
     path('api/settings/', V.SettingsView.as_view()),
+    path('api/rule-versions/', EFV.RuleVersionsView.as_view()),               # v1.67.12 (effective, item 64)
+    path('api/pension/<int:pk>/', EFV.PensionView.as_view()),                  # v1.67.12 (effective, item 249)
+    path('api/pension-settings/', EFV.PensionSettingsView.as_view()),          # v1.67.12 (effective, item 249)
     path('api/legal-rates/', V.LegalRatesView.as_view()),                     # v1.59.0
     path('api/branch-schemes/', BSC.BranchSchemesView.as_view()),             # v1.62.11 (item 229)
     path('api/branch-schemes/<str:action>/', BSC.BranchSchemesView.as_view()),
@@ -46,6 +51,9 @@ urlpatterns = [
     path('api/loans/', V.LoansView.as_view()),
     path('api/loans/<int:pk>/', V.LoanView.as_view()),
     path('api/loans/<int:pk>/<str:action>/', V.LoanView.as_view()),
+    path('api/lending/settings/', LNV.SettingsView.as_view()),                          # v1.67.11 (loans)
+    path('api/lending/check/', LNV.CheckView.as_view()),
+    path('api/lending/advances/<int:pk>/<str:action>/', LNV.AdvanceView.as_view()),
     path('api/what-if/', V.WhatIfsView.as_view()),                           # v1.50.0
     path('api/what-if/<int:pk>/', V.WhatIfView.as_view()),
     path('api/what-if/<int:pk>/<str:action>/', V.WhatIfView.as_view()),

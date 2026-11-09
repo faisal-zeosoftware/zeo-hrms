@@ -22,7 +22,8 @@ M = apps.get_model
 SETTING_FIELDS = ('notice_leave', 'accrual_reduction', 'exit_under_6m', 'advance_when', 'advance_basis', 'catch_up', 'catch_up_max_months',
                   'nursing_enabled', 'nursing_minutes', 'nursing_months', 'extension_skips_notice')
 RULE_FIELDS = ('birth_required', 'birth_window_months', 'birth_window_from', 'one_per_birth', 'sandwich', 'allow_projected', 'advance_salary',
-               'document_above_days', 'hr_eligibility', 'min_service_years', 'nursing_breaks', 'notice_exempt')
+               'document_above_days', 'hr_eligibility', 'min_service_years', 'nursing_breaks', 'notice_exempt',
+               'negative_limit')   # v1.67.12 (effective, item 62)
 BOOL = {'catch_up', 'nursing_enabled', 'extension_skips_notice', 'birth_required', 'one_per_birth', 'sandwich', 'allow_projected',
         'advance_salary', 'hr_eligibility', 'nursing_breaks', 'notice_exempt'}
 # figures not verified in two sources: shown "to be confirmed" on the screen
@@ -52,12 +53,16 @@ def _rule_row(lt, r):
         on.append('document_above_days')
     if out['min_service_years']:
         on.append('min_service_years')
+    if out.get('negative_limit') is not None:   # v1.67.12 (effective, item 62)
+        on.append('negative_limit')
     out['rules_on'] = on
+    out['negative_allowed'] = bool(lt.negative)   # v1.67.12 (effective): the type allows a negative balance (Leave types)
     words = {'birth_required': tr('Birth date · {0} months', out['birth_window_months']), 'sandwich': tr('Sandwich rule'),
              'allow_projected': tr('Projected balance'), 'advance_salary': tr('Leave salary in advance'), 'hr_eligibility': tr('HR confirms eligibility'),
              'nursing_breaks': tr('Nursing breaks'), 'notice_exempt': tr('Allowed in the notice period'),
              'document_above_days': tr('Document above {0} days', f"{out['document_above_days']:g}" if out['document_above_days'] is not None else ''),
-             'min_service_years': tr('{0} years of service', f"{out['min_service_years']:g}" if out['min_service_years'] else '')}
+             'min_service_years': tr('{0} years of service', f"{out['min_service_years']:g}" if out['min_service_years'] else ''),
+             'negative_limit': tr('At most {0} days below zero', f"{out['negative_limit']:g}" if out.get('negative_limit') is not None else '')}
     out['rules_text'] = [words[k] for k in on]
     out['category_label'] = tr(lt.get_leave_category_display())
     out['nursing_text'] = tr('Nursing breaks (law)')
@@ -137,7 +142,7 @@ class LeaveRulesView(APIView):
                 v = d[k]
                 if k in BOOL:
                     v = _b(v)
-                elif k in ('document_above_days', 'min_service_years'):
+                elif k in ('document_above_days', 'min_service_years', 'negative_limit'):   # v1.67.12 (effective): negative_limit
                     v = None if v in ('', None) else float(v)
                     if v is not None and v < 0:
                         return Response({k: [tr('Cannot be negative.')]}, status=400)

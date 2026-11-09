@@ -1,3 +1,4 @@
+# v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
 """AttendancePlus services (v1.12.0): punch checks (method, IP, GPS, geofence, selfie), QR / PIN,
 kiosk and device intake, bulk import and attendance corrections."""
 import csv
@@ -485,7 +486,7 @@ def new_correction(employee, data, user, by_hr=False, attachment=None):
         status=status, created_by_id=getattr(user, 'id', None))
     if status == 'manager':
         _notify_user(employee.emp_reporting_manager, 'Attendance correction to approve',
-                     f'{_name(employee)} asked to correct attendance on {day:%d %b %Y}.')
+                     f'{_name(employee)} asked to correct attendance on {day:%d/%m/%Y}.')
     elif not rule.correction_needs_hr and not has_mgr:
         pass
     return cr
@@ -517,7 +518,7 @@ def manager_decide(cr, user, approve, note=''):
     if not approve:
         cr.status = 'rejected'
         cr.save()
-        _notify_user(e.users, 'Attendance correction rejected', f'Your manager rejected the correction for {cr.date:%d %b %Y}. {note}')
+        _notify_user(e.users, 'Attendance correction rejected', f'Your manager rejected the correction for {cr.date:%d/%m/%Y}. {note}')
         return cr
     if rule.correction_needs_hr:
         cr.status = 'hr'
@@ -538,7 +539,7 @@ def hr_decide(cr, user, approve, note=''):
     if not approve:
         cr.status = 'rejected'
         cr.save()
-        _notify_user(e.users, 'Attendance correction rejected', f'HR rejected the correction for {cr.date:%d %b %Y}. {note}')
+        _notify_user(e.users, 'Attendance correction rejected', f'HR rejected the correction for {cr.date:%d/%m/%Y}. {note}')
         return cr
     cr.save()
     return apply_correction(cr, user)
@@ -597,5 +598,5 @@ def apply_correction(cr, user):
                                     f'({rec.worked_minutes // 60}h {rec.worked_minutes % 60}m). Old punches kept as void history.')
     except Exception:
         pass
-    _notify_user(e.users, 'Attendance correction approved', f'Your attendance for {cr.date:%d %b %Y} was corrected.')
+    _notify_user(e.users, 'Attendance correction approved', f'Your attendance for {cr.date:%d/%m/%Y} was corrected.')
     return cr

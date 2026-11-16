@@ -410,7 +410,10 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
             # v1.18.0: who entered the request (the employee, or HR on their behalf) – the notice-period rule uses it
             from LeavePolicy.paid_period import deciding
             with deciding(self.request):   # v1.62.5 (item 19): HR's answer to "salary already paid" (confirm_paid_period)
-                serializer.save(document_number=document_number, created_by=self.request.user)
+                _extra = {}
+                if not serializer.validated_data.get('branch') and employee.emp_branch_id_id:
+                    _extra['branch'] = employee.emp_branch_id   # v1.67.19: a self-service request gets the employee's branch too
+                serializer.save(document_number=document_number, created_by=self.request.user, **_extra)
 
     def perform_update(self, serializer):
         # v1.62.5 (item 19): a change of the dates onto days whose salary is already paid – the same question as a new request
@@ -486,6 +489,21 @@ class ShiftViewSet(viewsets.ModelViewSet):
     queryset = Shift.objects.all()
     serializer_class = ShiftSerializer
     permission_classes = [ShiftPermission] 
+
+    def get_queryset(self):   # v1.67.19 (shift check 3, 10): ?active=1 – only the shifts that may be planned
+        qs = Shift.objects.all().order_by('name', 'id')
+        if str(self.request.query_params.get('active', '')).lower() in ('1', 'true', 'yes'):
+            try:
+                from ShiftPlanner.models import ShiftRule
+                qs = qs.exclude(pk__in=ShiftRule.objects.filter(active=False).values('shift_id'))
+            except Exception:   # noqa: BLE001
+                pass
+        return qs
+
+    def get_serializer_context(self):
+        c = super().get_serializer_context()
+        c['_shift_rules'] = None
+        return c
 
     
 
@@ -816,9 +834,11 @@ def _v112_punch_denied(request, employee):
     return Response({"detail": "You can only punch for yourself."}, status=403)
 
 
-def _v112_record_punch(request, employee, kind, auth_method, lat=None, lng=None, location=''):
+def _v112_record_punch(request, employee, kind, auth_method, lat=None, lng=None, location='', photo=None):
     """v1.12.0: every punch from these screens is also stored in AttendancePlus with its source
-    (web / mobile / biometric / qr) and IP, and the daily result is recalculated."""
+    (web / mobile / biometric / qr) and IP, and the daily result is recalculated.
+    v1.67.16 (bug list 11/11 item 3): with the punch photo – Attendance › Punch photos reads the AttendancePlus punch, which was
+    stored without it, so HR saw no photos of the punches made on this screen."""
     try:
         from django.apps import apps
         if not apps.is_installed('AttendancePlus'):
@@ -829,7 +849,8 @@ def _v112_record_punch(request, employee, kind, auth_method, lat=None, lng=None,
         if src not in ('web', 'mobile', 'biometric', 'qr'):
             src = {'face': 'biometric', 'barcode': 'qr'}.get(auth_method, 'web')
         add_punch(employee, None, kind, src, ip=client_ip(request), lat=lat or None, lng=lng or None,
-                  location=location or '', verified_by=auth_method or 'login', user_id=request.user.id, check=False)
+                  location=location or '', verified_by=auth_method or 'login', user_id=request.user.id, check=False,
+                  photo=(getattr(photo, 'name', None) or None) if photo else None)
     except Exception:
         import logging
         logging.getLogger(__name__).warning('AttendancePlus punch not recorded', exc_info=True)
@@ -1077,7 +1098,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if punch_image:
                 attendance.check_out_image = punch_image
 
-        AttendanceLog.objects.create(
+        _v16716_log = AttendanceLog.objects.create(
             attendance=attendance,
             log_type=punch_type,
             lat=lat,
@@ -1092,7 +1113,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             attendance.calculate_total_hours()
 
         attendance.save()
-        _v112_record_punch(request, employee, 'in' if punch_type == 'check_in' else 'out', auth_method, lat, lng, location)
+        _v112_record_punch(request, employee, 'in' if punch_type == 'check_in' else 'out', auth_method, lat, lng, location,
+                           photo=_v16716_log.verification_photo or (attendance.check_in_image if punch_type == 'check_in' else attendance.check_out_image))
         
         from calendars.utils import apply_late_early_penalties
         apply_late_early_penalties(attendance)
@@ -1226,7 +1248,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if check_in_image:
             attendance.check_in_image = check_in_image
 
-        AttendanceLog.objects.create(
+        _v16716_log = AttendanceLog.objects.create(
             attendance=attendance,
             log_type='check_in',
             lat=lat,
@@ -1238,7 +1260,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         )
 
         attendance.save()
-        _v112_record_punch(request, employee, 'in', auth_method, lat, lng, check_in_location)
+        _v112_record_punch(request, employee, 'in', auth_method, lat, lng, check_in_location, photo=_v16716_log.verification_photo or attendance.check_in_image)
         # from calendars.utils import apply_late_early_penalties
         # apply_late_early_penalties(attendance)
         return Response({
@@ -1366,7 +1388,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if check_out_image:
             attendance.check_out_image = check_out_image
 
-        AttendanceLog.objects.create(
+        _v16716_log = AttendanceLog.objects.create(
             attendance=attendance,
             log_type='check_out',
             lat=lat,
@@ -1378,7 +1400,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         attendance.calculate_total_hours()
         attendance.save()
-        _v112_record_punch(request, employee, 'out', auth_method, lat, lng, check_out_location)
+        _v112_record_punch(request, employee, 'out', auth_method, lat, lng, check_out_location, photo=_v16716_log.verification_photo or attendance.check_out_image)
         from calendars.utils import apply_late_early_penalties
         apply_late_early_penalties(attendance)
 
@@ -1547,6 +1569,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 })
 
         return Response(result, status=200)
+RECHECK_WAITING = '__waiting__'   # v1.67.16: a recheck HR asked for, not answered yet
+
+
 class AttendanceRecheckViewSet(viewsets.ModelViewSet):
     queryset = AttendanceRecheck.objects.select_related('attendance__employee').all()   # v1.62.10 (item 171): names in the list
     serializer_class = AttendanceRecheckSerializer
@@ -1595,13 +1620,18 @@ class AttendanceRecheckViewSet(viewsets.ModelViewSet):
                 status=400
             )
 
-        recheck = AttendanceRecheck.objects.create(
-            attendance=attendance,
-            lat=lat,
-            lng=lng,
-            location=location_name,
-            # requested_by=request.user
-        )
+        # v1.67.16 (bug list 11/11 item 4): the answer fills HR's waiting request of that day (made by "+ New recheck")
+        recheck = AttendanceRecheck.objects.filter(attendance=attendance, location=RECHECK_WAITING).order_by('-checked_at').first()
+        if recheck is not None:
+            AttendanceRecheck.objects.filter(pk=recheck.pk).update(lat=lat, lng=lng, location=location_name, checked_at=timezone.now())
+            recheck.refresh_from_db()
+        else:
+            recheck = AttendanceRecheck.objects.create(
+                attendance=attendance,
+                lat=lat,
+                lng=lng,
+                location=location_name,
+            )
 
         return Response(
             {
@@ -1638,6 +1668,11 @@ class AttendanceRecheckViewSet(viewsets.ModelViewSet):
         company's SMTP is set up). v1.62.1: never a 500 – a mail problem is said in the answer."""
         import logging
         from Translations.i18n import tr
+        # v1.67.19 (access rights field check): any login could ask any employee to confirm the location (an HR task)
+        from Chatter.views import has_code
+        if not has_code(request, 'add_attendancerecheck', 'change_attendancerecheck', 'change_attendance', 'add_attendance'):
+            m = tr('Only HR can ask an employee to confirm the location.')
+            return Response({"detail": m, "error": m}, status=status.HTTP_403_FORBIDDEN)
         emp_code = request.data.get("emp_code")
         if not emp_code:
             return Response({"emp_code": [tr("Choose the employee.")], "error": tr("Choose the employee."), "detail": tr("Choose the employee.")}, status=status.HTTP_400_BAD_REQUEST)   # v1.62.10 (item 171): next to the field
@@ -1651,6 +1686,11 @@ class AttendanceRecheckViewSet(viewsets.ModelViewSet):
             m = tr("The employee has not clocked in.")
             return Response({"emp_code": [m], "error": m, "detail": m}, status=status.HTTP_404_NOT_FOUND)   # v1.62.10 (item 171): next to the field
         e = attendance.employee
+        from AccessControl.access import ctx as _ctx
+        _c = _ctx(request)
+        if not _c.admin and _c.branches is not None and e.emp_branch_id_id not in set(_c.branches):
+            m = tr('You can only work with records of your own branches.')
+            return Response({"detail": m, "error": m}, status=status.HTTP_403_FORBIDDEN)
         try:
             from zeo.module_helpers import notify
             notify(employee=e, title=tr('Please confirm your location'),
@@ -1665,8 +1705,14 @@ class AttendanceRecheckViewSet(viewsets.ModelViewSet):
         except Exception as x:
             logging.getLogger(__name__).warning('recheck e-mail not sent: %s', x)
             sent, note = False, tr('The e-mail could not be sent – check Settings › E-mail settings.')
+        # v1.67.16 (bug list 11/11 item 4): the request is a row of the list ("Waiting for the employee") – before only an answer
+        # made a row, so the screen showed nothing after Send. Kept in the existing table (calendars: no new migration).
+        req = AttendanceRecheck.objects.filter(attendance=attendance, location=RECHECK_WAITING).first()
+        if req is None:
+            req = AttendanceRecheck.objects.create(attendance=attendance, lat=0, lng=0, location=RECHECK_WAITING,
+                                                   requested_by=request.user if getattr(request.user, 'pk', None) else None)
         msg = tr('{0} was asked to confirm the location.', name) + ' ' + note
-        return Response({"message": msg, "detail": msg, "email_sent": sent}, status=status.HTTP_200_OK)
+        return Response({"message": msg, "detail": msg, "email_sent": sent, "id": req.pk}, status=status.HTTP_200_OK)
 
 
 class ImportAttendanceViewSet(viewsets.ModelViewSet):

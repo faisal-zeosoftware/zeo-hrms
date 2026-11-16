@@ -669,12 +669,27 @@ class LookupsView(Base):
         users = {}
         for e in E.objects.filter(is_active=True, users__isnull=False).select_related('users').order_by('emp_first_name'):
             users[e.users_id] = f'{S.full_name(e)} ({e.emp_code})'
+        # v1.67.16 (bug list 11/11 item 15): the reporting manager is a login; the list held only employees with a login, so in a new
+        # company (no employee logins yet) it was empty – the company's other logins (administrators, HR, managers without an
+        # employee record) are offered too
+        try:
+            from django.db import connection
+            from django.db.models import Q as _Q
+            from UserManagement.models import CustomUser
+            for u in CustomUser.objects.filter(tenants__schema_name=connection.schema_name, is_active=True).filter(
+                    _Q(is_ess=False) | _Q(is_ess__isnull=True)).exclude(pk__in=list(users)).exclude(username__startswith='gdis').order_by('username')[:500]:
+                nm = ' '.join(x for x in [getattr(u, 'first_name', ''), getattr(u, 'last_name', '')] if x).strip()
+                users[u.pk] = f'{nm} ({u.username})' if nm else u.username
+        except Exception:   # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception('company logins for the reporting manager list')
         return Response({
             'branches': rows('OrganisationManager.brnch_mstr', 'branch_name', B.objects.filter(pk__in=br) if br is not None else None),
             'departments': rows('OrganisationManager.dept_master', 'dept_name'),
             'designations': rows('OrganisationManager.desgntn_master', 'desgntn_job_title'),
             'categories': rows('OrganisationManager.ctgry_master', 'ctgry_title'),
             'managers': [{'value': k, 'label': v} for k, v in users.items()],
+            'managers_note': '' if users else tr('A reporting manager needs a ZEO login – make one in Settings › Users (or Employees › the manager › Login).'),
             'nationalities': rows('Core.Nationality', 'N_name'), 'religions': rows('Core.ReligionMaster', 'religion'),
             'countries': rows('Core.cntry_mstr', 'country_name'), 'states': rows('Core.state_mstr', 'state_name'),
             'document_types': rows('EmpManagement.document_type', 'type_name'),

@@ -205,6 +205,8 @@ class LeaveTypeRule(models.Model):
     notice_exempt = models.BooleanField(default=False)
     # v1.67.12 (effective, item 62): how far below zero a balance may go when negative balance is allowed (empty = no limit, as before)
     negative_limit = models.FloatField(null=True, blank=True)
+    # v1.67.19 – only for nationals of the company's country (e.g. UAE National Service Leave: Emirati employees only)
+    nationals_only = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
 
 

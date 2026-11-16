@@ -63,8 +63,8 @@ class WeekendCalendarSerailizer(serializers.ModelSerializer):
         if self.instance:
             calendar=calendar.exclude(id=self.instance.id)
         if calendar.exists():
-            raise serializers.ValidationError({f"{calendar_code} is already exists."
-        })
+            from Translations.i18n import tr as _tr   # v1.67.16 (bug list item 10): a message with its field, not a set printed as text
+            raise serializers.ValidationError({'calendar_code': _tr('A weekend calendar with the code "{0}" already exists.', calendar_code)})
         return attrs
 
 class WeekendAssignSerializer(serializers.ModelSerializer):
@@ -196,15 +196,32 @@ class HolidayCalandarSerializer(serializers.ModelSerializer):
         if self.instance:
             calendar=calendar.exclude(id=self.instance.id)
         if calendar.exists():
-            raise serializers.ValidationError({f"{calendar_title} is already exists."
-        })
+            from Translations.i18n import tr as _tr   # v1.67.16 (bug list item 10)
+            raise serializers.ValidationError({'calendar_title': _tr('A holiday calendar "{0}" already exists.', calendar_title)})
         return attrs
 
 class HolidayAssignSerializer(serializers.ModelSerializer):
     class Meta:
         model = assign_holiday
         fields = '__all__'
-    
+
+    def validate(self, data):
+        # v1.67.17 (checklist): the same holiday calendar given twice to the same branch / department / category / designation /
+        # employee made duplicate rows (Assign weekends already refused this) – refused with the same kind of message
+        related_to = data.get('related_to') if 'related_to' in data else getattr(self.instance, 'related_to', None)
+        cal = data.get('holiday_model') or getattr(self.instance, 'holiday_model', None)
+        others = assign_holiday.objects.filter(holiday_model=cal)
+        if self.instance is not None:
+            others = others.exclude(pk=self.instance.pk)
+        msgs = {'branch': "The branch already has this holiday calendar.", 'department': "The department already has this holiday calendar.",
+                'category': "The category already has this holiday calendar.", 'designation': "The designation already has this holiday calendar.",
+                'employee': "The employee already has this holiday calendar."}
+        if cal is not None and related_to in msgs:
+            chosen = data.get(related_to)
+            if chosen and others.filter(**{f'{related_to}__in': chosen}).exists():
+                raise serializers.ValidationError(tr(msgs[related_to]))
+        return data
+
     def to_representation(self, instance):
         rep = super(HolidayAssignSerializer, self).to_representation(instance)
         if instance.holiday_model:
@@ -443,6 +460,11 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         # twice made Annual Leave twice
         attrs = super().validate(attrs)
         inst = getattr(self, 'instance', None)
+        # v1.67.19 (field check): "Valid to" before "Valid from" was saved
+        vf = attrs.get('valid_from', getattr(inst, 'valid_from', None))
+        vt = attrs.get('valid_to', getattr(inst, 'valid_to', None))
+        if vf and vt and vt < vf:
+            raise serializers.ValidationError({'valid_to': [tr('"Valid to" must be on or after "Valid from".')]})
         name = (attrs.get('name', getattr(inst, 'name', '')) or '').strip()
         code = (attrs.get('code', getattr(inst, 'code', '')) or '').strip()
         br = attrs['branch'] if 'branch' in attrs else getattr(inst, 'branch', None)
@@ -550,6 +572,17 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
         if not leave_type or not employee:
             raise serializers.ValidationError("Employee and Leave Type are required.")
 
+        # v1.67.15 each branch has its own copy of a leave type (same name): a request given the copy of another branch (an import,
+        # the API, a type picked by name) is put on the copy of the employee's branch – it was refused "Approval workflow not
+        # configured for this branch" (the other copy's workflow is for the other branch)
+        _br = getattr(employee, 'emp_branch_id_id', None)
+        if getattr(leave_type, 'branch_id', None) and _br and leave_type.branch_id != _br:
+            from calendars.models import leave_type as _LT16715
+            _own = _LT16715.objects.filter(branch_id=_br, name=leave_type.name).first()
+            if _own is not None:
+                leave_type = _own
+                data['leave_type'] = _own
+
         is_half_day = data.get('dis_half_day', False)
         half_day_period = data.get('half_day_period')
 
@@ -592,7 +625,8 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
 
         if not workflow:
             raise serializers.ValidationError({
-                "leave_type": "Approval workflow not configured for this branch."
+                # v1.67.19: say where it is set (a new leave type has no workflow until one is added)
+                "leave_type": f"{leave_type.name}: no approval workflow for the branch {employee.emp_branch_id} – add one in Leave › Setup › Approval levels (choose \"No approval\" if none is needed)."
             })
 
         # ---------------- REPORTING MANAGER ----------------
@@ -1052,13 +1086,55 @@ class LateinEarlyoutApprovalSerializer(serializers.ModelSerializer):
         return rep
 
 class ShiftSerializer(serializers.ModelSerializer):
+    # v1.67.19 (shift check 3, 10): whether the shift may be planned (Shift master › Active) and its branches (empty = all)
+    active = serializers.SerializerMethodField(read_only=True)
+    branch_ids = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Shift
         fields = '__all__'
+
+    def _rule(self, obj):
+        cache = self.context.setdefault('_shift_rules', None) if hasattr(self, 'context') else None
+        if cache is None:
+            try:
+                from ShiftPlanner.models import ShiftRule
+                cache = {r.shift_id: r for r in ShiftRule.objects.all()}
+            except Exception:   # noqa: BLE001
+                cache = {}
+            try:
+                self.context['_shift_rules'] = cache
+            except Exception:   # noqa: BLE001
+                pass
+        return cache.get(obj.pk)
+
+    def get_active(self, obj):
+        r = self._rule(obj)
+        return True if r is None else bool(r.active)
+
+    def get_branch_ids(self, obj):
+        r = self._rule(obj)
+        return [int(b) for b in (r.branch_ids or [])] if r else []
 class ShiftPatternSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShiftPattern
         fields = '__all__'
+
+    def validate(self, attrs):   # v1.67.19 (shift check 3): a shift switched off is not put into a pattern again
+        try:
+            from ShiftPlanner.usable import config_shift_ids, inactive, pattern_shift_ids
+        except ImportError:
+            return attrs
+        cfg = attrs.get('pattern_config', None)
+        if cfg is None:
+            return attrs
+        had = set(pattern_shift_ids(self.instance)) if self.instance is not None else set()
+        new = [i for i in config_shift_ids(cfg) if i not in had]
+        off = inactive(new)
+        if off:
+            from Translations.i18n import tr as _tr
+            raise serializers.ValidationError({'pattern_config': _tr('“{0}” is switched off in Shift master (Active = No) – choose another shift.', off[0][1])})
+        return attrs
     def to_representation(self, instance):
         rep = super(ShiftPatternSerializer, self).to_representation(instance)
         if instance.monday_shift:  
@@ -1156,6 +1232,17 @@ class EmployeeShiftScheduleSerializer(serializers.ModelSerializer):
             return set(emp_master.objects.filter(q).values_list('id', flat=True)) if q else set()
 
         new_group = group_emps(groups)
+        from Translations.i18n import tr as _tr
+        if not direct and not any(groups.values()):   # v1.67.19 (shift check 6): an allocation must apply to somebody
+            raise serializers.ValidationError(_tr('Choose who the shift pattern is for: employees, or a branch, department, designation or category.'))
+        try:   # v1.67.19 (shift check 5): a shift limited to some branches only for employees of those branches
+            from ShiftPlanner.usable import pattern_branch_problem
+            pat = attrs.get('shift_pattern', getattr(inst, 'shift_pattern', None))
+            why = pattern_branch_problem(pat, list(emp_master.objects.filter(id__in=direct | new_group))) if pat is not None else ''
+        except ImportError:
+            why = ''
+        if why:
+            raise serializers.ValidationError(why)
         others = EmployeeShiftSchedule.objects.filter(start_date__lte=end_date or date.max).filter(
             Q(end_date__gte=start_date) | Q(end_date__isnull=True)).prefetch_related('employee', 'branches', 'departments', 'designations', 'categories')
         if inst is not None:
@@ -1169,10 +1256,14 @@ class EmployeeShiftScheduleSerializer(serializers.ModelSerializer):
                 clash = new_group & o_group
             if clash:
                 emp = emp_master.objects.filter(id__in=clash).order_by('emp_code').first()
-                raise serializers.ValidationError(
-                    f"Shift overlap detected for employee {emp.emp_code if emp else ''} "
-                    f"(schedule “{o.schedule_name or o.id}” covers the same dates)"
-                )
+                # v1.67.19 (shift check 7): the employee's name, the other schedule's dates and what to do
+                from datetime import timedelta as _td
+                who = f"{emp.emp_first_name} {emp.emp_last_name or ''}".strip() + f" ({emp.emp_code})" if emp else ''
+                till = o.end_date.strftime('%d/%m/%Y') if o.end_date else _tr('open-ended')
+                raise serializers.ValidationError(_tr(
+                    '{0} is already on “{1}” ({2} – {3}). One employee has one shift pattern at a time: end “{1}” on {4} '
+                    '(Edit › To) or choose other dates.', who, o.schedule_name or o.id, o.start_date.strftime('%d/%m/%Y'), till,
+                    (start_date - _td(days=1)).strftime('%d/%m/%Y') if start_date else ''))
 
         return attrs
     def get_branch_names(self, obj):
@@ -1512,6 +1603,12 @@ class CompensatoryLeaveAllocationSerializer(serializers.ModelSerializer):
         model = CompensatoryLeaveAllocation
         fields ='__all__'
 
+    def validate_credited_days(self, v):   # v1.67.19 (field check): -5 days were credited
+        if v is not None and v <= 0:
+            from Translations.i18n import tr
+            raise serializers.ValidationError(tr('Days to credit: enter more than 0.'))
+        return v
+
     def get_employee_name(self, o):
         e = o.employee
         name = ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x)
@@ -1648,6 +1745,15 @@ class AttendanceRecheckSerializer(serializers.ModelSerializer):
         rep['emp_code'] = getattr(e, 'emp_code', '') or ''
         rep['employee_name'] = ' '.join(x for x in [getattr(e, 'emp_first_name', ''), getattr(e, 'emp_last_name', '')] if x)
         rep['date'] = att.date.isoformat() if att and att.date else None
+        # v1.67.16 (bug list item 4): a request HR sent and the employee has not answered yet
+        waiting = instance.location == '__waiting__'
+        rep['status'] = 'waiting' if waiting else 'confirmed'
+        if waiting:
+            rep['location'], rep['lat'], rep['lng'] = '', None, None
+            rep['asked_at'] = rep.get('checked_at')
+            rep['checked_at'] = None
+        u = getattr(instance, 'requested_by', None)
+        rep['requested_by_name'] = (getattr(u, 'username', '') or '') if u else ''
         return rep
 class OvertimePolicySerializer(serializers.ModelSerializer):
     class Meta:
@@ -1675,6 +1781,26 @@ class AttendancePolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendancePolicy
         fields = '__all__'
+
+    def to_internal_value(self, data):
+        # v1.67.20 (1.67.17 import patch): a rounding that is not ticked hides its minutes on the screen, which then sends null –
+        # the save failed with "early_check_out_minutes: This field may not be null". An empty minutes value keeps the stored /
+        # default minutes.
+        if hasattr(data, 'copy'):
+            data = data.copy()
+            for k in ('early_check_in_minutes', 'late_check_in_minutes', 'early_check_out_minutes', 'late_check_out_minutes'):
+                if k in data and data.get(k) in (None, ''):
+                    data.pop(k)
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):   # v1.67.19 (field check): -5 minutes of early / late check-in and check-out were saved
+        from Translations.i18n import tr
+        errs = {k: tr('Enter 0 or more minutes.') for k in ('early_check_in_minutes', 'late_check_in_minutes', 'early_check_out_minutes', 'late_check_out_minutes')
+                if attrs.get(k) is not None and attrs[k] < 0}
+        if errs:
+            raise serializers.ValidationError(errs)
+        return super().validate(attrs)
+
 class AttendanceCalendarSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source='employee.emp_first_name', read_only=True)
     leave_type_name = serializers.CharField(source='leave_type.name', read_only=True)

@@ -173,6 +173,22 @@ class PortalContractsView(PortalBase):
         return Response(out)
 
 
+class PortalEquipmentView(PortalBase):
+    """v1.67.13 (service): the customer's own sites and equipment (view only)."""
+    @guard
+    def get(self, request):
+        c = self.contact(request)
+        from .models import CustomerEquipment, CustomerSite
+        from . import rows as RW
+        sites = CustomerSite.objects.filter(customer=c.customer, is_active=True)
+        eq = CustomerEquipment.objects.filter(customer=c.customer, is_active=True).select_related('site', 'category', 'customer', 'item', 'site__branch')
+        keep = ('id', 'number', 'name', 'site', 'site_name', 'category_name', 'make', 'model_no', 'serial_no', 'location_in_site',
+                'install_date', 'warranty_end', 'warranty_state', 'status', 'status_label')
+        return Response({'sites': [{'id': x.pk, 'code': x.code, 'name': x.name, 'address': x.address, 'city': x.city,
+                                    'emirate': x.emirate} for x in sites],
+                         'equipment': [{k: v for k, v in RW.equipment_row(x).items() if k in keep} for x in eq]})
+
+
 class PortalProjectsView(PortalBase):
     @guard
     def get(self, request):
@@ -264,11 +280,11 @@ class PortalInvoicesView(PortalBase):
         c = self.contact(request)
         if not S.settings().portal_show_invoices:
             raise A.Denied('Invoices are not shown in the portal.')
-        amc = AMCBilling.objects.filter(contract__customer=c.customer, status__in=('invoiced', 'paid')).select_related('contract', 'contract__customer')
+        amc = AMCBilling.objects.filter(contract__customer=c.customer, status__in=('invoiced', 'partly_paid', 'paid')).select_related('contract', 'contract__customer')
         pids = list(ProjectProfile.objects.filter(customer=c.customer).values_list('project_id', flat=True))
         from ProjectManagement.models import Project
         titles = dict(Project.objects.filter(pk__in=pids).values_list('id', 'title'))
-        ms = Milestone.objects.filter(project_id__in=pids, invoice_status__in=('invoiced', 'paid'))
+        ms = Milestone.objects.filter(project_id__in=pids, invoice_status__in=('invoiced', 'partly_paid', 'paid'))
         rows = [{'kind': 'AMC', 'reference': b.contract.number, 'description': b.period_label, 'invoice_no': b.invoice_no,
                  'invoice_date': RW.d(b.invoice_date), 'amount': RW.num(b.amount), 'currency': b.contract.currency, 'status': b.status,
                  'paid_date': RW.d(b.paid_date)} for b in amc]
@@ -276,7 +292,7 @@ class PortalInvoicesView(PortalBase):
                   'invoice_date': RW.d(m.invoice_date), 'amount': RW.num(m.amount), 'currency': S.settings().currency, 'status': m.invoice_status,
                   'paid_date': RW.d(m.paid_date)} for m in ms]
         rows.sort(key=lambda r: r['invoice_date'] or '', reverse=True)
-        outstanding = sum((Decimal(str(r['amount'] or 0)) for r in rows if r['status'] == 'invoiced'), Decimal(0))
+        outstanding = sum((Decimal(str(r['amount'] or 0)) for r in rows if r['status'] in ('invoiced', 'partly_paid')), Decimal(0))
         return Response({'invoices': rows, 'outstanding': float(outstanding)})
 
 

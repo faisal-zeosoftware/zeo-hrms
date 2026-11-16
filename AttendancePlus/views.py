@@ -58,6 +58,12 @@ class APViewSet(viewsets.ModelViewSet):
             ids = visible_employee_ids(self.request)
             if ids is not None:
                 qs = qs.filter(**{f'{self.employee_field}__in': ids})
+            pick = getattr(c(self.request), 'pick', None)
+            if pick and self.request.method in ('GET', 'HEAD', 'OPTIONS'):
+                # v1.67.18 (checklist 33.6): the branches ticked in the top bar narrow these lists for administrators too (the
+                # screens' own Branch filter is gone – one branch filter)
+                from AccessControl.access import emp_ids_in_branches
+                qs = qs.filter(**{f'{self.employee_field}__in': emp_ids_in_branches(pick)})
         elif self.branch_field:
             x = c(self.request)
             if not x.admin and x.branches is not None:

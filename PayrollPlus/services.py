@@ -223,15 +223,24 @@ def record_final_encashment(e, user, note=''):
 
 
 # ------------------------------------------------------------------ final settlement
+def wage_component(c):
+    """v1.67.19: a component that is part of the monthly wage – a fixed allowance, or a recurring allowance worked out by a
+    formula (e.g. 'Education allowance = basic × 10 %') and paid on every payslip. Before, formula allowances were left out of
+    the final salary, notice pay and leave salary on gross although the monthly payslip pays them."""
+    if c.component_type != 'addition' or (c.code or '') in NOT_WAGE_CODES or c.payroll_category not in WAGE_CATEGORIES:
+        return False
+    if c.component_value_type == 'fixed':
+        return True
+    return bool((c.formula or '').strip()) and bool(c.show_in_payslip)
+
+
 def _wage(emp):
     ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
     basic, wage = ZERO, ZERO
     parts = []
     for r in ESS.objects.filter(employee=emp, is_active=True).select_related('component'):
         c = r.component
-        if c.component_type != 'addition' or c.component_value_type != 'fixed' or (c.code or '') in NOT_WAGE_CODES:
-            continue
-        if c.payroll_category not in WAGE_CATEGORIES:
+        if not wage_component(c):
             continue
         amt = q2(r.amount)
         if c.payroll_category == 'basic':
@@ -762,6 +771,20 @@ def compute(st, user=None):
         if lb.get('under_6m'):   # v1.65.0 (item 90): company setting for less than 6 months of service (to be confirmed)
             calc.append(tr('+ {0} days: {1}', lb['under_6m'], lb.get('under_6m_note') or ''))
         calc.append(tr('balance on {0:%d/%m/%Y}: {1} days', lwd, q2(leave_days)))
+    if AL is not None:   # v1.67.19: no opening balance – the leave earned before ZEO's first entry is not in the balance
+        try:
+            LL = M('LeavePolicy', 'LeaveLedger')
+            _ll = LL.objects.filter(employee_id=emp.pk, leave_type_id=AL.pk)
+            _first = _ll.order_by('date').values_list('date', flat=True).first()
+            _j = emp.emp_joined_date
+            if not _ll.filter(kind='opening').exists() and _j and (_first is None or (_first - _j).days > 31):
+                _msg = tr('No opening leave balance: the leave earned from {0:%d/%m/%Y} to {1} is not in the balance – enter the opening '
+                          'balance (Leave › Opening balances) or the balance on this settlement before it is paid.',
+                          _j, f'{_first:%d/%m/%Y}' if _first else tr('today'))
+                calc.insert(0, _msg)
+                info('leave_opening', tr('Opening leave balance missing – check the unused leave days'), _msg, 'leave')
+        except Exception:
+            log.debug('opening balance check', exc_info=True)
     if _ES.leave_lines(_es, basic, wage, leave_days, calc, emp, AL, lwd, add):   # v1.62.11 (EOS settings): basic / gross, rate, HR's balance
         pass
     elif leave_days > 0:
@@ -812,6 +835,11 @@ def compute(st, user=None):
         _v1627_exit(st, emp, start, lwd, add, info, ua)
     except Exception:
         log.exception('accrued components of the final settlement')
+    try:   # v1.67.15 (C10): salary still held (Payroll › Hold / release salary) is paid with the settlement
+        from .payctl import exit_lines as _v16715_held
+        _v16715_held(emp.pk, add)
+    except Exception:
+        log.exception('held salary of the final settlement')
     # 6. deductions: loans, salary advances, approved asset recoveries (never the asset value without an approved decision)
     LA = M('PayrollManagement', 'LoanApplication')
     for l in LA.objects.filter(employee=emp, status__in=('Approved', 'Disbursed', 'In Progress', 'Paused')):
@@ -1002,6 +1030,11 @@ def _close_eos(st, user):
         _v1627_paid(st, user)
     except Exception:
         log.exception('accrued components of the paid settlement')
+    try:   # v1.67.15 (C10): the held salary paid with the settlement is released (no payroll run pays it again)
+        from .payctl import exit_paid as _v16715_held_paid
+        _v16715_held_paid(st, user)
+    except Exception:
+        log.exception('held salary of the paid settlement')
     st._v1623_closed.update(make_leaver_inactive(st))   # v1.62.3 (item 125)
 
 
@@ -1181,7 +1214,7 @@ def _patterns():
         import os
         import re
         here = os.path.dirname(os.path.abspath(__file__))
-        src = ''.join(open(os.path.join(here, f), encoding='utf-8').read() for f in ('services.py', 'leavers.py', 'accruals.py', 'branch_schemes.py', 'eos_settings.py'))   # v1.62.7 (item 18): + accruals.py; v1.62.11 (item 229): + branch_schemes.py; v1.62.11 (EOS settings): + eos_settings.py
+        src = ''.join(open(os.path.join(here, f), encoding='utf-8').read() for f in ('services.py', 'leavers.py', 'accruals.py', 'branch_schemes.py', 'eos_settings.py', 'payctl.py'))   # v1.67.15 (C10): + payctl.py (held salary lines); v1.62.7 (item 18): + accruals.py; v1.62.11 (item 229): + branch_schemes.py; v1.62.11 (EOS settings): + eos_settings.py
         out = []
         for m in re.finditer(r"tr\(\s*'((?:[^'\\]|\\.)*)'", src):
             t = m.group(1)

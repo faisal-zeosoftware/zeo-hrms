@@ -27,7 +27,8 @@ def customer_row(c, counts=False):
          'address': c.address, 'city': c.city, 'country': c.country, 'email_domains': c.email_domains,
          'account_manager': emp_ref(c.account_manager), 'branch': c.branch_id, 'branch_name': bname(c.branch), 'default_sla': c.default_sla_id,
          'notes': c.notes, 'is_active': c.is_active, 'created_at': d(c.created_at),
-         'partner': c.partner_id, 'partner_number': c.partner.number if c.partner_id else ''}   # v1.42.0 business partner
+         'partner': c.partner_id, 'partner_number': c.partner.number if c.partner_id else '',   # v1.42.0 business partner
+         'payment_days': c.payment_days}   # v1.67.13 (billing)
     if counts:
         r['open_tickets'] = c.tickets.filter(stage__in=OPEN_STAGES).count()
         r['contracts_active'] = c.contracts.filter(status__in=('active', 'expiring')).count()
@@ -59,7 +60,12 @@ def ticket_row(t, staff=True):
          'created_at': d(t.created_at), 'updated_at': d(t.updated_at), 'resolved_at': d(t.resolved_at), 'closed_at': d(t.closed_at),
          'response_due': d(t.response_due), 'resolution_due': d(t.resolution_due), 'first_response_at': d(t.first_response_at),
          'sla_state': st['state'], 'sla_minutes_left': st['minutes_left'], 'is_open': t.stage in OPEN_STAGES,
-         'satisfaction': t.satisfaction}
+         'satisfaction': t.satisfaction,
+         # v1.67.13 (service)
+         'site': t.site_id, 'site_name': t.site.name if t.site_id else '', 'equipment': t.equipment_id,
+         'equipment_name': (f'{t.equipment.number} {t.equipment.name}'.strip() if t.equipment_id else ''),
+         'ticket_kind': t.ticket_kind, 'ticket_kind_label': t.get_ticket_kind_display(),
+         'coverage_kind': t.coverage_kind, 'parts_chargeable': t.parts_chargeable}
     if staff:
         r.update({'team': t.team_id, 'team_name': t.team.name if t.team_id else '', 'assigned_to': emp_ref(t.assigned_to),
                   'response_breached': t.response_breached, 'resolution_breached': t.resolution_breached,
@@ -139,9 +145,17 @@ def contract_row(c, usage=False):
          'previous_number': c.previous.number if c.previous_id else '',
          'renewal_status': c.renewal_status, 'renewal_status_label': c.get_renewal_status_display(),
          'renewal_owner': emp_ref(c.renewal_owner), 'renewal_quote_ref': c.renewal_quote_ref, 'renewal_value': num(c.renewal_value),
-         'renewal_note': c.renewal_note, 'lost_reason': c.lost_reason, 'notes': c.notes}
+         'renewal_note': c.renewal_note, 'lost_reason': c.lost_reason, 'notes': c.notes,
+         # v1.67.13 (service)
+         'amc_type': c.amc_type_id, 'amc_type_name': c.amc_type.name if c.amc_type_id else '',
+         'cover_scope': c.cover_scope, 'cover_scope_label': c.get_cover_scope_display(),
+         'covered_sites': [{'id': x.pk, 'name': x.name, 'code': x.code} for x in c.covered_sites.all()],
+         'covered_categories': [{'id': x.pk, 'name': x.name} for x in c.covered_categories.all()],
+         'covered_equipment': [{'id': x.pk, 'number': x.number, 'name': x.name} for x in c.covered_equipment.all()],
+         'visits_per_year': c.visits_per_year, 'callouts_per_year': c.callouts_per_year, 'parts_limit': num(c.parts_limit)}
     if usage:
         r['usage'] = jsonable(S.contract_usage(c))
+        r['service_usage'] = jsonable(S.contract_service_usage(c))
     return r
 
 
@@ -208,3 +222,67 @@ def jsonable(v):
     if hasattr(v, 'isoformat'):
         return v.isoformat()
     return v
+
+
+# ------------------------------------------------------------------ v1.67.13 (service)
+def site_row(x, counts=False):
+    r = {'id': x.pk, 'code': x.code, 'name': x.name, 'customer': x.customer_id, 'customer_name': x.customer.name,
+         'site_type': x.site_type, 'site_type_label': x.get_site_type_display(), 'address': x.address, 'area': x.area,
+         'city': x.city, 'emirate': x.emirate, 'country': x.country, 'latitude': num(x.latitude), 'longitude': num(x.longitude),
+         'map_url': (f'https://www.google.com/maps?q={x.latitude},{x.longitude}' if x.latitude is not None and x.longitude is not None else ''),
+         'contact': x.contact_id, 'contact_name': x.contact.name if x.contact_id else x.contact_name,
+         'contact_phone': x.contact_phone or (x.contact.phone if x.contact_id else ''), 'access_notes': x.access_notes,
+         'working_hours': x.working_hours, 'branch': x.branch_id, 'branch_name': bname(x.branch) if x.branch_id else '',
+         'default_team': x.default_team_id, 'default_team_name': x.default_team.name if x.default_team_id else '',
+         'default_technician': emp_ref(x.default_technician), 'is_active': x.is_active}
+    if counts:
+        r['equipment_count'] = x.equipment.filter(is_active=True).count()
+        on = S.local_today()
+        r['active_amc'] = [c.number for c in x.customer.contracts.filter(start_date__lte=on, end_date__gte=on,
+                                                                          status__in=('active', 'expiring', 'renewed'))
+                           if not c.covered_sites.exists() or c.covered_sites.filter(pk=x.pk).exists()]
+        r['in_use'] = x.tickets.exists() or x.equipment.exists()
+    return r
+
+
+def equipment_row(x, detail=False):
+    on = S.local_today()
+    if x.warranty_end and x.warranty_end >= on:
+        w = 'expiring' if (x.warranty_end - on).days <= 30 else 'in_warranty'
+    elif x.warranty_end:
+        w = 'expired'
+    else:
+        w = 'none'
+    r = {'id': x.pk, 'number': x.number, 'name': x.name, 'customer': x.customer_id, 'customer_name': x.customer.name,
+         'site': x.site_id, 'site_name': x.site.name, 'category': x.category_id, 'category_name': x.category.name,
+         'make': x.make, 'model_no': x.model_no, 'serial_no': x.serial_no, 'item': x.item_id,
+         'item_name': x.item.name if x.item_id else '', 'location_in_site': x.location_in_site,
+         'install_date': d(x.install_date), 'supplied_by_us': x.supplied_by_us, 'warranty_start': d(x.warranty_start),
+         'warranty_end': d(x.warranty_end), 'warranty_by': x.warranty_by, 'warranty_state': w,
+         'capacity': num(x.capacity), 'capacity_unit': x.capacity_unit, 'extra': x.extra or {},
+         'extra_fields': x.category.extra_fields or [], 'status': x.status, 'status_label': x.get_status_display(),
+         'notes': x.notes, 'is_active': x.is_active, 'branch_name': bname(x.site.branch) if x.site.branch_id else ''}
+    if detail:
+        r['tickets'] = [ticket_row(t) for t in x.tickets.select_related('customer', 'contact', 'product', 'category', 'contract',
+                                                                         'team', 'assigned_to', 'requester_employee', 'site',
+                                                                         'equipment').order_by('-created_at')[:50]]
+        r['files'] = [{'id': f.pk, 'name': f.name, 'size': f.size, 'url': f.file.url if f.file else ''} for f in x.files.all()]
+        r['contracts'] = [c.number for c in S.equipment_contracts(x)]
+        r['in_use'] = x.tickets.exists()
+    return r
+
+
+def equipment_category_row(x):
+    return {'id': x.pk, 'code': x.code, 'name': x.name, 'industry': x.industry, 'parent': x.parent_id,
+            'parent_name': x.parent.name if x.parent_id else '', 'pm_months': x.pm_months, 'default_team': x.default_team_id,
+            'default_team_name': x.default_team.name if x.default_team_id else '', 'extra_fields': x.extra_fields or [],
+            'to_review': x.to_review, 'is_active': x.is_active, 'in_use': x.equipment.exists() or x.contracts.exists()}
+
+
+def amc_type_row(x):
+    return {'id': x.pk, 'code': x.code, 'name': x.name, 'industry': x.industry, 'parts': x.parts, 'parts_label': x.get_parts_display(),
+            'labour_included': x.labour_included, 'visits_per_year': x.visits_per_year, 'callouts_per_year': x.callouts_per_year,
+            'sla_policy': x.sla_policy_id, 'sla_policy_name': x.sla_policy.name if x.sla_policy_id else '',
+            'legacy_contract_type': x.legacy_contract_type, 'terms': x.terms, 'to_review': x.to_review,
+            'is_active': x.is_active, 'in_use': x.contracts.exists()}
+

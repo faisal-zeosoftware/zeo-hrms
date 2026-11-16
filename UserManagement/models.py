@@ -28,6 +28,12 @@ class company(TenantMixin):
         ('PM', 'Property management'),              # v1.21.0 (CRM / Property / Maintenance property pack)
         ('RET', 'Retail'),
         ('OTH', 'General'),                         # v1.21.0: was "Other" – the apps use their general setup
+        # v1.67.13 (service): the service industries of the Master SOP (choices only – the column is text, no migration)
+        ('HVAC', 'HVAC and air conditioning'), ('MEP', 'MEP contractors'), ('FIRE', 'Fire and safety'),
+        ('CCTV', 'CCTV and security systems'), ('LIFT', 'Elevators and escalators'), ('MEDEQ', 'Medical equipment'),
+        ('INDM', 'Industrial machinery'), ('SOLAR', 'Solar energy'), ('FM', 'Facility management'), ('CLEAN', 'Cleaning services'),
+        ('PEST', 'Pest control'), ('TEL', 'Telecom and networking'), ('KITCH', 'Commercial kitchen equipment'),
+        ('WATER', 'Water treatment'), ('POOL', 'Swimming pool and landscaping'), ('FITOUT', 'Construction fit-out'),
     ]   # choices only: no table change (the column is a 10-character text)
     name        = models.CharField(max_length=100)
     schema_name = models.SlugField(unique=True, blank=True, null=True)  # Ensure unique schemas

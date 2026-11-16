@@ -37,7 +37,10 @@ BRANCH_TYPES = {
 # the other apps: (kind used by the app's counter, label, default prefix) – company-wide series
 SERIES = {
     'projects': [('project', 'Project', 'PRJ'), ('ticket', 'Support ticket', 'TKT'), ('amc', 'AMC contract', 'AMC'),
-                 ('dev', 'Development request', 'DR'), ('cr', 'Change request', 'CR')],
+                 ('dev', 'Development request', 'DR'), ('cr', 'Change request', 'CR'),
+                 ('site', 'Customer site', 'SITE'), ('eqp', 'Customer equipment', 'EQP'),   # v1.67.13 (service)
+                 ('pi', 'Proforma invoice', 'PI'), ('inv', 'Tax invoice', 'INV'),   # v1.67.13 (billing)
+                 ('srv', 'Service report', 'SR')],   # v1.67.14 (field service)
     'crm': [('lead', 'Lead', 'LD'), ('opportunity', 'Opportunity', 'OPP'), ('quotation', 'Quotation', 'QT'),
             ('sales_order', 'Sales order', 'SO'), ('activity', 'CRM activity', 'ACT'), ('viewing', 'Viewing', 'VW'), ('offer', 'Offer', 'OFR')],
     'property': [('lease', 'Lease', 'LSE'), ('receipt', 'Receipt', 'RCT'), ('cheque', 'Cheque', 'CHQ'), ('bill', 'Property bill', 'BIL'),

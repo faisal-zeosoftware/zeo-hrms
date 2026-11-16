@@ -451,6 +451,60 @@ def set_flag(user, key, value):
 
 
 RELEASES = [
+    {'version': '1.67.20', 'date': '2026-11-13', 'title': 'Import from every screen', 'items': [   # v1.67.20 (1.67.17 import patch merged)
+        ('upload_file', 'Import on more screens', 'Customers, contacts, sites, equipment, AMC contracts, projects, tickets, stores and vans, resignations, employees and their details, salaries, air tickets, loans and expenses have an Import button with an Excel template.'),
+        ('fact_check', 'Check before import', 'Check now runs the screen\'s own save and undoes it, so the rows it says are ready really import.'),
+        ('task_alt', 'Mark a setup step completed', 'Every setup guide step has "Mark as completed"; the checks still open stay as warnings.'),
+        ('payments', 'Payroll and leave fixes', 'Gratuity is a provision and no longer paid on the payslip; National Service Leave is for nationals only; and more fixes from the payroll and leave tests.', ('hrms',)),
+    ]},
+    {'version': '1.67.19', 'date': '2026-11-12', 'title': 'Every field checked', 'items': [   # v1.67.19 (field-by-field check)
+        ('tune', 'Your own fields on every form', 'Fields added with "Design this form" now show and save on the newer forms and the time / approval forms too.'),
+        ('schedule', 'Dates and times stay as typed', 'A date and time you type (e.g. an announcement\'s "Show from") is kept exactly, no longer 19 minutes off.'),
+        ('rule', 'Clear messages', 'Too long text, a wrong e-mail or a number below 0 now gets a message instead of a server error.'),
+        ('lock', 'Rights checked on every save', 'A view-only right no longer lets a user add, change or delete attendance devices, punches or records of other employees.', ('hrms',)),
+        ('apps', 'Only your apps', 'Settings, the calendar, rights groups, the audit log, API keys and notifications list only what belongs to the apps your company uses.'),
+    ]},
+    {'version': '1.67.18', 'date': '2026-11-11', 'title': 'One branch filter and dates', 'items': [   # v1.67.18 (checklist open points F15–F17)
+        ('filter_alt', 'One branch filter', 'Employees, Leavers, Employee salary, Asset register, Org chart and Daily attendance follow the branches chosen in the top bar.'),
+        ('event', 'Dates as dd/mm/yyyy', 'Rosters, schedules and the Audit log show dates as dd/mm/yyyy.'),
+        ('translate', 'More Arabic', 'Texts built on the screen (weekdays, counts, report columns) now show in Arabic.'),
+    ]},
+    {'version': '1.67.17', 'date': '2026-11-11', 'title': 'Fixes from the release checklist', 'items': [   # v1.67.17 (checklist run of 1.67.16)
+        ('lock', 'Report files only for those allowed', 'A saved report file opens only for an administrator or the user it was made for; report lists show only your own files.'),
+        ('group', 'Users list', 'The list of users and administrators is shown only to those who manage users.'),
+        ('event', 'Holiday calendar given twice', 'The same holiday calendar cannot be given twice to the same branch, department, category or employee.'),
+        ('insights', 'Service KPIs for Management', 'The Projects Management role now opens Service KPIs and the service reports.'),
+        ('badge', 'Give access by branch', 'HR users limited to some branches give access only to the employees of those branches.'),
+    ]},
+    {'version': '1.67.16', 'date': '2026-11-11', 'title': 'Bug fixes from the 1.67.5 test report', 'items': [   # v1.67.16 (bug list 11/11)
+        ('face', 'Face registered in self service', 'Faces an employee registers in My profile now show in the Face and badge register.'),
+        ('more_time', 'Late in / early out and overtime', 'Employees ask for late in / early out in Self service; HR adds overtime by hand.'),
+        ('request_quote', 'My requests in one place', 'Every self-service request – general, letter, advance, loan, asset, air ticket, late in, resignation – starts from My requests.'),
+        ('my_location', 'Recheck and punch photos', 'A recheck shows as waiting until the employee answers; punch photos show for every punch.'),
+        ('credit_score', 'Loans ready for a new company', 'Personal and Emergency loan types with a reporting-manager approval are added; "No approval" approves at once.'),
+    ]},
+    {'version': '1.67.15', 'date': '2026-11-10', 'title': 'Payroll fixes', 'items': [   # v1.67.15 (fixes C10, C3, C14, C11)
+        ('payments', 'Held salary at exit', 'A salary still held when an employee leaves is now paid in the final settlement.'),
+        ('undo', 'Rejected payslips give everything back', 'Expense reports and carried-over deductions of a rejected or deleted payslip go to the next payslip.'),
+        ('account_balance', 'Saudi wage file and salary split', 'The Mudad wage protection file pays only the bank part of a split salary.'),
+        ('date_range', 'Monthly inputs preview', 'The preview counts the payroll period (attendance cut-off) and shows it.'),
+        ('receipt', 'Recovery journals', 'A recovery settled early or written off now makes its accounting journal.'),
+    ]},
+    {'version': '1.67.14', 'date': '2026-11-09', 'title': 'Field service, all industry packs and accounting', 'items': [   # v1.67.14 (service releases 2 – 5, billing connectors)
+        ('category', 'All 18 industry packs', 'Every service industry now has its own equipment, AMC types, checklists, CRM pipeline and maintenance trades.'),
+        ('assignment_turned_in', 'Service report on the phone', 'Technicians start the job, tick the checklist, add parts, get the customer to sign and finish. The report is e-mailed to the customer.'),
+        ('local_shipping', 'Van stock and parts', 'Parts used come out of the van. AMC parts limits are checked; the rest is chargeable and can be billed from the ticket.'),
+        ('insights', 'Service KPIs', 'First-time fix, SLA, preventive visits, technician use and customer rating, with reports to download.'),
+        ('sync_alt', 'Invoices to accounting', 'Tax invoices and payments go to ZEO Accounting, and on to Odoo or Zoho Books when connected.'),
+    ]},
+    {'version': '1.67.13', 'date': '2026-11-09', 'title': 'Service, billing and planners', 'items': [   # v1.67.13 (service, billing, planners)
+        ('location_on', 'Sites and equipment', 'Customers have sites with address, GPS and access notes, and equipment per site with warranty and a QR label.'),
+        ('verified', 'AMC types and coverage', 'AMC contracts have a type, visits and call-outs a year, and the sites and equipment they cover. Tickets show Warranty, Covered or Chargeable with the reason.'),
+        ('category', 'Industry packs', "Pick one or more service industries. IT keeps today's setup; General has every feature with simple lists."),
+        ('receipt_long', 'Proforma and tax invoices', 'Milestones and AMC lines go from PI to tax invoice with VAT, payments and follow-ups. Billing and collections shows what is due.'),
+        ('event_available', 'Collection planner', 'Plan collections from opening balances, CRM, projects and AMC. Follow-ups go to the To-do list; the report adds them up.'),
+        ('calendar_month', 'Support planner', 'Plan support jobs by day and person. The person gets the ticket and a notice, and can open the whole job.'),
+    ]},
     {'version': '1.67.12', 'date': '2026-11-09', 'title': 'Effective dates and GPSSA first insured', 'items': [   # v1.67.12 (effective)
         ('event', 'Changes from a date', 'Leave policies, leave types, overtime, gratuity, air tickets, pay structures and attendance rules can change from a set date, with a history of changes.'),
         ('account_balance', 'GPSSA old or new law', 'Enter the date an Emirati was first insured. The payroll uses the old or new pension law from that date.'),

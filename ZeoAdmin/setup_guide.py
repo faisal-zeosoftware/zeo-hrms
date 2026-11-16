@@ -773,6 +773,10 @@ def s_payroll():
             field('bank_file', 'Bank file', BANK_FILES.get(pk, 'Bank upload'), readonly=True, purple=True),
             field('payslip_language', 'Payslip', s.payslip_language if s else 'reader', 'select', M('PayrollPlus', 'PayrollPlusSettings').PAYSLIP_LANG if s else []),
             field('statutory', 'Statutory schemes', tr('{0} schemes', stat), readonly=True),
+            # v1.67.19: the payroll audit (fixed rules, no outside service) before a run is approved – off for a new company
+            field('require_audit', 'Require the payroll audit before approval', _audit_required(), 'check',
+                  help='The payroll auditor compares each payslip with last month, the contract and the attendance. When ticked, a run is '
+                       'approved only after it was audited (Payroll › AI payroll auditor).'),
         ],
         'links': [link('Salary components', 'salary-options/salary'), link('Salary structures', 'salary-options/salary-structure'),
                   link('Pay structure', 'salary-options/pay-structure'), link('Statutory schemes', 'salary-options/statutory-schemes'),
@@ -786,7 +790,8 @@ def s_payroll():
             chk('salaries', no_struct == 0, tr('{0} employees have no salary yet.', no_struct), MS + 'salary-options/salary-structure', 'warn'),
             # v1.62.2 (item 41): the same contribution in a pension formula component and a statutory scheme
             chk('statutory_duplicate', not _v1622_dup(), tr('{0} takes the same contribution as the statutory scheme {1} – payroll deducts it once, '
-                                                           'by the statutory scheme. Switch {0} off.', *(_v1622_dup() or ['', ''])), MS + 'salary-options/salary', 'warn'),
+                                                           'by the statutory scheme. Switch {0} off.', *(_v1622_dup() or ['', ''])[:2]),
+                MS + 'salary-options/salary?switch_off=' + str((_v1622_dup() or ['', '', ''])[2]), 'warn'),   # v1.67.16 (item 14): Fix opens the switch-off
         ],
     }
 
@@ -796,9 +801,16 @@ def _v1622_dup():
     try:
         from PayrollManagement.payroll_guards import duplicate_setup
         d = duplicate_setup()
-        return [d[0][0].name, d[0][1].name] if d else None
+        return [d[0][0].name, d[0][1].name, d[0][0].pk] if d else None
     except Exception:
         return None
+
+
+def _audit_required():
+    try:
+        return bool(M('ZeoAI', 'AIAssistantSettings').get().require_audit)
+    except Exception:   # noqa: BLE001
+        return False
 
 
 def save_payroll(v, user):
@@ -815,6 +827,14 @@ def save_payroll(v, user):
     if s is not None and v.get('payslip_language') in ('reader', 'en', 'en_ar'):
         s.payslip_language = v['payslip_language']
         s.save(update_fields=['payslip_language', 'updated_at'])
+    if 'require_audit' in v:   # v1.67.19
+        try:
+            a = M('ZeoAI', 'AIAssistantSettings').get()
+            if a.require_audit != bool(v['require_audit']):
+                a.require_audit = bool(v['require_audit'])
+                a.save(update_fields=['require_audit', 'updated_at'])
+        except Exception:   # noqa: BLE001
+            log.exception('payroll audit setting')
 
 
 # ---------------------------------------------------------------------- 10 approvals
@@ -883,14 +903,22 @@ def approval_rows():
         else:
             lv = list(L.objects.select_related('approver').order_by(order)[:5])
             chains = [_chain(None, lv)] if lv else []
-        first = chains[0] if chains else [tr('Not set up')]
+        types_none = False
+        if not chains and wf_model:   # v1.67.19: a chain per type (loan, request, document, asset type) – no types yet: nothing to approve
+            W_ = M(*wf_model.split('.'))
+            tfk = next((f for f in W_._meta.concrete_fields if f.is_relation and f.name in ('request_type', 'loan_type', 'asset_type')), None)
+            if tfk is not None and not tfk.related_model.objects.exists():
+                types_none = True
+        first = chains[0] if chains else [tr('No types yet') if types_none else tr('Not set up')]
         cells = (first + [''] * 3)[:3]
         if len(first) > 3:
             cells[2] = cells[2] + ' …'
         note = '' if len(chains) < 2 else tr('+ 1 other chain (per type or branch)') if len(chains) == 2 else \
             tr('+ {0} other chains (per type or branch)', len(chains) - 1)
-        rows.append({'cells': [tr(label)] + cells, 'link': MS + path, 'set': bool(chains), 'note': note})
-        if not chains:
+        if types_none:
+            note = tr('Add a type first; "Set up the standard chains" then gives it the reporting manager.')
+        rows.append({'cells': [tr(label)] + cells, 'link': MS + path, 'set': bool(chains) or types_none, 'note': note})
+        if not chains and not types_none:
             missing.append(tr(label))
     return rows, missing
 
@@ -965,6 +993,10 @@ def s_employees():
     s = pp_settings()
     G = M('PayrollPlus', 'GoLiveEmployee') if has('PayrollPlus.GoLiveEmployee') else None
     Bal = M('calendars', 'emp_leave_balance')
+    try:
+        _opening = M('LeavePolicy', 'LeaveLedger').objects.filter(kind='opening')
+    except Exception:   # noqa: BLE001
+        _opening = Bal.objects.exclude(balance=0)
     loans = M('PayrollManagement', 'LoanApplication').objects.filter(status__in=['approved', 'Approved', 'disbursed']).count()
     golive = s.paid_up_to if s else None
     return {
@@ -973,7 +1005,8 @@ def s_employees():
         'fields': [
             field('paid_up_to', 'Salary paid up to', iso(golive), 'date', purple=True,
                   help='Months up to this date were paid outside ZEO: payroll runs for them leave everybody out. Empty = no salary paid before ZEO.'),
-            field('balances', 'Opening leave balances', tr('Imported – {0} employees', Bal.objects.values('employee').distinct().count()) if Bal.objects.exists() else tr('Not imported'), readonly=True),
+            # v1.67.19: balance rows are made for every employee (0 days) – an IMPORT is an opening entry in the leave ledger
+            field('balances', 'Opening leave balances', tr('Imported – {0} employees', _opening.values('employee_id').distinct().count()) if _opening.exists() else tr('Not imported'), readonly=True),
             field('golive_rows', 'Employee exceptions (paid up to, unpaid days, gratuity start)', tr('{0} employees', G.objects.count()) if G else '0', readonly=True, purple=True),
             field('loans', 'Open loans and advances', tr('Imported – {0} loans', loans) if loans else tr('None'), readonly=True),
         ],
@@ -1138,7 +1171,8 @@ def act_test_mail(v, user):
 
 
 # ---------------------------------------------------------------------- 15 go live
-GAPS = ['Hourly leave is not built (days and half days).', 'Split shifts are not supported.',
+GAPS = [   # 1.67.19: split shifts are supported (Shift master › parts – checked in the shift planner test)
+       
         'Server set-up (SMTP, push notifications, backups, SSL, Celery) is done once by Adept.']
 
 
@@ -1183,12 +1217,17 @@ def s_golive():
     }
 
 
-def go_live(v, user):
+def go_live(v, user, force=False):
     st = s_golive()
-    if st['blocking']:
+    if st['blocking'] and not force:
         raise GuideError(tr('{0} items still block go-live.', len(st['blocking'])))
     notes = v.get('accept') or {}
     need = [w['key'] + '@' + w.get('step', 'golive') for w in st['warnings'] + [c for c in st['checks'] if not c['ok']]]
+    if force and st['blocking']:   # v1.67.17 the user's decision: blocking items are kept as warnings too
+        need += [c['key'] + '@' + c.get('step', 'golive') for c in st['blocking']]
+        notes = dict(notes) if isinstance(notes, dict) else {}
+        for c in st['blocking']:
+            notes.setdefault(c['key'] + '@' + c.get('step', 'golive'), str(v.get('note') or tr('Marked completed by the user')))
     g = guide()
     acc = dict(g.accepted or {})
     for k in need:
@@ -1291,6 +1330,30 @@ def post(key, data, user, base_url=''):
         if key != 'golive':
             raise GuideError(tr('Not found.'), status=404)
         return go_live(v, user), step(key)
+    if action == 'complete':
+        # v1.67.17 (user request 12 Nov): the user decides – any step can be marked completed, also with open checks; the open
+        # checks stay as warnings (Home checklist after go-live) with the user's note
+        if key == 'golive':
+            return go_live(v, user, force=True), step(key)
+        st0 = step(key)
+        open_checks = [c for c in st0.get('checks', []) if not c['ok']]
+        with transaction.atomic():
+            if key in SAVE:
+                try:
+                    SAVE[key](v, user)
+                except GuideError:
+                    pass   # a value that cannot be saved does not stop the user's decision
+            g = guide()
+            if open_checks:
+                acc = dict(g.accepted or {})
+                note = str(v.get('note') or tr('Marked completed by the user')).strip()[:300]
+                for c in open_checks:
+                    acc.setdefault(f"{c['key']}@{key}", {'note': note, 'by': getattr(user, 'pk', None), 'at': timezone.now().isoformat()})
+                g.accepted = acc
+                g.save(update_fields=['accepted', 'updated_at'])
+            mark(g, key, 'done', user)
+        st = step(key)
+        return (tr('Marked completed – {0} open check(s) kept as warnings.', len(open_checks)) if open_checks else tr('Marked completed.')), st
     if action in ACTIONS:
         fn = ACTIONS[action]
         if action == 'invite':   # one employee at a time: a login that cannot be made does not undo the others

@@ -169,6 +169,15 @@ def request_problems(req, line, days):
         out += birth_problems(req, rule, line, days)
     if rule is not None and (rule.hr_eligibility or rule.min_service_years):
         out += eligibility_problems(req, rule)
+    if rule is not None and getattr(rule, 'nationals_only', False):   # v1.67.19 (e.g. National Service Leave – Emirati only)
+        try:
+            from PayrollPlus.statutory import is_national
+            nat = is_national(emp)
+        except Exception:   # noqa: BLE001
+            nat = True
+        if not nat:
+            out.append(tr('{0} is only for nationals of the country – {1} is {2}.', lt.name, emp.emp_first_name,
+                          getattr(emp, 'emp_nationality', '') or tr('not a national')))
     if rule is not None and rule.document_above_days is not None and line is None and days > float(rule.document_above_days) + 1e-9 \
             and not req.lv_document:   # item 92 – a leave type without a policy line: the document above N days
         out.append(tr('{0} of more than {1:g} days needs a supporting document – attach it to the request.', lt.name, float(rule.document_above_days)))
@@ -527,7 +536,9 @@ def cancel_part(lr, from_date, reason, user=None):
         lr.save()
         lr.refresh_from_db()
         if back:
-            engine.post(lr.employee_id, lr.leave_type_id, date.today(), 'cancelled', back, ref=lr, user_id=uid, move_balance=True,
+            # v1.67.19: days given back from a FUTURE leave are booked on their own date (the year they belong to), not today –
+            # the leave year end of this year counted them (3 days too many lapsed); days already passed stay on today
+            engine.post(lr.employee_id, lr.leave_type_id, max(date.today(), from_date), 'cancelled', back, ref=lr, user_id=uid, move_balance=True,
                         note=f'{lr.document_number} {from_date:%d/%m/%Y}–{old_end:%d/%m/%Y} given back ({back:g})'[:255])
         AC.objects.filter(employee=lr.employee, date__range=(from_date, old_end), is_manual=False, remarks__startswith=engine.TAG,
                           leave_type=lr.leave_type).delete()

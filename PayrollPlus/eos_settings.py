@@ -134,8 +134,8 @@ def options():
     S = _S()
     SC = M('PayrollManagement', 'SalaryComponent')
     comps = {}
-    for c in SC.objects.filter(component_type='addition', component_value_type='fixed', payroll_category__in=S.WAGE_CATEGORIES).select_related('branch').order_by('name'):
-        if (c.code or '') in S.NOT_WAGE_CODES:
+    for c in SC.objects.filter(component_type='addition', payroll_category__in=S.WAGE_CATEGORIES).select_related('branch').order_by('name'):
+        if not S.wage_component(c):   # v1.67.19: formula allowances of the wage can be left out too
             continue
         k = comp_key(c)
         r = comps.setdefault(k, {'key': k, 'code': c.code or '', 'name': c.name, 'category': c.payroll_category, 'branches': []})
@@ -191,9 +191,7 @@ def wage_rows(emp):
     out = []
     for r in ESS.objects.filter(employee=emp, is_active=True).select_related('component'):
         c = r.component
-        if c.component_type != 'addition' or c.component_value_type != 'fixed' or (c.code or '') in S.NOT_WAGE_CODES:
-            continue
-        if c.payroll_category not in S.WAGE_CATEGORIES:
+        if not S.wage_component(c):   # v1.67.19: formula allowances paid every month too
             continue
         out.append({'key': comp_key(c), 'code': c.code or '', 'name': c.name, 'category': c.payroll_category, 'amount': S.q2(r.amount)})
     return out

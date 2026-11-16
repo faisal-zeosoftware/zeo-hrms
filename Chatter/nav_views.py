@@ -213,8 +213,18 @@ def _version():
 class WhatsNewView(Base):
     def get(self, request):
         seen = (N.flags(request.user).get('whatsnew') or {}).get('seen', '')
+        # v1.67.19 (apps): an item may name the apps it is about (4th value) – shown only to companies with one of them
+        try:
+            from ZeoApps.services import active_keys
+            act = set(active_keys())
+        except Exception:   # noqa: BLE001
+            act = None
+
+        def on(it):
+            return len(it) < 4 or act is None or bool(set(it[3]) & act)
         rel = [{'version': r['version'], 'date': r['date'], 'title': r['title'],
-                'items': [{'icon': i, 'title': t, 'text': x} for i, t, x in r['items']]} for r in N.RELEASES]
+                'items': [{'icon': it[0], 'title': it[1], 'text': it[2]} for it in r['items'] if on(it)]} for r in N.RELEASES]
+        rel = [r for r in rel if r['items']]
         return Response({'current': _version(), 'seen': seen, 'releases': rel})
 
     def post(self, request):

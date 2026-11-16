@@ -270,7 +270,7 @@ def contract_usage(c):
     charges = q2(logs.aggregate(s=Sum('travel_cost'))['s']) + q2(logs.aggregate(s=Sum('other_charges'))['s'])
     outside_value = q2(outside_hours * (c.hourly_rate_outside or 0)) + charges
     cost = q2(logs.aggregate(s=Sum('cost_amount'))['s'])
-    billed = q2(c.billing.filter(status__in=('invoiced', 'paid')).aggregate(s=Sum('amount'))['s'])
+    billed = q2(c.billing.filter(status__in=('invoiced', 'partly_paid', 'paid')).aggregate(s=Sum('amount'))['s'])
     paid = q2(c.billing.filter(status='paid').aggregate(s=Sum('amount'))['s'])
     included = q2(c.included_hours)
     remaining = None if c.unlimited_hours else q2(included - used)
@@ -288,14 +288,29 @@ def contract_usage(c):
 
 
 def apply_coverage(t):
-    """Link the active AMC and decide AMC covered / chargeable / internal."""
+    """Link the active AMC and decide AMC covered / warranty / chargeable / internal.
+    v1.67.13 (service): also warranty of the equipment, covered sites and equipment, call-outs and the parts limit."""
+    t.parts_chargeable = False
     if t.customer_id is None:
         t.contract = None
         t.covered = False
         t.billable_status = 'internal'
+        t.coverage_kind = 'internal'
         t.coverage_note = 'Internal helpdesk ticket'
         return
     on = local_today()
+    eq = t.equipment if getattr(t, 'equipment_id', None) else None
+    if eq is not None and not t.site_id:
+        t.site_id = eq.site_id
+    # 1. equipment under warranty – not charged to the AMC
+    if eq is not None and eq.warranty_end and eq.warranty_end >= on:
+        t.covered = True
+        t.billable_status = 'warranty'
+        t.coverage_kind = 'warranty'
+        t.coverage_note = f'Warranty until {eq.warranty_end:%d/%m/%Y}' + (f' ({eq.warranty_by})' if eq.warranty_by else '')
+        if t.contract_id is None:
+            t.contract = active_contract(t.customer, on, t.product)
+        return
     if t.contract_id is None or t.contract.customer_id != t.customer_id:
         t.contract = active_contract(t.customer, on, t.product)
     c = t.contract
@@ -303,6 +318,7 @@ def apply_coverage(t):
     if c is None:
         t.covered = False
         t.billable_status = (cat.default_billable if cat and cat.default_billable else 'chargeable')
+        t.coverage_kind = 'chargeable' if t.billable_status == 'chargeable' else t.billable_status
         t.coverage_note = 'No active AMC – chargeable work'
         return
     ids = set(c.products.values_list('pk', flat=True))
@@ -315,14 +331,120 @@ def apply_coverage(t):
         u = contract_usage(c)
         if u['remaining_hours'] is not None and u['remaining_hours'] <= 0:
             reasons.append('the AMC hours are used up')
+    # v1.67.13 (service): 2. site, 3. equipment, 4. call-outs
+    if t.site_id:
+        sites = set(c.covered_sites.values_list('pk', flat=True))
+        if sites and t.site_id not in sites:
+            reasons.append(f'site not covered by {c.number}')
+    if eq is not None:
+        if c.cover_scope == 'selected' and not c.covered_equipment.filter(pk=eq.pk).exists():
+            reasons.append('equipment not covered')
+        elif c.cover_scope == 'categories' and not c.covered_categories.filter(pk=eq.category_id).exists():
+            reasons.append('equipment not covered')
+    if getattr(t, 'ticket_kind', 'request') == 'callout' and c.callouts_per_year is not None:
+        n = callouts_used(c, exclude=t.pk)
+        if n >= c.callouts_per_year:
+            reasons.append(f'call-outs used up ({n} of {c.callouts_per_year})')
     if reasons:
         t.covered = False
         t.billable_status = 'chargeable'
+        t.coverage_kind = 'chargeable'
         t.coverage_note = ('Chargeable: ' + '; '.join(reasons))[:255]
-    else:
-        t.covered = True
-        t.billable_status = cat.default_billable if (cat and cat.default_billable) else 'amc'
-        t.coverage_note = f'Covered by {c.number}'
+        return
+    t.covered = True
+    t.billable_status = cat.default_billable if (cat and cat.default_billable) else 'amc'
+    t.coverage_kind = 'covered'
+    typ = f' ({c.amc_type.name})' if getattr(c, 'amc_type_id', None) else ''
+    t.coverage_note = f'Covered by {c.number}{typ}'
+    # 5. parts: labour stays covered, parts are charged when the AMC has no parts or the limit is used up
+    at = c.amc_type if getattr(c, 'amc_type_id', None) else None
+    if at is not None and at.parts == 'none':
+        t.parts_chargeable = True
+    elif at is not None and at.parts == 'limit' and c.parts_limit is not None and parts_used(c) >= c.parts_limit:
+        t.parts_chargeable = True
+    if t.parts_chargeable:
+        t.coverage_note = (t.coverage_note + ' – labour covered, parts chargeable')[:255]
+
+
+def check_site_equipment(customer, site, equipment):
+    """v1.67.13 (service): the site and equipment must belong to the ticket's customer; equipment fills its site."""
+    if equipment is not None:
+        if customer is not None and equipment.customer_id != customer.pk:
+            raise ProjectsError('The equipment belongs to another customer.', 'equipment')
+        if site is not None and equipment.site_id != site.pk:
+            raise ProjectsError('The equipment is at another site.', 'equipment')
+        site = equipment.site
+    if site is not None and customer is not None and site.customer_id != customer.pk:
+        raise ProjectsError('The site belongs to another customer.', 'site')
+    return site, equipment
+
+
+def callouts_used(c, exclude=None):
+    """v1.67.13 (service): emergency call-outs of the contract in its current contract year."""
+    qs = Ticket.objects.filter(contract=c, ticket_kind='callout').exclude(stage='cancelled')
+    if exclude:
+        qs = qs.exclude(pk=exclude)
+    start = contract_year_start(c)
+    if start:
+        qs = qs.filter(created_at__date__gte=start)
+    return qs.count()
+
+
+def visits_used(c):
+    """v1.67.13 (service): preventive visits of the contract in its current contract year."""
+    qs = Ticket.objects.filter(contract=c, ticket_kind='visit').exclude(stage='cancelled')
+    start = contract_year_start(c)
+    if start:
+        qs = qs.filter(created_at__date__gte=start)
+    return qs.count()
+
+
+def parts_used(c):
+    """v1.67.13 (service): parts value (cost) covered by the contract in its current contract year – v1.67.14 (release 4): the
+    covered parts used on its tickets (was 0 until parts lines existed)."""
+    from .field_service import parts_used_value
+    return parts_used_value(c)
+
+
+def contract_year_start(c):
+    """v1.67.13 (service): the start of the contract year that contains today."""
+    on = local_today()
+    if not c.start_date:
+        return None
+    y = c.start_date
+    while True:
+        try:
+            nxt = y.replace(year=y.year + 1)
+        except ValueError:   # 29 February
+            nxt = y.replace(year=y.year + 1, day=28)
+        if nxt > on:
+            return y
+        y = nxt
+
+
+def equipment_contracts(x):
+    """v1.67.13 (service): active AMC contracts that cover a piece of equipment today."""
+    on = local_today()
+    out = []
+    for c in AMCContract.objects.filter(customer_id=x.customer_id, start_date__lte=on, end_date__gte=on,
+                                        status__in=('active', 'expiring', 'renewed')):
+        sites = set(c.covered_sites.values_list('pk', flat=True))
+        if sites and x.site_id not in sites:
+            continue
+        if c.cover_scope == 'selected' and not c.covered_equipment.filter(pk=x.pk).exists():
+            continue
+        if c.cover_scope == 'categories' and not c.covered_categories.filter(pk=x.category_id).exists():
+            continue
+        out.append(c)
+    return out
+
+
+def contract_service_usage(c):
+    """v1.67.13 (service): visits, call-outs and parts of the current contract year for the AMC page and portal."""
+    return {'year_start': contract_year_start(c).isoformat() if contract_year_start(c) else None,
+            'visits_per_year': c.visits_per_year, 'visits_used': visits_used(c),
+            'callouts_per_year': c.callouts_per_year, 'callouts_used': callouts_used(c),
+            'parts_limit': str(c.parts_limit) if c.parts_limit is not None else None, 'parts_used': str(parts_used(c))}
 
 
 # ------------------------------------------------------------------ v1.15.0 work approval
@@ -494,7 +616,8 @@ def least_busy_member(team):
 
 def create_ticket(*, subject, description='', user=None, channel='manual', customer=None, contact=None, employee=None,
                   product=None, category=None, priority='medium', team=None, assigned_to=None, contract=None,
-                  billable_status=None, requester_email='', requester_name='', files=(), message_id='', approved_by=None):
+                  billable_status=None, requester_email='', requester_name='', files=(), message_id='', approved_by=None,
+                  site=None, equipment=None, ticket_kind='request'):   # v1.67.13 (service)
     subject = (subject or '').strip()
     if not subject:
         raise ProjectsError('Subject is required.', 'subject')
@@ -506,11 +629,15 @@ def create_ticket(*, subject, description='', user=None, channel='manual', custo
         raise ProjectsError('The contact does not belong to this customer.', 'contact')
     if contract is not None and customer is not None and contract.customer_id != customer.pk:
         raise ProjectsError('The contract belongs to another customer.', 'contract')
+    site, equipment = check_site_equipment(customer, site, equipment)   # v1.67.13 (service)
+    if ticket_kind not in ('request', 'callout', 'visit'):
+        raise ProjectsError('Unknown ticket kind.', 'ticket_kind')
     with transaction.atomic():
         t = Ticket(number=next_number('ticket'), subject=subject[:255], description=description or '', customer=customer,
                    contact=contact, requester_employee=employee, product=product, category=category, priority=priority,
                    channel=channel, contract=contract, created_by=user if (user and user.is_authenticated) else None,
-                   requester_email=requester_email or '', requester_name=requester_name or '', email_message_id=message_id or '')
+                   requester_email=requester_email or '', requester_name=requester_name or '', email_message_id=message_id or '',
+                   site=site, equipment=equipment, ticket_kind=ticket_kind)
         t.save()
         apply_coverage(t)
         if billable_status:
@@ -730,13 +857,37 @@ def update_ticket(t, data, user):
             if getattr(t, f'{f}_id') != (obj.pk if obj else None):
                 setattr(t, f, obj)
                 changed.append(f)
+    # v1.67.13 (service): site, equipment and kind of work
+    if any(k in data for k in ('site', 'equipment')):
+        from .models import CustomerEquipment, CustomerSite
+        site = t.site
+        eqp = t.equipment
+        if 'site' in data:
+            v = data['site']
+            site = CustomerSite.objects.filter(pk=v).first() if v not in (None, '', 0) else None
+            if v not in (None, '', 0) and site is None:
+                raise ProjectsError('Site not found.', 'site')
+        if 'equipment' in data:
+            v = data['equipment']
+            eqp = CustomerEquipment.objects.filter(pk=v).first() if v not in (None, '', 0) else None
+            if v not in (None, '', 0) and eqp is None:
+                raise ProjectsError('Equipment not found.', 'equipment')
+        site, eqp = check_site_equipment(t.customer, site, eqp)
+        if (site.pk if site else None) != t.site_id or (eqp.pk if eqp else None) != t.equipment_id:
+            t.site, t.equipment = site, eqp
+            changed.append('site')
+    if data.get('ticket_kind') and data['ticket_kind'] != t.ticket_kind:
+        if data['ticket_kind'] not in ('request', 'callout', 'visit'):
+            raise ProjectsError('Unknown ticket kind.', 'ticket_kind')
+        t.ticket_kind = data['ticket_kind']
+        changed.append('site')
     if 'priority' in data and data['priority'] and data['priority'] != t.priority:
         if data['priority'] not in PRIORITY_ORDER:
             raise ProjectsError('Unknown priority.', 'priority')
         event(t, 'priority', f'Priority {t.get_priority_display()} → {dict(Ticket._meta.get_field("priority").choices)[data["priority"]]}', user)
         t.priority = data['priority']
         changed.append('priority')
-    if any(f in changed for f in ('product', 'category', 'contract')):
+    if any(f in changed for f in ('product', 'category', 'contract', 'site')):
         apply_coverage(t)
     if 'billable_status' in data and data['billable_status'] and data['billable_status'] != t.billable_status:
         t.billable_status = data['billable_status']
@@ -930,10 +1081,11 @@ def build_billing(c):
     c.billing.filter(status='planned').delete()
     step = FREQ_MONTHS.get(c.billing_frequency, 12)
     dates = []
-    d = c.start_date
-    while d <= c.end_date and len(dates) < 120:
+    d, k = c.start_date, 0
+    while d <= c.end_date and len(dates) < 120:   # v1.67.14 (fix): each date from the start date – no month-end drift (31/10 → 31/01 → 30/04 → 31/07)
         dates.append(d)
-        d = add_months(d, step)
+        k += 1
+        d = add_months(c.start_date, k * step)
     if not dates:
         return []
     fixed = c.billing.exclude(status='planned').count()
@@ -943,9 +1095,10 @@ def build_billing(c):
         return []
     part = q2(left / len(dates))
     rows = []
+    all_dates = [add_months(c.start_date, j * step) for j in range(fixed + len(dates) + 1)]
     for i, d in enumerate(dates):
         amt = part if i < len(dates) - 1 else q2(left - part * (len(dates) - 1))
-        end = min(add_months(d, step) - timedelta(days=1), c.end_date)
+        end = min(all_dates[fixed + i + 1] - timedelta(days=1), c.end_date)
         rows.append(AMCBilling(contract=c, due_date=d, amount=amt, period_label=f'{d:%d/%m/%Y} – {end:%d/%m/%Y}'))
     return AMCBilling.objects.bulk_create(rows)
 
@@ -1290,7 +1443,7 @@ def project_profit(project):
     cr_hours = q2(cr.aggregate(s=Sum('extra_hours'))['s'])
     prof = ProjectProfile.objects.filter(project_id=project.pk).first()
     contract = q2(s.get('contract_value') or 0)
-    invoiced = q2(sum((m.amount for m in ms if m.invoice_status in ('invoiced', 'paid')), D0)) + q2(prof.invoiced_amount if prof else 0)
+    invoiced = q2(sum((m.amount for m in ms if m.invoice_status in ('invoiced', 'partly_paid', 'paid')), D0)) + q2(prof.invoiced_amount if prof else 0)
     paid = q2(sum((m.amount for m in ms if m.invoice_status == 'paid'), D0))
     cost = q2(s.get('cost') or 0)
     hours = q2(s.get('actual_hours') or 0)
@@ -1330,7 +1483,7 @@ def milestone_status(m, user, status, note='', customer_name=''):
         m.accepted_at = now()
         m.acceptance_note = note or ''
         if status == 'accepted' and m.amount and m.invoice_status == 'planned':
-            m.invoice_status = 'to_invoice'
+            m.invoice_status = 'pi_to_create'   # v1.67.13 (billing): the PI comes first (was 'to_invoice')
     m.save()
     from ProjectManagement.models import Project
     project = Project.objects.filter(pk=m.project_id).first()
@@ -1346,9 +1499,9 @@ def milestone_status(m, user, status, note='', customer_name=''):
         for e in project.managers.all():
             notify_emp(e, f'{project.title}: milestone {m.get_status_display().lower()}', f'"{m.name}" was {status} by {m.accepted_by}. {note}', event='project_updates')
         if status == 'accepted' and m.amount:
-            notify_users(users_with('change_amcbilling'), f'{project.title}: invoice milestone "{m.name}"',
-                         f'Milestone accepted – invoice {settings().currency} {q2(m.amount)}.', m,
-                         f'/main-sidebar/zeo-projects/billing', f'Invoice milestone {m.name}', event='project_updates')
+            notify_users(users_with('change_amcbilling'), f'{project.title}: create the PI for milestone "{m.name}"',
+                         f'Milestone accepted – create the proforma invoice for {settings().currency} {q2(m.amount)} (Projects › Billing).', m,
+                         f'/main-sidebar/zeo-projects/billing', f'Billing: create the PI – {project.title} – {m.name}', event='project_updates')   # v1.67.13
     return m
 
 
@@ -1389,3 +1542,37 @@ def decide_change_request(cr, user, step, approve, note='', customer_name=''):
 def _company_perms():   # v1.22.0: only the users of the open company (see AccessControl.access.company_perms)
     from AccessControl.access import company_perms
     return company_perms()
+
+
+# v1.67.19 (field check): a text longer than its field reached the database and answered a server error (Customers: name,
+# address … typed 300 characters); an e-mail field took "abc". Every Projects record is checked before it is stored and the
+# screen gets the field and the limit in words (the views turn ProjectsError into a 400 answer).
+def _check_fields(sender, instance, **kwargs):
+    if getattr(sender._meta, 'app_label', '') != 'ZeoProjects':
+        return
+    from django.core.validators import validate_email
+    from django.core.exceptions import ValidationError
+    from django.db import models as _m
+    for f in sender._meta.concrete_fields:
+        if not isinstance(f, (_m.CharField, _m.EmailField)) or f.choices:
+            continue
+        v = getattr(instance, f.attname, None)
+        if not isinstance(v, str) or not v:
+            continue
+        label = str(f.verbose_name).capitalize()
+        if f.max_length and len(v) > f.max_length:
+            raise ProjectsError(f'{label}: at most {f.max_length} characters.', f.name)
+        if isinstance(f, _m.EmailField):
+            if instance.pk and sender.objects.filter(pk=instance.pk, **{f.attname: v}).exists():
+                continue   # unchanged: an older address is not checked again
+            try:
+                validate_email(v)
+            except ValidationError:
+                raise ProjectsError(f'{label}: enter a valid e-mail address.', f.name)
+
+
+try:
+    from django.db.models.signals import pre_save as _pre_save
+    _pre_save.connect(_check_fields, dispatch_uid='zp_check_fields')
+except Exception:   # noqa: BLE001
+    pass

@@ -75,6 +75,31 @@ def audit(run, user=None):
     c = Collector(a, prev_keys)
     slips = list(Payslip.objects.filter(payroll_run=run).select_related('employee'))
     prev_slips = {p.employee_id: p for p in Payslip.objects.filter(payroll_run=prev)} if prev else {}
+    if prev:
+        # v1.67.19: compare with the SAME scope last month – the payslips (not rejected) of the previous month's runs of the
+        # branches of this run. Before, a one-branch run was compared with the whole-company run (gross −56 %, critical).
+        _brs = set(run.branch.values_list('pk', flat=True)) if hasattr(run, 'branch') else set()
+        if not _brs:
+            _brs = {p.employee.emp_branch_id_id for p in slips if p.employee_id}
+        _qs = Payslip.objects.filter(payroll_run__year=prev.year, payroll_run__month=prev.month).exclude(status__iexact='rejected') \
+            .exclude(payroll_run__status='pending').select_related('employee')
+        if _brs:
+            _qs = _qs.filter(employee__emp_branch_id__in=_brs)
+        for _rel, _fld in (('department', 'employee__emp_dept_id__in'), ('category', 'employee__emp_ctgry_id__in'),
+                           ('designation', 'employee__emp_desgntn_id__in')):   # the run's other filters too
+            try:
+                _ids = list(getattr(run, _rel).values_list('pk', flat=True))
+            except Exception:
+                _ids = []
+            if _ids:
+                _qs = _qs.filter(**{_fld: _ids})
+        try:   # off-cycle runs (corrections, bonuses) are not a month's pay
+            _qs = _qs.exclude(payroll_run_id__in=M('PayrollPlus', 'OffCycleRun').objects.values('payroll_run_id'))
+        except Exception:
+            pass
+        prev_slips = {}
+        for _p in _qs.order_by('pk'):
+            prev_slips[_p.employee_id] = _p   # an employee paid in two runs of the month: the later payslip
     start, end = period_of(run)
     a.payslips = len(slips)
 
@@ -163,6 +188,8 @@ def audit(run, user=None):
             pc = _pct(q.gross_salary, p.gross_salary)
             if pc is not None and abs(pc) > float(s.gross_change_pct):
                 sev = 'critical' if abs(pc) > float(s.gross_critical_pct) else 'warning'
+                if (q.days_worked or 0) < (q.total_working_days or 0) or (p.days_worked or 0) < (p.total_working_days or 0):
+                    sev = 'info'   # v1.67.19: a part month (joiner, leaver, unpaid leave) on either side explains the change
                 why = _why_changed(comps[p.pk], PC.objects.filter(payslip=q).select_related('component'))
                 c.add('gross_change', sev, f'{name}: gross {pc:+.1f}% ({_d(q.gross_salary):,.2f} → {_d(p.gross_salary):,.2f})',
                       f'Gross pay moved by {pc:+.1f}% against the previous month. {why} Confirm there is an approved salary revision, bonus, overtime or pro-rata behind it.',
@@ -218,6 +245,13 @@ def audit(run, user=None):
             if e is None:
                 continue
             active = getattr(e, 'is_active', True) and getattr(e, 'emp_status', True)
+            try:   # v1.67.19: a leaver whose last working day is before this period is paid by the final settlement
+                from PayrollManagement.signals import last_working_day as _lwd
+                _l = _lwd(e)
+                if _l and _l < start:
+                    active = False
+            except Exception:
+                pass
             c.add('missing_from_run', 'warning' if active else 'info', f'{emp_name(e)}: paid last month, not in this run',
                   ('The employee is still active but has no payslip in this run – left out by the run filters, on unpaid leave, or missed. ' if active else 'The employee has left; the final settlement is paid separately. ')
                   + f'Last month\'s net was {_d(q.net_salary):,.2f}.', employee=e, previous=q.net_salary)

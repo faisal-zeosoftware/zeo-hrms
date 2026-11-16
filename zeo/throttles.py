@@ -38,7 +38,24 @@ def _uid(request):
     return None
 
 
+import threading
+
+# v1.67.15 the calls the Data workbook makes itself (inside the server, one row after the other) are not visitor requests: they
+# counted against the loading user's 600 a minute, so a large workbook – or two companies loaded at the same time – was refused
+# row by row with "Request was throttled". Only code in the server process can set this (no header or parameter turns it on).
+INTERNAL = threading.local()
+
+
+def internal():
+    return bool(getattr(INTERNAL, 'on', False))
+
+
 class ZeoUserThrottle(UserRateThrottle):
+    def allow_request(self, request, view):
+        if internal():
+            return True
+        return super().allow_request(request, view)
+
     def get_ident(self, request):
         return _ip(request)
 
@@ -53,7 +70,7 @@ class ZeoAnonThrottle(AnonRateThrottle):
         return _ip(request)
 
     def allow_request(self, request, view):
-        if request.method == 'OPTIONS':
+        if request.method == 'OPTIONS' or internal():
             return True
         return super().allow_request(request, view)
 
@@ -88,6 +105,8 @@ class ZeoScopedThrottle(SimpleRateThrottle):
     scope = 'code'
 
     def allow_request(self, request, view):
+        if internal():
+            return True
         sc = scope_of(request)
         if sc is None:
             return True

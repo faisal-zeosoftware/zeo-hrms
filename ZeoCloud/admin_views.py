@@ -37,6 +37,16 @@ def _invited(schema):
     return set(CompanyAccess.objects.filter(company__schema_name=schema).values_list('user_id', flat=True))
 
 
+def _may_view_users(request):
+    """v1.67.17: the right to see the company's users (Settings › Users)."""
+    try:
+        from AccessControl.access import ctx
+        c = ctx(request)
+        return bool(c.admin or {'view_customuser', 'change_customuser', 'view_usertenantpermissions'} & set(c.codes))
+    except Exception:
+        return False
+
+
 class CompanyAdminsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -46,8 +56,14 @@ class CompanyAdminsView(APIView):
             return Response({'detail': tr('You do not have access to this company.')}, status=403)
         owner = CA.owner_id(schema)
         inv = _invited(schema)
-        rows = [_row(u, schema, owner, inv) for u in CA.members(schema)]
-        return Response({'owner_id': owner, 'can_change': CA.can_manage(request.user, schema), 'rows': rows,
+        manage = CA.can_manage(request.user, schema)
+        members = CA.members(schema)
+        if not manage and not _may_view_users(request):
+            # v1.67.17 (checklist 41 / 44): every user of the company, with e-mails, was listed to any login of it (a self-service
+            # user or a login without rights) – now only the user's own row; Settings › Users needs the users right
+            members = [u for u in members if u.pk == request.user.pk]
+        rows = [_row(u, schema, owner, inv) for u in members]
+        return Response({'owner_id': owner, 'can_change': manage, 'rows': rows,
                          'admins': sum(1 for r in rows if r['admin'])})
 
     def post(self, request):

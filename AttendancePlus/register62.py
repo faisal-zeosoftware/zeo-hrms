@@ -134,7 +134,8 @@ def overtime_rows(request, g):
         out.append({
             'id': o.pk, 'employee_id': e.pk, 'employee_display': _person(e), 'date': o.date,
             'hours': float(h), 'hours_hm': hm(h),
-            'hours_label': hm(h) + (' · ' + tr('over 2 h') if h > 2 else ''),   # v1.62.0 people: UAE Art. 19 limit flagged in the list 'type': t, 'type_label': tr(OT_LABEL.get(t, t.capitalize())),
+            'hours_label': hm(h) + (' · ' + tr('over 2 h') if h > 2 else ''),   # v1.62.0 people: UAE Art. 19 limit flagged in the list
+            'type': t, 'type_label': tr(OT_LABEL.get(t, t.capitalize())),   # v1.67.16: were inside the comment above – search by text failed
             'rate': float(rate) if rate else None,
             'type_rate': f"{tr(OT_LABEL.get(t, t.capitalize()))} ×{Decimal(str(rate)).normalize():f}" if rate else tr(OT_LABEL.get(t, t)),
             'weighted_hm': hm(h * Decimal(str(rate))) if rate else '',
@@ -143,6 +144,7 @@ def overtime_rows(request, g):
             'approved_by': names.get(o.approved_by_id, '') if o.approved_by_id else '',
             'decided_by': names.get(d.by_id, '') if d is not None and d.by_id else '', 'note': d.note if d is not None else '',
             'can_act': bool(mine), 'can_reject': bool((hr or e.pk in team) and not manual and stk in ('pending', 'approved')),
+            'source': o.source, 'can_delete': bool(hr and manual and stk != 'paid'),   # v1.67.16: HR's own entry until it is paid
         })
     view = g.get('view', 'all')
     if view == 'waiting':
@@ -156,10 +158,89 @@ def overtime_rows(request, g):
 
 
 class OvertimeView(APIView):
+    """GET the register; POST {employee, date, hours (2.5 or 2:30), ot_type, note} – v1.67.16 (bug list 11/11 item 5): HR enters
+    overtime by hand (worked off the clock, on a site without a device). Kept as "Entered by HR" (source MANUAL): approved,
+    paid with the payroll of its month, never changed by the attendance recalculation. DELETE <id>/ removes such an entry
+    while it is not paid."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response(overtime_rows(request, request.query_params))
+
+    def post(self, request):
+        OT = M('calendars', 'EmployeeOvertime')
+        Emp = M('EmpManagement', 'emp_master')
+        if not _ot_hr(request):
+            return Response({'detail': tr('Only HR enters overtime.')}, status=403)
+        d = request.data
+        err = {}
+        e = Emp.objects.filter(pk=d.get('employee')).first() if str(d.get('employee') or '').isdigit() else None
+        ids = hr_employee_ids(request)
+        if e is None or (not ctx(request).admin and ids is not None and e.pk not in ids):
+            err['employee'] = [tr('Choose the employee.')]
+        try:
+            day = date.fromisoformat(str(d.get('date') or '')[:10])
+            if day > timezone.localdate():
+                err['date'] = [tr('Overtime cannot be entered for a future day.')]
+        except ValueError:
+            day = None
+            err['date'] = [tr('Enter the date.')]
+        raw = str(d.get('hours') or '').strip()
+        hours = None
+        try:
+            if ':' in raw:
+                hh, mm = raw.split(':', 1)
+                hours = (Decimal(int(hh)) + Decimal(int(mm)) / 60).quantize(Decimal('0.01'))
+            elif raw:
+                hours = Decimal(raw).quantize(Decimal('0.01'))
+        except Exception:   # noqa: BLE001
+            hours = None
+        if hours is None or hours <= 0 or hours > 12:
+            err['hours'] = [tr('Enter the hours – more than 0 and at most 12 (for example 2:30 or 2.5).')]
+        t = str(d.get('ot_type') or 'NORMAL').upper()
+        if t not in dict(OT.OT_TYPE_CHOICES):
+            err['ot_type'] = [tr('Choose the kind of day.')]
+        if not err and OT.objects.filter(employee=e, date=day, ot_type=t).exists():
+            err['date'] = [tr('{0} already has {1} overtime on this day – change or approve that row.', _person(e), tr(OT_LABEL.get(t, t)).lower())]
+        if not err:
+            try:
+                P = M('PayrollManagement', 'Payslip')
+                if P.objects.filter(employee_id=e.pk, payroll_run__year=day.year, payroll_run__month=day.month).exists():
+                    err['date'] = [tr('The payroll of this month is already made for the employee – enter the overtime in the next month.')]
+            except Exception:   # noqa: BLE001
+                pass
+        if err:
+            return Response(err, status=400)
+        o = OT.objects.create(employee=e, date=day, ot_type=t, slab='OT', hours=hours, approved=True, approved_by=request.user,
+                              source='MANUAL', created_by=request.user)
+        note = str(d.get('note') or '').strip()
+        if note:
+            OvertimeDecision.objects.update_or_create(employee_id=e.pk, date=day, ot_type=t, defaults={
+                'hours': hours, 'status': 'approved', 'note': note[:255], 'by_id': request.user.pk})
+        rows = [r for r in overtime_rows(request, {'from': day.isoformat(), 'to': day.isoformat(), 'employee': str(e.pk)}) if r['id'] == o.pk]
+        return Response(rows[0] if rows else {'id': o.pk}, status=201)
+
+
+class OvertimeOneView(APIView):
+    """DELETE – v1.67.16: removes overtime HR entered by hand, while its payroll is not made."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        OT = M('calendars', 'EmployeeOvertime')
+        o = OT.objects.filter(pk=pk).first()
+        if o is None:
+            return Response({'detail': tr('Overtime not found.')}, status=404)
+        ids = hr_employee_ids(request) if _ot_hr(request) else set()
+        if not (_ot_hr(request) and (ctx(request).admin or ids is None or o.employee_id in ids)):
+            return Response({'detail': tr('Only HR removes overtime.')}, status=403)
+        if o.source != 'MANUAL':
+            return Response({'detail': tr('Overtime from attendance is not deleted – reject it instead.')}, status=400)
+        P = M('PayrollManagement', 'Payslip')
+        if P.objects.filter(employee_id=o.employee_id, payroll_run__year=o.date.year, payroll_run__month=o.date.month).exists():
+            return Response({'detail': tr('Already in the payroll of that month – it cannot be removed.')}, status=400)
+        OvertimeDecision.objects.filter(employee_id=o.employee_id, date=o.date, ot_type=o.ot_type or '').delete()
+        o.delete()
+        return Response(status=204)
 
 
 class OvertimeStatsView(APIView):
@@ -275,10 +356,73 @@ def late_early_rows(request, g):
 
 
 class LateEarlyView(APIView):
+    """GET the register (?mine=1 = my own requests); POST {date, request_type LATE_IN|EARLY_OUT, reason, employee (HR only)} –
+    v1.67.16 (bug list 11/11 item 2): a late in / early out request made on this screen (by the employee for themself, or by HR
+    for an employee). Same numbering, workflow check and approval levels as before (calendars LateinEarlyoutRequest)."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(late_early_rows(request, request.query_params))
+        rows = late_early_rows(request, request.query_params)
+        if str(request.query_params.get('mine') or '') in ('1', 'true'):
+            me = ctx(request).emp
+            rows = [r for r in rows if me is not None and r['employee_id'] == me.id]
+        return Response(rows)
+
+    def post(self, request):
+        from django.db import transaction
+        from rest_framework.exceptions import APIException, ValidationError
+        from calendars.serializer import LateinEarlyoutRequestSerializer
+        from calendars.views import LateinEarlyoutRequestViewset
+        Emp = M('EmpManagement', 'emp_master')
+        x = ctx(request)
+        d = request.data
+        target = d.get('employee')
+        if target not in (None, '') and (x.emp is None or str(target) != str(x.emp.id)):
+            ids = hr_employee_ids(request) if (x.admin or is_hr(request)) else set()
+            e = Emp.objects.filter(pk=target).first() if str(target).isdigit() else None
+            if e is None or not (x.admin or ids is None or e.pk in ids):
+                return Response({'employee': [tr('You can make a request only for yourself or for the employees you manage as HR.')]}, status=403)
+        else:
+            e = x.emp
+            if e is None:
+                return Response({'employee': [tr('Your login is not linked to an employee – choose the employee.')]}, status=400)
+        err = {}
+        try:
+            day = date.fromisoformat(str(d.get('date') or '')[:10])
+        except ValueError:
+            day = None
+            err['date'] = [tr('Enter the date.')]
+        kind = str(d.get('request_type') or '').upper()
+        if kind not in LE_LABEL:
+            err['request_type'] = [tr('Choose Late in or Early out.')]
+        reason = str(d.get('reason') or '').strip()
+        if not reason:
+            err['reason'] = [tr('Say why.')]
+        R = M('calendars', 'LateinEarlyoutRequest')
+        if not err and R.objects.filter(employee=e, date=day, request_type=kind).exclude(status='REJECTED').exists():
+            err['date'] = [tr('There is already a {0} request for this day.', tr(LE_LABEL[kind]).lower())]
+        if err:
+            return Response(err, status=400)
+        ser = LateinEarlyoutRequestSerializer(data={'employee': e.pk, 'date': day.isoformat(), 'request_type': kind, 'reason': reason},
+                                              context={'request': request})
+        try:
+            ser.is_valid(raise_exception=True)
+            v = LateinEarlyoutRequestViewset()
+            v.request, v.format_kwarg = request, None
+            with transaction.atomic():
+                v.perform_create(ser)
+                R.objects.filter(pk=ser.instance.pk).update(created_by=request.user)
+        except ValidationError as ex:
+            det = ex.detail
+            if isinstance(det, list):
+                det = {'detail': ' '.join(str(i) for i in det)}
+            elif isinstance(det, dict) and 'approval' in det:
+                det = {'detail': tr('No approval workflow is set up for late in / early out in this branch – ask HR (Settings › Approvals).')}
+            return Response(det, status=400)
+        except APIException as ex:
+            return Response({'detail': str(ex.detail)}, status=400)
+        rows = [r for r in late_early_rows(request, {}) if r['id'] == ser.instance.pk]
+        return Response(rows[0] if rows else {'id': ser.instance.pk}, status=201)
 
 
 class LateEarlyStatsView(APIView):
@@ -358,6 +502,7 @@ def _can_override(request):
 
 class OverridesView(APIView):
     permission_classes = [IsAuthenticated]
+    zeo_model_for = staticmethod(lambda kwargs: __import__('django.apps', fromlist=['apps']).apps.get_model('calendars', 'ShiftOverride'))   # v1.67.15 (checklist scan): extra fields / record panel
 
     def get(self, request):
         return Response(_override_ranges(request, request.query_params))
@@ -378,6 +523,13 @@ class OverridesView(APIView):
         sh = Shift.objects.filter(pk=d.get('override_shift') or 0).first()
         if sh is None:
             return Response({'override_shift': [tr('Choose the shift.')]}, status=400)
+        try:   # v1.67.19 (shift check 10): no shift that is switched off or limited to another branch
+            from ShiftPlanner.usable import shift_problem
+            why = shift_problem(sh.pk, e)
+        except Exception:   # noqa: BLE001 – Shift planner not installed
+            why = ''
+        if why:
+            return Response({'override_shift': [why]}, status=400)
         try:
             a = date.fromisoformat(str(d.get('from'))[:10])
             b = date.fromisoformat(str(d.get('to') or d.get('from'))[:10])

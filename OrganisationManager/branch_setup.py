@@ -136,7 +136,12 @@ def copy_setup(new, source=None, user=None):
         for c in SC.objects.filter(branch=source):
             if SC.objects.filter(branch=new, code=c.code).exists() or SC.objects.filter(branch=new, name=c.name).exists():
                 continue
-            _clone(c, branch=new)
+            extra = {}
+            # 1.67.19 (P-BUG-01): the old default Gratuity of the source branch (an addition) is not copied as one – the new branch gets
+            # it as type Others, not on the payslip (a provision; gratuity is paid by the final settlement)
+            if c.code == 'GTY' and c.formula == 'monthly_gratuity_accrual' and c.component_type == 'addition':
+                extra = {'component_type': 'others', 'show_in_payslip': False}
+            _clone(c, branch=new, **extra)
             made += 1
         done['salary_components'] = made
         done['salary_structures'] = _join(M('PayrollManagement', 'SalaryStructure'), 'branch', source, new)

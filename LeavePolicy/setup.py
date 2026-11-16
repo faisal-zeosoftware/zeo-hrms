@@ -194,6 +194,12 @@ def load(user=None):
                                   include_dashboard=name in ('Annual Leave', 'Sick Leave'), is_compensatory=(cat == 'compensatory'), created_by=user)
             by_name[name.lower()] = t
             created_types.append(name)
+        if name == 'National Service Leave':   # v1.67.19: Emirati employees only (Federal Law 6/2014)
+            try:
+                from .models import LeaveTypeRule
+                LeaveTypeRule.objects.update_or_create(leave_type_id=t.pk, defaults={'nationals_only': True})
+            except Exception:   # noqa: BLE001
+                pass
         if not WF.objects.filter(request_type=t).exists():     # requests need an approval workflow
             wf = WF.objects.create(request_type=t, approval_type='reporting_manager', created_by=user)
             wf.branch.set(Branch.objects.all())

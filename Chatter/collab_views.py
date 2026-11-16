@@ -88,11 +88,17 @@ def _approvals(user):
         return []
     out = []
     qs = ApprovalStep.objects.filter(Q(approver=user) | Q(delegate=user), status='pending', request__status='pending').select_related('request')[:200]
+    pages = {}
     for s in qs:
         r = s.request
+        # v1.67.19 (inbox): Open goes to the record's own screen (e.g. the lead page, where the record panel shows Approve) when
+        # it is known from its followers; record_link is the generic record view (Reports menu, "No pages available for your rights")
+        k = (r.model, str(r.object_id))
+        if k not in pages:
+            pages[k] = Follower.objects.filter(model=r.model, object_id=str(r.object_id)).exclude(page='').values_list('page', flat=True).first() or r.record_link
         out.append({'key': f'a{s.id}', 'id': s.id, 'source': 'approval', 'kind': 'approval', 'kind_label': 'Approval', 'app': SO.app_of(r.model),
                     'title': f'Approve {r.record_label}', 'body': (r.note or '')[:500] + (f' – {r.amount:,.2f}' if r.amount else ''),
-                    'from': uname(r.submitted_by), 'record': r.record_label, 'page': r.record_link, 'model': r.model, 'object_id': r.object_id,
+                    'from': uname(r.submitted_by), 'record': r.record_label, 'page': pages[k], 'model': r.model, 'object_id': r.object_id,
                     'at': s.activated_at or r.submitted_at, 'unread': True, 'done': False})
     return out
 
@@ -100,7 +106,9 @@ def _approvals(user):
 def _activities(user):
     out = []
     today = timezone.localdate()
-    for a in Activity.objects.filter(assigned_to=user, state='open').select_related('created_by')[:300]:
+    # v1.67.19 (inbox): reminders are not listed here – on their day they come in as a Reminder line (send_reminders),
+    # listing the open reminder activity as well showed every reminder twice
+    for a in Activity.objects.filter(assigned_to=user, state='open').exclude(activity_type='reminder').select_related('created_by')[:300]:
         j = act_json(a, today)
         out.append({'key': f'c{a.id}', 'id': a.id, 'source': 'activity', 'kind': 'activity', 'kind_label': j['type_label'], 'app': SO.app_of(a.model),
                     'title': a.summary, 'body': a.note, 'from': j['created_by'], 'record': a.record_label, 'page': a.page, 'model': a.model,
@@ -123,15 +131,23 @@ class InboxView(APIView):
         if q.get('done') != '1':
             items = items.filter(done=False)
         rows = [_item(i) for i in items[:500]] + _activities(u) + _approvals(u)
-        counts = {'all': len(rows), 'unread': sum(1 for r in rows if r['unread'])}
-        for r in rows:
-            counts[r['kind']] = counts.get(r['kind'], 0) + 1
         apps = sorted({r['app'] for r in rows})
+        if q.get('app'):
+            rows = [r for r in rows if r['app'] == q['app']]
+        # v1.67.19 (inbox): the tab numbers follow the app filter; a message tab counts its UNREAD lines (as the top-bar
+        # badge), Activities the open activities and Approvals the ones waiting; "unread" (the All tab) = unread lines,
+        # the same number as the badge and what "Mark all read" clears – approvals and activities are not "read" there
+        counts = {'all': len(rows), 'unread': 0}
+        for r in rows:
+            if r['source'] == 'inbox':
+                if r['unread']:
+                    counts['unread'] += 1
+                    counts[r['kind']] = counts.get(r['kind'], 0) + 1
+            else:
+                counts[r['kind']] = counts.get(r['kind'], 0) + 1
         if q.get('kind'):
             ks = q['kind'].split(',')
             rows = [r for r in rows if r['kind'] in ks]
-        if q.get('app'):
-            rows = [r for r in rows if r['app'] == q['app']]
         if q.get('unread') == '1':
             rows = [r for r in rows if r['unread']]
         rows.sort(key=lambda r: r['at'] or timezone.now(), reverse=True)
@@ -147,6 +163,15 @@ class InboxView(APIView):
         vals = {'read': {'is_read': True}, 'unread': {'is_read': False}, 'done': {'done': True, 'is_read': True}, 'undone': {'done': False}}.get(a)
         if vals is None:
             return bad('Unknown action.')
+        if a in ('done', 'undone'):
+            # v1.67.19 (inbox): Done on a Reminder line closes the reminder itself (it stayed open in My To-do); Restore opens it again
+            for i in qs.filter(kind='reminder'):
+                acts = Activity.objects.filter(assigned_to=request.user, activity_type='reminder', model=i.model, object_id=i.object_id,
+                                               notified_at__isnull=False, state='open' if a == 'done' else 'done')
+                if a == 'done':
+                    acts.update(state='done', done_at=timezone.now(), done_by=request.user)
+                else:
+                    acts.filter(done_by=request.user).update(state='open', done_at=None, done_by=None)
         n = qs.update(**vals)
         return Response({'updated': n, 'unread_messages': InboxItem.objects.filter(user=request.user, is_read=False, done=False).count()})
 
@@ -345,6 +370,23 @@ class AuditView(APIView):
             return bad('The audit log is for administrators.', 403)
         p = request.query_params
         qs = RecordLog.objects.all()
+        # v1.67.19 (apps): only the records of the apps the company has (and of the company core)
+        from ZeoApps.services import active_keys, shown
+        act = active_keys()
+        all_models = list(RecordLog.objects.values_list('model', flat=True).distinct().order_by('model')[:400])
+        off_models = [k for k in all_models if not shown(k, active=act)]
+        if off_models:
+            qs = qs.exclude(model__in=off_models)
+        try:   # print designs of the documents of other apps (payslip in a company without Payroll …)
+            from django.apps import apps as _apps
+            from PrintTemplates.appdocs import app_active
+            for lab in ('PrintTemplates.PrintTemplate', 'PrintTemplates.PrintDefault'):
+                PM = _apps.get_model(lab)
+                off = [str(pk) for pk, dt in PM.objects.values_list('pk', 'doc_type') if not app_active(dt)]
+                if off:
+                    qs = qs.exclude(model__iexact=lab, object_id__in=off)
+        except Exception:   # noqa: BLE001
+            pass
         if p.get('model'):
             qs = qs.filter(model=p['model'])
         if p.get('action') in ('created', 'updated', 'deleted'):
@@ -374,7 +416,7 @@ class AuditView(APIView):
             resp = HttpResponse(buf.getvalue(), content_type='text/csv')
             resp['Content-Disposition'] = 'attachment; filename="audit-log.csv"'
             return resp
-        models = [{'key': k, 'label': _model_label(k)} for k in RecordLog.objects.values_list('model', flat=True).distinct().order_by('model')[:400]]
+        models = [{'key': k, 'label': _model_label(k)} for k in all_models if k not in off_models]
         return Response({'total': total, 'rows': rows, 'models': models})
 
 

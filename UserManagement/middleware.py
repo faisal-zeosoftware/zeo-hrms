@@ -54,6 +54,11 @@ import pytz
 from django.utils import timezone
 from django_tenants.utils import get_tenant_model
 
+def _zone(name):
+    from zoneinfo import ZoneInfo
+    return ZoneInfo(str(name or 'UTC'))
+
+
 class TenantTimezoneMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
@@ -64,15 +69,18 @@ class TenantTimezoneMiddleware:
         if tenant and hasattr(tenant, 'country') and tenant.country:
             # Activate timezone based on the tenant's country
             tenant_timezone = tenant.country.timezone
+            # v1.67.19 (field check): a zoneinfo zone, not a pytz one. Django 5 gives a typed date and time its zone with
+            # replace(tzinfo=…); a pytz zone then uses its first (local mean time) offset – Asia/Dubai +03:41 – so every
+            # "Show from 14/11 00:00" was stored 19 minutes off (13/11 20:19 UTC instead of 20:00).
             try:
-                timezone.activate(pytz.timezone(tenant_timezone))
-            except pytz.UnknownTimeZoneError:
+                timezone.activate(_zone(tenant_timezone))
+            except Exception:
                 # Fallback to UTC if the tenant's timezone is invalid
-                timezone.activate(pytz.utc)
+                timezone.activate(_zone('UTC'))
         else:
             # Use the server's local timezone for public tenants
             from django.conf import settings
-            timezone.activate(pytz.timezone(getattr(settings, 'TIME_ZONE', 'UTC')))
+            timezone.activate(_zone(getattr(settings, 'TIME_ZONE', 'UTC')))
 
         response = self.get_response(request)
 

@@ -237,10 +237,20 @@ def available():
         return False
 
 
+# v1.67.16: PDFium is not thread-safe – two previews drawn at once (a template list asks for several thumbnails together)
+# crashed the whole server process (SIGTRAP in libpdfium). Every PDFium call goes through this lock.
+_PDFIUM_LOCK = threading.Lock()
+
+
 def pdf_pages(pdf):
     try:
         import pypdfium2 as pdfium
-        return len(pdfium.PdfDocument(pdf))
+        with _PDFIUM_LOCK:
+            doc = pdfium.PdfDocument(pdf)
+            try:
+                return len(doc)
+            finally:
+                doc.close()
     except Exception:   # noqa: BLE001
         return 0
 
@@ -248,12 +258,19 @@ def pdf_pages(pdf):
 def pdf_to_png(pdf, width=900, pages=4):
     """PNG images (bytes) of the first pages."""
     import pypdfium2 as pdfium
-    doc = pdfium.PdfDocument(pdf)
+    imgs = []
+    with _PDFIUM_LOCK:   # v1.67.16: PDFium only one at a time (see _PDFIUM_LOCK)
+        doc = pdfium.PdfDocument(pdf)
+        try:
+            for i in range(min(len(doc), pages)):
+                page = doc[i]
+                scale = width / page.get_width()
+                imgs.append(page.render(scale=scale).to_pil())
+                page.close()
+        finally:
+            doc.close()
     out = []
-    for i in range(min(len(doc), pages)):
-        page = doc[i]
-        scale = width / page.get_width()
-        img = page.render(scale=scale).to_pil()
+    for img in imgs:   # PNG encoding is plain Pillow – outside the lock
         b = io.BytesIO()
         img.save(b, 'PNG', optimize=True)
         out.append(b.getvalue())

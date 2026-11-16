@@ -20,6 +20,7 @@ urlpatterns = [
     path('api/out-of-office/leave-choice/', V.OooLeaveChoiceView.as_view()),
     path('api/out-of-office/handed/', V.OooHandedView.as_view()),
     path('api/stand-ins/levels/', V.StandInLevelsView.as_view()),
+    path('api/approval-levels/move-waiting/', V.LevelMoveView.as_view()),   # v1.67.19
     path('api/stand-ins/mine/', V.StandInMineView.as_view()),
     path('api/health/', V.HealthView.as_view()),                         # health checks
     path('api/retention/', V.RetentionView.as_view()),                    # v1.53.0 data retention and privacy

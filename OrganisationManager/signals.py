@@ -143,7 +143,7 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                 ("HRA", "addition", "HRA", "hra", "fixed", "", False, True, False, False),
                 ("Air Ticket", "addition", "ATK", "air_ticket", "fixed", "", False, True, False, True),
                 ("Petty Cash", "addition", "PC", "other_allowance", "fixed", "", False, True, False, False),
-                ("Gratuity", "addition", "GTY", "gratuity", "variable", "monthly_gratuity_accrual", False, True, False, True),   # v1.11.0: was a description (paid 0)
+                ("Gratuity", "others", "GTY", "gratuity", "variable", "monthly_gratuity_accrual", False, False, False, True),   # v1.67.19: a provision (employer cost), never paid on the payslip
                 # deductions used automatically by payroll for approved loans and salary advances
                 ("Loan Deduction", "deduction", "LOAN", "loan", "variable", "", True, True, False, False),
                 ("Advance Salary Deduction", "deduction", "ADV", "advance_salary", "variable", "", False, True, True, False),
@@ -173,6 +173,9 @@ def create_tenant_defaults(sender, tenant, **kwargs):
                         "description": f"Default {name} Component",
                         # "loan": loan,
                         "show_in_payslip": show_in_payslip,
+                        # v1.67.15 Basic and HRA are reduced by unpaid leave / absence (no wage for unpaid leave) – a new company's
+                        # Basic was not, so an employee on 4 days' unpaid leave was paid the whole basic
+                        "deduct_leave": code in ("BAS", "HRA"),
                         # "advance_salary":advance_salary,
                         # "air_ticket":air_ticket,
                     },

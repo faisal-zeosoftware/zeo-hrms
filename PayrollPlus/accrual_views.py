@@ -69,6 +69,7 @@ class AccrualsView(_B):
 
 
 class AccrualComponentView(_B):
+    zeo_model_for = staticmethod(lambda kwargs: __import__('django.apps', fromlist=['apps']).apps.get_model('PayrollManagement', 'SalaryComponent'))   # v1.67.15 (checklist scan): extra fields on Salary components
     def _comp(self, pk):
         c = M('PayrollManagement', 'SalaryComponent').objects.filter(pk=pk).first()
         if c is None:

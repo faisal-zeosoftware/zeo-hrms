@@ -403,6 +403,27 @@ def run_period(cal, start, user=None, employee_ids=None):
     return cr
 
 
+def _consume_arrears(payslip, employee, items):
+    """v1.67.19: a 'Salary arrears' line typed in an off-cycle run (e.g. a correction) pays the arrears waiting for the employee –
+    those lines are marked paid by this payslip, oldest month first, as far as the amount typed reaches. Before, the waiting
+    lines stayed waiting and the next monthly payroll paid them a second time."""
+    from .models import ArrearLine
+    SC = M('PayrollManagement', 'SalaryComponent')
+    codes = dict(SC.objects.filter(pk__in=[c for c, _ in items]).values_list('pk', 'code'))
+    paid = sum((Decimal(str(a)) for c, a in items if (codes.get(c) or '').upper() == ARREARS_CODE), Decimal('0'))
+    if paid <= 0:
+        return
+    left, used = paid, []
+    for x in ArrearLine.objects.filter(employee_id=employee.pk, status='pending').order_by('month', 'pk'):
+        amt = Decimal(str(x.amount))
+        if amt <= 0 or amt > left:
+            continue
+        left -= amt
+        used.append(x.pk)
+    if used:
+        ArrearLine.objects.filter(pk__in=used).update(status='included', included_payslip_id=payslip.pk)
+
+
 def off_cycle(kind, title, pay_date, lines, user=None):
     """lines: [{employee_id, component_id, amount, note}] → an off-cycle run with one payslip per employee."""
     from .models import ArrearLine, OffCycleRun
@@ -447,6 +468,8 @@ def off_cycle(kind, title, pay_date, lines, user=None):
                     pc.save(update_fields=['amount'])
             if kind == 'arrears':
                 include_arrears(p, emp)
+            else:
+                _consume_arrears(p, emp, items)   # v1.67.19
             calculate_payslip_totals(p)
         try:
             from .services import record_prepared

@@ -38,6 +38,19 @@ LAYERS = [
     ('meeting', 'Meetings & to-dos', '#0F9F8F'), ('events', 'Employee events', '#64748B'), ('birthday', 'Birthdays', '#DB2777'),
     ('company', 'Company events', '#5B4FE0'),
 ]
+# v1.67.19 (apps): the layers of HR (leave, holidays, attendance, shifts, training, interviews, employee events) only when HR is active
+LAYER_APP = {'leave': 'hrms', 'holiday': 'hrms', 'attendance': 'hrms', 'shift': 'hrms', 'training': 'hrms', 'interview': 'hrms', 'events': 'hrms'}
+
+
+def layers_on():
+    try:
+        from ZeoApps.services import active_keys
+        act = active_keys()
+    except Exception:   # noqa: BLE001
+        return LAYERS
+    return [x for x in LAYERS if LAYER_APP.get(x[0]) in (None, *act)]
+
+
 COLOR = {k: c for k, _, c in LAYERS}
 LABEL = {k: l for k, l, _ in LAYERS}
 HR_CODES = ('view_emp_master', 'view_employee_leave_request', 'view_attendance')
@@ -90,7 +103,9 @@ class Cal:
         want = q.get('scope') or ('team' if 'team' in self.scopes else 'company' if 'company' in self.scopes else 'me')
         self.scope = want if want in self.scopes else self.scopes[-1] if want != 'me' else 'me'
         raw = q.get('layers')
-        self.layers = [x for x in re.split(r'[,\s]+', raw) if x in COLOR] if raw else list(COLOR)
+        self.on = layers_on()   # v1.67.19 (apps)
+        ok_keys = [k for k, _, _ in self.on]
+        self.layers = [x for x in re.split(r'[,\s]+', raw) if x in ok_keys] if raw else ok_keys
         self.me = self.c.emp
         if self.scope == 'company':
             self.emps = list(Run(request, {'period': None}).employees)
@@ -359,7 +374,7 @@ class Cal:
         cnt = Counter(e['layer'] for e in self.events)
         self.events.sort(key=lambda e: (str(e['start'])[:10], 0 if e['allDay'] else 1, str(e['start']), e['layer']))
         return {'from': self.d_from, 'to': self.d_to, 'today': self.today, 'scope': self.scope, 'scopes': self.scopes,
-                'layers': [{'key': k, 'label': l, 'color': c, 'count': cnt.get(k, 0), 'on': k in self.layers} for k, l, c in LAYERS],
+                'layers': [{'key': k, 'label': l, 'color': c, 'count': cnt.get(k, 0), 'on': k in self.layers} for k, l, c in self.on],
                 'events': self.events, 'errors': errors, 'employees': len(self.ids)}
 
 

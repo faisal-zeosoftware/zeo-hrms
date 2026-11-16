@@ -92,6 +92,17 @@ class ProjectSerializer(serializers.ModelSerializer):
         model = Project
         fields = '__all__'
 
+    def validate(self, attrs):
+        # v1.67.19 (field check): the model's own check (clean) never ran through the API – an end date before the start was saved
+        attrs = super().validate(attrs)
+        inst = getattr(self, 'instance', None)
+        sd = attrs.get('start_date', getattr(inst, 'start_date', None))
+        ed = attrs.get('end_date', getattr(inst, 'end_date', None))
+        if sd and ed and ed < sd:
+            from Translations.i18n import tr
+            raise serializers.ValidationError({'end_date': [tr('End date must be after start date')]})
+        return attrs
+
     def to_representation(self, instance):
         rep = super( ProjectSerializer, self).to_representation(instance)
         # if instance.branches.exists():

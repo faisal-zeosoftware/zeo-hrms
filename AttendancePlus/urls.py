@@ -31,6 +31,7 @@ urlpatterns = [
     # v1.62.0 people: overtime and late in / early out registers (approval queue, names, h:mm, stage)
     path('api/overtime/', R62.OvertimeView.as_view()),
     path('api/overtime/stats/', R62.OvertimeStatsView.as_view()),
+    path('api/overtime/<int:pk>/', R62.OvertimeOneView.as_view()),   # v1.67.16 (bug list item 5)
     path('api/overtime/<int:pk>/<str:action>/', R62.OvertimeActionView.as_view()),
     path('api/late-early/', R62.LateEarlyView.as_view()),
     path('api/late-early/stats/', R62.LateEarlyStatsView.as_view()),

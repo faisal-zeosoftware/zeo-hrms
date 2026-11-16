@@ -40,9 +40,12 @@ def seed(refresh=False):
     and branding are never changed. Returns (created, refreshed)."""
     made = upd = 0
     have = {(t.doc_type, t.sample_key): t for t in PrintTemplate.objects.filter(is_sample=True)}
+    from .appdocs import app_active
     for doc_type, look, lang in sample_defs():
-        f = _sample_fields(doc_type, look, lang)
         t = have.get((doc_type, look))
+        if t is None and not app_active(doc_type):   # v1.67.19 item 7: samples of an app come when the app is activated
+            continue
+        f = _sample_fields(doc_type, look, lang)
         if t is None:
             PrintTemplate.objects.create(doc_type=doc_type, is_sample=True, sample_key=look, **f)
             made += 1

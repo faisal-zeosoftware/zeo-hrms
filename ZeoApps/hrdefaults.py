@@ -21,6 +21,17 @@ from django.utils import timezone
 
 log = logging.getLogger(__name__)
 KEY = 'hr_defaults_deferred'
+KEY_PAY = 'payroll_defaults_deferred'   # v1.67.19: a company made with HR but without Payroll
+# v1.67.19 item 7: the e-mail templates and standard approval chains of HR / Payroll (UserManagement.signals,
+# ZeoAdmin.approval_defaults) – a company without the app has none; they are made when the app is activated
+HR_MAILS = ('EmpManagement.EmailTemplate', 'EmpManagement.DocExpEmailTemplate', 'EmpManagement.DocRequestEmailTemplate',
+            'EmpManagement.ResignationEmailTemplate', 'calendars.LvEmailTemplate', 'calendars.LatinEarlyoutEmailTemplate')
+PAY_MAILS = ('PayrollManagement.LoanEmailTemplate', 'PayrollManagement.AdvanceSalaryEmailTemplate',
+             'PayrollManagement.AirticketEmailTemplate')
+HR_CHAINS = (('calendars.LateinEarlyoutApprovalLevel', 'calendars.LatinEarlyApprovalWorkflow'),
+             ('EmpManagement.ResignationApprovalLevel', 'EmpManagement.ResignationApprovalWorkflow'))
+PAY_CHAINS = (('PayrollManagement.AdvanceCommonWorkflow', 'PayrollManagement.AdvanceApprovalWorkflow'),
+              ('PayrollManagement.AirticketWorkflow', 'PayrollManagement.AirticketApprovalWorkflow'))
 
 DEFAULT_LEAVES = [   # the six of the branch signal (OrganisationManager.signals)
     ("Sick Leave", "SL", "paid", True, False, "sick"),
@@ -35,7 +46,7 @@ DEFAULT_COMPONENTS = [   # the seven of the branch signal
     ("HRA", "addition", "HRA", "hra", "fixed", ""),
     ("Air Ticket", "addition", "ATK", "air_ticket", "fixed", ""),
     ("Petty Cash", "addition", "PC", "other_allowance", "fixed", ""),
-    ("Gratuity", "addition", "GTY", "gratuity", "variable", "monthly_gratuity_accrual"),
+    ("Gratuity", "others", "GTY", "gratuity", "variable", "monthly_gratuity_accrual"),   # v1.67.19: a provision, not paid
     ("Loan Deduction", "deduction", "LOAN", "loan", "variable", ""),
     ("Advance Salary Deduction", "deduction", "ADV", "advance_salary", "variable", ""),
 ]
@@ -65,8 +76,17 @@ def _unused(obj):
         return False
 
 
-def strip(user=None):
-    """Company without HR, right after it was made: remove the HR / Payroll defaults that nothing uses."""
+def _no_requests():
+    """A new company: no employee yet, so no request uses a template or a chain."""
+    try:
+        return not M('EmpManagement.emp_master').objects.exists()
+    except LookupError:
+        return False
+
+
+def strip(user=None, payroll_only=False):
+    """Company without HR (or with HR but without Payroll: payroll_only), right after it was made: remove the HR / Payroll
+    defaults that nothing uses."""
     from django.db import transaction
     removed = {}
 
@@ -80,7 +100,30 @@ def strip(user=None):
         if n:
             removed[label] = removed.get(label, 0) + n
 
+    def mails_and_chains(mails, chains):
+        if not _no_requests():
+            return
+        for lbl in mails:
+            try:
+                drop('e-mail templates', M(lbl).objects.all(), check=False)
+            except LookupError:
+                pass
+        for lv, wf in chains:
+            try:
+                drop('approval levels', M(lv).objects.all(), check=False)
+                drop('approval chains', M(wf).objects.all(), check=False)
+            except LookupError:
+                pass
+
+    if payroll_only:
+        with transaction.atomic():
+            mails_and_chains(PAY_MAILS, PAY_CHAINS)
+            _opt().objects.update_or_create(key=KEY_PAY, defaults={'value': {'at': timezone.now().isoformat(),
+                                                                         'by': getattr(user, 'pk', None), 'removed': removed}})
+        return removed
+
     with transaction.atomic():
+        mails_and_chains(HR_MAILS + PAY_MAILS, HR_CHAINS + PAY_CHAINS)
         # assignments first (they make the calendars "used")
         drop('holiday assignments', M('calendars.assign_holiday').objects.all(), check=False)
         drop('weekend assignments', M('calendars.assign_weekend').objects.all(), check=False)
@@ -98,6 +141,33 @@ def strip(user=None):
         _opt().objects.update_or_create(key=KEY, defaults={'value': {'at': timezone.now().isoformat(), 'by': getattr(user, 'pk', None),
                                                                      'removed': removed}})
     return removed
+
+
+def _mails_and_chains(user=None):
+    """The e-mail templates and standard approval chains of the active apps (each only when missing)."""
+    from django.db import connection
+    made = []
+    try:
+        from UserManagement.signals import create_default_email_templates
+        create_default_email_templates(sender=None, tenant=connection.tenant)
+        made.append('e-mail templates')
+    except Exception:   # noqa: BLE001
+        log.exception('e-mail templates when the app is activated')
+    try:
+        from ZeoAdmin.approval_defaults import ensure as _chains
+        made += [f'Approval chain: {x}' for x in _chains(user=user)]
+    except Exception:   # noqa: BLE001
+        log.exception('approval chains when the app is activated')
+    return made
+
+
+def ensure_payroll(user=None):
+    """v1.67.19: Payroll switched on in a company made with HR but without it – its e-mail templates and approval chains."""
+    if not _opt().objects.filter(key=KEY_PAY).exists():
+        return None
+    made = _mails_and_chains(user)
+    _opt().objects.filter(key=KEY_PAY).delete()
+    return made
 
 
 def _branches():
@@ -141,7 +211,8 @@ def ensure(user=None):
         for name, ctype, code, cat, vtype, formula in DEFAULT_COMPONENTS:
             SC.objects.get_or_create(code=code, branch=first, defaults={'name': name, 'component_type': ctype, 'payroll_category': cat,
                                                                          'component_value_type': vtype, 'formula': formula,
-                                                                         'description': f'Default {name} Component', 'show_in_payslip': True})
+                                                                         'description': f'Default {name} Component', 'show_in_payslip': code != 'GTY',
+                                                                         'deduct_leave': code in ('BAS', 'HRA')})   # v1.67.15
         added.append('salary components')
     try:
         from CountryPack import services as CP
@@ -150,5 +221,15 @@ def ensure(user=None):
         added += [f"{a['kind']}: {a['name']}" for a in res.get('added', [])]
     except Exception:   # noqa: BLE001 – the administrator can load them in Settings › Country settings
         log.exception('country defaults when HR is activated')
+    added += _mails_and_chains(user)   # v1.67.19 item 7
     _opt().objects.filter(key=KEY).delete()
+    try:
+        from .services import is_active
+        pay = is_active('payroll')
+    except Exception:   # noqa: BLE001
+        pay = True
+    if pay:
+        _opt().objects.filter(key=KEY_PAY).delete()
+    else:   # Payroll's templates and chains wait for Payroll
+        _opt().objects.update_or_create(key=KEY_PAY, defaults={'value': {'at': timezone.now().isoformat(), 'by': getattr(user, 'pk', None)}})
     return added

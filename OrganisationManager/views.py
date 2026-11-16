@@ -938,7 +938,20 @@ class Groupviewset(viewsets.ModelViewSet):
         # v1.62.0 speed: the permissions and their content type prefetched (one query per permission before – Permission groups / Branch permissions pages)
         from django.db.models import Prefetch
         qs = qs.prefetch_related(Prefetch('permissions', queryset=Permission.objects.select_related('content_type')))
-        return qs.filter(pk__in=company_group_ids()).order_by('name')   # v1.22.0: not the groups of other companies
+        qs = qs.filter(pk__in=company_group_ids()).order_by('name')   # v1.22.0: not the groups of other companies
+        if getattr(self, 'action', None) == 'list' and self.request.query_params.get('all_apps') != '1':
+            # v1.67.19 (apps): the role groups of the apps the company does not use are not listed (their rights stay as they are)
+            from ZeoApps import groupscope, services as AS
+            active = AS.active_keys()
+            hide = [g.pk for g in Group.objects.filter(pk__in=company_group_ids()) if not AS.group_shown(groupscope.label(g), active)]
+            if hide:   # a group someone of this company is in stays listed
+                from tenant_users.permissions.models import UserTenantPermissions as UTP
+                mine = UTP.objects.filter(profile__tenants__schema_name=connection.schema_name).values_list('id', flat=True)
+                used = set(UTP.groups.through.objects.filter(group_id__in=hide, usertenantpermissions_id__in=mine).values_list('group_id', flat=True))
+                hide = [x for x in hide if x not in used]
+            if hide:
+                qs = qs.exclude(pk__in=hide)
+        return qs
 
     # ---- v1.62.0 isolation: the groups are shared (public schema) – a company changes only its own
     def _in_company(self):

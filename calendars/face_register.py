@@ -24,12 +24,24 @@ class FaceRegisterListView(APIView):
             return Response({'detail': tr('You do not have permission for this.')}, status=403)
         qs = emp_master.objects.exclude(is_active=False).select_related('emp_branch_id', 'emp_dept_id').order_by('emp_code')
         qs = limit_by_branch(request, qs, branch_path='emp_branch_id')
+        # v1.67.16 (bug list 11/11 item 1): a face registered in self service (My profile › Face punch – AttendancePlus.FaceProfile,
+        # the face the self-service punch checks) counted as "No" here – only the older photo enrolment (face_encoding) was read.
+        prof = {}
+        try:
+            from AttendancePlus.models import FaceProfile
+            for fp in FaceProfile.objects.exclude(descriptors=[]).values('employee_id', 'consent_at', 'registered_by_id', 'consent_by_id'):
+                prof[fp['employee_id']] = fp
+        except Exception:   # noqa: BLE001 – Attendance plus not installed
+            pass
         out = []
         for e in qs.only('id', 'emp_code', 'emp_first_name', 'emp_last_name', 'emp_branch_id__branch_name', 'emp_dept_id__dept_name',
-                         'barcode_number', 'face_encoding'):
+                         'barcode_number', 'face_encoding', 'users_id'):
             out.append({'id': e.id, 'emp_code': e.emp_code or '',
                         'name': ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x),
                         'branch': getattr(e.emp_branch_id, 'branch_name', '') or '',
                         'department': getattr(e.emp_dept_id, 'dept_name', '') or '',
-                        'face': bool(e.face_encoding), 'barcode': e.barcode_number or ''})
+                        'face': bool(e.face_encoding) or e.id in prof, 'barcode': e.barcode_number or '',
+                        'face_at': prof[e.id]['consent_at'].isoformat() if e.id in prof and prof[e.id]['consent_at'] else None,
+                        'face_how': ('self service' if e.users_id and prof[e.id]['registered_by_id'] == e.users_id else 'HR') if e.id in prof
+                        else ('photo' if e.face_encoding else '')})
         return Response(out)

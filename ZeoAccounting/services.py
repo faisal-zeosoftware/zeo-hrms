@@ -583,6 +583,12 @@ def build_settlement(settlement_id, user=None):
                 acct, lvl = b.accts.find('settlement', 'gratuity', 'debit', e and e.pk, dept, branch, st.gratuity_expense_account)
             b.add(acct, label, amt, 'debit' if ln['kind'] == 'earning' else 'credit', e and e.pk, dept, branch, cost=True, level=lvl, group=key)
             continue
+        if ln['kind'] == 'earning' and str(key).startswith('held_'):   # v1.67.15 (C10): salary held on an earlier payslip – already an expense
+            acct, lvl = b.accts.find('settlement', key, 'debit', e and e.pk, dept, branch, '')   # and in Salaries payable (payroll journal)
+            if not acct:
+                acct, lvl = b.accts.find('payable', 'net', 'debit', e and e.pk, dept, branch, st.payable_account)
+            b.add(acct, label, amt, 'debit', e and e.pk, dept, branch, cost=False, level=lvl, group=key)
+            continue
         if ln['kind'] == 'earning' and str(key).startswith('accrual_'):   # v1.62.7 (item 18): accrued balance paid at exit
             have = min(q2(ln.get('from_balance')), amt) if q2(ln.get('from_balance')) > 0 else ZERO
             if have:   # Dr the accrual liability for the balance, Dr expense for the days after the last payroll
@@ -924,6 +930,9 @@ def recheck(batch, user=None):
         raise Refused('Only a draft, ready or failed journal can be checked again.')
     if batch.source in PROP_SOURCES:   # v1.40.0
         return build_property(batch.source, batch.source_id, user)
+    if batch.source in ('prj_invoice', 'prj_payment'):   # v1.67.14 (billing connectors)
+        from .projects_billing import build as _prj_build
+        return _prj_build(batch.source, batch.source_id, user)
     if batch.source == 'payroll':
         return build_payroll(int(batch.source_id), user)
     if batch.source == 'settlement':
@@ -990,6 +999,9 @@ def mark_done(batch, status, user=None, external_id='', external_ref=''):
     batch.save()
     _apply_provisions(batch)
     property_posted(batch, 'posted' if status == 'posted' else 'exported')   # v1.40.0
+    if batch.source in ('prj_invoice', 'prj_payment'):   # v1.67.14 (billing connectors): sync status on the Projects invoice
+        from .projects_billing import posted as _prj_posted
+        _prj_posted(batch)
     hooks_fire('journal.posted' if status == 'posted' else 'journal.exported', batch)
 
 
@@ -1060,6 +1072,10 @@ def document_kind(batch, st=None):
         return 'payment'
     if batch.source == 'prop_vendor':
         return 'bill'
+    if batch.source == 'prj_invoice':   # v1.67.14 (billing connectors)
+        return 'invoice'
+    if batch.source == 'prj_payment':
+        return 'payment'
     return None
 
 
@@ -1070,7 +1086,7 @@ def _invoice_ids(batch):
     if not nums:
         return
     found = {}
-    for jb in JournalBatch.objects.filter(source='prop_bill', reference__in=nums, status='posted').exclude(external_id=''):
+    for jb in JournalBatch.objects.filter(source__in=('prop_bill', 'prj_invoice'), reference__in=nums, status='posted').exclude(external_id=''):   # v1.67.14 + Projects invoices
         if (jb.rules or {}).get('style') == 'documents' and jb.connector == batch.connector:
             found[jb.reference] = jb.external_id
     for x in doc['bills']:

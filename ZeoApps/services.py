@@ -222,6 +222,9 @@ def industries_of(key):
     if key in KIT_KEYS:
         a = kit(key)
         return [(c, a.packs[c]['label']) for c in a.packs], a.industry_from_company.get(code, 'general')
+    if key == 'projects':   # v1.67.13 (service): the service industries of the Projects packs
+        from ZeoProjects.packs import FROM_COMPANY, INDUSTRIES
+        return list(INDUSTRIES), FROM_COMPANY.get(code, 'general')
     from UserManagement.models import company as C
     return [(k, str(v)) for k, v in C.INDUSTRY_CHOICES], code or 'OTH'
 
@@ -329,6 +332,70 @@ def links_of(key):
 ROLE_PREFIX = {'projects': 'Projects – ', 'crm': 'CRM – ', 'property': 'Property – ', 'maintenance': 'Maintenance – ', 'assets': 'Asset Management – ', 'people': 'People – ', 'hse': 'HSE – '}
 
 
+# v1.67.19 (apps): which app a Django app's records belong to (not listed: the company core – shared by every app)
+APP_OF_LABEL = {**{k: 'hrms' for k in ('EmpManagement', 'calendars', 'LeavePolicy', 'AttendancePlus', 'ShiftPlanner', 'HRActions',
+                                       'ExpenseManagement', 'PerformanceManagement', 'RecruitmentManagement', 'LearningManagement',
+                                       'LearningPlus', 'EmployeeProfile', 'SelfService', 'ZeoHR')},
+                'PayrollManagement': 'payroll', 'PayrollPlus': 'payroll',
+                'ZeoProjects': 'projects', 'ProjectManagement': 'projects', 'ProjectControl': 'projects',
+                'ZeoCRM': 'crm', 'ZeoProperty': 'property', 'ZeoMaintenance': 'maintenance', 'ZeoAssets': 'assets',
+                'ZeoPeople': 'people', 'ZeoHSE': 'hse'}
+# models of the core apps that belong to one app
+APP_OF_MODEL = {'OrganisationManager.assetapproval': 'hrms', 'OrganisationManager.assetapprovallevel': 'hrms',
+                'OrganisationManager.assetrequest': 'hrms', 'OrganisationManager.companypolicy': 'hrms', 'OrganisationManager.assetemailtemplate': 'hrms',
+                'EmpManagement.emp_master': None}   # None: the company core (the employee directory is there without HR)
+
+
+def app_of(model_or_label, model_name=None):
+    """The app key of a model (class / instance / 'App.model' / app label + model name), or None for the company core."""
+    if hasattr(model_or_label, '_meta'):
+        label, model_name = model_or_label._meta.app_label, model_or_label._meta.model_name
+    elif model_name is None and '.' in str(model_or_label):
+        label, model_name = str(model_or_label).split('.', 1)
+    else:
+        label = str(model_or_label)
+    k = f'{label}.{(model_name or "").lower()}'
+    for mk, app in APP_OF_MODEL.items():
+        if mk.lower() == k.lower():
+            return app
+    return APP_OF_LABEL.get(label)
+
+
+def shown(model_or_label, model_name=None, active=None):
+    """v1.67.19 (apps): may a shared page list this model (its app is active, or it is the company core)?"""
+    k = app_of(model_or_label, model_name)
+    if k is None:
+        return True
+    active = active_keys() if active is None else active
+    return k in active or (k == 'people' and 'people' in active)
+
+
+# v1.67.19 (apps): the standard groups of the apps that are not prefixed
+GROUP_APPS = {'HR Manager': ['hrms'], 'Payroll Manager': ['payroll'], 'HR operations – ': ['hrms'],
+              'Accounting – ': ['payroll', 'hrms', 'property', 'assets', 'projects']}
+
+
+def group_apps(label):
+    """The apps a group belongs to (any of them active = shown); [] = company core (administrators, business partners, own groups)."""
+    label = label or ''
+    for k, p in ROLE_PREFIX.items():
+        if label.startswith(p):
+            return [k]
+    for p, keys in GROUP_APPS.items():
+        if label == p or (p.endswith(' – ') and label.startswith(p)):
+            return keys
+    return []
+
+
+def group_shown(label, active=None):
+    """v1.67.19 (apps): is the group of an app the company uses (or of the core)? Groups of the other apps are not listed."""
+    keys = group_apps(label)
+    if not keys:
+        return True
+    active = active_keys() if active is None else active
+    return any(k in active for k in keys)
+
+
 def role_groups(key):
     p = ROLE_PREFIX.get(key)
     if not p:
@@ -428,6 +495,9 @@ def activate(key, industry=None, user=None):
     first_time = _never_set_up(key)   # v1.67.6 (setup) item 5
     inds, sug = industries_of(key)
     ind = industry or previous_industry(key) or sug
+    if key == 'projects' and ind not in dict(inds):   # v1.67.13 (service): an industry of before (company codes) → its pack
+        from ZeoProjects.packs import FROM_COMPANY
+        ind = FROM_COMPANY.get(ind, 'it' if ind == 'IT' else 'general')
     if ind not in dict(inds):
         raise AppsError(f'Choose the industry for {BY_KEY[key][2]}.')
     source = 'company' if ind == sug else 'chosen'
@@ -449,14 +519,22 @@ def activate(key, industry=None, user=None):
                         added = {'hr_defaults': r}
                 except Exception:
                     log.exception('HR defaults when HR is activated')
-            if key == 'projects':   # v1.22.0: SLA policy, teams, categories … when Projects was not chosen at company set-up
+            if key == 'payroll':   # v1.67.19 item 7: a company made with HR but without Payroll gets Payroll's templates and chains
                 try:
-                    from ZeoProjects.models import SLAPolicy
-                    if not SLAPolicy.objects.exists():
-                        from ZeoProjects.management.commands.zeoprojects_setup import Command as _PC
-                        added = {'defaults': _PC().defaults()}
+                    from .hrdefaults import ensure_payroll as _pay_defaults
+                    r = _pay_defaults(user)
+                    if r:
+                        added = {'payroll_defaults': r}
                 except Exception:
-                    log.exception('Projects defaults')
+                    log.exception('Payroll defaults when Payroll is activated')
+            if key == 'projects':   # v1.67.13 (service): the main industry's pack (IT = the setup of v1.22.0, General, …)
+                try:
+                    from ZeoProjects.packs import install as _pinstall
+                    made = _pinstall(ind, user, main=True)
+                    if made:
+                        added = {'defaults': ', '.join(made)}
+                except Exception:
+                    log.exception('Projects pack')
         elif key == 'hse':
             from ZeoHSE.models import HSESettings
             from ZeoHSE.packs import install
@@ -623,6 +701,20 @@ def setup_new_company(tenant, keys, user=None, progress=None):
                 strip(user)
             except Exception:
                 log.exception('HR defaults of %s', tenant.schema_name)
+        elif 'payroll' not in keys:   # v1.67.19 item 7: HR without Payroll – no loan / advance / air-ticket templates and chains
+            try:
+                from .hrdefaults import strip
+                strip(user, payroll_only=True)
+            except Exception:
+                log.exception('Payroll defaults of %s', tenant.schema_name)
+        try:   # v1.67.19: the payroll audit before approval starts off for a new company (Setup guide step 9 / AI settings)
+            from ZeoAI.models import AIAssistantSettings
+            a = AIAssistantSettings.get()
+            if a.require_audit:
+                a.require_audit = False
+                a.save(update_fields=['require_audit', 'updated_at'])
+        except Exception:
+            log.exception('payroll audit default of %s', tenant.schema_name)
         if 'hrms' in keys:
             try:   # v1.62.1 (user request 2 Nov): a new company finishes the required setup steps before HR transactions
                 from ZeoAdmin.setup_gate import enforce_new
@@ -645,14 +737,18 @@ def setup_new_company(tenant, keys, user=None, progress=None):
                     make_roles(k)
                 except Exception:
                     log.exception('role groups for %s', k)
-                if k == 'projects':   # v1.67.6 (setup) item 5: the SLA policy, teams and categories, as when activated later
+                if k == 'projects':   # v1.67.13 (service): the pack of the company's industry (IT = the setup of v1.67.6)
                     try:
-                        from ZeoProjects.models import SLAPolicy
-                        if not SLAPolicy.objects.exists():
-                            from ZeoProjects.management.commands.zeoprojects_setup import Command as _PC
-                            _PC().defaults()
+                        from ZeoProjects.packs import FROM_COMPANY, LABELS, install as _pinstall
+                        from .models import AppState
+                        st = AppState.objects.filter(app='projects').first()
+                        pind = st.industry if st is not None and st.industry in LABELS else FROM_COMPANY.get(company_industry()[0], 'general')
+                        _pinstall(pind, user, main=True)
+                        if st is not None and st.industry != pind:
+                            st.industry = pind
+                            st.save(update_fields=['industry'])
                     except Exception:
-                        log.exception('Projects defaults of %s', tenant.schema_name)
+                        log.exception('Projects pack of %s', tenant.schema_name)
                 try:   # v1.67.6 (setup) item 5: Projects of a new company waits for its setup wizard
                     from .appsetup import on_activate
                     on_activate(k, True, user)

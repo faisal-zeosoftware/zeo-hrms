@@ -196,8 +196,12 @@ def duplicate_setup():
     if not schemes:
         return []
     SC = M('PayrollManagement', 'SalaryComponent')
+    ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
     out = []
-    pens = [c for c in SC.objects.exclude(formula__isnull=True).exclude(formula='') if re.search(r'\bpension_employ(ee|er)_rate\b', c.formula or '')]
+    # v1.67.16 (bug list 11/11 item 14): a pension component switched off (on no employee's salary any more) is not a duplicate
+    used = set(ESS.objects.filter(is_active=True).values_list('component_id', flat=True).distinct())
+    pens = [c for c in SC.objects.exclude(formula__isnull=True).exclude(formula='') if re.search(r'\bpension_employ(ee|er)_rate\b', c.formula or '')
+            and c.pk in used]
     for s in schemes:
         st = SC.objects.filter(formula__regex=rf'stat_{s.code}_emp').first()
         if st is not None:
@@ -269,12 +273,55 @@ def _carries(employee_id):
     return out
 
 
+# v1.67.15 (C10): a REJECTED payslip paid nothing. Before, the carry-overs it took ("Deductions carried over") stayed "included" in it
+# and were never deducted, and the carry-over it made (deductions that did not fit) stayed waiting although the re-run deducts those
+# deductions again (taken twice). Now: rejecting parks the carry-over it made and puts the ones it took back to waiting; approving
+# it again undoes that (refused when another payslip took them since). A deleted payslip is handled by _carries() as before.
+def carry_give_back(payslip):
+    """→ {'made': [i], 'taken': [i]} (positions in the employee's carry list) for the rejected payslip's note."""
+    v = _opt(_CARRY.format(payslip.employee_id), {}) or {}
+    items = v.get('items', [])
+    made, taken = [], []
+    for i, x in enumerate(items):
+        if x.get('from_payslip') == payslip.pk and not x.get('parked'):
+            x['parked'] = True
+            made.append(i)
+        if x.get('status') == 'included' and x.get('included_payslip') == payslip.pk:
+            x['status'], x['included_payslip'], x['given_back_by'] = 'pending', None, payslip.pk
+            taken.append(i)
+    if made or taken:
+        _set_opt(_CARRY.format(payslip.employee_id), {'items': items})
+    return {'made': made, 'taken': taken}
+
+
+def carry_problems(payslip, note):
+    items = (_opt(_CARRY.format(payslip.employee_id), {}) or {}).get('items', [])
+    return any(x.get('given_back_by') == payslip.pk and x.get('status') == 'included' and x.get('included_payslip') != payslip.pk for x in items)
+
+
+def carry_retake(payslip, note):
+    v = _opt(_CARRY.format(payslip.employee_id), {}) or {}
+    items = v.get('items', [])
+    n = 0
+    for x in items:
+        if x.get('from_payslip') == payslip.pk and x.get('parked'):
+            x.pop('parked', None)
+            n += 1
+        if x.get('given_back_by') == payslip.pk and x.get('status') == 'pending':
+            x['status'], x['included_payslip'] = 'included', payslip.pk
+            x.pop('given_back_by', None)
+            n += 1
+    if n:
+        _set_opt(_CARRY.format(payslip.employee_id), {'items': items})
+    return n
+
+
 def apply(payslip, employee):
     """Before the totals: take the waiting carry-overs, then keep the deductions inside the limit when the setting is on."""
     PC = M('PayrollManagement', 'PayslipComponent')
     st = net_settings()
     items = _carries(employee.pk)
-    pending = [x for x in items if x.get('status') == 'pending' and x.get('from_payslip') != payslip.pk]
+    pending = [x for x in items if x.get('status') == 'pending' and x.get('from_payslip') != payslip.pk and not x.get('parked')]   # v1.67.15 (C10): + parked
     if pending:
         amt = sum((_d(x.get('amount')) for x in pending), Decimal('0')).quantize(Q2)
         if amt > 0:
@@ -336,3 +383,21 @@ def apply(payslip, employee):
     if items or _opt(_CARRY.format(employee.pk)) is not None:   # no row for employees without carry-overs
         _set_opt(_CARRY.format(employee.pk), {'items': items})
     return carried
+
+
+def switch_off(component_id, user=None):
+    """v1.67.16 (bug list 11/11 item 14): "Switch the duplicate component off" – a salary component has no on / off of its own (core
+    table, no new column), so it is taken off every employee's salary (the rows are kept, inactive – the history stays) and out of
+    the salary structure templates. The statutory scheme's own component is never switched off here. Returns employees changed."""
+    SC = M('PayrollManagement', 'SalaryComponent')
+    ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
+    Tpl = M('PayrollManagement', 'SalaryStructure')
+    c = SC.objects.filter(pk=component_id).first()
+    if c is None:
+        raise ValueError('Salary component not found.')
+    if re.search(r'stat_\w+_emp', c.formula or ''):
+        raise ValueError('This is the statutory scheme itself – it is not switched off.')
+    n = ESS.objects.filter(component=c, is_active=True).update(is_active=False)
+    for t in Tpl.objects.filter(components=c):
+        t.components.remove(c)
+    return n

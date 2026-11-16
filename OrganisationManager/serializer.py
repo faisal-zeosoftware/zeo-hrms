@@ -258,6 +258,16 @@ class GroupSerializer(serializers.ModelSerializer):
 
 class PermissionSerializer(serializers.ModelSerializer):
     user = serializers.CharField(source="profile.username", read_only=True)
+
+    def validate_profile(self, value):
+        # v1.67.17 (checklist 10.2): "user tenant permissions with this profile already exists." – said in words
+        from Translations.i18n import tr as _tr
+        qs = UserTenantPermissions.objects.filter(profile=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(_tr('This user already has permission groups – change that row instead.'))
+        return value
     def to_representation(self, instance):
         representation = super().to_representation(instance)
         # v1.62.0 speed: a group is turned into JSON once per list (every user of a group repeated its ~1,600 permissions)
@@ -278,13 +288,26 @@ class PermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserTenantPermissions
         fields = '__all__'
+        extra_kwargs = {'profile': {'validators': []}}   # v1.67.17: checked in validate_profile with a message in words
 
 
 class DocumentNumberingSerializer(serializers.ModelSerializer):
-    
+
     class Meta:
         model = DocumentNumbering
         fields = '__all__'
+        validators = []   # v1.67.17 (checklist 10.2): the framework's "The fields branch_id, type must make a unique set." – own message below
+
+    def validate(self, data):
+        from Translations.i18n import tr as _tr
+        br = data.get('branch_id', getattr(self.instance, 'branch_id', None))
+        tp = data.get('type', getattr(self.instance, 'type', None))
+        qs = DocumentNumbering.objects.filter(branch_id=br, type=tp)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if br is not None and tp and qs.exists():
+            raise serializers.ValidationError(_tr('This branch already has a numbering row for this document type – change that row instead.'))
+        return data
     def to_representation(self, instance):
         rep = super(DocumentNumberingSerializer, self).to_representation(instance)
         if instance.branch_id:  # Check if emp_state_id is not None
@@ -297,6 +320,17 @@ class AnnouncementSerializer(serializers.ModelSerializer):
     class Meta:
         model = Announcement
         fields = '__all__'
+
+    def validate(self, attrs):
+        # v1.67.19 (field check): "Show until" before "Show from" was saved from the Announcements register (the pop-up form
+        # checked it, the register's own form did not) – the announcement then never showed
+        a = super().validate(attrs)
+        start = a.get('schedule_at', getattr(self.instance, 'schedule_at', None))
+        end = a.get('expires_at', getattr(self.instance, 'expires_at', None))
+        if start and end and end <= start:
+            from Translations.i18n import tr
+            raise serializers.ValidationError({'expires_at': [tr('"Show until" must be after "Show from".')]})
+        return a
 
     def to_representation(self, instance):
         rep = super( AnnouncementSerializer, self).to_representation(instance)
@@ -806,6 +840,16 @@ class GratuityTableSerializer(serializers.ModelSerializer):
         model = GratuityTable
         fields = '__all__'
 
+    def validate(self, attrs):
+        # v1.67.17: "To (years)" not above "From (years)" broke the database rule and the screen only said
+        # "A value is out of range (valid range)" – say which field and why
+        lo = attrs.get('minimum_value', getattr(self.instance, 'minimum_value', None))
+        hi = attrs.get('maximum_value', getattr(self.instance, 'maximum_value', None))
+        if lo is not None and hi is not None and hi <= lo:
+            raise serializers.ValidationError({'maximum_value': ['"To (years)" must be more than "From (years)".'],
+                                               'detail': '"To (years)" must be more than "From (years)" – e.g. 0 to 5, then 5 to 99.'})
+        return super().validate(attrs)
+
 class DocumentSerializer(serializers.ModelSerializer):
     # uploaded_by_name = serializers.CharField(source='uploaded_by.username', read_only=True)
 
@@ -859,6 +903,9 @@ class BranchSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):   # v1.67.6 (setup) item 2: a branch never gets another currency than the company's
         attrs = super().validate(attrs)
+        if (attrs.get('probation_period_days') or 0) < 0:   # v1.67.19 (field check): -5 days of probation was saved
+            from Translations.i18n import tr
+            raise serializers.ValidationError({'probation_period_days': tr('Probation (days): enter 0 or more.')})
         req = self.context.get('request')
         data = getattr(req, 'data', None) or {}
         for k in ('br_currency', 'currency', 'br_currency_id'):
@@ -993,6 +1040,12 @@ class BranchGeoFenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = BranchGeoFence
         fields = '__all__'
+
+    def validate_radius(self, v):   # v1.67.19 (field check): a radius of -5 metres was saved
+        if v is not None and v <= 0:
+            from Translations.i18n import tr
+            raise serializers.ValidationError(tr('Radius (metres): enter more than 0.'))
+        return v
 
     def to_representation(self, instance):   # v1.62.0 people: the geofence list shows branch names, type in words
         rep = super().to_representation(instance)

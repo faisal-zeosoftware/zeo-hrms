@@ -104,6 +104,24 @@ def actions_for(request, c, allowed):
                 drill={'metric': 'documents', 'params': {'scope': 'team', 'days': 30}, 'title': 'Team documents to renew'})
     safe(documents)
 
+    def rosters():   # v1.67.19 (shift check 8): rosters sent for approval to this user (named approver, or the approve right)
+        try:
+            from ShiftPlanner.models import RosterPeriod
+        except Exception:   # noqa: BLE001
+            return
+        qs = RosterPeriod.objects.filter(status='submitted').exclude(submitted_by_id=user.pk)
+        if not (c.admin or 'approve_rosterperiod' in c.codes):
+            qs = qs.filter(approver_id=user.pk)
+        elif not c.admin and c.branches is not None:
+            from django.db.models import Q
+            qs = qs.filter(Q(approver_id=user.pk) | Q(branch_id__in=list(c.branches)))
+        rows = list(qs.order_by('date_from', 'id')[:50])
+        if rows:
+            link = f'/main-sidebar/shift-planner/rosters/{rows[0].pk}' if len(rows) == 1 else '/main-sidebar/shift-planner/rosters'
+            add('rosters', 'Rosters to approve', len(rows), tone='warn', link=link, views=list(allowed),   # every view – a to-do
+                sub=rows[0].name if len(rows) == 1 else '')
+    safe(rosters)
+
     def mine():
         add('input', 'Your items needing input', len(S.my_input_rows(user, c.emp, today)),
             drill={'metric': 'my_input', 'title': 'Your items needing input'})

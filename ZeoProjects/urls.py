@@ -7,6 +7,11 @@ from . import dashboard as DB
 from . import portal as P
 from . import views as V
 from . import views_projects as VP
+from . import views_service as VS   # v1.67.13 (service)
+from . import views_billing as VB   # v1.67.13 (billing)
+from . import collection_plan as CP   # v1.67.13 (collections)
+from . import support_planner as SP   # v1.67.13 (support planner)
+from . import views_field as VF   # v1.67.14 (service releases 3 – 5)
 
 urlpatterns = [
     path('api/lookups/', V.LookupsView.as_view()),
@@ -35,6 +40,17 @@ urlpatterns = [
     path('api/contacts/', V.ContactListView.as_view()),
     path('api/contacts/<int:pk>/', V.ContactDetailView.as_view()),
     path('api/contacts/<int:pk>/portal/', V.ContactPortalView.as_view()),
+    # v1.67.13 (service): sites, equipment, categories, AMC types, industry packs
+    path('api/sites/', VS.SiteListView.as_view()),
+    path('api/sites/<int:pk>/', VS.SiteDetailView.as_view()),
+    path('api/equipment/', VS.EquipmentListView.as_view()),
+    path('api/equipment/import/', VS.EquipmentImportView.as_view()),
+    path('api/equipment/<int:pk>/', VS.EquipmentDetailView.as_view()),
+    path('api/equipment-categories/', VS.EquipmentCategoryListView.as_view()),
+    path('api/equipment-categories/<int:pk>/', VS.EquipmentCategoryDetailView.as_view()),
+    path('api/amc-types/', VS.AMCTypeListView.as_view()),
+    path('api/amc-types/<int:pk>/', VS.AMCTypeDetailView.as_view()),
+    path('api/industries/', VS.IndustryView.as_view()),
     # support
     path('api/tickets/', V.TicketListView.as_view()),
     path('api/tickets/<int:pk>/', V.TicketDetailView.as_view()),
@@ -57,6 +73,38 @@ urlpatterns = [
     path('api/contracts/<int:pk>/', V.ContractDetailView.as_view()),
     path('api/contracts/<int:pk>/<str:action>/', V.ContractActionView.as_view()),
     path('api/billing/', V.BillingListView.as_view()),
+    # v1.67.13 (billing) PI, tax invoice, payments, follow-ups, collections
+    path('api/billing/collections/', VB.CollectionsView.as_view()),
+    path('api/billing/items/<str:kind>/<int:pk>/', VB.ItemView.as_view()),
+    path('api/billing/items/<str:kind>/<int:pk>/stage/', VB.ItemStageView.as_view()),
+    path('api/billing/documents/', VB.DocumentListView.as_view()),
+    path('api/billing/documents/<int:pk>/', VB.DocumentDetailView.as_view()),
+    path('api/billing/documents/<int:pk>/pdf/', VB.DocumentPdfView.as_view()),
+    path('api/billing/documents/<int:pk>/payments/', VB.PaymentView.as_view()),
+    path('api/billing/documents/<int:pk>/<str:action>/', VB.DocumentActionView.as_view()),
+    path('api/billing/payments/<int:pk>/', VB.PaymentDetailView.as_view()),
+    path('api/billing/followups/', VB.FollowUpView.as_view()),
+    path('api/billing/users/', VB.BillingUsersView.as_view()),
+    # v1.67.13 (collections) collection planner
+    path('api/collections/', CP.CollectionLinesView.as_view()),
+    path('api/collections/report/', CP.CollectionReportView.as_view()),
+    path('api/collections/sources/', CP.CollectionSourcesView.as_view()),
+    path('api/collections/<int:pk>/', CP.CollectionLineView.as_view()),
+    # v1.67.13 (support planner)
+    path('api/support-planner/', SP.PlannerView.as_view()),
+    path('api/support-planner/<int:pk>/', SP.AllocationView.as_view()),
+    path('api/support-planner/<int:pk>/job/', SP.JobView.as_view()),
+    # v1.67.14 (service releases 3 – 5): technician's job, parts, vans, preventive visits, KPIs
+    path('api/support-planner/<int:pk>/visit/', VF.JobVisitView.as_view()),
+    path('api/support-planner/<int:pk>/parts/', VF.JobPartsView.as_view()),
+    path('api/support-planner/<int:pk>/parts/<int:part_pk>/', VF.JobPartsView.as_view()),
+    path('api/visits/<int:pk>/pdf/', VF.VisitPdfView.as_view()),
+    path('api/tickets/<int:pk>/field/', VF.TicketFieldView.as_view()),
+    path('api/field/vans/', VF.VansView.as_view()),
+    path('api/field/parts/', VF.PartsPickView.as_view()),
+    path('api/field/ppm/', VF.PpmView.as_view()),
+    path('api/service-kpi/', VF.ServiceKpiView.as_view()),
+    path('api/service-kpi/report/<str:key>/', VF.ServiceReportView.as_view()),
     path('api/billing/<int:pk>/', V.BillingDetailView.as_view()),
     # projects
     path('api/projects/', VP.ProjectListView.as_view()),
@@ -79,6 +127,7 @@ urlpatterns = [
     path('api/portal/files/<int:pk>/', P.PortalFileView.as_view()),
     path('api/portal/contracts/', P.PortalContractsView.as_view()),
     path('api/portal/projects/', P.PortalProjectsView.as_view()),
+    path('api/portal/equipment/', P.PortalEquipmentView.as_view()),   # v1.67.13 (service)
     path('api/portal/approvals/', P.PortalApprovalsView.as_view()),
     path('api/portal/invoices/', P.PortalInvoicesView.as_view()),
     path('api/portal/password/', P.PortalPasswordView.as_view()),

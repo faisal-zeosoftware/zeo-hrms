@@ -151,11 +151,12 @@ def compute(scheme, employee, rows=None, national=None):
     base = base_amount(rows, scheme.base)
     if base <= 0 and scheme.kind != 'fixed':
         return Decimal('0'), Decimal('0'), Decimal('0')
-    if scheme.min_base is not None and base < _d(scheme.min_base):
+    _gp = scheme.kind == 'percent' and _is_gpssa(scheme)   # v1.67.19: GPSSA limits are applied by gpssa_terms (Legal rates first)
+    if not _gp and scheme.min_base is not None and base < _d(scheme.min_base):
         base = _d(scheme.min_base)
-    if scheme.max_base is not None and base > _d(scheme.max_base):
+    if not _gp and scheme.max_base is not None and base > _d(scheme.max_base):
         base = _d(scheme.max_base)
-    if scheme.kind == 'percent' and _is_gpssa(scheme):
+    if _gp:
         # v1.62.3: old law (joined before 31/10/2023) 5 % / 12.5 %, salary 1,000–50,000; new law the scheme's rates, the
         # employer 15 % from a contribution salary of AED 20,000 (Payroll › Legal rates)
         from .legal import gpssa_terms, _on
@@ -214,6 +215,14 @@ def variables(employee, rows=None, on=None):
     """stat_<code>_base / _emp / _er per active scheme + statutory_employee_total / statutory_employer_total.
     v1.59.0: with the rates in force on `on` (default: the rule date – the payroll sets the first day of the pay period)."""
     out = {'statutory_employee_total': Decimal('0.00'), 'statutory_employer_total': Decimal('0.00')}
+    # v1.67.17: a scheme switched off (e.g. UAE ILOE "off" in Payroll → Statutory) keeps its salary component on the
+    # employees; its stat_<code>_* names now read 0 instead of failing the formula ("Unknown name stat_iloe_emp") per payslip.
+    try:
+        for code in M('PayrollPlus', 'StatutoryScheme').objects.filter(active=False).values_list('code', flat=True):
+            for part in ('base', 'emp', 'er'):
+                out[f'stat_{code}_{part}'] = Decimal('0.00')
+    except Exception:
+        pass
     schemes = schemes_on(on)
     if not schemes:
         return out

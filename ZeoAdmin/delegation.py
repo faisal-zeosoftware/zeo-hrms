@@ -26,6 +26,7 @@ v1.62.11 (item 95):
 * payslip approvals have no delegation fields (core model, no core migration): the approver of a waiting payslip step is
   changed to the colleague and changed back when the approver returns.
 """
+from zeo.appkit.engine import today as _today   # v1.67.19: the company's date, not the server's (UTC)
 import logging
 from datetime import date, timedelta
 
@@ -33,6 +34,7 @@ from django.apps import apps
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+from Translations.i18n import tr   # v1.67.19
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +89,22 @@ def kinds():
             out.append((key, label, apps.get_model(*am.split('.')), fk, rm))
         except LookupError:
             pass
+    return out
+
+
+def kinds_on():
+    """v1.67.19 (apps): the approval kinds of the apps the company has (asset requests are HR; automation approvals always)."""
+    try:
+        from ZeoApps.services import active_keys, app_of
+        act = active_keys()
+    except Exception:   # noqa: BLE001
+        return kinds()
+    out = []
+    for row in kinds():
+        key, label, M = row[0], row[1], row[2]
+        app = 'hrms' if key == 'asset' else (None if key == FLOW else app_of(M))
+        if app is None or app in act:
+            out.append(row)
     return out
 
 
@@ -219,7 +237,7 @@ def can_approve(user_id, kind):
 
 def current(user_id, day=None):
     from .models import OutOfOffice
-    day = day or date.today()
+    day = day or _today()
     return OutOfOffice.objects.filter(user_id=user_id, active=True, waiting_leave=False, start_date__lte=day, end_date__gte=day) \
         .select_related('delegate', 'user').first()
 
@@ -331,7 +349,7 @@ def candidates(o, kind, a=None, lt=None):
 
 def pick(o, kind, a=None, day=None):
     """The colleague who gets this approval (None: nobody can take it – it stays with the approver)."""
-    day = day or date.today()
+    day = day or _today()
     lt = leave_type_of(kind, a) if a is not None else None
     for uid, why in candidates(o, kind, a, lt):
         if not uid or uid == o.user_id:
@@ -458,7 +476,7 @@ def give_back(o, why='back'):
 
 def start(o, user=None):
     """The period starts (today within it): hand over what is waiting and tell the colleague."""
-    if not o.active or o.waiting_leave or not (o.start_date <= date.today() <= o.end_date):
+    if not o.active or o.waiting_leave or not (o.start_date <= _today() <= o.end_date):
         return 0
     n = hand_over(o) if o.include_pending else 0
     try:
@@ -510,7 +528,7 @@ def on_new_step(instance):
 
 def end(o, day=None):
     """The approver is back (or the period was cut): end the row now and give back."""
-    day = day or date.today()
+    day = day or _today()
     from .models import OutOfOffice
     o.active, o.end_date = False, max(o.start_date, min(o.end_date, day - timedelta(days=1)))
     OutOfOffice.objects.filter(pk=o.pk).update(active=False, end_date=o.end_date)
@@ -520,7 +538,7 @@ def end(o, day=None):
 def daily():
     """Periods starting today hand over what is waiting; periods that ended yesterday give back (v1.62.11 item 95)."""
     from .models import OutOfOffice
-    t = date.today()
+    t = _today()
     n = 0
     for o in OutOfOffice.objects.filter(active=True, waiting_leave=False, start_date=t).select_related('user', 'delegate'):
         n += start(o)
@@ -658,13 +676,13 @@ def leave_approved(req):
     o.active, o.include_pending, o.give_back, o.cancelled = True, True, bool(s['give_back']), False
     o.note = (o.note or f'{req.leave_type.name if req.leave_type_id else "Leave"} {req.document_number or ""}'.strip())[:255]
     o.save()
-    n = start(o) if a <= date.today() <= b else 0
+    n = start(o) if a <= _today() <= b else 0
     try:
         from zeo.module_helpers import notify
         dn = _names([d]).get(d, '')
         notify(user=user, title=msg('Out of office set for your leave'),
                message=msg('Your leave {0} is approved. From {1} to {2} your approvals go to {3}.', req.document_number or '', f'{a:%d/%m/%Y}', f'{b:%d/%m/%Y}', dn))
-        if n == 0 and a > date.today():   # the colleague hears it now too (start() tells them when it starts today)
+        if n == 0 and a > _today():   # the colleague hears it now too (start() tells them when it starts today)
             who = user.get_full_name() or user.username
             for u in _U().objects.filter(pk__in={d} | {r.get('delegate_id') for r in rules if r.get('delegate_id')}):
                 notify(user=u, title=msg('You approve for {0}', who),
@@ -716,7 +734,7 @@ def cancel(o):
 def moved(o, a, b):
     """The leave's dates changed: the row follows; a leave that now ended gives back at once."""
     from .models import OutOfOffice
-    t = date.today()
+    t = _today()
     OutOfOffice.objects.filter(pk=o.pk).update(start_date=a, end_date=b)
     o.start_date, o.end_date = a, b
     if b < t:
@@ -760,7 +778,7 @@ def choose_for_leave(req, user, delegate_id, rules=None):
     if o.pk and not o.waiting_leave and o.active:
         o.save(update_fields=['delegate', 'rules'])
         give_back_quiet(o)
-        if o.start_date <= date.today() <= o.end_date:
+        if o.start_date <= _today() <= o.end_date:
             hand_over(o)
         return o
     o.save()
@@ -799,3 +817,53 @@ def handed_info(user, kind_key=None):
                                                       'back_on': (o.end_date + timedelta(days=1)) if o.give_back else None,
                                                       'until': o.end_date, 'leave': o.leave_number, 'ooo_id': o.pk}
     return out
+
+
+# ------------------------------------------------------------------ v1.67.19: a level's approver changed – its waiting approvals move too
+def waiting_at_level(kind, workflow_id, level_no, user_id):
+    """The approvals of kind waiting for user_id at level_no of workflow_id (not handed to a stand-in)."""
+    M = next((m for k, l, m, f, rm in kinds() if k == kind), None)
+    if M is None or not user_id:
+        return []
+    out = []
+    try:
+        qs = _waiting(kind, M, int(user_id))
+        if any(f.name == 'level' for f in M._meta.get_fields()) and level_no:
+            qs = qs.filter(level=int(level_no))
+        for a in qs:
+            wf = workflow_of(kind, a)
+            if wf is not None and wf.pk == int(workflow_id):
+                out.append(a)
+    except Exception:
+        log.exception('waiting at level %s', kind)
+    return out
+
+
+def move_level(kind, workflow_id, changes, by=None, dry_run=False):
+    """changes = [{level, from, to}] – the waiting approvals of each changed level go to its new approver (history note on the
+    request). Returns [{level, from, to, count}]."""
+    rm = {k: r for k, l, m, f, r in kinds()}.get(kind)
+    fk = {k: f for k, l, m, f, r in kinds()}.get(kind)
+    names = _names([int(c.get('from') or 0) for c in changes] + [int(c.get('to') or 0) for c in changes])
+    res = []
+    for c in changes:
+        try:
+            lv, a_from, a_to = int(c.get('level') or 0), int(c.get('from') or 0), int(c.get('to') or 0)
+        except (TypeError, ValueError):
+            continue
+        if not a_from or not a_to or a_from == a_to:
+            continue
+        items = waiting_at_level(kind, workflow_id, lv, a_from)
+        n = 0
+        if not dry_run:
+            M = items[0].__class__ if items else None
+            for a in items:
+                if M.objects.filter(pk=a.pk, approver_id=a_from).update(approver_id=a_to):
+                    n += 1
+                    req = getattr(a, fk + '_id', None) if fk else None
+                    if rm and req:
+                        _history(rm, req, tr('Approval moved from {0} to {1} – the approver of level {2} was changed{3}.', names.get(a_from, a_from),
+                                             names.get(a_to, a_to), lv, (' ' + tr('by {0}', getattr(by, 'username', ''))) if by else ''))
+        res.append({'level': lv, 'from': a_from, 'to': a_to, 'from_name': names.get(a_from, ''), 'to_name': names.get(a_to, ''),
+                    'count': len(items) if dry_run else n})
+    return res

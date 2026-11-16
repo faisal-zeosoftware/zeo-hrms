@@ -506,12 +506,17 @@ def ren_extra(o, r):
     return {'days_left': (o.expiry - today()).days if o.expiry else None}
 
 
+def ren_check(o, request, old):   # v1.67.19 (field check): a negative cost was saved
+    if o.cost is not None and o.cost < 0:
+        raise AppError('Cost: enter 0 or more.', 'cost')
+
+
 app.reg(Reg('renewal', DocumentRenewal, 'Renewal', 'Document renewals', 'Documents',
             cols=('number', 'employee', 'document', 'doc_number', 'expiry', 'assigned_to', 'pro_service', 'new_expiry', 'status'),
             form=('employee', 'document', 'doc_number', 'expiry', 'assigned_to', 'cost', 'notes'),
             number=('renewal', 'RNW'), manage=PRO, view=VIEW, own=(('employee', 'emp'),), public=lambda r: Q(assigned_to=r.user),
             search=('number', 'document', 'doc_number', 'employee__emp_first_name', 'employee__emp_last_name', 'employee__emp_code'),
-            filters=('status', 'document', 'assigned_to', 'employee'), title='number', subtitle='document',
+            filters=('status', 'document', 'assigned_to', 'employee'), title='number', subtitle='document', check=ren_check,
             edit_when=lambda o: o.status in ('due', 'in_progress', 'submitted'), info=('status', 'new_number', 'new_expiry', 'renewed_at', 'source'), extra=ren_extra,
             actions=[Act('pro', 'Open a PRO service', a_ren_pro, lambda o, r: o.status in ('due', 'in_progress') and not o.pro_service_id and app.any(r, *PRO), style='primary'),
                      Act('progress', 'Update status', a_ren_progress, lambda o, r: o.status in ('due', 'in_progress', 'submitted') and app.any(r, *PRO),
@@ -545,6 +550,9 @@ def pro_defaults(o, request):
 
 
 def pro_check(o, request, old):
+    for n, lab in (('gov_fee', 'Government fee'), ('service_fee', 'Typing / service fee'), ('other_fee', 'Other costs')):   # v1.67.19 (field check)
+        if (getattr(o, n) or 0) < 0:
+            raise AppError(f'{lab}: enter 0 or more.', n)
     if not o.for_company and not o.employee_id:
         raise AppError('Choose the employee, or tick "for the company".', 'employee')
     o.total = (o.gov_fee or 0) + (o.service_fee or 0) + (o.other_fee or 0)
@@ -632,6 +640,8 @@ def ho_defaults(o, request):
 
 
 def ho_check(o, request, old):
+    if o.damage_charge is not None and o.damage_charge < 0:   # v1.67.19 (field check): a negative charge was saved
+        raise AppError('Charge for damage / loss: enter 0 or more.', 'damage_charge')
     if old is not None and o.status == 'draft':
         for i, it in enumerate(o.items or []):
             if not str(it.get('asset') or '').strip():

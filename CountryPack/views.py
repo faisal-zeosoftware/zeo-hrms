@@ -68,6 +68,22 @@ class PacksView(_Admin):
                          'country': {'code': p['country_code'], 'name': p['country_name']}})
 
 
+# v1.67.19 (apps): the captions and features of HR and Payroll are listed only when the company has that app
+KEY_APP = {**{k: 'hrms' for k in ('national_id', 'national_id_no', 'national_id_expiry', 'work_permit', 'work_permit_no', 'work_permit_expiry',
+                                  'labour_contract', 'labour_authority', 'residence_visa', 'visa_uid', 'visa_file_no', 'nationals',
+                                  'nationals_plural', 'insurance_card', 'nationals_reports')},
+           **{k: 'payroll' for k in ('wps', 'wps_file', 'wps_sif', 'employer_id', 'routing_code', 'gratuity', 'end_of_service')}}
+
+
+def _key_on(k):
+    try:
+        from ZeoApps.services import active_keys
+        act = active_keys()
+    except Exception:   # noqa: BLE001
+        return True
+    return KEY_APP.get(k) in (None, *act)
+
+
 def settings_payload(row=None):
     row = row or CountryPackSettings.get()
     p = S.current_pack()
@@ -79,8 +95,8 @@ def settings_payload(row=None):
         # for the Country settings screen
         'pack': p['pack'], 'auto_pack': p['_auto_pack'], 'country': {'code': p['country_code'], 'name': p['country_name']},
         'defaults': p['_defaults'], 'resolved': S.public_pack(p),
-        'label_titles': [{'key': k, 'title': LABEL_TITLES[k]} for k in LABEL_KEYS],
-        'feature_titles': [{'key': k, 'title': FEATURE_TITLES[k][0], 'help': FEATURE_TITLES[k][1]} for k in FEATURE_KEYS],
+        'label_titles': [{'key': k, 'title': LABEL_TITLES[k]} for k in LABEL_KEYS if _key_on(k)],
+        'feature_titles': [{'key': k, 'title': FEATURE_TITLES[k][0], 'help': FEATURE_TITLES[k][1]} for k in FEATURE_KEYS if _key_on(k)],
         'packs': S.packs_list(),
         'locked': S.locked() or None,   # v1.67.6 (setup) item 3
     }

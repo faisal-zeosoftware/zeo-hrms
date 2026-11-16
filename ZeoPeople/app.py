@@ -384,7 +384,13 @@ def sub_check(o, request, old):
     t = o.template
     if old is None and t.once and FormSubmission.objects.filter(template=t, employee=o.employee).exclude(status='rejected').exists():
         raise AppError('This form has already been submitted.', 'template')
-    missing = [f['label'] for f in (t.fields or []) if f.get('required') and (o.data or {}).get(f['name']) in (None, '', [], False) and f.get('type') != 'yesno']
+    # v1.67.19 (field check): the answers sent as a list (or any other JSON) answered a server error
+    data = o.data or {}
+    if isinstance(data, list):
+        data = {str(x.get('name') or x.get('key') or ''): x.get('value') for x in data if isinstance(x, dict)}
+    if not isinstance(data, dict):
+        raise AppError('The answers are not in the right form – fill in the form again.', 'data')
+    missing = [f['label'] for f in (t.fields or []) if isinstance(f, dict) and f.get('required') and data.get(f.get('name')) in (None, '', [], False) and f.get('type') != 'yesno']
     if missing:
         raise AppError('Required: ' + ', '.join(missing), 'data')
     if old is None and not t.needs_approval:

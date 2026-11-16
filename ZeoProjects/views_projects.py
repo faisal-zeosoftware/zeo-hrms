@@ -159,7 +159,7 @@ class ProjectListView(Base):
 
     @guard
     def post(self, request):
-        A.need(request, 'project_edit', 'You need the right to create projects.')
+        A.need(request, 'project_add', 'You need the right to create projects.')
         Project = _pm()[0]
         f = In(request)
         title = f.s('title')
@@ -522,7 +522,7 @@ class MilestoneDetailView(Base):
             for k in ('invoice_date', 'paid_date'):
                 if f.has(k):
                     setattr(m, k, f.dt(k))
-            if m.invoice_status in ('invoiced', 'paid') and not m.invoice_no:
+            if m.invoice_status in ('invoiced', 'partly_paid', 'paid') and not m.invoice_no:
                 raise S.ProjectsError('Enter the invoice number.', 'invoice_no')
             if m.invoice_status == 'paid' and not m.paid_date:
                 m.paid_date = S.local_today()
@@ -552,7 +552,7 @@ class MilestoneDetailView(Base):
         m = get_or_404(Milestone, pk)
         p = project_for(request, m.project_id)
         need_manage(request, p)
-        if m.status == 'accepted' or m.invoice_status in ('invoiced', 'paid'):
+        if m.status == 'accepted' or m.invoice_status in ('invoiced', 'partly_paid', 'paid'):
             raise S.ProjectsError('An accepted or invoiced milestone cannot be deleted.')
         m.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

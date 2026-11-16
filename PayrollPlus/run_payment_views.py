@@ -109,6 +109,9 @@ class RunPaymentFileView(_R):
                     br = [b for b in M('OrganisationManager', 'brnch_mstr').objects.values_list('pk', flat=True) if b not in others]
             if self.br() is not None:
                 br = [b for b in (br or self.br()) if b in set(self.br())]
+            est = [int(x) for x in d.get('establishment') or [] if str(x).isdigit()]
+            if est:   # v1.67.19: the file of one WPS establishment of the run
+                br = [b for b in br if b in est] if br else est
             all_in = RP.summary(run, br or None)['lines']
             wps_emp = [l['employee_id'] for l in all_in if l['method'] == 'wps']
             emp = None if len(wps_emp) == len(all_in) else wps_emp
@@ -116,7 +119,8 @@ class RunPaymentFileView(_R):
             content = res['content'] if isinstance(res['content'], bytes) else res['content'].encode('utf-8')
             out.update(file_name=res['file_name'], mime=res['mime'], preview_lines=(res.get('preview_lines') or [])[:300], checks=res['checks'],
                        note=res['note'], state=res['state'], layout_name=tr(res['layout_name']), warnings=res.get('warnings'),
-                       skipped=[dict(x, reason=tr(x.get('reason') or '')) for x in res.get('skipped') or []], summary=res.get('summary'))
+                       skipped=[dict(x, reason=tr(x.get('reason') or '')) for x in res.get('skipped') or []], summary=res.get('summary'),
+                       establishments=res.get('establishments') or [], branch_ids=res.get('branch_ids') or br)
             if not preview:
                 B.log_file({'profile': acc, 'agent': res['agent'], 'layout': res['layout'], 'run': run.pk, 'file_name': res['file_name'],
                             'employees': (res.get('summary') or {}).get('employees'), 'total': (res.get('summary') or {}).get('total'),
@@ -145,6 +149,18 @@ class RunPaymentFileView(_R):
         return Response(out)
 
 
+def _sod_paid(run, user):
+    """v1.67.19: Payroll controls › Segregation of duties – whoever prepared or approved the run may not mark its salaries paid
+    (before, Payments › Mark all paid let the approver do what the run's own "Mark as paid" refuses)."""
+    if not S.settings().segregation or user is None:
+        return
+    c = S.control_for(run)
+    if c and c.prepared_by_id and c.prepared_by_id == user.pk:
+        raise S.Refused(tr('You prepared this payroll run – somebody else must release the payment (segregation of duties).'), status=403)
+    if c and c.approved_by_id and c.approved_by_id == user.pk:
+        raise S.Refused(tr('You approved this payroll run – somebody else must release the payment (segregation of duties).'), status=403)
+
+
 class RunPaymentMarkView(_R):
     def post(self, request, pk):
         self.need(MARK, 'You do not have the right to mark salaries paid.')
@@ -158,6 +174,7 @@ class RunPaymentMarkView(_R):
         if not ls:
             raise S.Refused(tr('Choose the employees.'), problems={'payslips': tr('Required.')})
         unmark = d.get('unmark') in (True, 'true', 1, '1')
+        _sod_paid(run, request.user)   # v1.67.19: the same segregation of duties as "Mark as paid" of the run
         on = str(d.get('paid_on') or '')[:10]
         if not unmark:
             try:

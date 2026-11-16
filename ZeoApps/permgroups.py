@@ -126,7 +126,11 @@ class GroupsView(Base):
             users[gid] = users.get(gid, 0) + 1
         act_perm = {p for a in catalogue() for m in a['models'] for p in list(m['rights'].values()) + [o['id'] for o in m['other']]}
         out = []
+        act = S.active_keys()
+        show_all = request.query_params.get('all_apps') == '1'
         for g in Group.objects.filter(pk__in=ids).prefetch_related('permissions'):
+            if not show_all and not S.group_shown(GS.label(g), act) and not users.get(g.pk):
+                continue   # v1.67.19 (apps): the role groups of the apps the company does not use (unless someone is in one)
             pids = [p.pk for p in g.permissions.all()]
             own_copy = bool((rows.get(g.pk) or (None, ''))[0])
             std = GS.is_standard_name(g.name)

@@ -77,8 +77,19 @@ def schedule(loan, today=None):
                                  'balance': rows[at]['balance'] if at >= 0 else str(Decimal(str(loan.amount_requested or 0)).quantize(Q2))})
         for i, r in enumerate(rows):
             r['n'] = i + 1
-    if nxt < today.replace(day=1):
-        nxt = today.replace(day=1)
+    _floor = today.replace(day=1)
+    try:   # v1.67.19: the next payroll that has not run yet deducts the instalment – a loan approved on 13/11 while October is
+        # still to run is deducted in October; the plan said November (one month off)
+        _PS = M('Payslip')
+        _last = (_PS.objects.filter(employee_id=loan.employee_id).exclude(payroll_run__status='pending')
+                 .exclude(status__iexact='rejected').order_by('-payroll_run__year', '-payroll_run__month')
+                 .values_list('payroll_run__year', 'payroll_run__month').first())
+        if _last:
+            _floor = min(_floor, add_months(date(_last[0], _last[1], 1), 1))
+    except Exception:
+        pass
+    if nxt < _floor or (not rows and _floor < nxt and start <= today.replace(day=1)):
+        nxt = _floor
     if loan.status == 'Paused' and loan.resume_date and loan.resume_date.replace(day=1) > nxt:
         nxt = loan.resume_date.replace(day=1)
     if loan.status in ACTIVE and emi > 0:

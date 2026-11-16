@@ -53,7 +53,21 @@ def _nationality_ok(v):
     return v
 
 
-class IdentitySerializer(serializers.ModelSerializer):
+class BlankNotNull:
+    """v1.67.19 – an empty optional text box arrives as null; the text columns of these records hold '' (not null), so a null
+    made the save fail ("This field may not be null." – e.g. WPS agent ID left empty on a new bank account)."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'copy'):
+            data = data.copy()
+            from django.db import models as dm
+            for f in self.Meta.model._meta.concrete_fields:
+                if isinstance(f, (dm.CharField, dm.TextField)) and not f.null and f.name in data and data[f.name] is None:
+                    data[f.name] = ''
+        return super().to_internal_value(data)
+
+
+class IdentitySerializer(BlankNotNull, serializers.ModelSerializer):
     # wider than the columns so the format checks below give the message (values are cleaned to the column size)
     passport_no = serializers.CharField(required=False, allow_blank=True, max_length=40)
     emirates_id = serializers.CharField(required=False, allow_blank=True, max_length=40)
@@ -172,7 +186,7 @@ class IdentitySerializer(serializers.ModelSerializer):
         return attrs
 
 
-class EmergencySerializer(serializers.ModelSerializer):
+class EmergencySerializer(BlankNotNull, serializers.ModelSerializer):
     class Meta:
         model = EmergencyContact
         fields = '__all__'
@@ -200,7 +214,7 @@ class EmergencySerializer(serializers.ModelSerializer):
         return _run(V.clean_phone, v, 'Other phone')
 
 
-class DependentExtraSerializer(serializers.ModelSerializer):
+class DependentExtraSerializer(BlankNotNull, serializers.ModelSerializer):
     passport_no = serializers.CharField(required=False, allow_blank=True, max_length=40)
     emirates_id = serializers.CharField(required=False, allow_blank=True, max_length=40)
 
@@ -241,7 +255,7 @@ class DependentExtraSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class BankExtraSerializer(serializers.ModelSerializer):
+class BankExtraSerializer(BlankNotNull, serializers.ModelSerializer):
     class Meta:
         model = BankExtra
         fields = '__all__'
@@ -254,7 +268,7 @@ class BankExtraSerializer(serializers.ModelSerializer):
         return v
 
 
-class QualificationExtraSerializer(serializers.ModelSerializer):
+class QualificationExtraSerializer(BlankNotNull, serializers.ModelSerializer):
     country_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -294,7 +308,7 @@ class QualificationExtraSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class EmploymentSerializer(serializers.ModelSerializer):
+class EmploymentSerializer(BlankNotNull, serializers.ModelSerializer):
     LEAVING = ('on_notice', 'left', 'terminated', 'absconded', 'retired')
 
     class Meta:

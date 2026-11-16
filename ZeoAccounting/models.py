@@ -91,7 +91,7 @@ class AccountingSettings(models.Model):
 
 MAP_KIND = (('component', 'Salary component'), ('payable', 'Payable (net salary, settlement)'), ('provision', 'Provision (gratuity, leave salary)'),
             ('settlement', 'Final settlement line'), ('expense', 'Expense category'), ('property', 'Property (v1.40.0)'),
-            ('allocation', 'Cost allocation (v1.50.0)'))
+            ('allocation', 'Cost allocation (v1.50.0)'), ('projects', 'Projects billing (v1.67.14)'))
 
 
 class AccountMap(models.Model):
@@ -137,7 +137,9 @@ SOURCES = (('payroll', 'Payroll run'), ('provision', 'Month-end provisions'), ('
            ('prop_bill', 'Property invoices / credit notes'), ('prop_receipt', 'Property receipts'), ('prop_payout', 'Owner payouts'),
            ('prop_commission', 'Property commissions'), ('prop_vendor', 'Property vendor bills'),
            ('cost_allocation', 'Payroll cost allocation'),   # v1.50.0
-           ('loan', 'Loans (payout, write-off)'), ('advance', 'Salary advances (payout)'))   # v1.67.11 (loans, item 117)
+           ('loan', 'Loans (payout, write-off)'), ('advance', 'Salary advances (payout)'),   # v1.67.11 (loans, item 117)
+           ('prj_invoice', 'Projects tax invoices'), ('prj_payment', 'Projects payments'),   # v1.67.14 (billing connectors)
+           ('recovery', 'Recoveries (settled early, written off)'))   # v1.67.15 (C11)
 STATUS = (('draft', 'Draft – check it'), ('ready', 'Ready to post'), ('posting', 'Posting'), ('posted', 'Posted'), ('failed', 'Failed'),
           ('exported', 'Exported'), ('reversed', 'Reversed'), ('cancelled', 'Cancelled'))
 

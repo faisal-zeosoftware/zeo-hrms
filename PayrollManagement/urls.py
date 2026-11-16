@@ -50,7 +50,10 @@ router.register(r'emp-leave-encashment', LeaveEncashmentViewSet,basename='emp-le
 
 
 
+from .views import ComponentSwitchOffView   # v1.67.16 (bug list item 14)
+
 urlpatterns = [
+    path('api/component-switch-off/', ComponentSwitchOffView.as_view()),   # v1.67.16 (bug list item 14)
     path('api/', include(router.urls)),
     path('sif-data/', SIFDataView.as_view(), name='sif-data'),
     path(

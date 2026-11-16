@@ -197,6 +197,16 @@ def line_for(emp, leave_type_id):
     return line
 
 
+def no_running_balance(emp, leave_type_id):
+    """v1.67.19: the employee's policy line of the type earns nothing (Per event / No balance) – the type has no running balance;
+    the days taken only count against the limits per request / year. The balance screens show "–" instead of a negative number."""
+    try:
+        line = line_for(emp, leave_type_id)
+        return bool(line is not None and getattr(line, 'accrual', '') in ('per_event', 'none'))
+    except Exception:   # noqa: BLE001
+        return False
+
+
 def months_of_service(emp, on):
     j = emp.emp_joined_date
     if not j or on < j:
@@ -1034,6 +1044,12 @@ def _run_accrual_month(on=None, user_id=None, preview=False):
     for eid, lt, d in Ledger.objects.filter(kind__in=('accrual', 'reset'), date__gte=m_end - timedelta(days=740), date__lte=m_end + timedelta(days=370)) \
             .values_list('employee_id', 'leave_type_id', 'date'):
         near[(eid, lt)].append(d)
+    # v1.67.15 a company going live during the leave year loads the balance left of a yearly type (sick leave …) as an opening
+    # balance dated in that year – that is the year's grant: the first accrual gave the full year again on top (sick 90 + 90)
+    opened = defaultdict(list)
+    for eid, lt, d in Ledger.objects.filter(kind='opening', date__gte=m_end - timedelta(days=370), date__lte=m_end + timedelta(days=370)) \
+            .values_list('employee_id', 'leave_type_id', 'date'):
+        opened[(eid, lt)].append(d)
     for emp in _accrual_employees(m_start):
         p = policy_for(emp)
         if p is None or not emp.emp_joined_date or emp.emp_joined_date > m_end:
@@ -1079,9 +1095,12 @@ def _run_accrual_month(on=None, user_id=None, preview=False):
                     if closed:
                         rows.append(dict(closed, kind='year_end', days=-closed['lapsed'] if closed['lapsed'] else 0,
                                          note=f'{tag} · leave year {y0 - timedelta(days=1):%Y} closed: {closed["carry_forward"]:g} carried'))
+                if any(y0 <= d <= y1 for d in list(opened.get((emp.pk, line.leave_type_id), [])) + list(opened.get((emp.pk, was), []) if was is not None else [])):
+                    continue   # v1.67.15 the opening balance of this leave year is its grant (the last year is closed above all the same)
                 full, step = blended_days(line, emp, y0, y1)
                 full = round(full, 2)
-                amt, kind, note = full, 'accrual', f'{tag} · {full:g} days for the leave year' + (f' ({step})' if step else '')
+                _unit = 'hours' if M('calendars', 'leave_type').objects.filter(pk=line.leave_type_id, unit='hours').exists() else 'days'   # v1.67.19
+                amt, kind, note = full, 'accrual', f'{tag} · {full:g} {_unit} for the leave year' + (f' ({step})' if step else '')
                 joined = emp.emp_joined_date
                 if joined and joined > y0 and not line.min_service_months and not line.after_probation and line.prorate != 'none':
                     amt = round(full * year_fraction(line, y0, y1, joined), 2)   # joined during this leave year
@@ -1145,7 +1164,7 @@ def expire_carry_forward(m_end, user_id=None, preview=False):
             if lapse <= 0:
                 continue
             out.append({'employee_id': emp.pk, 'employee': f'{emp.emp_first_name} ({emp.emp_code})', 'leave_type_id': line.leave_type_id,
-                        'kind': 'lapsed', 'days': -lapse, 'note': f'{note}: {cf:g} carried, {max(used, 0):g} used by {m_end:%d/%m/%Y}'})
+                        'kind': 'lapsed', 'days': -lapse, 'note': f'{note}: {cf:g} carried, {max(used, 0) + 0.0:g} used by {m_end:%d/%m/%Y}'})
             if not preview:
                 post(emp.pk, line.leave_type_id, m_end, 'lapsed', -lapse, note=out[-1]['note'], user_id=user_id, move_balance=True)
     return out
@@ -1217,6 +1236,8 @@ def close_line(emp, line, ye, user_id=None, preview=False):
     row = {'employee_id': emp.pk, 'employee': f'{emp.emp_first_name} ({emp.emp_code})', 'leave_type_id': line.leave_type_id,
            'balance': bal, 'carry_forward': round(carry if action != 'keep' else bal, 2), 'excess': excess, 'action': action,
            'lapsed': excess if action == 'lapse' else over, 'encash': enc_days}
+    if action == 'encash' and enc_days <= 0:   # v1.67.19: nothing may be encashed – the preview said "Send for encashment"
+        row['action'] = 'lapse'
     if preview:
         return row
     post(emp.pk, line.leave_type_id, ye, 'carry_forward', 0, note=f'{row["carry_forward"]:g} days carried forward', user_id=user_id)

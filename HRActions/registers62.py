@@ -151,6 +151,7 @@ def rows_for(request, view='all', status='', kind='', q=''):
 
 class ResignationsView(APIView):
     permission_classes = [IsAuthenticated]
+    zeo_model_for = staticmethod(lambda kwargs: __import__('django.apps', fromlist=['apps']).apps.get_model('EmpManagement', 'EmployeeResignation'))   # v1.67.15 (checklist scan): extra fields / record panel
 
     def get(self, request):
         g = request.query_params
@@ -158,14 +159,22 @@ class ResignationsView(APIView):
 
     def post(self, request):
         """Record a resignation through the EmpManagement API (numbering, approval chain, e-mails)."""
-        if not _can(request, 'add_employeeresignation'):
-            return Response({'detail': tr('You may not record resignations.')}, status=403)
         from EmpManagement.views import EmployeeResignationViewset
         E = M('EmpManagement', 'emp_master')
         data = {k: v for k, v in request.data.items()}
+        mine = E.objects.filter(users=request.user).first()
+        if not data.get('employee') and mine is not None:
+            data['employee'] = mine.pk
         emp = E.objects.filter(pk=data.get('employee') or 0).select_related('emp_branch_id').first()
+        # v1.67.16 (bug list 11/11 item 12): an employee hands in their own resignation from Self service › Requests;
+        # recording one for someone else still needs the add right
+        own = emp is not None and mine is not None and emp.pk == mine.pk
+        if not own and not _can(request, 'add_employeeresignation'):
+            return Response({'detail': tr('You may not record resignations.')}, status=403)
         if emp is None:
             return Response({'employee': [tr('Choose the employee.')]}, status=400)
+        if own and M('EmpManagement', 'EmployeeResignation').objects.filter(employee=emp).exclude(status__in=('Rejected', 'Cancelled', 'rejected', 'cancelled')).exists():
+            return Response({'detail': tr('You have already handed in your resignation – follow it in My requests.')}, status=400)
         data.setdefault('document_date', date.today().isoformat())
         if not data.get('document_date'):
             data['document_date'] = date.today().isoformat()

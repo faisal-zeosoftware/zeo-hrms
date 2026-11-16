@@ -10,6 +10,7 @@ from zeo.appkit.engine import (in_branches, dash_period, Act, App, AppError, Reg
 from .models import (ROLES, Asset, Category, Checklist, CostLine, Inspection, Location, MaintEvent, MaintFile, MaintSequence, MaintSettings,
                      PreventivePlan, Quote, Vendor, WorkOrder)
 from .packs import PACKS
+from zeo.service_industries import FROM_COMPANY as SERVICE_FROM_COMPANY   # v1.67.14 (service release 2)
 
 PAGE = '/main-sidebar/zeo-maintenance/'
 ZERO = Decimal('0')
@@ -19,7 +20,7 @@ app = App(
     label='ZeoMaintenance', slug='zeo-maintenance', title='Maintenance', settings_model=MaintSettings, sequence_model=MaintSequence,
     event_model=MaintEvent, file_model=MaintFile, roles=ROLES, role_prefix='mnt_', manager_role='mnt_manager', packs=PACKS,
     pack_labels={k: v['label'] for k, v in PACKS.items()}, pack_descriptions={k: v['description'] for k, v in PACKS.items()},
-    industry_from_company={'PM': 'property_management', 'CON': 'construction', 'OG': 'oil_gas', 'HC': 'healthcare', 'EDU': 'education', 'MFG': 'manufacturing', 'RET': 'retail', 'IT': 'it', 'FIN': 'finance'},   # v1.38.0
+    industry_from_company={'PM': 'property_management', 'CON': 'construction', 'OG': 'oil_gas', 'HC': 'healthcare', 'EDU': 'education', 'MFG': 'manufacturing', 'RET': 'retail', 'IT': 'it', 'FIN': 'finance'} | SERVICE_FROM_COMPANY,   # v1.38.0; v1.67.14 the 16 service industries
     pack_models={'category': (Category, 'code'), 'checklist': (Checklist, 'code')},
     links=(('ZeoProperty', 'Property', 'Work on Property units; tenant and buyer requests from the portal; owner approval above the '
             'agreement limit; costs charged to the tenant or the owner as billing records; move-in / move-out / unit-ready / snag inspections.'),

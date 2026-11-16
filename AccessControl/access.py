@@ -189,7 +189,9 @@ class Ctx:
             ids = [i for i in ids if i]
             if not ids and self.emp and self.emp.emp_branch_id_id:
                 ids = [self.emp.emp_branch_id_id]
-            self.branches = ids
+            # v1.67.19: no branch row and no linked employee = every branch the rights allow (as Settings › Users says:
+            # "Users without a row here see every branch their rights allow"); before, such a back-office user saw nothing
+            self.branches = None if (not ids and not self.emp and self.backoffice) else ids
         # v1.62.0 ui: ONE branch filter for every list and report – the branches ticked in the top bar come with each call
         # (X-Branch-Ids, only when the user narrowed the choice). For reading only, and only inside the user's own branches:
         # the selection can narrow, never widen (ids outside the allowed ones are dropped; nothing left = the header is ignored).
@@ -409,6 +411,20 @@ class ZeoAccess(permissions.BasePermission):
                 return own
             uf = user_fields(model)
             return any(getattr(obj, f'{f}_id', None) == c.user.id for f in uf if hasattr(obj, f'{f}_id'))
+        if verb == 'change':
+            # v1.67.19 (access rights field check): without the change right a user could change ANY record they can see – a "view
+            # only" group changed another employee's compensatory leave allocation. Without the right: only the user's own records
+            # or rows that name the user (approver, delegate, owner …).
+            ep = emp_path(model)
+            uf = user_fields(model)
+            if any(getattr(obj, f'{f}_id', None) == c.user.id for f in uf if hasattr(obj, f'{f}_id')):
+                return True
+            if ep is not None and c.emp:   # (approvals go through the approval rows, which name the approver)
+                if model.objects.filter(pk=obj.pk, **{f'{ep}__in' if ep else 'pk__in': [c.emp.id]}).exists():
+                    return True
+            if ep is not None or uf:
+                self.message = tr('You do not have permission to {0} {1}.', verb, model._meta.verbose_name)
+                return False
         return True
 
     def _location_ok(self, request, model, verb, detail=False):
@@ -806,6 +822,24 @@ class BranchReportMixin:
 
     def _scoped(self, qs, path):
         return qs if self._branches() is None else limit_by_branch(self.request, qs, branch_path=path)
+
+    def filter_queryset(self, queryset):
+        """v1.67.17 (checklist 42 / 44): the saved report files of the list. A user without company-wide rights saw every row – the
+        company-wide standard report (std_report, written for administrators) and the per-user files of other users – and could
+        open their JSON (every employee's data). Now only an administrator (company-wide user) sees those; others see their own
+        standard report file (…_u<own id>) and the saved (named) reports."""
+        qs = super().filter_queryset(queryset)
+        if self._branches() is None:
+            return qs
+        try:
+            names = {f.name for f in qs.model._meta.get_fields()}
+        except Exception:
+            return qs
+        if 'file_name' not in names:
+            return qs
+        from django.db.models import Q
+        uid = self.request.user.pk
+        return qs.exclude(file_name__regex=r'std_report$').exclude(Q(file_name__regex=r'_u[0-9]+$') & ~Q(file_name__endswith=f'_u{uid}'))
 
 
 def run_in_branches(branches, run):

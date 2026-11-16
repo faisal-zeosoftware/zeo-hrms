@@ -51,7 +51,14 @@ def daily(schema=None):
 
     def run():
         from .plans import overdue_tasks
-        out = {'renewal_reminders': renewal_reminders(), 'overdue_tasks': overdue_tasks()}
+        from .billing import reminders as billing_reminders   # v1.67.13 (billing)
+        out = {'renewal_reminders': renewal_reminders(), 'overdue_tasks': overdue_tasks(), 'billing_reminders': billing_reminders()}
+        try:   # v1.67.14 (service release 3): preventive visits within the planning horizon
+            from .field_service import plan_ppm
+            out['ppm_planned'] = len(plan_ppm())
+        except Exception:   # noqa: BLE001 – never stops the other daily jobs
+            import logging
+            logging.getLogger(__name__).exception('ppm planning')
         if local_today().weekday() == 0:
             out['weekly_summary_to'] = send_weekly()
         return out

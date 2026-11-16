@@ -73,7 +73,13 @@ def _view_of(request, endpoint):
     try:
         match = resolve(path)
     except Resolver404:
-        return path, None
+        # v1.67.15 (checklist scan): a screen that only has a detail URL (…/components/<id>/, e.g. Salary components' accrual
+        # settings) – resolve the address as given
+        full = '/' + str(endpoint or '').split('?')[0].strip('/') + '/'
+        try:
+            match = resolve(full)
+        except Resolver404:
+            return path, None
     cls = getattr(match.func, 'cls', None) or getattr(match.func, 'view_class', None)
     if cls is None:
         return path, None
@@ -684,8 +690,9 @@ class FieldsView(APIView):
         path, view, model = model_of(request, screen) if screen else (None, None, None)
         qs = FieldDef.objects.all()
         if screen:
-            if model is None:
-                return Response({'detail': 'This screen cannot get extra fields.'}, status=status.HTTP_400_BAD_REQUEST)
+            if model is None:   # v1.67.19: an empty answer, not a 400 in the console on every load (payroll run, accruals …)
+                return Response({'model': None, 'screen': screen, 'can_design': False, 'types': [], 'fields': [], 'unsupported': True,
+                                 'detail': 'This screen cannot get extra fields.'})
             qs = qs.filter(model=model_key(model))
         if request.query_params.get('active') == '1':
             qs = qs.filter(active=True)
@@ -950,6 +957,8 @@ def _clean_typed(f, v):
             return (s, None) if COLOR.match(s) else (None, f'{f.label}: choose a colour.')
         if t == 'employee':
             from EmpManagement.models import emp_master
+            if isinstance(v, dict):   # v1.67.19 (field check): the form sends the picked employee as {id, code, name}
+                v = v.get('id') or v.get('code') or ''
             e = emp_master.objects.filter(Q(pk=v) if str(v).isdigit() else Q(emp_code__iexact=str(v).strip())).first()
             return ({'id': e.id, 'code': e.emp_code, 'name': ' '.join(x for x in [e.emp_first_name, e.emp_last_name] if x)}, None) if e else (None, f'{f.label}: employee not found.')
         if t == 'file':

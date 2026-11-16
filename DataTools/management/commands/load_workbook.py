@@ -25,6 +25,9 @@ Special columns (start with @; every other column is a field of the screen – i
   @month    YYYY-MM for monthly sheets.
   @date     the business day of the row: the record's created / submitted time is moved to that day (history looks real);
             on an action row the times the action sets on its record (approved, resolved, issued …) move to that day.
+            v1.67.14: a screen API can name the other records an action changes (zeo_related on the view: a technician's
+            "Finish job" changes the visit, the ticket, the work log) – their times move to that day too.
+  @time     v1.67.14: HH:MM – the time of day for @date (a job started 09:10 and finished 11:05 keeps its length).
   @method, @endpoint, @body, @expect – action rows.
   @until (YYYY-MM-DD) – the row is for a future day (the screen refuses past days): after that day it is left out and counted as "date passed".
   @example  v1.62.0 workbook: any value (e.g. "example") – the row is an example of the template and is never loaded.
@@ -54,7 +57,7 @@ from decimal import Decimal  # noqa: F401
 
 from django.core.management.base import BaseCommand, CommandError
 
-SPECIAL = ('@ref', '@skip_if', '@until', '@as', '@month', '@date', '@method', '@endpoint', '@body', '@expect', '@note', '@example')
+SPECIAL = ('@ref', '@skip_if', '@until', '@as', '@month', '@date', '@time', '@method', '@endpoint', '@body', '@expect', '@note', '@example')   # v1.67.14 @time
 TS_FIELDS = ('created_at', 'created', 'created_on', 'updated_at', 'reported_at', 'requested_at', 'opened_at', 'submitted_at',
              'applied_on', 'request_date', 'raised_at', 'logged_at')
 # v1.62.0 workbook: sheets of a workbook that are never loaded (help, lists)
@@ -220,7 +223,16 @@ class Loader:
 
     def call(self, user, method, path, data=None):
         if not self.trial:
-            return self._call(user, method, path, data)
+            for _try in range(3):   # v1.67.15 the database met another save at the same moment – try the call again
+                try:
+                    return self._call(user, method, path, data)
+                except Exception as ex:   # noqa: BLE001
+                    if _try == 2 or not re.search(r'deadlock detected|could not serialize', str(ex)):
+                        raise
+                    from django.db import connection as _c
+                    if _c.needs_rollback or _c.in_atomic_block:
+                        raise
+                    time.sleep(2 + _try)
         # v1.62.0 workbook --check: the call really runs, in a savepoint of the trial transaction; a refused call is undone,
         # and what the screens do "after saving" (on_commit) runs at once so the next rows see it
         from django.db import transaction
@@ -234,10 +246,48 @@ class Loader:
         self.drain()
         return st, res
 
+    @staticmethod
+    def _files_of(data):
+        """v1.67.15 a cell holding a file as a data URI (data:application/pdf;base64,…) is sent as an uploaded file – the screens
+        that take a file (company policy, documents, receipts) refused it as text. Only for a flat body (multipart has no nesting)."""
+        if not isinstance(data, dict) or not any(isinstance(v, str) and v.startswith('data:') and ';base64,' in v[:120] for v in data.values()):
+            return None
+        if any(isinstance(v, dict) or (isinstance(v, list) and any(isinstance(x, (dict, list)) for x in v)) for v in data.values()):
+            return None
+        import base64
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        out = {}
+        for k, v in data.items():
+            if isinstance(v, str) and v.startswith('data:') and ';base64,' in v[:120]:
+                head, raw = v.split(';base64,', 1)
+                ctype = head[5:] or 'application/octet-stream'
+                ext = {'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg'}.get(ctype, 'bin')
+                try:
+                    out[k] = SimpleUploadedFile(f'{k}.{ext}', base64.b64decode(raw), content_type=ctype)
+                except (ValueError, TypeError):
+                    return None
+            elif isinstance(v, bool):
+                out[k] = 'true' if v else 'false'
+            elif v is not None:
+                out[k] = v
+        return out
+
     def _call(self, user, method, path, data=None):
+        from zeo import throttles as _thr
+        _thr.INTERNAL.on = True   # v1.67.15 the loader's own calls are not rate-limited
+        try:
+            return self._call_in(user, method, path, data)
+        finally:
+            _thr.INTERNAL.on = False
+
+    def _call_in(self, user, method, path, data=None):
         c = self.client(user)
         fn = getattr(c, method.lower())
-        r = fn(self.url(path), data=data, format='json') if data is not None else fn(self.url(path))
+        mp = self._files_of(data) if method.upper() in ('POST', 'PUT', 'PATCH') else None
+        if mp is not None:
+            r = fn(self.url(path), data=mp, format='multipart')
+        else:
+            r = fn(self.url(path), data=data, format='json') if data is not None else fn(self.url(path))
         body = None
         ct = r.get('Content-Type', '') if hasattr(r, 'get') else ''
         if 'json' in ct:
@@ -312,6 +362,9 @@ class Loader:
         flt = {}
         for part in filter(None, query.split('&')):
             k, _, val = part.partition('=')
+            if '%' in val:   # v1.67.15 a value with & = ? (e.g. "Health, Safety & Environment") is written %26 %3D %3F
+                from urllib.parse import unquote
+                val = unquote(val)
             val = self.resolve(val)
             if isinstance(val, str) and val.lower() in ('true', 'false'):
                 val = val.lower() == 'true'
@@ -470,8 +523,10 @@ class Loader:
             s = s[3:-1]
         return s
 
-    def target_of(self, endpoint):
-        """(model, pk) of the record an action URL works on: …/<pk>/… of a detail or app-kit record."""
+    def target_of(self, endpoint, body=None):
+        """(model, pk) of the record an action URL works on: …/<pk>/… of a detail or app-kit record.
+        v1.67.15: or the record named by "id" in the body of an action endpoint that names its record type (zeo_model), e.g.
+        Leave › Encashments POST {id, action: approve} – its approval date kept the load day, so the payroll of the month did not pay it."""
         from django.urls import resolve, Resolver404
         path = '/' + endpoint.split('?')[0].strip('/') + '/'
         try:
@@ -479,6 +534,9 @@ class Loader:
         except Resolver404:
             return None, None
         pk = kw.get('pk') or kw.get('id') or kw.get('rid')
+        if not pk and isinstance(body, dict) and str(body.get('id') or '').isdigit():
+            m = self.model_of(path)
+            return (m, int(body['id'])) if m is not None else (None, None)
         if not pk:
             return None, None
         cands = [path, re.sub(r'/do/[^/]+/$', '/', path)]
@@ -492,6 +550,38 @@ class Loader:
                 return m, pk
         return None, pk
 
+    def related_of(self, endpoint, pk):
+        """v1.67.14: [(model, pk)] of the other records an action / new record changes – the view's zeo_related(pk) names them."""
+        from django.urls import resolve, Resolver404
+        from django_tenants.utils import schema_context
+        if not pk:
+            return []
+        try:
+            m = resolve('/' + endpoint.split('?')[0].strip('/') + '/')
+        except Resolver404:
+            return []
+        cls = getattr(m.func, 'cls', None) or getattr(m.func, 'view_class', None)
+        fn = getattr(cls, 'zeo_related', None)
+        if fn is None:
+            return []
+        try:
+            with schema_context(self.schema):
+                return [x for x in (fn(pk) or []) if x and x[0] is not None and x[1]]
+        except Exception:   # noqa: BLE001 – never stops a row
+            return []
+
+    @staticmethod
+    def _tod(v):
+        if not v:
+            return None
+        if isinstance(v, datetime.time):
+            return v
+        try:
+            h, m_ = str(v).strip().split(':')[:2]
+            return datetime.time(int(h), int(m_))
+        except (ValueError, TypeError):
+            return None
+
     def stamps(self, model, pk):
         from django.db import models as M
         from django_tenants.utils import schema_context
@@ -504,8 +594,9 @@ class Loader:
             return {f.name: getattr(obj, f.name) for f in model._meta.fields
                     if isinstance(f, (M.DateField, M.DateTimeField)) and f.name not in ('date_joined',)}
 
-    def stamp_action(self, model, pk, before, day):
-        """An action row with @date: the times the action just set (approved / resolved / issued … = now or today) move to that day."""
+    def stamp_action(self, model, pk, before, day, tod=None):
+        """An action row with @date: the times the action just set (approved / resolved / issued … = now or today) move to that day
+        (v1.67.14: at the row's @time when given)."""
         import zoneinfo
         from django.db import models as M
         from django.utils import timezone
@@ -525,13 +616,14 @@ class Loader:
                     continue
                 v = after[f.name]
                 if isinstance(f, M.DateTimeField) and abs((now - v).total_seconds()) < 900:
-                    upd[f.name] = datetime.datetime.combine(day, datetime.time(10 + int(pk) % 7, (int(pk) * 11) % 60)).replace(tzinfo=zoneinfo.ZoneInfo('Asia/Dubai'))
+                    t_ = tod or datetime.time(10 + int(pk) % 7, (int(pk) * 11) % 60)
+                    upd[f.name] = datetime.datetime.combine(day, t_).replace(tzinfo=zoneinfo.ZoneInfo('Asia/Dubai'))
                 elif isinstance(f, M.DateField) and not isinstance(f, M.DateTimeField) and v == today:
                     upd[f.name] = day
             if upd:
                 model.objects.filter(pk=pk).update(**upd)
 
-    def backdate(self, model, pk, day):
+    def backdate(self, model, pk, day, tod=None):
         if model is None or not pk or not day:
             return
         import zoneinfo
@@ -550,7 +642,7 @@ class Loader:
                 if f.name not in TS_FIELDS or getattr(obj, f.name, None) is None:
                     continue
                 if isinstance(f, M.DateTimeField):
-                    upd[f.name] = datetime.datetime.combine(day, datetime.time(9 + pk % 8, (pk * 7) % 60)).replace(tzinfo=zoneinfo.ZoneInfo('Asia/Dubai'))
+                    upd[f.name] = datetime.datetime.combine(day, tod or datetime.time(9 + pk % 8, (pk * 7) % 60)).replace(tzinfo=zoneinfo.ZoneInfo('Asia/Dubai'))
                 elif isinstance(f, M.DateField):
                     upd[f.name] = day
             if upd:
@@ -770,11 +862,39 @@ class Loader:
                 if self.check:
                     self.note(sheet, rn, 'ok')
                     continue
-                tgt = self.target_of(str(path)) if (how == 'action' and row.get('@date')) else (None, None)
+                tgt = self.target_of(str(path), body) if (how == 'action' and row.get('@date')) else (None, None)
                 before = self.stamps(*tgt) if tgt[0] is not None else None
+                tod = self._tod(row.get('@time'))
+                rel_pk = tgt[1] if tgt[1] else None
+                rel_before = [(m_, p_, self.stamps(m_, p_)) for m_, p_ in self.related_of(str(path), rel_pk)] if (how == 'action' and row.get('@date') and rel_pk) else []
                 st, res = self.call(user, method, str(path), body if method not in ('GET', 'DELETE') else None)
                 if before is not None and st < 400:
-                    self.stamp_action(tgt[0], tgt[1], before, self.cell(row['@date']))
+                    self.stamp_action(tgt[0], tgt[1], before, self.cell(row['@date']), tod)
+                if row.get('@date') and st < 400 and rel_pk:   # v1.67.14: records the action made or changed (a visit made by "Start job" too)
+                    seen = {(m_, p_) for m_, p_, _b in rel_before}
+                    for m_, p_ in self.related_of(str(path), rel_pk):
+                        if (m_, p_) not in seen:   # a new record: its created stamps and the times the action set (e.g. started at)
+                            self.backdate(m_, p_, self.cell(row['@date']), tod)
+                            self.stamp_action(m_, p_, {}, self.cell(row['@date']), tod)
+                    for m_, p_, b_ in rel_before:
+                        self.stamp_action(m_, p_, b_ or {}, self.cell(row['@date']), tod)
+                # v1.67.15: an action row that CREATES a record (POST to a list endpoint, e.g. Projects › Tickets) – its created / opened
+                # times and what the create set (approval, first event) take the row's @date like an import row. Before, only rows on an
+                # existing record were dated: tickets kept the load day as opened date, so Service KPIs of the months loaded showed 0.
+                if how == 'action' and method == 'POST' and row.get('@date') and st < 400 and not tgt[1] and isinstance(res, dict) \
+                        and str(res.get('id') or '').isdigit():
+                    try:   # dating only – never fails the row
+                        new_m = tgt[0] or self.model_of('/' + str(path).split('?')[0].strip('/') + '/')
+                        if new_m is not None:
+                            new_pk = int(res['id'])
+                            self.backdate(new_m, new_pk, self.cell(row['@date']), tod)
+                            self.stamp_action(new_m, new_pk, {}, self.cell(row['@date']), tod)
+                            for m_, p_ in self.related_of(str(path).split('?')[0].rstrip('/') + f'/{new_pk}/', new_pk):
+                                self.backdate(m_, p_, self.cell(row['@date']), tod)
+                                self.stamp_action(m_, p_, {}, self.cell(row['@date']), tod)
+                    except Exception:   # noqa: BLE001
+                        import logging
+                        logging.getLogger(__name__).exception('dating the new record of %s', path)
                 expect = str(row.get('@expect') or '').strip()
                 good = (str(st) in [x.strip() for x in expect.split(',')]) if expect else st < 400
                 if not good:
@@ -795,7 +915,9 @@ class Loader:
                 if row.get('@ref') and new_id:
                     self.refs[row['@ref']] = new_id
                 if row.get('@date') and new_id and how != 'action':
-                    self.backdate(self.model_of(str(path)), new_id, self.cell(row['@date']))
+                    self.backdate(self.model_of(str(path)), new_id, self.cell(row['@date']), self._tod(row.get('@time')))
+                    for m_, p_ in self.related_of(str(path) + f'{new_id}/' if str(path).endswith('/') else str(path), new_id):   # v1.67.14
+                        self.backdate(m_, p_, self.cell(row['@date']), self._tod(row.get('@time')))
                 self.remember(sheet, rn, row, new_id)
                 self.note(sheet, rn, 'ok')
             except Stopped:
@@ -865,7 +987,20 @@ class Loader:
                     for rn, _, _ in block:
                         self.note(sheet, rn, 'failed', f'import {st}: {self.flat(res)}')
                     continue
-                for (rn, row, _), r in zip(block, res.get('results') or []):
+                pairs = list(zip(block, res.get('results') or []))
+                # v1.67.15 a row refused only because the database met another save at the same moment ("deadlock detected" /
+                # "could not serialize") is tried again on its own, up to 3 times – it is not a fault of the row
+                for k, ((rn, row, d), r) in enumerate(pairs):
+                    tries = 0
+                    while not r.get('ok') and tries < 3 and re.search(r'deadlock detected|could not serialize', ' '.join(map(str, r.get('errors') or []))):
+                        tries += 1
+                        time.sleep(1 + tries)
+                        st2, res2 = self.call(user, 'POST', '/tools/api/import/', {'endpoint': ep, 'rows': [d], 'dry_run': bool(self.check)})
+                        if st2 >= 400 or not isinstance(res2, dict) or not (res2.get('results') or []):
+                            break
+                        r = res2['results'][0]
+                    pairs[k] = ((rn, row, d), r)
+                for (rn, row, _), r in pairs:
                     if r.get('ok'):
                         if row.get('@ref') and r.get('id'):
                             self.refs[row['@ref']] = r['id']

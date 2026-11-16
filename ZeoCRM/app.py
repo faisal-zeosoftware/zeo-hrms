@@ -12,6 +12,7 @@ from zeo.appkit.models import REVIEW  # noqa: F401
 from .models import (CRMEvent, CRMFile, CRMSequence, CRMSettings, ROLES, Activity, Contact, LeadScoreRule, Listing, LostReason, Offer, Opportunity, Pipeline,
                      Source, Stage, Viewing)
 from .packs import PACKS
+from zeo.service_industries import FROM_COMPANY as SERVICE_FROM_COMPANY   # v1.67.14 (service release 2)
 
 PAGE = '/main-sidebar/zeo-crm/'
 
@@ -19,7 +20,7 @@ app = App(
     label='ZeoCRM', slug='zeo-crm', title='CRM', settings_model=CRMSettings, sequence_model=CRMSequence, event_model=CRMEvent,
     file_model=CRMFile, roles=ROLES, role_prefix='crm_', manager_role='crm_manager', packs=PACKS,
     pack_labels={k: v['label'] for k, v in PACKS.items()}, pack_descriptions={k: v['description'] for k, v in PACKS.items()},
-    industry_from_company={'PM': 'property_management', 'CON': 'construction', 'OG': 'oil_gas', 'HC': 'healthcare', 'EDU': 'education', 'MFG': 'manufacturing', 'RET': 'retail', 'IT': 'it', 'FIN': 'finance'},   # v1.38.0
+    industry_from_company={'PM': 'property_management', 'CON': 'construction', 'OG': 'oil_gas', 'HC': 'healthcare', 'EDU': 'education', 'MFG': 'manufacturing', 'RET': 'retail', 'IT': 'it', 'FIN': 'finance'} | SERVICE_FROM_COMPANY,   # v1.38.0; v1.67.14 the 16 service industries
     pack_models={'source': (Source, 'code'), 'pipeline': (Pipeline, 'code'), 'stage': (Stage, 'code'), 'lost_reason': (LostReason, 'code'),
                  'score_rule': (LeadScoreRule, 'name')},
     links=(('ZeoProperty', 'Property', 'Pick Property units on opportunities, viewings and offers; reserve the unit from a won deal; '

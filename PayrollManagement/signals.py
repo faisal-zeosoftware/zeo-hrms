@@ -196,7 +196,8 @@ def get_payroll_dates_and_days(instance, branch=None, structure=None):
 
     elif calc_type == "ORGANIZATION_DAYS":
 
-        config_working_days = (
+        from PayrollManagement.serializer import _work_week   # v1.67.19: a work week stored as text by an edit
+        config_working_days = _work_week(
             pay_structure.working_days or []
         )
 
@@ -685,6 +686,25 @@ def sync_employee_components_on_component_change(sender, instance, action, pk_se
         ).update(is_active=False)
 
 
+import contextlib as _contextlib
+import threading as _threading
+_ASSIGNED_ONLY = _threading.local()
+
+
+@_contextlib.contextmanager
+def assigned_only():
+    """v1.67.19: a component made or changed on the Salary components screen is worked out only for the employees it is
+    assigned to (Salary structures / Employee salary). Before, saving a new formula component gave it to every employee of the
+    branch, paid from the next run. Components made by ZEO itself (statutory schemes, GPSSA …) are still given to everybody
+    (their formula is 0 for those not covered)."""
+    old = getattr(_ASSIGNED_ONLY, 'on', False)
+    _ASSIGNED_ONLY.on = True
+    try:
+        yield
+    finally:
+        _ASSIGNED_ONLY.on = old
+
+
 @receiver(post_save, sender=SalaryComponent)
 def update_employee_salary_structure(sender, instance, created, **kwargs):
     # if not instance.is_fixed and instance.formula:
@@ -701,6 +721,8 @@ def update_employee_salary_structure(sender, instance, created, **kwargs):
             from django.db.models import Q
             employees = employees.filter(Q(emp_branch_id_id=instance.branch_id) |
                                          Q(pk__in=EmployeeSalaryStructure.objects.filter(component=instance).values('employee_id'))).distinct()
+        if getattr(_ASSIGNED_ONLY, 'on', False):   # v1.67.19
+            employees = employees.filter(pk__in=EmployeeSalaryStructure.objects.filter(component=instance).values('employee_id'))
 
         from .perf import payroll_cache   # v1.16.0 (D15): one shift plan / rule / calendar read for all employees
         from django.db import transaction
@@ -1198,6 +1220,17 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
     # Example:
     #     Basic Salary -> BAS
     # ========================================================
+
+    # v1.67.15 a fixed component or monthly input the employee does not have counts as 0 in a formula: one company formula such as
+    # (BAS + HOUSING + FOOD) / 30 * ABSN gave "Unknown name FOOD" – and so 0 – for every employee without a food allowance
+    try:
+        _SC16715 = apps.get_model("PayrollManagement", "SalaryComponent")
+        for _code in _SC16715.objects.filter(Q(component_value_type="fixed") | Q(component_value_type="variable", formula__isnull=True)
+                                             | Q(component_value_type="variable", formula="")).exclude(code__isnull=True).exclude(code="") \
+                .values_list("code", flat=True).distinct():
+            variables.setdefault(_code, Decimal("0.00"))
+    except Exception:
+        logger.exception("component codes as 0 for %s", getattr(employee, "pk", None))
 
     for sc in salary_structs:
 
@@ -2198,6 +2231,7 @@ def _process_payroll(
             logger.info(f"{employee.emp_code}: the final settlement pays the salary to {_lwd} – no payslip")
             continue
         _not_employed = 0
+        _v16714_ne = Decimal('0')   # v1.67.14 (fixes): days of the period before joining / after leaving, in payroll days
         if _joined and _joined > _a:
             _not_employed += (_joined - _a).days
         if _lwd and _lwd < _b:
@@ -2214,9 +2248,10 @@ def _process_payroll(
                 pass
             if _pm == 'days':
                 _employed = _window - Decimal(_not_employed)
-                unpaid_leave_days += max(Decimal('0'), Decimal(str(total_days)) - min(_employed, Decimal(str(total_days))))
+                _v16714_ne = max(Decimal('0'), Decimal(str(total_days)) - min(_employed, Decimal(str(total_days))))
             else:
-                unpaid_leave_days += (Decimal(_not_employed) * Decimal(str(total_days)) / _window).quantize(Decimal('0.01'))
+                _v16714_ne = (Decimal(_not_employed) * Decimal(str(total_days)) / _window).quantize(Decimal('0.01'))
+            unpaid_leave_days += _v16714_ne
 
         # ====================================================
         # DAYS WORKED
@@ -2439,6 +2474,20 @@ def _process_payroll(
             # -----------------------------------------------
             # Deduct unpaid leave if configured
             # -----------------------------------------------
+
+            # v1.67.14 (fixes): days before joining / after the last working day are never paid – also for a fixed earning whose
+            # "Deduct leave" is off (Basic and HRA of a new company): a joiner on 15/07 was paid the whole of July
+            if (
+                not getattr(comp, "deduct_leave", False)
+                and _v16714_ne > 0
+                and total_days > 0
+                and comp.component_type == "addition"
+                and comp.component_value_type == "fixed"
+            ):
+                amount -= (amount / Decimal(str(total_days))) * _v16714_ne
+                if amount < 0:
+                    amount = Decimal("0.00")
+                amount = amount.quantize(Decimal("0.01"))
 
             if (
                 getattr(comp, "deduct_leave", False)
@@ -3125,6 +3174,13 @@ def update_dependents_on_fixed_change(sender, instance, **kwargs):
     # the component is saved; an employee whose salary is entered later got none of them and was paid 0 for them.
     # Add the missing ones (inactive rows that HR switched off stay off); payroll calculates the amount every run.
     have = set(EmployeeSalaryStructure.objects.filter(employee=instance.employee).values_list('component_id', flat=True))
+    # v1.67.15 only the formula components of the employee's own branch (or of no branch), and never the gratuity accrual: every
+    # formula component of every branch was added – two of each in a 2-branch company – and the default "Gratuity" (GTY, the
+    # monthly gratuity accrual) was then PAID as an addition in every payslip of an employee whose salary was entered after it.
+    # Gratuity is paid by the final settlement; its monthly accrual is a provision (Payroll › Accruals), not pay.
+    from django.db.models import Q as _Q16715
+    _br = getattr(instance.employee, 'emp_branch_id_id', None)
+    formula_components = formula_components.filter(_Q16715(branch__isnull=True) | _Q16715(branch_id=_br)).exclude(payroll_category='gratuity')
     for comp in formula_components:
         if comp.pk not in have:
             EmployeeSalaryStructure.objects.get_or_create(employee=instance.employee, component=comp,
@@ -3277,6 +3333,11 @@ def restore_consumed_items(payslip):
     if used.get("given_back"):   # v1.62.11 (item 256): the payslip was rejected and gave everything back then – never twice
         row.delete()
         return out
+    try:   # v1.67.15 (C10): expense reports the payslip reimbursed are reimbursable again
+        from ExpenseManagement.services import give_back_payslip as _v16715_exp_back
+        out["expense_ids"] = _v16715_exp_back(payslip)
+    except (ImportError, LookupError):
+        pass
     if used.get("advances"):
         out["advances"] = apps.get_model("PayrollManagement", "AdvanceSalaryRequest").objects.filter(
             pk__in=used["advances"], status="Deducted").update(status="Approved")

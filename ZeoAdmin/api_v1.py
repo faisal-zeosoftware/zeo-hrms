@@ -39,6 +39,17 @@ SCOPES = (
     ('payroll:read', 'Payslip totals – read'),
 )
 SCOPE_KEYS = [s for s, _ in SCOPES]
+SCOPE_APP = {'leave:read': 'hrms', 'attendance:read': 'hrms', 'attendance:write': 'hrms', 'payroll:read': 'payroll'}   # v1.67.19 (apps)
+
+
+def scopes_on():
+    """v1.67.19 (apps): the scopes a company can give a key – leave / attendance with HR, payslips with Payroll."""
+    try:
+        from ZeoApps.services import active_keys
+        act = active_keys()
+    except Exception:   # noqa: BLE001
+        return list(SCOPES)
+    return [(k, v) for k, v in SCOPES if SCOPE_APP.get(k) in (None, *act)]
 MAX_PAGE = 500
 
 
@@ -107,7 +118,7 @@ class IndexView(V1):
     def get(self, request):
         base = '/api/v1/'
         return Response({'name': 'ZEO HRMS API', 'version': VERSION, 'key': self.key.name, 'scopes': self.key.scopes or [],
-                         'all_scopes': [{'scope': s, 'meaning': m} for s, m in SCOPES],
+                         'all_scopes': [{'scope': s, 'meaning': m} for s, m in scopes_on()],
                          'endpoints': [{'path': base + p, 'methods': ms, 'scope': sc} for p, ms, sc in (
                              ('employees/', ['GET'], 'employees:read'), ('employees/<id>/', ['GET'], 'employees:read'),
                              ('branches/', ['GET'], 'org:read'), ('departments/', ['GET'], 'org:read'), ('designations/', ['GET'], 'org:read'),

@@ -256,14 +256,19 @@ class Zoho:
         base = sum(net(l) for l, _r in other)
         vat_amt = sum(abs(float(l.credit - l.debit)) for l, _r in vat)
         tax_id = ''
-        if vat_amt and base:
+        per_line = doc.get('line_rates') or {}   # v1.67.14 (billing connectors): Projects invoices mix 5 % and zero-rated lines
+        if vat_amt and base and not per_line:
             tax_id = self._tax(round(vat_amt * 100 / base, 2), self.st.sale_tax_ref if sale else self.st.purchase_tax_ref)
         items = []
         for l, _r in other:
             it = {'account_id': acc[l.account], 'name': (l.label or doc.get('description') or batch.reference)[:100],
                   'description': (doc.get('description') or l.label or '')[:500], 'rate': round(net(l), 2), 'quantity': 1}
-            if tax_id:
-                it['tax_id'] = tax_id
+            lt = tax_id
+            if per_line and l.label in per_line:
+                r_ = float(per_line[l.label])
+                lt = self._tax(r_, (self.st.sale_tax_ref if sale else self.st.purchase_tax_ref) if r_ else '')
+            if lt:
+                it['tax_id'] = lt
             items.append(it)
         ref = f'ZEO {batch.number} {doc.get("invoice_no") if kind == "bill" else batch.reference}'[:100]
         date = doc.get('date') or batch.date.isoformat()

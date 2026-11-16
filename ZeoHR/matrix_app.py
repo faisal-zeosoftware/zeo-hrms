@@ -52,6 +52,12 @@ def asg_defaults(o, request):
         o.start_date = timezone.localdate()
 
 
+def _pc(v):
+    # v1.67.17 (checklist 30.1): a share sent as a JSON number stays an int on the object until it is read back – .normalize()
+    # failed and "+ New assignment" answered a server error after the save
+    return f'{Decimal(str(v)).normalize():f}' if v not in (None, '') else ''
+
+
 def asg_check(o, request, old):
     if o.percent is None or not (Decimal('1') <= Decimal(o.percent) <= Decimal('100')):
         raise AppError('Give the share of time between 1 and 100 %.', 'percent')
@@ -67,7 +73,7 @@ def asg_check(o, request, old):
     if o.status != 'cancelled':
         peak, others = MX.peak_share(o.employee_id, o.start_date, o.end_date, o.percent, exclude=o.pk)
         if peak > 100:
-            used = ', '.join(f'{x.number} {x.percent.normalize():f}%' for x in others)
+            used = ', '.join(f'{x.number} {_pc(x.percent)}%' for x in others)
             raise AppError(tr('The employee would work {0}% of the time on assignments (already: {1}). Lower the share or end the other assignment first.',
                               MX.pct(peak), used), 'percent')
         same = [x for x in others if x.department_id == o.department_id and x.project_id == o.project_id and x.host_branch_id == o.host_branch_id]
@@ -77,10 +83,10 @@ def asg_check(o, request, old):
 
 
 def asg_after(o, request, old):
-    app.event('assignment', o.pk, f'{o.get_kind_display()} – {o.percent.normalize():f}% from {d(o.start_date)}' + (f' to {d(o.end_date)}' if o.end_date else ''), request.user)
+    app.event('assignment', o.pk, f'{o.get_kind_display()} – {_pc(o.percent)}% from {d(o.start_date)}' + (f' to {d(o.end_date)}' if o.end_date else ''), request.user)
     if o.manager_id and (old is None or old.manager_id != o.manager_id):
         app.todo(o.manager, f'You manage {emp_name(o.employee)} on {o.number}', 'assignment', o.pk, o.number, link('assignment', o.pk),
-                 f'{o.get_kind_display()}, {o.percent.normalize():f}% from {d(o.start_date)}')
+                 f'{o.get_kind_display()}, {_pc(o.percent)}% from {d(o.start_date)}')
     if o.manager_approves and o.manager_id:
         MX.open_reviews([o.employee_id])
 

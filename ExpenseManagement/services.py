@@ -240,10 +240,17 @@ def next_number(model, prefix):
 
 
 # ------------------------------------------------------------------ approvals (reports and trips)
-def _admin_user():
+def _admin_user(exclude=()):
     U = M('UserManagement', 'CustomUser')
     from django.db import connection   # v1.22.0: an administrator of this company, not of any company
-    return U.objects.filter(is_active=True, is_superuser=True, tenants__schema_name=connection.schema_name).order_by('pk').first()
+    try:   # v1.67.15 a real administrator of the company, not the platform administrator
+        from ZeoCloud.companyadmin import approver_admin
+        u = approver_admin(connection.schema_name, exclude)   # v1.67.17 not the employee himself
+        if u is not None:
+            return u
+    except Exception:   # noqa: BLE001
+        pass
+    return U.objects.filter(is_active=True, is_superuser=True, tenants__schema_name=connection.schema_name).exclude(pk__in=list(exclude or ())).order_by('pk').first()
 
 
 def build_chain(emp, roles):
@@ -253,8 +260,8 @@ def build_chain(emp, roles):
     own = own_user_ids(emp)
     chain, used = [], set()
     for role in roles or DEFAULT_ROLES:
-        tries = [(role, holder(role, emp) if role != 'admin' else _admin_user())]
-        tries += [('branch_hr', holder('branch_hr', emp)), ('company_hr', holder('company_hr', emp)), ('admin', _admin_user())]
+        tries = [(role, holder(role, emp) if role != 'admin' else _admin_user(own))]
+        tries += [('branch_hr', holder('branch_hr', emp)), ('company_hr', holder('company_hr', emp)), ('admin', _admin_user(own))]
         for how, u in tries:
             if u is None or u.pk in own:
                 continue
@@ -530,10 +537,64 @@ def expense_reimbursement_amount(employee, start_date=None, end_date=None):
     return money(total or ZERO)
 
 
+# v1.67.15 (C10): a payslip rejected or deleted (run deleted / recalculated) paid nothing – the expense reports it reimbursed are
+# reimbursable again (approved, "With the next payroll") and the next payslip of the employee pays them. Before, they stayed
+# "Reimbursed" with the payroll run of the payslip that was never paid – the employee lost the money.
+def give_back_payslip(payslip):
+    """→ ids of the reports given back."""
+    if not payslip.payroll_run_id:
+        return []
+    ids = []
+    for r in ExpenseReport.objects.filter(employee_id=payslip.employee_id, payroll_run_id=payslip.payroll_run_id, status='reimbursed',
+                                          reimburse_via='payroll'):
+        r.status, r.reimbursed_on, r.payroll_run_id = 'approved', None, None
+        r.reimbursement_reference = 'With the next payroll'
+        r.save()
+        r.expenses.filter(status='reimbursed').update(status='approved')
+        ids.append(r.pk)
+    return ids
+
+
+def retake_payslip(payslip, ids):
+    """A rejected payslip approved again pays its reports again (when they are still waiting); → number taken."""
+    run = payslip.payroll_run
+    on = getattr(run, 'payment_date', None) or date.today()
+    n = 0
+    for r in ExpenseReport.objects.filter(pk__in=ids or [], status='approved', reimburse_via='payroll', payroll_run_id__isnull=True):
+        _mark_reimbursed(r, on, f'Payroll {run.month:02d}/{run.year}', run_id=payslip.payroll_run_id)
+        n += 1
+    return n
+
+
+def taken_since(ids):
+    """True when a report given back was paid since (another payslip / direct)."""
+    return ExpenseReport.objects.filter(pk__in=ids or []).exclude(status='approved', payroll_run_id__isnull=True).exists()
+
+
+def _period_end(payslip):
+    """v1.67.15: the last day of the pay period the payslip was worked out for – the same end the payroll gave
+    expense_reimbursement_amount. Before, the run's attendance end date was used, but the run stores it only after its payslips
+    are made: on the first processing it was empty and the 28th was taken – a report approved on the 29th – 31st was paid by
+    the payslip, stayed "approved" and was paid again by the next month's payroll."""
+    run = payslip.payroll_run
+    try:
+        from PayrollManagement.signals import get_payroll_dates_and_days, structure_for
+        emp = payslip.employee
+        end = get_payroll_dates_and_days(run, branch=getattr(emp, 'emp_branch', None), structure=structure_for(emp))[1]
+        if end:
+            return end.date() if hasattr(end, 'date') and callable(end.date) else end
+    except Exception:   # noqa: BLE001
+        log.exception('pay period of payslip %s not found', getattr(payslip, 'pk', None))
+    if getattr(run, 'attendance_end_date', None):
+        return run.attendance_end_date
+    import calendar
+    return date(run.year, run.month, calendar.monthrange(run.year, run.month)[1])
+
+
 def mark_paid_by_payslip(payslip):
     """A payslip was created: the reports its payroll paid are reimbursed with that run."""
     run = payslip.payroll_run
-    end = getattr(run, 'attendance_end_date', None) or date(run.year, run.month, 28)
+    end = _period_end(payslip)
     on = getattr(run, 'payment_date', None) or date.today()
     n = 0
     for r in payroll_reports(payslip.employee_id, end):

@@ -234,6 +234,11 @@ def _other_items(st):
                           'default_debit': c.gl_account or '', 'default_credit': ''})
     except LookupError:
         pass
+    from .projects_billing import PROJECTS_ACCOUNTS, projects_on   # v1.67.14 (billing connectors)
+    if projects_on():
+        for key, label, side, default, group in PROJECTS_ACCOUNTS:
+            items.append({'kind': 'projects', 'key': key, 'label': label, 'group': group, 'side': side,
+                          'default_debit': default if side == 'debit' else '', 'default_credit': default if side == 'credit' else ''})
     if S.property_app() is not None:   # v1.40.0 Property app accounts
         for key, label, side, default, group in S.PROPERTY_ACCOUNTS:
             items.append({'kind': 'property', 'key': key, 'label': label, 'group': group, 'side': side,
@@ -374,6 +379,9 @@ class SourcesView(Base):
                     'vendor_bills': [prow('prop_vendor', i, i['id'], f"Vendor bill {i.get('invoice_no') or i['number']}", i['vendor'], i['amount'])
                                      for i in S.property_items('vendor_bills')]}
             out['property'] = {k: sorted(v, key=lambda r: (str(r['date']), str(r['number'])), reverse=True) for k, v in prop.items()}
+        from . import projects_billing as PB   # v1.67.14 (billing connectors): Projects tax invoices and payments
+        if PB.projects_on():
+            out['projects'] = PB.candidates()
         return Response(out)
 
 
@@ -416,12 +424,19 @@ class BuildView(Base):
             if obj is None:
                 raise S.Refused('Not found.', 404)
             b = _L.build_journal(src, obj, d.get('what') or 'payout', int(d.get('event') or 0), request.user)
-        elif src in S.PROP_SOURCES:   # v1.40.0 {source, id} or {source, ids:[…]} – one journal per Property document
+        elif src == 'recovery':   # v1.67.15 (C11) {source: recovery, id: <recovery entry id>} – rebuild the journal of a settle-early / write-off
+            from PayrollPlus import recoveries as _R
+            ent = M('PayrollPlus', 'RecoveryEntry').objects.select_related('recovery').filter(pk=d.get('id')).first()
+            if ent is None:
+                raise S.Refused('Not found.', 404)
+            b = _R.build_journal(ent.recovery, ent, request.user)
+        elif src in S.PROP_SOURCES or src in ('prj_invoice', 'prj_payment'):   # v1.40.0 {source, id} or {source, ids:[…]} – one journal per document (v1.67.14 + Projects)
             ids = d.get('ids') or [d.get('id')]
             made, errors = [], []
+            from . import projects_billing as PB
             for pk in ids:
                 try:
-                    made.append(S.build_property(src, pk, request.user))
+                    made.append(PB.build(src, pk, request.user) if src in PB.SOURCES else S.build_property(src, pk, request.user))
                 except S.Refused as ex:
                     if len(ids) == 1:
                         raise

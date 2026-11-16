@@ -165,6 +165,20 @@ def admin_ids(schema=None):
     return {i for i in ids if is_admin(i, schema)}
 
 
+def approver_admin(schema=None, exclude=()):
+    """v1.67.15 the company administrator who takes an approval nobody else can (the last fallback of an approval chain): a real
+    administrator of this company – not the platform's own administrator login, which is a member of every company and was
+    picked first (expense reports and leave of a new company waited for "gdis_admin"). The platform administrator only when the
+    company has no other."""
+    # v1.67.17: `exclude` = the logins of the employee whose request it is – the top manager is often the first company
+    # administrator; his own expense report had no approver at all ("No approver could be found") although the company
+    # has other administrators (e.g. the finance manager).
+    skip = set(exclude or ())
+    users = [u for u in admin_users(schema) if u.pk not in skip]
+    own = [u for u in users if not getattr(u, 'is_superuser', False) and not is_system_admin(u)]
+    return (own or users or [None])[0]
+
+
 def admin_users(schema=None):
     from django.contrib.auth import get_user_model
     from django_tenants.utils import schema_context
@@ -285,6 +299,10 @@ def _admin_group(schema, uid, on):
         from ZeoApps import adminbranches as AB
         with schema_context(schema):
             if on:
+                # v1.67.15 a login made by Give access (e-mail link, slip, code) has no rights row in the company yet – the
+                # administrator flag was set but the "Company administrators" group could not be linked, so the new administrator
+                # still had only self-service rights (e.g. "You do not have permission to change payroll run")
+                UTP.objects.get_or_create(profile_id=uid, defaults={'is_superuser': False, 'is_staff': False})
                 AB.ensure_group(link_admins=True)
             else:
                 ids = AB._option_ids()

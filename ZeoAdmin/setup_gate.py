@@ -67,6 +67,8 @@ TRANSACTION_PATHS = [
     r'/mobile-co/api/requests/', r'/mobile-co/api/approvals/',
     # expense claims and shift swap requests
     r'/expense/api/expenses/', r'/expense/api/reports/', r'/shift-planner/api/requests/',
+    # v1.67.17: monthly payroll inputs (overtime hours, night shifts, absence) and recoveries were saved before the setup
+    r'/payroll-plus/api/monthly-inputs/', r'/payroll-plus/api/recoveries/',
 ]
 TX = re.compile('^(?:' + '|'.join(TRANSACTION_PATHS) + ')')
 METHODS = ('POST', 'PUT', 'PATCH')

@@ -168,8 +168,8 @@ SESSION_COOKIE_SECURE = True
 MEDIA_URL = '/media/'
 ZEO_MEDIA_LOGIN = env('ZEO_MEDIA_LOGIN', 'true').lower() not in ('0', 'false', 'no', 'off')   # v1.56.1: files need a login
 ZEO_MEDIA_ACCEL = env('ZEO_MEDIA_ACCEL', 'true' if DEBUG else 'true').lower() not in ('0', 'false', 'no', 'off')   # nginx sends the file
-# MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 MEDIA_ROOT = '/var/www/zeo-media/'
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -320,6 +320,16 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django_tenants.postgresql_backend',
+#         'NAME': env('ZEO_DB_NAME', 'zeo'),
+#         'USER': env('ZEO_DB_USER', 'zeo_user'),
+#         'PASSWORD': env('ZEO_DB_PASSWORD'),
+#         'HOST': env('ZEO_DB_HOST', '127.0.0.1'),
+#         'PORT': env('ZEO_DB_PORT', '5432'),
+#     }
+# }
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',
@@ -330,7 +340,6 @@ DATABASES = {
         'PORT': '5432',
     }
 }
-
 # v1.24.0 ZEO Cloud: a company can live in the own database of its account ('control' = this main database)
 from ZeoCloud.dbsettings import with_cloud_databases   # noqa: E402
 DATABASES = with_cloud_databases(DATABASES)

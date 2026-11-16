@@ -119,9 +119,16 @@ def _auto(app, key):
             return None if st == 'skip' else st == 'done'
         if key == 'people':
             from AccessControl.access import company_perms
+            from django.db.models import Q
+            from .services import APP_OF_LABEL
             pre = ROLE_PREFIX.get(app, ())
-            return company_perms().filter(is_superuser=False).filter(
-                **{'groups__permissions__codename__startswith': pre[0]}).exists() if pre else False
+            # v1.67.19 (walkthrough): a permission of one of the app's models counts too – the Projects roles carry the plain
+            # model rights (add_project, view_ticket …), not zp_ ones, so "Who uses the app" never ticked and contracts and
+            # projects answered 409 setup_required although every engineer had a Projects role
+            q = Q(groups__permissions__content_type__app_label__in=[k for k, v in APP_OF_LABEL.items() if v == app])
+            for p_ in pre:
+                q |= Q(groups__permissions__codename__startswith=p_)
+            return company_perms().filter(is_superuser=False).filter(q).exists()
     except Exception:   # noqa: BLE001
         return False
     return False

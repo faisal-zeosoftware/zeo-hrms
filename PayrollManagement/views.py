@@ -86,9 +86,20 @@ class _SalaryComponentRights(permissions.BasePermission):
 
 
 class SalaryComponentViewSet(viewsets.ModelViewSet):
-    queryset = SalaryComponent.objects.all()
+    queryset = SalaryComponent.objects.select_related('branch').all()   # v1.67.19: branch_name
     serializer_class = SalaryComponentSerializer
     permission_classes = [_SalaryComponentRights]
+
+    # v1.67.19: a component saved on this screen is paid only to the employees it is assigned to (not to the whole branch)
+    def perform_create(self, serializer):
+        from .signals import assigned_only
+        with assigned_only():
+            serializer.save()
+
+    def perform_update(self, serializer):
+        from .signals import assigned_only
+        with assigned_only():
+            serializer.save()
 
     @action(detail=False, methods=['get'], url_path='formula-help')
     def formula_help(self, request):
@@ -129,6 +140,11 @@ class SalaryComponentViewSet(viewsets.ModelViewSet):
                     except Exception:
                         return str(x)
                 used = {n: _fmt(v.get(n, v.get(lower.get(n.lower(), ''), ''))) for n in sorted(names)}
+                try:   # v1.67.19: a payslip line holds at most 99,999,999.99 – say so instead of "OK"
+                    if value is not None and abs(Decimal(str(value))) > Decimal('99999999.99'):
+                        warns = list(warns or []) + ['The result is more than 99,999,999.99, the largest amount a payslip line can hold – check the formula.']
+                except Exception:
+                    pass
                 out.update({'employee': f'{emp.emp_first_name} ({emp.emp_code})', 'period': f'{m:02d}/{y}', 'value': str(value), 'error': err,
                             'warnings': warns, 'used': used})
         return Response(out)
@@ -147,6 +163,21 @@ class SalaryComponentViewSet(viewsets.ModelViewSet):
 class EmployeeSalaryStructureViewSet(viewsets.ModelViewSet):
     queryset = EmployeeSalaryStructure.objects.all()
     serializer_class = EmployeeSalaryStructureSerializer
+
+    def perform_create(self, serializer):
+        # v1.67.19 ("+ New salary assignment"): a formula component given to one employee gets its amount at once (it was saved
+        # with no amount); a fixed one without an amount is 0
+        row = serializer.save()
+        c = row.component
+        try:
+            if c.component_value_type == 'variable' and (c.formula or '').strip():
+                from .signals import _recalculate_component_for
+                _recalculate_component_for(c, [row.employee])
+            elif row.amount is None:
+                EmployeeSalaryStructure.objects.filter(pk=row.pk).update(amount=0)
+        except Exception:   # noqa: BLE001 – the row is saved; the next salary save works the amount out
+            import logging
+            logging.getLogger(__name__).exception('amount of a new salary assignment')
 
 class BenefitLiabilityAPIView(APIView):
     # v1.62.0: salary, gratuity and leave liability of every employee – only for company admins and users with the right to view
@@ -864,9 +895,55 @@ class PayslipConfirmedViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Payslip.objects.filter(status='processed')
 
+# v1.67.16 (bug list 11/11 item 16): the loan types a new company starts with (UAE: repaid from the wage without interest –
+# Decree-Law 33/2021 Art. 25(1)(a)); made the first time the list is read in a company that has none at all.
+DEFAULT_LOAN_TYPES = [('Personal loan', 10000, 12), ('Emergency loan', 5000, 6)]
+
+
+def ensure_loan_defaults(user=None):
+    made = []
+    if not LoanType.objects.exists():
+        for name, amount, months in DEFAULT_LOAN_TYPES:
+            made.append(LoanType.objects.create(loan_type=name, max_amount=amount, repayment_period=months,
+                                                created_by=user if getattr(user, 'pk', None) else None))
+    return made
+
+
+def ensure_loan_chain(t):
+    """v1.67.16 (bug list item 16): a new loan type gets the standard approval chain (the reporting manager approves, every branch) –
+    before, Approval levels showed nothing for it and every loan request of the type was refused "Approval workflow is not configured
+    for this loan type" until one was made by hand. A type on the common workflow is left alone."""
+    if getattr(t, 'use_common_workflow', False) or LoanApprovalWorkflow.objects.filter(loan_type=t).exists():
+        return None
+    from OrganisationManager.models import brnch_mstr
+    from .models import LoanApprovalLevels
+    w = LoanApprovalWorkflow.objects.create(loan_type=t, approval_type='reporting_manager')
+    LoanApprovalLevels.objects.create(workflow=w, level=1, role='Reporting Manager')
+    brs = list(t.branch.all()) or list(brnch_mstr.objects.all())
+    if brs:
+        w.branch.add(*brs)
+    return w
+
+
 class LoanTypeviewset(viewsets.ModelViewSet):
     queryset = LoanType.objects.all()
     serializer_class = LoanTypeSerializer
+
+    def list(self, request, *a, **k):
+        try:
+            ensure_loan_defaults(request.user)
+            for t in LoanType.objects.filter(loan_approval_workflows__isnull=True, use_common_workflow=False):
+                ensure_loan_chain(t)
+        except Exception:   # noqa: BLE001 – never blocks the list
+            logging.getLogger(__name__).exception('default loan types')
+        return super().list(request, *a, **k)
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        try:
+            ensure_loan_chain(serializer.instance)
+        except Exception:   # noqa: BLE001 – the type is saved; the chain can be made in Approval levels
+            logging.getLogger(__name__).exception('loan approval chain of %s', serializer.instance)
 
 class LoanApplicationviewset(viewsets.ModelViewSet):
     queryset = LoanApplication.objects.all()
@@ -1205,7 +1282,24 @@ class SIFDataView(APIView):
             _run = PayrollRun.objects.filter(pk=_rid).first() if str(_rid or '').isdigit() else None
             if _run is not None and not run_in_branches(_branches, _run):
                 deny_branch()
-        serializer = SIFSerializer(data=request.data)
+        # v1.67.19: one file per WPS establishment – a run of branches with different employer IDs is made per establishment
+        _data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        _groups = []
+        try:
+            from PayrollPlus.bankfiles import establishments as _est
+            _run0 = PayrollRun.objects.filter(pk=_data.get('payroll_run_id')).first() if str(_data.get('payroll_run_id') or '').isdigit() else None
+            _t0 = get_tenant_model().objects.filter(schema_name=request.tenant.schema_name).first()
+            if _run0 is not None:
+                _e0 = _t0.employer_unique_id.zfill(13) if _t0 and _t0.employer_unique_id else '0' * 13
+                _r0 = _t0.bank_routing_code if _t0 and _t0.bank_routing_code else '0' * 9
+                _bids, _emp_g, _rout_g, _groups = _est(_run0, _data.get('branch_ids') or [], _e0, _r0)
+                if hasattr(_data, 'setlist'):
+                    _data.setlist('branch_ids', _bids)
+                else:
+                    _data['branch_ids'] = _bids
+        except Exception:
+            _groups = []
+        serializer = SIFSerializer(data=_data)
         if serializer.is_valid():
             try:
                 # sif_data, total_salary = serializer.generate_sif_data()
@@ -1263,6 +1357,12 @@ class SIFDataView(APIView):
                         bank_routing_code = _bw.bank_routing_code
                 except Exception:
                     pass
+            if _groups:   # v1.67.19: the establishment of this file (branch IDs from Payroll controls, else the company's)
+                try:
+                    from PayrollPlus.bankfiles import establishments as _est
+                    _x, employer_unique_id, bank_routing_code, _y = _est(payroll_run, _br, employer_unique_id, bank_routing_code)
+                except Exception:
+                    pass
 
             # Handle total_salary
             salary_value = total_salary
@@ -1293,6 +1393,9 @@ class SIFDataView(APIView):
             # v1.26.0: a plain summary and what still blocks the file (the screen showed HDR / SCR under employee columns and
             # never said why employees were left out – 50 payslips gave a file with 0 employee rows and total 0.00)
             warnings = []
+            if len(_groups) > 1:
+                from PayrollPlus.bankfiles import several_note
+                warnings.append(several_note(_groups, employer_unique_id))
             if employer_unique_id == '0' * 13:
                 warnings.append('The WPS employer ID (MoHRE establishment number, 13 digits) is missing – enter it in Settings → Company (edit) '
                                 'or per branch in Payroll → Setup → Payroll controls.')
@@ -1316,6 +1419,8 @@ class SIFDataView(APIView):
                     "skipped_employees": skipped_employees,
                     'summary': summary,
                     'warnings': warnings,
+                    'establishments': _groups,
+                    'branch_ids': list(_br),
                 }
             }
 
@@ -2581,3 +2686,43 @@ class LeaveEncashmentViewSet(viewsets.ModelViewSet):
             "variables": variables,
             "default_formula": "basic_salary / fixed_days * encashment_days"
         })
+
+class ComponentSwitchOffView(APIView):
+    """v1.67.16 (bug list 11/11 item 14) – GET ?component= → what switching it off changes (employees, templates, why it is a
+    duplicate); POST {component} → takes it off every salary (payroll_guards.switch_off). Rights: change salary component."""
+
+    def _allowed(self, request):
+        try:
+            from AccessControl.access import ctx
+            c = ctx(request)
+            return c.admin or 'change_salarycomponent' in c.codes
+        except Exception:   # noqa: BLE001
+            return bool(getattr(request.user, 'is_superuser', False))
+
+    def get(self, request):
+        from Translations.i18n import tr
+        from .payroll_guards import duplicate_setup
+        c = SalaryComponent.objects.filter(pk=request.query_params.get('component') or 0).first()
+        if c is None:
+            return Response({'detail': tr('Salary component not found.')}, status=404)
+        dup = [b for a, b in duplicate_setup() if a.pk == c.pk]
+        return Response({'id': c.pk, 'name': c.name, 'code': c.code,
+                         'employees': EmployeeSalaryStructure.objects.filter(component=c, is_active=True).values('employee_id').distinct().count(),
+                         'templates': SalaryStructure.objects.filter(components=c).count(),
+                         'duplicate_of': dup[0].name if dup else '', 'can': self._allowed(request)})
+
+    def post(self, request):
+        from Translations.i18n import tr
+        from .payroll_guards import switch_off
+        if not self._allowed(request):
+            return Response({'detail': tr('Only a company administrator or a user who may change salary components can do this.')}, status=403)
+        from .payroll_guards import duplicate_setup
+        if not any(str(a.pk) == str(request.data.get('component')) for a, _b in duplicate_setup()):
+            # v1.67.16: only a component that duplicates a statutory pension scheme is switched off here
+            return Response({'detail': tr('This component does not duplicate a statutory pension scheme, so it is not switched off here.')}, status=400)
+        try:
+            n = switch_off(request.data.get('component'), request.user)
+        except ValueError as e:
+            return Response({'detail': tr(str(e))}, status=400)
+        return Response({'detail': tr('Switched off – taken off the salary of {0} employee(s). The statutory scheme still deducts the pension.', n),
+                         'employees': n})

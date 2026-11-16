@@ -93,7 +93,7 @@ def _push_json(p):
             'devices': devices.count(), 'devices_with_token': devices.exclude(push_token='').count(),
             'recent': [{'at': x.created_at, 'kind': x.kind, 'title': x.title, 'devices': x.devices, 'sent': x.sent, 'result': x.result}
                        for x in PushLog.objects.filter(schema=schema).order_by('-id')[:15]],
-            'all_events': [{'value': k, 'label': v} for k, v in G.EVENTS if k != 'helpdesk']}
+            'all_events': [{'value': k, 'label': v} for k, v in G.events_on() if k != 'helpdesk']}
 
 
 class PushSettingsView(APIView):

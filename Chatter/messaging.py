@@ -23,6 +23,16 @@ log = logging.getLogger(__name__)
 EVENTS = (('approval', 'Approvals waiting for me'), ('decision', 'Decisions on my requests'), ('payslip', 'Payslip ready'),
           ('helpdesk', 'Answers from the HR helpdesk'), ('notification', 'Every other notification'))
 TIMEOUT = 20
+EVENT_APP = {'payslip': 'payroll', 'helpdesk': 'hrms'}   # v1.67.19 (apps): listed only with that app
+
+
+def events_on():
+    try:
+        from ZeoApps.services import active_keys
+        act = active_keys()
+    except Exception:   # noqa: BLE001
+        return list(EVENTS)
+    return [(k, v) for k, v in EVENTS if EVENT_APP.get(k) in (None, *act)]
 
 
 # ------------------------------------------------------------------ secrets
@@ -55,7 +65,7 @@ def settings_json(s):
     return {'enabled': s.enabled, 'provider': s.provider, 'channel': s.channel, 'account_id': s.account_id, 'sender': s.sender,
             'has_secret': bool(s.secret), 'secret_last4': s.secret_last4, 'url': s.url, 'template': s.template, 'template_lang': s.template_lang,
             'country_code': s.country_code, 'events': s.events or [], 'last_test_at': s.last_test_at, 'last_test_result': s.last_test_result,
-            'providers': [{'value': k, 'label': v} for k, v in s.PROVIDERS], 'all_events': [{'value': k, 'label': v} for k, v in EVENTS]}
+            'providers': [{'value': k, 'label': v} for k, v in s.PROVIDERS], 'all_events': [{'value': k, 'label': v} for k, v in events_on()]}
 
 
 def problems(s):

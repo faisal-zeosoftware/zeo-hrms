@@ -255,7 +255,9 @@ def on_payslip(run, payslip, employee, skip_events=False):
         return {'released': ZERO, 'held': ZERO}
     m = run_month(run)
     released = ZERO
-    due = [h for h in qs.filter(status='to_release', release_payslip_id__isnull=True, month__lt=m) if not h.release_from or h.release_from <= m]
+    _in_st = in_settlement(employee.pk)   # v1.67.15 (C10): a hold the final settlement pays is not released by payroll as well
+    due = [h for h in qs.filter(status='to_release', release_payslip_id__isnull=True, month__lt=m) if (not h.release_from or h.release_from <= m)
+           and h.pk not in _in_st]
     if due:
         PC = M('PayrollManagement', 'PayslipComponent')
         comp = _release_component(employee.emp_branch_id_id)
@@ -286,6 +288,62 @@ def on_payslip(run, payslip, employee, skip_events=False):
         base -= q2(h.held_amount)
         held += q2(h.held_amount)
     return {'released': released, 'held': held}
+
+
+# ------------------------------------------------------------------ v1.67.15 (C10): held salary at exit
+# Before 1.67.15 a salary still held when the employee left (hold not released, or released for a payroll run that never comes for a
+# leaver) was not in the final settlement – the employee was never paid it. Now every hold of the employee that held money on a
+# payslip and has not been paid out is an earning line "Held salary <month> – not paid yet" (key held_<id>) of the settlement;
+# paying the settlement marks the hold Released ("Paid in final settlement FS-…") and no payroll run releases it again.
+def open_holds(emp_id):
+    from .models import SalaryHold
+    P = M('PayrollManagement', 'Payslip')
+    out = []
+    for h in SalaryHold.objects.filter(employee_id=emp_id, status__in=('held', 'to_release'), release_payslip_id__isnull=True,
+                                       payslip_id__isnull=False).order_by('month', 'pk'):
+        amt = q2(h.held_amount) - q2(h.released_amount)
+        if amt <= 0:
+            continue
+        if P.objects.filter(pk=h.payslip_id, status__iexact='rejected').exists():   # a rejected payslip paid nothing – nothing was held
+            continue
+        out.append((h, amt))
+    return out
+
+
+def exit_lines(emp_id, add):
+    for h, amt in open_holds(emp_id):
+        basis = tr('held on the {0} payslip', month_label(h.month)) + (f' – {h.reason}' if h.reason else '')
+        add(f'held_{h.pk}', tr('Held salary {0} – not paid yet', month_label(h.month)), 'earning', amt, basis, 'salary')
+
+
+def in_settlement(emp_id):
+    """Ids of the holds an open (not cancelled, not paid) final settlement of the employee pays."""
+    X = M('PayrollPlus', 'ExitSettlement')
+    ids = set()
+    for lines in X.objects.filter(employee_id=emp_id).exclude(status__in=('cancelled', 'paid')).values_list('lines', flat=True):
+        for ln in lines or []:
+            k = str(ln.get('key') or '')
+            if k.startswith('held_') and k[5:].isdigit() and ln.get('amount'):
+                ids.add(int(k[5:]))
+    return ids
+
+
+def exit_paid(st, user=None):
+    """The paid settlement paid the held salary of its held_<id> lines."""
+    from .models import SalaryHold
+    n = 0
+    for ln in st.lines or []:
+        k = str(ln.get('key') or '')
+        if not (k.startswith('held_') and k[5:].isdigit()):
+            continue
+        h = SalaryHold.objects.filter(pk=int(k[5:]), status__in=('held', 'to_release'), release_payslip_id__isnull=True).first()
+        if h is None:
+            continue
+        h.status, h.released_amount = 'released', q2(h.released_amount) + q2(ln.get('amount'))
+        _note(h, 'released', user, tr('Paid in final settlement {0}', st.number or st.pk))
+        h.save(update_fields=['status', 'released_amount', 'history', 'updated_at'])
+        n += 1
+    return n
 
 
 def payslip_deleted(payslip):

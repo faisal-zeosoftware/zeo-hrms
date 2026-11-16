@@ -1,6 +1,6 @@
 """Who may do what in Projects.
 
-Rights are normal ZEO group permissions (Settings → Permission groups). `zeoprojects_setup --roles` creates the
+Rights are normal ZEO group permissions (v1.67.19: "add" creates, "change" edits – checked separately) (Settings → Permission groups). `zeoprojects_setup --roles` creates the
 role groups of the specification with these rights:
 
   Support Manager      all tickets, assign / escalate / close, approve work logs, technical approval, SLA set-up
@@ -25,9 +25,15 @@ R = {
     'worklog_approve': ('approve_worklog', 'assign_ticket'),
     'customer_view': ('view_customer', 'view_amccontract', 'view_ticket', 'work_ticket', 'assign_ticket', 'view_projectprofile'),
     'customer_edit': ('add_customer', 'change_customer'),
+    # v1.67.19: "add" and "change" are separate rights – an add-only group creates customers / sites / equipment / contracts /
+    # projects but does not change them (the *_edit keys stay for "may do either", e.g. which menu to show)
+    'customer_add': ('add_customer',),
+    'customer_change': ('change_customer',),
     'contact_portal': ('change_contact',),
     'amc_view': ('view_amccontract',),
     'amc_edit': ('add_amccontract', 'change_amccontract'),
+    'amc_add': ('add_amccontract',),
+    'amc_change': ('change_amccontract',),
     'amc_renew': ('renew_amccontract', 'change_amccontract'),
     'billing_view': ('view_amcbilling', 'view_projectfinance'),
     'billing_edit': ('change_amcbilling',),
@@ -36,10 +42,14 @@ R = {
     'dev_commercial': ('approve_commercial_devrequest',),
     'project_view': ('view_project', 'view_projectprofile'),
     'project_edit': ('change_project', 'change_projectprofile'),
+    'project_add': ('add_project',),
     'cr_approve': ('approve_changerequest',),
     'finance': ('view_projectfinance', 'view_amcbilling'),
     'dashboard': ('view_ticket', 'assign_ticket', 'view_amccontract', 'view_projectprofile', 'view_projectfinance'),
     'setup': ('change_projectssettings', 'change_slapolicy', 'change_supportteam'),
+    # v1.67.17 (checklist 47): Service KPIs and service reports – the support manager and Management ("every dashboard and
+    # report"); approve_changerequest is the right only the Management role holds besides administrators
+    'kpi_view': ('assign_ticket', 'approve_changerequest'),
 }
 
 

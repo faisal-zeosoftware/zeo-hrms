@@ -321,10 +321,64 @@ def _now(tenant):
     return datetime.datetime.now(tz=tz)
 
 
+def establishment_groups(run, employer, routing):
+    """v1.67.19: the WPS establishments of a run – branches grouped by employer ID and routing code (own values per branch in
+    Payroll controls, else the company's). Each: {key, employer_id, routing_code, branch_ids, branches}."""
+    try:
+        ids = list(run.branch.values_list('pk', flat=True))
+        if not ids:   # a run of every branch: the branches of its employees
+            ids = list(run.payslips.values_list('employee__emp_branch_id', flat=True).distinct())
+        ids = [i for i in ids if i]
+        BWs = {x.branch_id: x for x in M('PayrollPlus', 'BranchWPS').objects.filter(branch_id__in=ids)}
+        est = {}
+        for b in M('OrganisationManager', 'brnch_mstr').objects.filter(pk__in=ids).order_by('pk'):
+            bw = BWs.get(b.pk)
+            e = bw.employer_unique_id.zfill(13) if bw and bw.employer_unique_id else employer
+            r = bw.bank_routing_code if bw and bw.bank_routing_code else routing
+            g = est.setdefault((e, r), {'key': f'{e}-{r}', 'employer_id': e, 'routing_code': r, 'branch_ids': [], 'branches': []})
+            g['branch_ids'].append(b.pk)
+            g['branches'].append(b.branch_name)
+        return list(est.values())
+    except Exception:   # noqa: BLE001
+        return []
+
+
+def establishments(run, branch_ids, employer, routing):
+    """v1.67.19: (branch_ids, employer ID, routing code, groups) of a WPS file. A run whose branches are different WPS
+    establishments gets one file per establishment: without a choice the first establishment is made (never one file that
+    mixes them – the bank refuses rows of another employer ID); a choice of branches that spans several is narrowed to the
+    establishment of its first branch. groups lists them all so the screen can offer each file."""
+    br = [int(x) for x in (branch_ids or [])]
+    groups = establishment_groups(run, employer, routing)
+    if not groups:
+        return br, employer, routing, groups
+    if br:
+        inside = [g for g in groups if set(br) & set(g['branch_ids'])]
+        g = inside[0] if inside else None
+        if g is None:
+            return br, employer, routing, groups
+        br = [b for b in br if b in g['branch_ids']]
+    else:
+        g = groups[0]
+        if len(groups) > 1:
+            br = list(g['branch_ids'])
+    return br, g['employer_id'], g['routing_code'], groups
+
+
+def several_note(groups, g_emp):
+    names = '; '.join(f"{', '.join(g['branches'])}: {g['employer_id']}" for g in groups)
+    return tr('This run covers {0} WPS establishments ({1}). The bank needs one file per establishment – this is the file of {2}; '
+              'choose the other establishment above for its file.', len(groups), names, g_emp)
+
+
 def sif_data(run, branch_ids=None, now=None, employee_ids=None):
     """The data of the WPS SIF of a run – the same rows and SCR as PayrollManagement.views.SIFDataView (v1.26.0 rules)."""
     from rest_framework import serializers as drf
     from PayrollManagement.serializer import SIFSerializer
+    tenant = _tenant()
+    employer = tenant.employer_unique_id.zfill(13) if tenant and tenant.employer_unique_id else '0' * 13
+    routing = tenant.bank_routing_code if tenant and tenant.bank_routing_code else '0' * 9
+    branch_ids, employer, routing, groups = establishments(run, branch_ids, employer, routing)
     body = {'payroll_run_id': run.pk, 'branch_ids': list(branch_ids or [])}
     if employee_ids is not None:   # Payroll run › Payments: only the employees paid by WPS
         body['employee_ids'] = list(employee_ids) or [0]
@@ -335,17 +389,7 @@ def sif_data(run, branch_ids=None, now=None, employee_ids=None):
         edr, total, skipped = ser.generate_sif_data()
     except drf.ValidationError as e:
         raise FileError(str(e))
-    tenant = _tenant()
     now = now or _now(tenant)
-    employer = tenant.employer_unique_id.zfill(13) if tenant and tenant.employer_unique_id else '0' * 13
-    routing = tenant.bank_routing_code if tenant and tenant.bank_routing_code else '0' * 9
-    br = list(branch_ids or [])
-    if len(br) == 1:   # as SIFDataView: a file for one branch with its own establishment uses its employer ID and bank
-        bw = M('PayrollPlus', 'BranchWPS').objects.filter(branch_id=br[0]).first()
-        if bw and bw.employer_unique_id:
-            employer = bw.employer_unique_id.zfill(13)
-        if bw and bw.bank_routing_code:
-            routing = bw.bank_routing_code
     value = float(total)
     scr = {'Type': 'SCR', 'Person ID': employer, 'Routing Code': routing, 'IBAN Number': now.strftime('%Y-%m-%d'),
            'Pay Start Date': now.strftime('%H%M'), 'Pay End Date': f'{run.month:02d}{run.year}', 'Number of Days': len(edr),
@@ -354,6 +398,8 @@ def sif_data(run, branch_ids=None, now=None, employee_ids=None):
     if employer == '0' * 13:
         warnings.append(tr('The WPS employer ID (MoHRE establishment number, 13 digits) is missing – enter it in Settings → Company (edit) '
                            'or per branch in Payroll → Setup → Payroll controls.'))
+    if len(groups) > 1:
+        warnings.append(several_note(groups, employer))
     if routing == '0' * 9:
         warnings.append(tr("The employer's bank routing code (9 digits) is missing – Settings → Company (edit)."))
     if skipped:
@@ -368,7 +414,7 @@ def sif_data(run, branch_ids=None, now=None, employee_ids=None):
         e = by_pid.get(r['Person ID'])
         extra.append({'employee': e, 'payslip': slips.get(e.pk) if e else None})
     return {'edr': edr, 'scr': scr, 'skipped': skipped, 'warnings': warnings, 'extra': extra, 'now': now, 'employer': employer,
-            'routing': routing, 'total': value}
+            'routing': routing, 'total': value, 'establishments': groups, 'branch_ids': list(branch_ids or [])}
 
 
 # ------------------------------------------------------------------ renderers
@@ -549,11 +595,16 @@ def ksa_data(run, branch_ids, prof, now=None):
         full = max(Decimal(str(ps.net_salary or 0)), Decimal('0')).quantize(Decimal('0.01'))
         oea = full - bas - hal + ded   # HRSD: 32B-AMT = MOL-BAS + MOL-HAL + MOL-OEA − MOL-DED
         # v1.62.11 (item 227 / 228): pay net − held (payctl.payable_amount); the held part shows as a deduction so 32B-AMT still adds up
-        from .payctl import payable_amount
-        net = payable_amount(ps).quantize(Decimal('0.01'))
+        # v1.67.15 (C3): a salary split (Payroll › Salary split – a second account / cash) – the file pays only the main (WPS) portion,
+        # as the UAE SIF does (paysplit.wps_amount); before, the whole net pay went in the Mudad file and the second part was paid twice
+        from .payctl import held_amount
+        from .paysplit import wps_amount
+        net, _split = wps_amount(ps, full, held_amount(ps))
+        net = Decimal(str(net)).quantize(Decimal('0.01'))
         if net <= 0 and full > 0:
-            skipped.append({'emp_code': e.emp_code, 'reason': 'Salary held (Payroll › Hold / release salary)'}); continue
-        ded += full - net
+            skipped.append({'emp_code': e.emp_code, 'reason': 'Salary held (Payroll › Hold / release salary)' if _split is None
+                            else 'Whole salary paid outside the wage protection file (Payroll › Salary split)'}); continue
+        ded += full - net   # the held part and the part paid outside the file show as a deduction so 32B-AMT still adds up
         bx = BX.objects.filter(bank_detail_id=bd.pk).first()
         code = (getattr(bx, 'wps_agent', '') or '').strip().upper()
         bank = code if re.fullmatch(r'[A-Z]{4}', code) else ''
@@ -757,7 +808,8 @@ def make(run, prof=None, layout=None, branch_ids=None, justifications=None, now=
     summary = {'employer_id': d['employer'], 'routing_code': d['routing'], 'file_date': d['now'].strftime('%Y-%m-%d'),
                'file_time': d['now'].strftime('%H%M'), 'salary_month': f'{run.month:02d}{run.year}', 'employees': len(d['edr']),
                'total': f"{d['total']:.2f}", 'currency': 'AED', 'skipped': len(d['skipped'])}
-    out.update(summary=summary, warnings=list(d['warnings']), skipped=d['skipped'], people=[getattr(x['employee'], 'emp_code', '') for x in d['extra']])
+    out.update(summary=summary, warnings=list(d['warnings']), skipped=d['skipped'], people=[getattr(x['employee'], 'emp_code', '') for x in d['extra']],
+               establishments=d['establishments'], branch_ids=d['branch_ids'])
     ctxs = wps_contexts(run, d, prof)
     fctx = file_context(run, prof, d['now'], len(d['edr']), Decimal(f"{d['total']:.2f}"),
                         {'employer_id': d['employer'], 'employer_routing': d['routing'],

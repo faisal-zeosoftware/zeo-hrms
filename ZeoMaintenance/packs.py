@@ -127,3 +127,24 @@ PACKS = {
                                   ('CLEAN', 'Cleaning', 'Cleaner', 'normal', 24, 48, 'company'), ('SIGN', 'Signage and branding', 'Electrician', 'low', 48, 168, 'company')]),
                  'checklist': chk([('BRANCH', 'Branch opening check', 'routine', ['Alarm and CCTV', 'Safe and vault', 'ATM online', 'Lighting and signage', 'Queue system', 'Client area tidy', 'Fire exits clear'])])}},
 }
+
+
+# v1.67.14 (service release 2): the 16 service-industry packs (zeo/service_industries.py): the industry's trades with response and
+# fix times, the general trades, and its inspection checklists. Content only.
+def _service_packs():
+    from zeo.service_industries import INDUSTRIES
+    out = {}
+    for code, d in INDUSTRIES.items():
+        own = [(c, n, t, p, r, f, 'company') for c, n, t, p, r, f in d['maint']]
+        codes = {r[0] for r in own}
+        rows_ = own + [g for g in GEN_ROWS if g[0] not in codes]
+        lists = [(c, n, 'routine', items) for c, n, items in d['checklists']]
+        out[code] = {'label': d['label'],
+                     'description': f"{d['label']}: {len(own)} service categories with response and fix times, and {len(lists)} checklist(s) "
+                                    f"({', '.join(n for _, n, _, _ in lists)}).",
+                     'highlights': [f'{len(rows_)} categories with SLA'] + [n for _, n, _, _ in lists],
+                     'rows': {'category': cat(rows_), 'checklist': chk(lists)}}
+    return out
+
+
+PACKS.update(_service_packs())

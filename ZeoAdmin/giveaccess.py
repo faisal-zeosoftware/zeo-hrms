@@ -436,9 +436,11 @@ def give_many(emp_ids, method, by, password=''):
 
 
 # ------------------------------------------------------------------ list
-def rows(flt='', q='', limit=500):
+def rows(flt='', q='', limit=500, branches=None):
     E = emp_model()
     qs = E.objects.filter(Q(is_active=True) | Q(is_active__isnull=True)).select_related('users', 'emp_ctgry_id')
+    if branches is not None:   # v1.67.17 (checklist 43): a branch-limited HR user sees the employees of their branches only
+        qs = qs.filter(emp_branch_id__in=branches)
     if q:
         qs = qs.filter(Q(emp_code__icontains=q) | Q(emp_first_name__icontains=q) | Q(emp_last_name__icontains=q))
     if flt == 'no_login':

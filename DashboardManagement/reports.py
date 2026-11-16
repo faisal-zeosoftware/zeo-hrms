@@ -2308,7 +2308,7 @@ except ImportError:
 if apps.is_installed('ShiftPlanner'):
     from ShiftPlanner.reports import r_shift_roster, r_shift_requests
     REPORTS.update({
-        'shift-roster': ('Shift roster', 'Leave & attendance', 'Published shift roster per employee and day: shift, times, hours, night shifts and changes after publishing.', r_shift_roster, 'month', ['view_rosterperiod', 'view_employeeshiftschedule']),
+        'shift-roster': ('Shift roster', 'Leave & attendance', 'Published shift roster per employee and day: shift, times, hours, night shifts and changes after publishing – up to 3 months.', r_shift_roster, 'month', ['view_rosterperiod', 'view_employeeshiftschedule']),
         'shift-requests': ('Shift requests', 'Leave & attendance', 'Shift swaps, changes, cancellations and open-shift claims with status and approver.', r_shift_requests, 'month', ['view_shiftrequest', 'view_rosterperiod', 'view_employeeshiftschedule']),
     })
     REPORT_MODELS.update({'shift-roster': set(), 'shift-requests': set()})

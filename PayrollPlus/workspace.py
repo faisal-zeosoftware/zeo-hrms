@@ -120,14 +120,42 @@ def _journal_row(b):
             'done': b.status in ('posted', 'exported')}
 
 
+def _employer_gap(run, info):
+    """v1.67.19: why a made WPS file cannot go to the bank although no employee was left out – the employer ID or routing code
+    of the file is missing (0000…), or the branches of the run are different establishments. '' = none."""
+    try:
+        from . import bankfiles as BF
+        t = BF._tenant()
+        employer = t.employer_unique_id.zfill(13) if t and t.employer_unique_id else '0' * 13
+        routing = t.bank_routing_code if t and t.bank_routing_code else '0' * 9
+        br = [int(x) for x in (info.get('branch_ids') or [])] or list(run.branch.values_list('pk', flat=True))
+        if len(br) == 1:
+            bw = M('PayrollPlus', 'BranchWPS').objects.filter(branch_id=br[0]).first()
+            if bw and bw.employer_unique_id:
+                employer = bw.employer_unique_id.zfill(13)
+            if bw and bw.bank_routing_code:
+                routing = bw.bank_routing_code
+        # 1.67.19 item 39: a run of several WPS establishments gives one file per establishment – that is no gap; the file made
+        # is checked with the employer ID and routing code of its own establishment
+        _br, employer, routing, _groups = BF.establishments(run, br, employer, routing)
+        if routing == '0' * 9:
+            return tr('employer bank routing code missing')
+        if employer == '0' * 13:
+            return tr('employer ID missing')
+    except Exception:   # noqa: BLE001
+        return ''
+    return ''
+
+
 def _wps_row(run, log, ctl):
     st = str(run.status or '').lower()
     if log is not None:
         ch = (log.changes or {}).get('wps_file') or {}
         info = ch.get('info') or {}
         skipped = int(info.get('skipped') or 0)
-        state = 'ready' if not skipped else 'gaps'
-        label = tr('Bank-ready') if not skipped else tr('Made – {0} employee(s) left out', skipped)
+        gap = _employer_gap(run, info) if not skipped else ''
+        state = 'ready' if not skipped and not gap else 'gaps'
+        label = tr('Bank-ready') if not skipped and not gap else (tr('Made – not bank-ready: {0}', gap) if gap else tr('Made – {0} employee(s) left out', skipped))
         row = {'state': state, 'label': label, 'at': _iso(log.at), 'by': log.user_name, 'employees': info.get('employees'),
                'total': info.get('total'), 'skipped': skipped, 'done': True}
     elif st == 'paid' and ctl is not None and ctl.payment_ref:
@@ -208,8 +236,9 @@ def _previous(run, runs_by_month, kinds, branches_of):
     for r in runs_by_month.get((y, m), []):
         if r.pk == run.pk or r.pk in kinds:
             continue
-        s = len(mine & set(branches_of.get(r.pk, [])))
-        if s > score:
+        # v1.67.19: of two runs of the same branches (a correction run beside the month's run), the one with more payslips
+        s = (len(mine & set(branches_of.get(r.pk, []))), r.payslips.exclude(status__iexact='rejected').count())
+        if score == -1 or s > score:
             best, score = r, s
     return best
 
@@ -313,8 +342,8 @@ def _amounts(ps):
                 basic += a
             elif c.component_value_type == 'fixed':
                 allow += a
-        elif c.component_type == 'others':
-            er += a
+        elif c.component_type == 'others' or (c.payroll_category == 'gratuity' and not c.show_in_payslip):
+            er += a   # v1.67.19: a hidden gratuity accrual is an employer cost however it is hidden (type Others or not shown)
     gross = Decimal(str(ps.gross_salary or 0))
     return basic, allow, gross - basic - allow, Decimal(str(ps.total_deductions or 0)), er
 
@@ -390,6 +419,8 @@ class WorkspaceRunView(_RunBase):
                 ex['leavers'].append({**item, 'detail': tr('Last working day {0:%d/%m/%Y}', lwd)}); flags[ps.pk].append('leaver')
             unpaid = sum((Decimal(str(x.days or 0)) for x in ps.leave_details.all() if (x.leave_type.type or '') == 'unpaid'), Decimal('0'))
             short = (ps.total_working_days or 0) - (ps.days_worked or 0)
+            if 'joiner' in flags[ps.pk] or 'leaver' in flags[ps.pk]:
+                short = 0   # v1.67.19: days before joining / after leaving are not unpaid leave (already listed as joiner / leaver)
             if unpaid or short > 0:
                 parts = []
                 if unpaid:
@@ -545,8 +576,11 @@ class WorkspaceRunView(_RunBase):
         add('send', tr('Send {0} payslip(s) for approval', len(unconfirmed)), self.can({'change_payslip'}) or can_change,
             st == 'processed' and bool(unconfirmed) and can_send, send_reason if unconfirmed else tr('Every payslip has been sent for approval.'),
             primary=row['stage'] in ('checked', 'sent') and bool(unconfirmed), ids=unconfirmed, warn=send_reason)
-        add('approve_payslips', tr('Approve my {0} payslip(s)', len(my_pending)), bool(my_pending), bool(my_pending), '',
-            primary=bool(my_pending), ids=my_pending)
+        # v1.67.19: the preparer is not offered payslips he may not approve (segregation) – the reason says how to go on
+        add('approve_payslips', tr('Approve my {0} payslip(s)', len(my_pending)), bool(my_pending), bool(my_pending) and not prepared_by_me,
+            (tr('You prepared this payroll run, so you cannot approve its payslips (segregation of duties) – choose another approver '
+                'in Payroll → Setup → Payroll approval levels.') + S._sod_hint()) if my_pending and prepared_by_me else '',
+            primary=bool(my_pending) and not prepared_by_me, ids=my_pending)
         approve_reason = ''
         if pending:
             approve_reason = tr('{0} payslip(s) are still waiting for approval.', pending)
@@ -563,12 +597,17 @@ class WorkspaceRunView(_RunBase):
             self.can({'view_wps', 'export_wps', 'add_wps'}), st in ('approved', 'paid'),
             '' if st in ('approved', 'paid') else tr('Approve the run before the WPS file is made.'), primary=st == 'approved' and not row['wps'].get('done'))
         pay_reason = ''
-        if prepared_by_me:
+        if st == 'paid':
+            pass   # v1.67.19: a paid run has nothing to mark – its next step is the journal (it said "Mark as paid … Approve the run first")
+        elif prepared_by_me:
             pay_reason = tr('You prepared this payroll run – somebody else must release the payment (segregation of duties).')
         elif approved_by_me:
             pay_reason = tr('You approved this payroll run – somebody else must release the payment (segregation of duties).')
-        add('pay', tr('Mark as paid and release the payslips'), can_change and not prepared_by_me and not approved_by_me, st == 'approved',
-            pay_reason or ('' if st == 'approved' else tr('Approve the run first.')), primary=st == 'approved' and bool(row['wps'].get('done')))
+        # v1.67.19: the segregation reason is shown as the next step (it was hidden: the step counted as ready)
+        add('pay', tr('Mark as paid and release the payslips'), can_change and not prepared_by_me and not approved_by_me,
+            st == 'approved' and not prepared_by_me and not approved_by_me,
+            (pay_reason + S._sod_hint()) if pay_reason else ('' if st in ('approved', 'paid') else tr('Approve the run first.')),
+            primary=st == 'approved' and bool(row['wps'].get('done')))
         jn = row.get('journal')
         add('journal', tr('Open the journal') if jn else tr('Make the accounting journal'),
             self.can({'post_accounting', 'manage_accounting', 'view_accounting'}) if jn else self.can({'post_accounting', 'manage_accounting'}),
@@ -641,7 +680,8 @@ class WorkspaceWpsMadeView(WorkspaceRunView):
         run = self._run(pk)
         d = request.data or {}
         info = {'file': str(d.get('file') or 'sif')[:10], 'employees': int(d.get('employees') or 0),
-                'total': str(S.q2(d.get('total') or 0)), 'skipped': int(d.get('skipped') or 0)}
+                'total': str(S.q2(d.get('total') or 0)), 'skipped': int(d.get('skipped') or 0),
+                'branch_ids': [int(x) for x in (d.get('branch_ids') or []) if str(x).isdigit()][:50]}   # v1.67.19: the file's branches
         RL = M('Chatter', 'RecordLog')
         u = request.user
         RL.objects.create(model=RUN_MODEL, object_id=str(run.pk), record_label=(run.name or _period(run))[:255], action='updated',
@@ -660,10 +700,14 @@ class WorkspaceApprovalsView(Base):
         mine, others = defaultdict(list), defaultdict(lambda: defaultdict(int))
         for a in qs:
             run = a.request.payroll_run
+            own = getattr(a.request.employee, 'users_id', None) == me
+            # v1.67.19: the approvals sent to me are mine whatever my branch rights (only these payslips – nothing else of the branch)
+            if a.approver_id == me and not own:
+                mine[run.pk].append(a)
+                continue
             if not run_in_branches(self.c.branches, run):
                 continue
-            own = getattr(a.request.employee, 'users_id', None) == me
-            if (a.approver_id == me or (self.c.admin and a.approver_id is None)) and not own:
+            if (self.c.admin and a.approver_id is None) and not own:
                 mine[run.pk].append(a)
             elif self.can({'view_payrollrun', 'view_payslipapproval'}):
                 others[run.pk][(_user(a.approver_id) if a.approver_id else tr('Company administrator'))] += 1

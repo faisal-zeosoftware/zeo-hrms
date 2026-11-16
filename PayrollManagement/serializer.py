@@ -23,6 +23,11 @@ class SalaryComponentSerializer(serializers.ModelSerializer):
         model = SalaryComponent
         fields = '__all__'
 
+    def to_representation(self, instance):   # v1.67.19: the branch's name, so pickers can tell two "Basic" apart
+        rep = super().to_representation(instance)
+        rep['branch_name'] = instance.branch.branch_name if instance.branch_id and instance.branch else ''
+        return rep
+
     def validate(self, attrs):
         # v1.11.0: a formula with an error was saved and then silently paid as 0 – check it before saving
         import re
@@ -126,6 +131,16 @@ class LoanApplicationSerializer(serializers.ModelSerializer):
         if inst is None:
             principal = data.get('amount_requested') or 0
             probs = L.check_loan(employee, loan_type, principal, months, data.get('emi_amount'), guarantor_id=guarantor)
+            # v1.67.19: UAE – a loan is repaid from the wage only with the worker's written consent (Decree-Law 33/2021
+            # Art. 25(1)(a)). A loan entered by HR needs the consent tick; the employee's own request (self service) is his consent.
+            if L.uae() and not consent:
+                req = self.context.get('request') if hasattr(self, 'context') else None
+                own = bool(req and getattr(employee, 'users_id', None) and employee.users_id == getattr(req.user, 'pk', None))
+                if not own:
+                    probs = dict(probs)
+                    from Translations.i18n import tr as _tr
+                    probs["consent"] = _tr('Tick "The employee agreed in writing to the monthly deduction" – a loan is repaid from the '
+                                          'wage only with the worker\'s written consent (UAE Decree-Law 33/2021, Art. 25).')
         else:
             t = L.terms_of(inst.pk)
             changed = any(k in data and data[k] != getattr(inst, k) for k in ('amount_requested', 'repayment_period', 'loan_type'))
@@ -340,10 +355,22 @@ class PayrollRunSerializer(serializers.ModelSerializer):
  
         if self.instance:
             existing_runs = existing_runs.exclude(pk=self.instance.pk)
+        try:   # v1.67.19: an off-cycle run (bonus, correction, arrears …) does not pay the month's salary – it never blocks the monthly run
+            from PayrollPlus.models import OffCycleRun as _OCR
+            existing_runs = existing_runs.exclude(pk__in=_OCR.objects.values('payroll_run_id'))
+        except Exception:   # noqa: BLE001
+            pass
  
         duplicate_ids = set(
             existing_runs.values_list('employees__id', flat=True).distinct()
         )
+        # v1.67.19: an employee whose only payslip of the month was REJECTED may be paid by a new (correction) run – the
+        # rejected payslip pays nothing (before: "Payroll already exists", and he could not be paid for the month)
+        if duplicate_ids:
+            _slips = Payslip.objects.filter(payroll_run__in=existing_runs, employee_id__in=duplicate_ids)
+            _live = set(_slips.exclude(status__iexact='rejected').values_list('employee_id', flat=True))
+            _rejected = set(_slips.filter(status__iexact='rejected').values_list('employee_id', flat=True))
+            duplicate_ids -= (_rejected - _live)
  
         remaining_employee_ids = employee_ids - duplicate_ids
  
@@ -496,6 +523,8 @@ class PayslipSerializer(serializers.ModelSerializer):
         out = {'emp_code': e.emp_code, 'emp_first_name': e.emp_first_name, 'emp_last_name': e.emp_last_name,
                'designation': getattr(getattr(e, 'emp_desgntn_id', None), 'desgntn_job_title', '') or '',
                'department': getattr(getattr(e, 'emp_dept_id', None), 'dept_name', '') or '',
+               'branch': getattr(getattr(e, 'emp_branch_id', None), 'branch_name', '') or '',   # v1.67.19: the employee's own branch
+               'category': getattr(getattr(e, 'emp_ctgry_id', None), 'ctgry_title', '') or '',
                'person_id': getattr(e, 'person_id', '') or '', 'emp_company_email': getattr(e, 'emp_company_email', '') or '',
                'emirates_id': '', 'emp_bank': []}
         try:
@@ -1387,12 +1416,13 @@ class LoanTypeSerializer(serializers.ModelSerializer):
         fields = '__all__'
     def validate(self, attrs):
         loan_type=attrs.get("loan_type")
-        loan=LoanType.objects.filter(loan_type=loan_type)
+        loan = LoanType.objects.filter(loan_type__iexact=str(loan_type or '').strip())   # v1.67.16: case and spaces do not make a second type
         if self.instance:
             loan=loan.exclude(id=self.instance.id)
         if loan.exists():
-            raise serializers.ValidationError({ f"{loan_type} is already exists."
-        })
+            from Translations.i18n import tr as _tr
+            # v1.67.16 (bug list 11/11 item 16): the message was "{'X is already exists.'}" (a set printed as text), with no field
+            raise serializers.ValidationError({'loan_type': _tr('A loan type "{0}" already exists.', str(loan_type).strip())})
         # v1.67.11 (loans, item 110): the highest amount and the months are limits the loan requests are checked against
         if 'max_amount' in attrs and (attrs['max_amount'] is None or attrs['max_amount'] <= 0):
             from Translations.i18n import tr as _tr
@@ -1777,6 +1807,16 @@ class SIFSerializer(serializers.Serializer):
                 continue
             if ps.approvals.filter(status='Pending').exists():
                 skipped_employees.append({"emp_code": employee.emp_code, "reason": "Payslip is waiting for approval"})
+                continue
+            # v1.67.19: employees paid in cash, by cheque or by a non-WPS bank transfer are not in the WPS file
+            try:
+                from PayrollPlus.paysplit import main_method as _main_method
+                _mode = _main_method(employee.pk)
+            except Exception:   # noqa: BLE001
+                _mode = 'wps'
+            if _mode in ('cash', 'cheque', 'bank_transfer'):
+                skipped_employees.append({"emp_code": employee.emp_code,
+                                          "reason": {"cash": "Paid in cash", "cheque": "Paid by cheque"}.get(_mode, "Paid by bank transfer (non-WPS)")})
                 continue
             # ✅ Get the employee’s active bank detail
             bank_detail = employee.bank_details.filter(is_active=True).first()
@@ -2337,6 +2377,12 @@ class AirTicketPolicySerializer(serializers.ModelSerializer):
         model = AirTicketPolicy
         fields = '__all__'
 
+    def validate_amount(self, v):   # v1.67.19 (field check): -5 was saved – the model's own check (clean) never ran through the API
+        if v is not None and v <= 0:
+            from Translations.i18n import tr
+            raise serializers.ValidationError(tr('Amount must be greater than 0.'))
+        return v
+
     def validate(self, data):
         # v1.66.0 (item 123): with Air ticket rules › "Two policies for the same employee" = refuse, an active policy whose country and
         # limits cross another active policy is refused (default 'first': saved as before)
@@ -2708,13 +2754,30 @@ class LoanEscalationRuleSerializer(serializers.ModelSerializer):
             'level', 'role', 'approver', 'loan_type', 
             'loan_type_name', 'approver_name', 'escalate_to_name'
         ]
+def _work_week(v):
+    """v1.67.19: the work week is a list of day keys; an edit sent it as JSON text inside JSON and the text was stored."""
+    import json as _json
+    for _ in range(3):   # text stored once or twice over
+        if not isinstance(v, str):
+            break
+        try:
+            v = _json.loads(v) if v.strip() else []
+        except ValueError:
+            v = [x.strip() for x in v.split(',') if x.strip()]
+    return [str(x) for x in v] if isinstance(v, (list, tuple)) else []
+
+
 class PayStructureSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayStructure
         fields = '__all__'
-        
+
+    def validate_working_days(self, value):
+        return _work_week(value)
+
     def to_representation(self, instance):
             rep = super().to_representation(instance)
+            rep['working_days'] = _work_week(rep.get('working_days'))
     
             rep['branch'] = [
                 branch.branch_name

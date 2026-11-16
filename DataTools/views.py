@@ -143,12 +143,78 @@ def writable_fields(cls, request):
     return out
 
 
+def _parts(s):
+    return [x.strip() for x in re.split(r'\s*[|]\s*', str(s)) if x.strip()]
+
+
+def _day(s):
+    try:
+        d = _date(s)
+        from datetime import date as _d
+        return _d.fromisoformat(str(d)[:10]) if d else None
+    except Exception:   # noqa: BLE001
+        return None
+
+
+def _course_q(prefix, text):
+    t = str(text).strip()
+    return Q(**{f'{prefix}code__iexact': t}) | Q(**{f'{prefix}title__iexact': t}) | Q(**{f'{prefix}title__istartswith': t + ' '})
+
+
+def _readable_link(model, s):
+    """v1.67.17 (Falcon upload pack): records without a code a person can know before they exist, typed the way the screen shows
+    them – "course | dd/mm/yyyy" for a training session, "employee code | course | dd/mm/yyyy" for a nomination, the employee
+    code for an air ticket entitlement, the position title for a manpower requisition, "candidate e-mail | job title" for an
+    application. Returns a pk, or None to fall back on the usual id / code / name match."""
+    key = f'{model._meta.app_label}.{model._meta.model_name}'.lower()
+    p = _parts(s)
+    try:
+        # "… | dd/mm/yyyy | 2" = the 2nd session of that course on that day (two batches the same day), in the order entered
+        nth = None
+        if len(p) >= 3 and re.fullmatch(r'\d{1,2}', p[-1] or '') and _day(p[-2]):
+            nth, p = int(p[-1]), p[:-1]
+        if key == 'learningmanagement.trainingsession' and len(p) >= 2 and _day(p[-1]):
+            hits = list(model._default_manager.filter(_course_q('course__', ' | '.join(p[:-1])), start_date=_day(p[-1]))
+                        .order_by('pk').values_list('pk', flat=True)[:20])
+            if nth:
+                return hits[nth - 1] if 0 < nth <= len(hits) else None
+            return hits[0] if len(hits) == 1 else None
+        if key == 'learningmanagement.nomination' and len(p) >= 3 and _day(p[-1]):
+            S = model._meta.get_field('session').related_model
+            sess = list(S._default_manager.filter(_course_q('course__', ' | '.join(p[1:-1])), start_date=_day(p[-1]))
+                        .order_by('pk').values_list('pk', flat=True)[:20])
+            if nth:
+                sess = sess[nth - 1:nth]
+            hits = list(model._default_manager.filter(employee__emp_code__iexact=p[0], session_id__in=sess).values_list('pk', flat=True)[:2])
+            return hits[0] if len(hits) == 1 else None
+        if key == 'payrollmanagement.airticketallocation' and p:
+            qs = model._default_manager.filter(employee__emp_code__iexact=p[0])
+            if len(p) > 1:
+                qs = qs.filter(policy__name__iexact=p[1])
+            qs = qs.exclude(status='REJECTED').order_by('-is_active', '-id')
+            hit = qs.values_list('pk', flat=True).first()
+            return hit
+        if key == 'recruitmentmanagement.manpowerrequisition' and p:
+            hit = model._default_manager.filter(Q(position_title__iexact=p[0]) | Q(document_number__iexact=p[0])).order_by('-id').values_list('pk', flat=True).first()
+            return hit
+        if key == 'recruitmentmanagement.jobopening' and p:
+            hit = model._default_manager.filter(Q(title__iexact=p[0]) | Q(job_code__iexact=p[0])).order_by('-id').values_list('pk', flat=True).first()
+            return hit
+    except Exception:   # noqa: BLE001
+        return None
+    return None
+
+
 def _resolve_link(model, raw, branch=None, many_out=None):
     """id / code / name -> pk (None when not found). v1.62.0: several rows with the same code / name (a salary component copied to
     every branch) → the row of the record's branch; still several → None and many_out gets True (the message says so)."""
     s = str(raw).strip()
     if not s:
         return None
+    if not s.isdigit():   # v1.67.17 readable values of records without a code
+        hit = _readable_link(model, s)
+        if hit is not None:
+            return hit
     q = Q()
     if s.isdigit():
         q |= Q(pk=int(s))
@@ -263,6 +329,25 @@ def _row_branch(ser, row):
     return None
 
 
+def _data_uri_file(raw, key):
+    """v1.67.17: 'data:<type>;name=<file name>;base64,<…>' -> a file for a FileField (None when not a data: URI)."""
+    import base64
+    from django.core.files.base import ContentFile
+    s = str(raw).strip()
+    m = re.match(r'^data:([\w.+/-]*)((?:;[\w-]+=[^;,]*)*);base64,(.*)$', s, re.S)
+    if not m:
+        return None
+    params = dict(p.split('=', 1) for p in m.group(2).split(';') if '=' in p)
+    try:
+        content = base64.b64decode(m.group(3))
+    except Exception:   # noqa: BLE001
+        return None
+    ext = {'application/pdf': '.pdf', 'image/png': '.png', 'image/jpeg': '.jpg'}.get(m.group(1), '')
+    from urllib.parse import unquote
+    name = unquote(params.get('name') or '') or f'{key}{ext or ".bin"}'
+    return ContentFile(content, name=name)
+
+
 def convert_row(ser, row):
     data, problems = {}, []
     branch = _row_branch(ser, row)
@@ -288,6 +373,13 @@ def convert_row(ser, row):
                 else:
                     ids.append(pk)
             data[key] = ids if many else (ids[0] if ids else None)
+        elif isinstance(f, serializers.FileField):
+            # v1.67.17: a file column carries the file itself as a data: URI – the import window reads the files attached by name
+            fobj = _data_uri_file(raw, key)
+            if fobj is None:
+                problems.append(tr('{0}: “{1}” – attach this file in the import window (Attach files), or leave the cell empty', f.label or key, str(raw).strip()[:80]))
+            else:
+                data[key] = fobj
         elif isinstance(f, serializers.BooleanField):
             data[key] = str(raw).strip().lower() in ('1', 'true', 'yes', 'y', 'active')
         elif isinstance(f, serializers.DateTimeField):
@@ -478,8 +570,18 @@ class _check_access:
 
 # v1.28.1: template columns per list that differ from the serializer – the company import had Schema name, Employer unique
 # ID and Bank routing code (not asked when a company is created) and no way to say which apps the company uses.
+# v1.67.17 (Falcon upload pack): columns kept as a plain id by the screen's serializer that a person fills with a code – the
+# template shows them as a link (employee code, project …) and the import turns the code into the id
+ID_LINKS = {
+    'employee_id': ('EmpManagement', 'emp_master', 'Employee'),
+    'project_id': ('ProjectManagement', 'Project', 'Project'),
+    'department_id': ('OrganisationManager', 'dept_master', 'Department'),
+}
+
 TEMPLATE_OVERRIDES = {
     '/organisation/api/asset-type/': {'hide': ['min_approvals_required']},   # v1.37.1: not asked on the screen either
+    '/expense/api/expenses/': {'id_links': ['employee_id', 'project_id', 'department_id']},   # v1.67.17 (Falcon upload pack)
+    '/expense/api/reports/': {'id_links': ['employee_id']},
     '/users/api/company/': {
         'hide': ['schema_name', 'employer_unique_id', 'bank_routing_code', 'paid_until', 'logo', 'cloud', 'db_alias', 'timezone'],
         'extra': [{'key': 'apps', 'label': 'Apps for this company', 'required': False, 'many': True, 'type': 'text',
@@ -493,6 +595,56 @@ def _overrides(path):
     return TEMPLATE_OVERRIDES.get(path, {})
 
 
+def _id_link_model(key):
+    from django.apps import apps as _apps
+    app, name, _ = ID_LINKS[key]
+    try:
+        return _apps.get_model(app, name)
+    except LookupError:
+        return None
+
+
+def _id_link_field(f, request):
+    """v1.67.17: a plain id column (Employee id of an expense) shown as a link – the template asks for the employee code."""
+    m = _id_link_model(f['key'])
+    if m is None:
+        return f
+    lbl = ID_LINKS[f['key']][2]
+    return dict(f, label=lbl, type='link', link=lbl, match_by=_natural_fields(m) + ['id'], examples=_example(m, request))
+
+
+def _id_links(path, base):
+    """v1.67.17: codes in the id-link columns -> ids (a number stays as it is); problems for codes not found."""
+    problems = []
+    for key in _overrides(path).get('id_links', []):
+        raw = base.get(key)
+        if raw in (None, '') or (isinstance(raw, (int, float)) and not isinstance(raw, bool)):
+            continue
+        m = _id_link_model(key)
+        if m is None:
+            continue
+        several = []
+        pk = _resolve_link(m, raw, many_out=several)
+        if pk is None:
+            problems.append(tr('{0}: “{1}” not found', ID_LINKS[key][2], str(raw).strip()) + ('' if several else _valid_hint(m, raw)))
+        else:
+            base[key] = pk
+    return problems
+
+
+def _auto_user_fields(ser, request, data):
+    """v1.67.17: "created by" / "requested by" user columns are not in the template (the screen fills them with the signed-in
+    user); a serializer that still requires one refused every imported row ("Created by: This field is required")."""
+    from django.contrib.auth import get_user_model
+    U = get_user_model()
+    for name, f in ser.fields.items():
+        if name in data or f.read_only or not f.required or not any(k in name for k in ('created', 'updated', 'modified')):
+            continue
+        rel = getattr(f, 'queryset', None)
+        if rel is not None and rel.model is U:
+            data[name] = request.user.pk
+
+
 class FieldsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -500,12 +652,16 @@ class FieldsView(APIView):
         endpoint = request.query_params.get('endpoint', '')
         func, cls, path = _view_for(endpoint)
         if not cls:
+            from . import api_imports   # v1.67.17 lists of the Projects app (not a ViewSet) – their own create, row by row
+            if api_imports.spec(path):
+                return Response({'endpoint': path, 'fields': api_imports.public_fields(path)})
             return Response({'detail': tr('This list cannot be imported.')}, status=status.HTTP_400_BAD_REQUEST)
         if not _check_access.can_add(request, cls):
             return Response({'detail': tr('You do not have permission to add these records.')}, status=status.HTTP_403_FORBIDDEN)
         from AccessControl.access import view_model
         ov = _overrides(path)
         fields = [f for f in writable_fields(cls, request) if f['key'] not in set(ov.get('hide', []))] + list(ov.get('extra', []))
+        fields = [_id_link_field(f, request) if f['key'] in ov.get('id_links', []) else f for f in fields]   # v1.67.17
         return Response({'endpoint': path, 'fields': fields + extra_fields(view_model(cls()))})
 
 
@@ -517,7 +673,19 @@ class ImportView(APIView):
         rows = request.data.get('rows') or []
         dry = bool(request.data.get('dry_run', True))
         func, cls, path = _view_for(endpoint)
+        # v1.67.17: the required setup (setup guide) applies to imports too – the rows are saved by the screens' own views
+        # called from here, so SetupGateMiddleware (which looks at the request path /tools/api/import/) did not see them and
+        # leave, expenses, loans … could be imported into a new company before its setup was finished
+        try:
+            from ZeoAdmin import setup_gate as _gate
+            if _gate.TX.match(path) and _gate.blocked():
+                return _gate.refused()
+        except Exception:   # noqa: BLE001 – no setup guide app
+            pass
         if not cls:
+            from . import api_imports   # v1.67.17 lists of the Projects app: each row through the screen's own create
+            if api_imports.spec(path) and isinstance(rows, list) and rows and len(rows) <= MAX_ROWS:
+                return Response(api_imports.run(request, path, rows, dry, request.query_params.get('schema', ''), APIRequestFactory()))
             return Response({'detail': tr('This list cannot be imported.')}, status=status.HTTP_400_BAD_REQUEST)
         if not isinstance(rows, list) or not rows:
             return Response({'detail': tr('The file has no rows.')}, status=status.HTTP_400_BAD_REQUEST)
@@ -560,17 +728,47 @@ class ImportView(APIView):
 
     def _rows(self, request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen):
         results, ok = [], 0
+        # v1.67.17: the check of a file whose rows point at earlier rows of the same file (employees and their "reports to"
+        # manager, a parent department …) said "not found – add them first" for every such row, though the import (row by
+        # row) finds them. In the check, a link to a record an earlier row of the file makes counts as found.
+        self_links, in_file = [], set()
+        if dry and model is not None:
+            try:
+                self_links = [f.name for f in model._meta.concrete_fields if f.is_relation and f.related_model is model]
+            except Exception:   # noqa: BLE001
+                self_links = []
+        nat = _natural_fields(model) if (self_links and model is not None) else []
         for i, row in enumerate(rows, start=1):
             ser = _serializer(cls, request)
             base, xvals, ecf = split_extras(row if isinstance(row, dict) else {})
+            for k in self_links:
+                v = base.get(k)
+                if v not in (None, '') and str(v).strip().lower() in in_file:
+                    base.pop(k)
+            for k in nat:
+                if base.get(k) not in (None, ''):
+                    in_file.add(str(base[k]).strip().lower())
+            link_problems = _id_links(path, base)   # v1.67.17 employee code in an id column
             data, problems = convert_row(ser, base)
+            problems = link_problems + problems
+            _auto_user_fields(ser, request, data)   # v1.67.17 created_by = the user importing
             for k in _overrides(path).get('passthrough', []):   # v1.28.1: columns the create view reads itself (company apps)
                 if base.get(k) not in (None, ''):
                     data[k] = str(base[k]).strip()
             problems += check_extras(model, xvals, ecf)
+            # v1.67.15 a model kept per branch (salary components: the same code in each branch) – the same value in two rows of
+            # different branches is not a duplicate; before, the second branch's row was refused "Code: … is also on row 2"
+            _scope = ''
+            try:
+                _bf = model._meta.get_field('branch') if model is not None else None
+                if _bf is not None and _bf.many_to_one:
+                    _scope = '|' + str(data.get('branch') or '')
+            except Exception:   # noqa: BLE001 – no branch field
+                _scope = ''
             for f in dup_fields:  # same value twice in the file
                 v = str(data.get(f, '')).strip().lower()
                 if v:
+                    v = v + _scope
                     if (f, v) in seen:
                         from .duplicates import pretty
                         problems.append(tr('{0}: “{1}” is also on row {2}', pretty(f), data[f], seen[(f, v)]))
@@ -592,13 +790,23 @@ class ImportView(APIView):
                 refused = _rights_refusal(request, cls, path, schema, data, factory)   # v1.56.1 the check refuses what the import refuses
                 if refused:
                     results.append({'row': i, 'ok': False, 'errors': [refused]})
-                elif vs.is_valid():
-                    results.append({'row': i, 'ok': True})
-                    ok += 1
-                else:
+                elif not vs.is_valid():
                     results.append({'row': i, 'ok': False, 'errors': _flatten(vs.errors)})
+                else:
+                    # v1.67.17: the check also runs the screen's own save (rolled back) – the rules of the save (sick leave
+                    # needs its certificate, overlapping leave, balances …) were only found by Import, after "N rows ready"
+                    from django.core.files.base import File as _F
+                    for _v in data.values():
+                        if isinstance(_v, _F):
+                            _v.seek(0)
+                    trial = _trial_save(request, func, path, schema, factory, data)
+                    if trial:
+                        results.append({'row': i, 'ok': False, 'errors': trial})
+                    else:
+                        results.append({'row': i, 'ok': True})
+                        ok += 1
                 continue
-            sub = factory.post(f'{path}?schema={schema}', data, format='json')
+            sub = _sub_request(factory, path, schema, data, request)
             force_authenticate(sub, user=request.user)
             sub.tenant = getattr(request, 'tenant', None)
             try:
@@ -621,6 +829,61 @@ class ImportView(APIView):
 class _Rollback(Exception):
     def __init__(self, resp):
         self.resp = resp
+
+
+def _has_files(data):
+    from django.core.files.base import File
+    return any(isinstance(v, File) for v in data.values())
+
+
+def _sub_request(factory, path, schema, data, request=None):
+    """v1.67.17: rows with an attached file (file columns) go as multipart, the others as JSON as before."""
+    from django.core.files.base import File
+    host = {'HTTP_HOST': request.get_host()} if request is not None else {}
+    if _has_files(data):
+        flat = {}
+        for k, v in data.items():
+            if v is None:
+                continue
+            if isinstance(v, File):
+                v.seek(0)   # the check before read it
+            flat[k] = [str(x) for x in v] if isinstance(v, (list, tuple)) else v
+        sub = factory.post(f'{path}?schema={schema}', flat, format='multipart', **host)
+        for v in data.values():
+            if isinstance(v, File):
+                v.seek(0)
+        return sub
+    return factory.post(f'{path}?schema={schema}', data, format='json', **host)
+
+
+class _Trial(Exception):
+    pass
+
+
+def _trial_save(request, func, path, schema, factory, data):
+    """v1.67.17: the row saved by the screen's own view in a transaction that is always rolled back; [] when it would be saved,
+    else the view's messages. E-mails and background jobs of the trial are not sent."""
+    sub = _sub_request(factory, path, schema, data, request)
+    force_authenticate(sub, user=request.user)
+    sub.tenant = getattr(request, 'tenant', None)
+    try:
+        from zeo import mailguard
+        guard = mailguard.suppressed()
+    except Exception:   # noqa: BLE001
+        import contextlib
+        guard = contextlib.nullcontext()
+    errors = []
+    try:
+        with guard, transaction.atomic():
+            try:
+                resp = func(sub)
+                if resp.status_code >= 400:
+                    errors = _flatten(getattr(resp, 'data', None) or 'Rejected')
+            finally:
+                transaction.set_rollback(True)
+    except Exception as exc:   # noqa: BLE001
+        errors = [str(exc)[:200]]
+    return errors
 
 
 class DirectoryView(APIView):

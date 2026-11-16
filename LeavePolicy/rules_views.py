@@ -23,9 +23,9 @@ SETTING_FIELDS = ('notice_leave', 'accrual_reduction', 'exit_under_6m', 'advance
                   'nursing_enabled', 'nursing_minutes', 'nursing_months', 'extension_skips_notice')
 RULE_FIELDS = ('birth_required', 'birth_window_months', 'birth_window_from', 'one_per_birth', 'sandwich', 'allow_projected', 'advance_salary',
                'document_above_days', 'hr_eligibility', 'min_service_years', 'nursing_breaks', 'notice_exempt',
-               'negative_limit')   # v1.67.12 (effective, item 62)
+               'negative_limit', 'nationals_only')   # v1.67.12 (effective, item 62); v1.67.19 nationals only
 BOOL = {'catch_up', 'nursing_enabled', 'extension_skips_notice', 'birth_required', 'one_per_birth', 'sandwich', 'allow_projected',
-        'advance_salary', 'hr_eligibility', 'nursing_breaks', 'notice_exempt'}
+        'advance_salary', 'hr_eligibility', 'nursing_breaks', 'notice_exempt', 'nationals_only'}
 # figures not verified in two sources: shown "to be confirmed" on the screen
 TO_CONFIRM = {'accrual_reduction': 'Art. 33(2) / 51(4): unpaid leave and unpaid absence are not counted in the period of service – how this reduces annual leave days is to be confirmed.',
               'exit_under_6m': 'The law gives 2 days a month after 6 months and leave pay for the fractions of the last year; less than 6 months is not stated – to be confirmed.',
@@ -47,8 +47,8 @@ def _rule_row(lt, r):
     for k in RULE_FIELDS:
         out[k] = getattr(r if r is not None else blank, k)
     out['nursing_default'] = lt.leave_category == 'maternity' and lt.type == 'paid'
-    on = [k for k in ('birth_required', 'sandwich', 'allow_projected', 'advance_salary', 'hr_eligibility', 'nursing_breaks', 'notice_exempt')
-          if out[k]]
+    on = [k for k in ('birth_required', 'sandwich', 'allow_projected', 'advance_salary', 'hr_eligibility', 'nursing_breaks', 'notice_exempt',
+                      'nationals_only') if out[k]]
     if out['document_above_days'] is not None:
         on.append('document_above_days')
     if out['min_service_years']:
@@ -60,6 +60,7 @@ def _rule_row(lt, r):
     words = {'birth_required': tr('Birth date · {0} months', out['birth_window_months']), 'sandwich': tr('Sandwich rule'),
              'allow_projected': tr('Projected balance'), 'advance_salary': tr('Leave salary in advance'), 'hr_eligibility': tr('HR confirms eligibility'),
              'nursing_breaks': tr('Nursing breaks'), 'notice_exempt': tr('Allowed in the notice period'),
+             'nationals_only': tr('Nationals only'),
              'document_above_days': tr('Document above {0} days', f"{out['document_above_days']:g}" if out['document_above_days'] is not None else ''),
              'min_service_years': tr('{0} years of service', f"{out['min_service_years']:g}" if out['min_service_years'] else ''),
              'negative_limit': tr('At most {0} days below zero', f"{out['negative_limit']:g}" if out.get('negative_limit') is not None else '')}

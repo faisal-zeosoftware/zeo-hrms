@@ -46,6 +46,22 @@ def custom_exception_handler(exc, context):
         set_rollback()
         return Response(integrity_reason(exc), status=status.HTTP_400_BAD_REQUEST)
 
+    # v1.67.19 (field check): a text longer than its field (or a value the column cannot hold) reached the database and answered
+    # 500 "Server error" (Attendance › Punches note, Projects …) – now a 400 that says so
+    from django.db import DataError
+    if isinstance(exc, DataError):
+        from rest_framework.views import set_rollback
+        set_rollback()
+        try:
+            from Translations.i18n import tr
+        except Exception:   # noqa: BLE001
+            def tr(s, *a):
+                return s
+        msg = str(exc)
+        if 'too long' in msg:
+            return Response({'detail': tr('A text is longer than its field allows – shorten it and save again.')}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'detail': tr('A value is not valid for its field (too long, too large or the wrong kind).')}, status=status.HTTP_400_BAD_REQUEST)
+
     # Call default DRF exception handler
     response = exception_handler(exc, context)
 

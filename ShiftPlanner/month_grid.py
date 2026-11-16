@@ -212,6 +212,13 @@ def shift_codes():
     return out
 
 
+def _for_branch(shift_id, branch):
+    """v1.67.19 (shift check 10): a shift limited to some branches is offered only for those branches."""
+    r = ShiftRule.objects.filter(shift_id=shift_id).only('branch_ids').first()
+    ids = [int(b) for b in (r.branch_ids or [])] if r else []
+    return not ids or not branch or int(branch) in ids
+
+
 def shift_list():
     shifts = S.shifts_by_id()
     rules = {x.shift_id: x for x in ShiftRule.objects.all()}
@@ -298,7 +305,7 @@ def grid(r, data):
            'reopen': bool(pr and pr['can']['reopen'])}
     from calendars.models import ShiftPattern
     return {'month': a.strftime('%Y-%m'), 'from': a, 'to': b, 'branch': branch, 'department': dept, 'period': pr, 'can': can,
-            'settings': cfg, 'days': days, 'shifts': list(shifts.values()),
+            'settings': cfg, 'days': days, 'shifts': [x for x in shifts.values() if _for_branch(x['id'], branch)],   # v1.67.19 (shift check 10)
             'patterns': [{'id': x.pk, 'name': x.name, 'type': x.pattern_type} for x in ShiftPattern.objects.order_by('name')],
             'rows': rows, 'problems': [dict(x, date=x['date'].isoformat() if hasattr(x['date'], 'isoformat') else x['date']) for x in conflicts],
             'counts': {'errors': sum(1 for x in conflicts if x['level'] == 'error'), 'warnings': sum(1 for x in conflicts if x['level'] == 'warning'),

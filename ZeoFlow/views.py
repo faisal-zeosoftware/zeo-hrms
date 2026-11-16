@@ -139,6 +139,7 @@ class MetaView(APIView):
             'variables': ['{{ record.<field> }}', '{{ record.<link>.<field> }}', '{{ old.<field> }}', '{{ user.name }}', '{{ user.email }}',
                           '{{ company.name }}', '{{ today }}', '{{ now }}', '{{ link }}'],
             'can_configure': can_configure(request), 'is_admin': is_admin(request),
+            'can_flows': can_configure(request, 'change_approvalflow'),   # v1.67.19 (access rights field check): the screens hide New / Edit / Delete
         })
 
 

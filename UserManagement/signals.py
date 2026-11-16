@@ -25,9 +25,17 @@ def create_default_email_templates(sender, tenant, **kwargs):
     from PayrollManagement.models import LoanEmailTemplate, AdvanceSalaryEmailTemplate, AirticketEmailTemplate
 
     with schema_context(tenant.schema_name):
+        try:   # v1.67.19: the templates belong to HR (loan, advance salary and air ticket to Payroll) – none while the app is off
+            from ZeoApps.services import is_active
+            hr_on, pay_on = is_active('hrms'), is_active('payroll')
+        except Exception:   # noqa: BLE001
+            hr_on = pay_on = True
+        pay_on = pay_on and hr_on   # the asset request templates are kept: Asset Management uses the same register
     # GeneralRequest EmailTemplate
         for branch in brnch_mstr.objects.all():
             for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                if not hr_on:
+                    break
                 email_template, created = EmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={
@@ -39,6 +47,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
             
             # DocExpEmailTemplate
             for t_type in ['Employee Notification', 'User Notification']:
+                if not hr_on:
+                    break
                 email_template, created =DocExpEmailTemplate.objects.get_or_create(
                     template_name=t_type,
                     defaults={
@@ -50,6 +60,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
 
             # DocRequestEmailTemplate
             for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                if not hr_on:
+                    break
                 email_template, created = DocRequestEmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={
@@ -61,6 +73,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
 
             # ResignationEmailTemplate
             for t_type in ['resignation_created', 'resignation_approved', 'resignation_rejected']:
+                if not hr_on:
+                    break
                 email_template, created =ResignationEmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={
@@ -72,6 +86,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
 
             # LvEmailTemplate
             for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                if not hr_on:
+                    break
                 email_template, created = LvEmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={
@@ -94,6 +110,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
 
             # LoanEmailTemplate
             for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                if not pay_on:
+                    break
                 email_template, created = LoanEmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={
@@ -105,6 +123,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
 
             # AdvanceSalaryEmailTemplate
             for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                if not pay_on:
+                    break
                 email_template, created = AdvanceSalaryEmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={
@@ -115,6 +135,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
                 email_template.branch.add(branch)
             #AirticketEmailTemplate
             for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                if not pay_on:
+                    break
                 email_template, created = AirticketEmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={
@@ -125,6 +147,8 @@ def create_default_email_templates(sender, tenant, **kwargs):
                 email_template.branch.add(branch)
             #LateinearlyoutEmailTemplate
             for t_type in ['request_created', 'request_approved', 'request_rejected']:
+                if not hr_on:
+                    break
                 email_template, created = LatinEarlyoutEmailTemplate.objects.get_or_create(
                     template_type=t_type,
                     defaults={

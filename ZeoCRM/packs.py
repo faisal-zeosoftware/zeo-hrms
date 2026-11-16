@@ -125,3 +125,21 @@ PACKS = {
     'finance': _ind('Finance', 'Advisory and financing pipeline (enquiry → KYC → proposal / term sheet → credit and compliance approval → agreement).',
                     ['Advisory pipeline', 'KYC and compliance stages'], [I_FIN, G_SALES], [('EXISTING', 'Existing client'), ('BANK', 'Bank / partner referral')], [('COMPLIANCE', 'Compliance / KYC')]),
 }
+
+
+# v1.67.14 (service release 2): the 16 service-industry packs (same industries as Projects and Maintenance – zeo/service_industries.py):
+# a service sales pipeline (enquiry → survey → quotation → negotiation → awarded AMC / project) next to the general one, service lead
+# sources and lost reasons. Content only.
+def _service_packs():
+    from zeo.service_industries import INDUSTRIES, SERVICE_LOST, SERVICE_SOURCES, crm_pipeline
+    out = {}
+    for code, d in INDUSTRIES.items():
+        c = d['crm']
+        stages = ' → '.join(n for k, n, _ in c['stages'] if k != 'LOST')
+        out[code] = _ind(d['label'], f'Service sales pipeline ({stages}); tender, consultant, FM-company and existing-client sources.',
+                         ['Service sales pipeline', 'Service lead sources', 'Service lost reasons'], [crm_pipeline(code), G_SALES],
+                         SERVICE_SOURCES + c.get('sources', []), SERVICE_LOST + c.get('lost', []), SCORE_B2B)
+    return out
+
+
+PACKS.update(_service_packs())

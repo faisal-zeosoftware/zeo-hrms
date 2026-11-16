@@ -182,6 +182,16 @@ def now():
 
 
 def company_tz():
+    """v1.67.19: the time zone of the company's country (Settings › Company), else the Projects setting, else Asia/Dubai."""
+    try:
+        from django.db import connection
+        from UserManagement.models import company
+        c = company.objects.select_related('country').filter(schema_name=connection.schema_name).first()
+        tz = getattr(getattr(c, 'country', None), 'timezone', None)
+        if tz:
+            return tz
+    except Exception:
+        pass
     tz = 'Asia/Dubai'
     try:
         from ZeoProjects.models import ProjectsSettings
@@ -398,6 +408,10 @@ def guard(fn):
             return bad('Not found.', status.HTTP_404_NOT_FOUND)
         except IntegrityError as e:
             log.warning('integrity: %s', e)
+            if 'check constraint' in str(e).lower():   # v1.67.19 (field check): a value out of range is no duplicate
+                return bad('A value is outside what is allowed (for example a number below 0).')
+            if 'not-null' in str(e).lower() or 'null value' in str(e).lower():
+                return bad('A required value is missing.')
             return bad('A record with the same code / number already exists, or the record is still in use.')
     wrapper.__name__, wrapper.__doc__ = fn.__name__, fn.__doc__
     return wrapper
@@ -908,6 +922,8 @@ def fmeta(r, name):
         m['choices'] = [{'value': k, 'label': str(v)} for k, v in f.choices if k != '']
     m['required'] = bool(not f.blank and t not in ('bool', 'bool3', 'json', 'm2m') and f.default is M.NOT_PROVIDED)
     m['readonly'] = name in r.readonly
+    if getattr(f, 'max_length', None) and t not in ('fk', 'm2m', 'choice', 'json'):   # v1.67.19 (field check): the form stops at the length
+        m['max'] = f.max_length
     # v1.58.0: the model default fills a new form (a checkbox that defaults to on was shown off and saved off)
     if t in ('bool', 'choice', 'decimal', 'int') and f.default is not M.NOT_PROVIDED and not callable(f.default) and f.default not in (None, ''):
         m['default'] = str(f.default) if t == 'decimal' else f.default
@@ -1057,6 +1073,23 @@ def detail(r, obj, request):
     return jsonable(out)
 
 
+def _num_ok(fld, n, v):
+    """v1.67.19 (field check): a number below 0 in a 0-or-more field (or outside the field's own limits) is said in words –
+    it reached the database and came back as "A record with the same code / number already exists"."""
+    if v is None:
+        return
+    if v < 0 and isinstance(fld, (M.PositiveIntegerField, M.PositiveSmallIntegerField, M.PositiveBigIntegerField)):
+        raise AppError(f'{label_of(fld)}: enter 0 or more.', n)
+    from django.core.exceptions import ValidationError as _VE
+    for val in fld.validators:
+        try:
+            val(v)
+        except _VE as e:
+            raise AppError(f'{label_of(fld)}: {" ".join(e.messages)}', n)
+        except Exception:   # noqa: BLE001 – a validator for another value type
+            pass
+
+
 def assign(r, obj, f, request, creating):
     hide = not r.show_restricted(request, obj)
     m2m = {}
@@ -1089,9 +1122,11 @@ def assign(r, obj, f, request, creating):
             setattr(obj, n, None if f.d.get(n) in (None, '') else f.b(n))
         elif t == 'int':
             v = f.i(n)
+            _num_ok(fld, n, v)
             setattr(obj, n, v if v is not None else (fld.default if fld.default is not M.NOT_PROVIDED else None))
         elif t == 'decimal':
             v = f.n(n)
+            _num_ok(fld, n, v)
             setattr(obj, n, v if v is not None else (fld.default if fld.default is not M.NOT_PROVIDED else None))
         elif t == 'date':
             setattr(obj, n, f.dt(n))
@@ -1105,6 +1140,10 @@ def assign(r, obj, f, request, creating):
     return m2m
 
 
+DATE_PAIRS = (('start', 'end'), ('start_date', 'end_date'), ('date_from', 'date_to'), ('period_from', 'period_to'),
+              ('valid_from', 'valid_to'), ('from_date', 'to_date'), ('starts_on', 'ends_on'), ('start_on', 'end_on'))
+
+
 def validate(r, obj):
     for n in r.form:
         if r.link_off(n) or n in r.links:
@@ -1114,6 +1153,15 @@ def validate(r, obj):
             v = getattr(obj, n + '_id' if fm['type'] == 'fk' else n, None)
             if v in (None, ''):
                 raise AppError(f'{fm["label"]} is required.', n)
+    # v1.67.19 (field check): an end before its start was saved on every register (surveys, 360° reviews …)
+    for a, b in DATE_PAIRS:
+        if a in r.form and b in r.form:
+            x, y = getattr(obj, a, None), getattr(obj, b, None)
+            try:
+                if x and y and y < x:
+                    raise AppError(f'{label_of(field_of(r.model, b))} must be on or after {label_of(field_of(r.model, a)).lower()}.', b)
+            except TypeError:
+                pass
 
 
 def save(r, obj, f, request, creating):

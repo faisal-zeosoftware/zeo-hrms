@@ -120,6 +120,7 @@ def rows_for(request, kind, g):
 
 class RequestsView(APIView):
     permission_classes = [IsAuthenticated]
+    zeo_model_for = staticmethod(lambda kwargs: __import__('django.apps', fromlist=['apps']).apps.get_model('EmpManagement', KINDS[kwargs.get('kind')]['model']) if kwargs.get('kind') in KINDS else None)   # v1.67.15 (checklist scan)
 
     def get(self, request, kind):
         if not _cfg(kind):

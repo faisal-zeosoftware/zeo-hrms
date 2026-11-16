@@ -25,6 +25,7 @@ from rest_framework.views import APIView
 from Translations.i18n import tr
 
 from .views import READ, _ctx, person
+from . import engine   # v1.67.19
 
 M = apps.get_model
 CANCEL = {'add_lv_cancellation', 'delete_lv_cancellation'}
@@ -98,6 +99,7 @@ def request_rows(request, g):
                 .values_list('pk', 'document_number'))
     me = getattr(_ctx(request).emp, 'pk', None)
     out = []
+    _nobal = {}
     for r in lrs:
         e = r.employee
         st = steps.get(r.pk, [])
@@ -105,6 +107,12 @@ def request_rows(request, g):
         total = max([a.level for a in st] + [1])
         days = r.approved_days or r.applied_days or r.number_of_days
         b = bal.get((r.employee_id, r.leave_type_id))
+        _nb_key = (r.employee_id, r.leave_type_id)
+        if _nb_key not in _nobal:
+            from . import engine as _eng
+            _nobal[_nb_key] = _eng.no_running_balance(e, r.leave_type_id)
+        if _nobal[_nb_key]:
+            b = None   # v1.67.19: Per event / No balance – no running balance ("–", it showed "Balance after −27.5")
         back = rj.get(r.pk)
         short = None
         if r.status == 'pending':
@@ -146,7 +154,8 @@ def request_rows(request, g):
             'balance_now': b, 'balance_after': (round(b - days, 2) if (b is not None and r.status == 'pending') else b),
             'can_act': bool(cur is not None and (_mine(cur, request.user) or getattr(request.user, 'is_superuser', False))),
             'waiting_for_me': bool(cur is not None and _mine(cur, request.user)),
-            'can_cancel': bool(can_cancel and r.status == 'approved' and back is None),
+            # v1.67.15 lets a waiting request be cancelled (server); v1.67.19 the register offers it too
+            'can_cancel': bool(can_cancel and ((r.status == 'approved' and back is None) or r.status == 'pending')),
             'history': [{'level': a.level, 'approver': names.get(a.approver_id, ''), 'status': tr(a.status),
                          'note': a.rejection_reason or a.note or '', 'date': a.updated_at} for a in st],
             'document': r.lv_document.url if r.lv_document else None,
@@ -191,6 +200,7 @@ def _adv_label(r, i):
 
 class LeaveRequestsView(APIView):
     permission_classes = [IsAuthenticated]
+    zeo_model_for = staticmethod(lambda kwargs: __import__('django.apps', fromlist=['apps']).apps.get_model('calendars', 'employee_leave_request'))   # v1.67.15 (checklist scan): extra fields / record panel
 
     def get(self, request):
         return Response(request_rows(request, request.query_params))
@@ -219,6 +229,9 @@ class LeaveRequestsView(APIView):
         from .paid_period import deciding
         with deciding(request):   # v1.62.5 (item 19): HR's answer to "salary already paid" (confirm_paid_period=next_salary)
             v.perform_create(ser)
+        ser.instance.refresh_from_db()
+        if ser.instance.status == 'approved':   # v1.67.19: a type without approval is approved at once – say so
+            return Response({'id': ser.instance.pk, 'detail': tr('Leave request {0} saved and approved (no approval needed).', ser.instance.document_number)}, status=201)
         return Response({'id': ser.instance.pk, 'detail': tr('Leave request {0} sent for approval.', ser.instance.document_number)}, status=201)
 
 
@@ -256,7 +269,9 @@ class LeaveRequestActionView(APIView):
         a = LA.objects.filter(leave_request=lr, status='Pending').order_by('level', 'id').first()
         if a is None:
             return Response({'detail': tr('Nothing is waiting for approval on this leave.')}, status=400)
-        if not (_mine(a, request.user) or getattr(request.user, 'is_superuser', False)):
+        # v1.67.15 a company administrator may decide in place of the approver (an approver on leave, or none named – the
+        # employee's manager has no login); before only the approver or a platform superuser could, the administrator got 403
+        if not (_mine(a, request.user) or getattr(request.user, 'is_superuser', False) or _ctx(request).admin):
             return Response({'detail': tr('This leave is waiting for someone else.')}, status=403)
         if action == 'approve':
             try:
@@ -276,9 +291,19 @@ class LeaveRequestActionView(APIView):
     def _cancel(self, request, lr):
         """Same steps as Leave cancellation (calendars ImmediateRejectAPIView) for one approved leave."""
         c = _ctx(request)
+        why = (request.data.get('reason') or '').strip()
+        if lr.status == 'pending' and (c.admin or c.codes & CANCEL or (c.emp is not None and lr.employee_id == c.emp.pk)):
+            # v1.67.15 a request still waiting for approval can be cancelled too (the employee changed plans) – before only an
+            # approved leave could, and the waiting request stayed with the approvers. Nothing was deducted, nothing to give back.
+            if not why:
+                return Response({'reason': [tr('Say why the leave is cancelled.')]}, status=400)
+            LA = M('calendars', 'LeaveApproval')
+            LA.objects.filter(leave_request=lr, status='Pending').update(status=LA.REJECTED, rejection_reason=why[:255])
+            lr.status = 'cancelled'
+            lr.save()
+            return Response({'detail': tr('Leave request {0} cancelled before it was approved.', lr.document_number)})
         if not (c.admin or c.codes & CANCEL):
             return Response({'detail': tr('You may not cancel approved leave.')}, status=403)
-        why = (request.data.get('reason') or '').strip()
         if not why:
             return Response({'reason': [tr('Say why the leave is cancelled.')]}, status=400)
         if lr.status != 'approved':
@@ -369,6 +394,11 @@ class BalanceGridView(APIView):
             name = t.name.strip()
             cols.setdefault(name, {'key': name, 'label': name, 'category': t.leave_category, 'unit': t.unit})
             cell = cells.setdefault(b['employee_id'], {}).setdefault(name, {'balance': 0.0, 'leave_type_id': t.pk, 'pending': 0})
+            _emp = next((e for e in emps if e.pk == b['employee_id']), None)
+            if _emp is not None and engine.no_running_balance(_emp, t.pk):
+                cell['no_balance'] = True   # v1.67.19: Per event / No balance – shown as "–", not −33
+                cell['pending'] = round(cell['pending'] + pend.get((b['employee_id'], t.pk), 0), 2)
+                continue
             cell['balance'] = round(cell['balance'] + float(b['balance'] or 0), 2)
             cell['pending'] = round(cell['pending'] + pend.get((b['employee_id'], t.pk), 0), 2)
             if t.branch_id == emp_branch:

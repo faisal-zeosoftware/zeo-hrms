@@ -142,7 +142,7 @@ def compute(month, emp_ok=None):
     end = month.replace(day=calendar.monthrange(month.year, month.month)[1])
     PS = M('PayrollManagement', 'Payslip')
     slips = PS.objects.filter(payroll_run__month=month.month, payroll_run__year=month.year,
-                              payroll_run__status__in=('processed', 'approved', 'paid')).select_related(
+                              payroll_run__status__in=('processed', 'approved', 'paid')).exclude(status__iexact='rejected').select_related(   # v1.67.19: a rejected payslip is no cost
         'employee', 'employee__emp_dept_id', 'employee__emp_branch_id', 'payroll_run')
     cost = defaultdict(Decimal)
     emps, runs = {}, set()

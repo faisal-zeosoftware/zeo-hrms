@@ -159,7 +159,7 @@ class ApiKeysView(Base):
         return Response({'rows': [key_json(k) for k in M.ApiKey.objects.select_related('user', 'created_by')],
                          'users': [{'id': u.pk, 'name': uname(u), 'email': u.email} for u in company_users().order_by('email')[:1000]],
                          'schema': getattr(connection, 'schema_name', ''),
-                         'scopes': [{'scope': s, 'meaning': m} for s, m in __import__('ZeoAdmin.api_v1', fromlist=['SCOPES']).SCOPES]})
+                         'scopes': [{'scope': s, 'meaning': m} for s, m in __import__('ZeoAdmin.api_v1', fromlist=['scopes_on']).scopes_on()]})   # v1.67.19 (apps)
 
     def post(self, request):
         from .apikeys import hash_key, make_key
@@ -221,7 +221,7 @@ class WebhooksView(Base):
     def get(self, request):
         from .webhooks import CHOICES, EVENTS
         self.need_admin()
-        return Response({'rows': [hook_json(h) for h in M.Webhook.objects.all()], 'choices': [{'key': k, 'label': l} for k, l in CHOICES], 'events': EVENTS})
+        return Response({'rows': [hook_json(h) for h in M.Webhook.objects.all()], 'choices': [{'key': k, 'label': l} for k, l in CHOICES if _app_shown(k)], 'events': EVENTS})   # v1.67.19 (apps)
 
     def post(self, request):
         import secrets
@@ -328,8 +328,14 @@ class ImportUndoView(Base):
 
 
 # ------------------------------------------------------------------ out of office (64)
+def _eng_today():
+    from zeo.appkit.engine import today
+    return today()
+
+
 def ooo_json(o, names=None):
-    t = date.today()
+    from zeo.appkit.engine import today as _today
+    t = _today()
     names = names or {}
     state = 'cancelled' if o.cancelled else ('ended' if (not o.active or o.end_date < t) else ('now' if o.start_date <= t else 'planned'))
     return {'id': o.pk, 'user': uname(o.user), 'user_id': o.user_id, 'delegate': uname(o.delegate), 'delegate_id': o.delegate_id,
@@ -381,23 +387,23 @@ def _bool(v, default=True):
 
 class OutOfOfficeView(Base):
     def get(self, request):
-        from .delegation import is_approver, kinds, my_standins, settings_get
+        from .delegation import is_approver, kinds, kinds_on, my_standins, settings_get
         mine = list(M.OutOfOffice.objects.filter(user=request.user, waiting_leave=False).select_related('user', 'delegate')[:20])
         for_me = list(M.OutOfOffice.objects.filter(Q(delegate=request.user) | Q(rules__contains=[{'delegate_id': request.user.pk}]), active=True,
-                                                   waiting_leave=False, end_date__gte=date.today()).select_related('user', 'delegate'))
+                                                   waiting_leave=False, end_date__gte=_eng_today()).select_related('user', 'delegate'))
         names = _ooo_names(mine + for_me)
         s = settings_get()
         d, rules = my_standins(request.user.pk)
         sn = {u.pk: uname(u) for u in U.objects.filter(pk__in=[x for x in [d] + [r['delegate_id'] for r in rules] if x])}
         out = {'mine': [ooo_json(o, names) for o in mine], 'for_me': [ooo_json(o, names) for o in for_me],
                'users': _people(company_users().exclude(pk=request.user.pk).filter(is_active=True).order_by('username', 'email')[:1000]),
-               'kinds': [label for key, label, *_ in kinds()],
+               'kinds': [label for key, label, *_ in kinds_on()],   # v1.67.19 (apps): only the approvals of the company's apps
                # v1.62.11 (item 95)
-               'kind_list': [{'key': key, 'label': label} for key, label, *_ in kinds()], 'leave_types': _leave_types(),
+               'kind_list': [{'key': key, 'label': label} for key, label, *_ in kinds_on()], 'leave_types': _leave_types(),
                'auto': {'on': s['on'], 'give_back': s['give_back'], 'types': s['types']}, 'approver': is_approver(request.user),
                'standins': {'delegate_id': d, 'delegate': sn.get(d, ''), 'rules': [dict(r, delegate=sn.get(r['delegate_id'], '')) for r in rules]}}
         if self.admin and request.query_params.get('all'):
-            rows = list(M.OutOfOffice.objects.filter(end_date__gte=date.today(), active=True, waiting_leave=False).select_related('user', 'delegate'))
+            rows = list(M.OutOfOffice.objects.filter(end_date__gte=_eng_today(), active=True, waiting_leave=False).select_related('user', 'delegate'))
             out['all'] = [ooo_json(o, _ooo_names(rows)) for o in rows]
         return Response(out)
 
@@ -431,7 +437,7 @@ class OutOfOfficeView(Base):
         o = M.OutOfOffice.objects.filter(pk=pk).select_related('user', 'delegate').first()
         if o is None or (o.user_id != request.user.pk and not self.admin):
             return bad('Not found.', 404)
-        if o.start_date > date.today():
+        if o.start_date > _eng_today():
             o.delete()
             return Response(status=204)
         n = end(o)   # v1.62.11 (item 95): "I am back" – the waiting approvals come back at once (when give back is on)
@@ -519,6 +525,24 @@ class StandInLevelsView(Base):
                 M.StandIn.objects.create(scope='level', kind=k, workflow_id=int(wf), level_no=int(x['level_no']), delegate_id=int(uid), updated_by=request.user)
                 n += 1
         return Response({'saved': n})
+
+
+class LevelMoveView(Base):
+    """v1.67.19: the approver of a level changed (Approval levels editor) – how many approvals wait for the old approver (POST
+    dry_run) and move them to the new one. Body {kind, workflow_id, changes: [{level, from, to}], dry_run}."""
+    def post(self, request):
+        from .delegation import LEVELS, move_level
+        if not (self.admin or (self.c and self.c.codes and any(c.startswith(('add_', 'change_')) and ('level' in c or 'workflow' in c) for c in self.c.codes))):
+            return bad(tr('You do not have permission to do this.'), 403)
+        d = request.data
+        k, wf = str(d.get('kind') or ''), d.get('workflow_id')
+        if k not in LEVELS or not str(wf or '').isdigit():
+            return bad(tr('Not found.'), 404)
+        users = set(company_users().values_list('pk', flat=True))
+        changes = [c for c in d.get('changes') or [] if str(c.get('to') or '').isdigit() and int(c['to']) in users]
+        dry = d.get('dry_run') in (True, 'true', 1, '1')
+        res = move_level(k, int(wf), changes, by=request.user, dry_run=dry)
+        return Response({'changes': res, 'total': sum(x['count'] for x in res)})
 
 
 class StandInMineView(Base):
@@ -718,11 +742,23 @@ def test_json(t):
             'state_label': t.get_state_display(), 'step': t.step, 'result': t.result, 'error': t.error, 'by': uname(t.by), 'at': t.at}
 
 
+def _app_shown(key):
+    """v1.67.19 (apps): a record type ('App.model') of an app the company has, or of the core."""
+    try:
+        from ZeoApps.services import shown
+        return shown(key)
+    except Exception:   # noqa: BLE001
+        return True
+
+
 class TestCompanyView(Base):
     def get(self, request, pk=None):
         from .sandbox import KINDS
         self.need_admin()
-        return Response({'kinds': [{'key': k, 'label': l} for k, l in KINDS],
+        need = {'leave_types': 'hrms', 'leave_policies': 'hrms', 'letter_templates': 'hrms', 'salary_components': 'payroll'}   # v1.67.19 (apps)
+        from ZeoApps.services import active_keys
+        act = active_keys()
+        return Response({'kinds': [{'key': k, 'label': l} for k, l in KINDS if need.get(k) in (None, *act)],
                          'rows': [test_json(t) for t in M.TestCompany.objects.exclude(state='deleted').select_related('by')[:20]]})
 
     def post(self, request, pk=None):
@@ -1051,7 +1087,9 @@ class AccessView(Base):
         from . import giveaccess as G
         self._need()
         p = G.policy()
-        return Response({'rows': G.rows(request.query_params.get('filter', ''), (request.query_params.get('q') or '').strip()),
+        from AccessControl.access import allowed_branches
+        br = allowed_branches(request)   # v1.67.17 (checklist 43): None = every branch
+        return Response({'rows': G.rows(request.query_params.get('filter', ''), (request.query_params.get('q') or '').strip(), branches=br),
                          'messaging': G.messaging_on(), 'app_url': bool(G.app_url()),
                          'policy': {'signin_id': p.signin_id, 'link_hours': p.link_hours, 'hr_types_password': p.hr_types_password,
                                     'default_password_on': bool(p.default_password_on and p.default_password_hash),
@@ -1067,6 +1105,12 @@ class AccessView(Base):
             return bad(tr_('Choose the employees.'))
         if len(ids) > 2000:
             return bad(tr_('At most 2,000 employees at a time.'))
+        from AccessControl.access import allowed_branches
+        br = allowed_branches(request)
+        if br is not None:   # v1.67.17 (checklist 43): only employees of the user's branches get a login from this user
+            E = G.emp_model()
+            if E.objects.filter(pk__in=ids).exclude(emp_branch_id__in=br).exists():
+                return bad(tr_('You can only work with records of your own branches.'), 403)
         method = request.data.get('method') or 'auto'
         if method not in G.METHODS:
             return bad(tr_('Choose how the password is set.'))

@@ -181,10 +181,14 @@ def gpssa_terms(employee, base, on=None, scheme_emp=None, scheme_er=None, scheme
         er = rate('ae_gpssa_employer', on)
         lo, hi = rate('ae_gpssa_salary_min_old', on), rate('ae_gpssa_salary_max_old', on)
     else:
-        emp = D(scheme_emp) if scheme_emp is not None else rate('ae_gpssa_employee_new', on)
-        er = D(scheme_er) if scheme_er is not None else rate('ae_gpssa_employer', on)
-        lo = D(scheme_min) if scheme_min is not None else rate('ae_gpssa_salary_min', on)
-        hi = D(scheme_max) if scheme_max is not None else rate('ae_gpssa_salary_max', on)
+        # v1.67.19: a value entered on Payroll › Legal rates and in force on the day wins over the statutory scheme's own figure
+        # (the screen showed it "in force" but the scheme's figure was used: GPSSA minimum 3,500 entered, 3,000 applied)
+        def _pick(key, scheme_v):
+            return plain(rate_row(key, on).value) if rate_row(key, on) is not None else (D(scheme_v) if scheme_v is not None else rate(key, on))
+        emp = _pick('ae_gpssa_employee_new', scheme_emp)
+        er = _pick('ae_gpssa_employer', scheme_er)
+        lo = _pick('ae_gpssa_salary_min', scheme_min)
+        hi = _pick('ae_gpssa_salary_max', scheme_max)
     b = Decimal(str(base or 0))
     if b > 0:
         b = min(max(b, lo), hi)

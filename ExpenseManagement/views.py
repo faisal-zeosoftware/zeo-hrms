@@ -134,10 +134,41 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+# v1.67.16 (bug list 11/11 item 8): a new company had no expense category, so "Category" of a new expense offered nothing and an
+# expense could not be saved. The usual categories are made the first time the list is read in a company that has none at all
+# (never again once the company has any – active or not – so a company's own choice is kept). GL accounts stay empty: set in Categories.
+DEFAULT_CATEGORIES = [
+    ('Air travel', 'TRV-AIR', 'travel', 0, False), ('Taxi and transport', 'TRV-TAXI', 'travel', 50, False), ('Hotel', 'HOTEL', 'hotel', 0, False),
+    ('Meals and entertainment', 'MEALS', 'meals', 100, True), ('Mileage (own car)', 'MILEAGE', 'mileage', None, True),
+    ('Per diem', 'PERDIEM', 'per_diem', None, True), ('Fuel', 'FUEL', 'general', 0, False), ('Office supplies', 'OFFICE', 'general', 50, False),
+    ('Phone and internet', 'PHONE', 'general', 0, False), ('Visa and government fees', 'GOVFEE', 'general', 0, True),
+    ('Training and courses', 'TRAINING', 'general', 0, True), ('Other', 'OTHER', 'general', 0, True),
+]
+
+
+def ensure_default_categories():
+    if ExpenseCategory.objects.exists():
+        return 0
+    n = 0
+    for name, code, kind, above, desc in DEFAULT_CATEGORIES:
+        _o, made = ExpenseCategory.objects.get_or_create(code=code, defaults={'name': name, 'kind': kind, 'receipt_required_above': above,
+                                                                             'description_required': desc})
+        n += 1 if made else 0
+    return n
+
+
 class CategoryViewSet(Base, viewsets.ModelViewSet):
     queryset = ExpenseCategory.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [SetupRights]
+
+    def list(self, request, *a, **k):
+        try:
+            ensure_default_categories()
+        except Exception:   # noqa: BLE001 – never blocks the list
+            import logging
+            logging.getLogger(__name__).exception('default expense categories')
+        return super().list(request, *a, **k)
 
     def get_queryset(self):
         qs = super().get_queryset()

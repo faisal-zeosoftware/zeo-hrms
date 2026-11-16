@@ -116,6 +116,17 @@ def shared_only(app_label):
     return app_label in _SHARED_ONLY
 
 
+_M2M = {}
+
+
+def _m2m_to(owner, model):
+    """Has the company model `owner` a many-to-many list of `model` (a shared model such as the users)?"""
+    k = (owner, model)
+    if k not in _M2M:
+        _M2M[k] = any(f.many_to_many and not f.auto_created and f.related_model is model for f in owner._meta.get_fields())
+    return _M2M[k]
+
+
 def _on_own_db():
     from django.db import connections
     c = connections['default']
@@ -129,10 +140,19 @@ class ControlRouter:
 
     def db_for_read(self, model, **hints):
         if _on_own_db() and shared_only(model._meta.app_label):
+            # v1.67.19 (move test): the users of a company record's many-to-many list (policy users, notification users, chat
+            # members) are read with a join on the list table, which lives in the company's own database – read them there
+            # (the own database keeps a copy of the company's users); the main database has no such table (error 500)
+            inst = hints.get('instance')
+            if inst is not None and not shared_only(inst._meta.app_label) and _m2m_to(type(inst), model):
+                return None
             return 'control'
         return None
 
-    db_for_write = db_for_read
+    def db_for_write(self, model, **hints):
+        if _on_own_db() and shared_only(model._meta.app_label):
+            return 'control'
+        return None
 
     def allow_relation(self, obj1, obj2, **hints):
         dbs = {obj1._state.db, obj2._state.db}

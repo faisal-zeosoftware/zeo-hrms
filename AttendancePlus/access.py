@@ -19,12 +19,23 @@ def c(request):
     return ctx(request)
 
 
+# v1.67.19 (access rights field check): a view-only right ("view_attendance_list") counted as HR for every change – a
+# "view only" group could add / delete attendance devices, kiosks and punches. Changes need a right that changes something.
+HR_WRITE_CODES = {x for x in HR_CODES if not x.startswith('view_')}
+
+
 def is_hr(request, model_name=None, verb=None):
     x = c(request)
     if x.admin:
         return True
     if model_name and verb and f'{verb}_{model_name}' in x.codes:
         return True
+    if verb is None and getattr(request, 'method', 'GET') not in SAFE_METHODS:
+        verb = 'change'   # a save, import, recalculation … asked for without naming the verb
+    if verb == 'delete':   # deleting attendance set-up / punches needs a delete right (a change-only group deleted devices)
+        return any(c.startswith('delete_') and ('attendance' in c or c in ('delete_punch', 'delete_device', 'delete_kiosk')) for c in x.codes)
+    if verb in ('add', 'change'):
+        return bool(x.codes & HR_WRITE_CODES)
     return bool(x.codes & HR_CODES)
 
 

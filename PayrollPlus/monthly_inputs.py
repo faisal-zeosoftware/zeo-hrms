@@ -424,6 +424,23 @@ def save_grid(m, branch_id, rows, allowed=None, user=None):
 
 
 # ------------------------------------------------------------------ preview (formula engine)
+def payroll_window(m, emp):
+    """v1.67.15 (C14) – the dates the payroll run of month m uses for the employee: the pay structure of the employee's branch / group
+    (custom attendance cycle, e.g. 26th – 25th) as PayrollManagement.signals.get_payroll_dates_and_days works it out. Before, the preview
+    counted attendance (late, overtime, absent days …) from the 1st to the month end, so it differed from the payslip."""
+    from types import SimpleNamespace
+    try:
+        from PayrollManagement.signals import get_payroll_dates_and_days, structure_for
+        run = SimpleNamespace(year=m.year, month=m.month, pk=None, id=None)
+        a, b, _days = get_payroll_dates_and_days(run, branch=emp.emp_branch_id, structure=structure_for(emp))
+        a = a.date() if hasattr(a, 'date') and callable(a.date) else a
+        b = b.date() if hasattr(b, 'date') and callable(b.date) else b
+        return a, b
+    except Exception:
+        log.exception('payroll window of the monthly inputs preview')
+        return m, month_end(m)
+
+
 def preview(m, emp, values):
     """The formula components of the employee that use the inputs, worked out with the typed figures:
     {'lines': [{code, name, amount, accrued}], 'total': x}"""
@@ -432,7 +449,8 @@ def preview(m, emp, values):
     from PayrollManagement.utils import evaluate_formula
     ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
     cols = {c['code'].upper(): c for c in input_components(emp.emp_branch_id_id)}
-    v = dict(get_formula_variables(emp, m, month_end(m)))
+    a, b = payroll_window(m, emp)   # v1.67.15 (C14): the payroll's own period (attendance cut-off, pay calendar), not the calendar month
+    v = dict(get_formula_variables(emp, a, b))
     given = set()
     for code, val in (values or {}).items():
         c = cols.get(str(code).upper())
@@ -465,7 +483,7 @@ def preview(m, emp, values):
             uses |= {x.upper() for x in filter(None, [c.code, safe_name(c.name).lower()])}
             lines.append({'code': c.code or '', 'name': c.name, 'formula': c.formula, 'amount': str(amt), 'accrued': c.pk in acc})
             total += amt
-    return {'lines': lines, 'total': str(q2(total))}
+    return {'lines': lines, 'total': str(q2(total)), 'period': {'from': a.isoformat(), 'to': b.isoformat()}}   # v1.67.15 (C14): the period counted
 
 
 # ------------------------------------------------------------------ Excel template + import

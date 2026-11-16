@@ -74,6 +74,43 @@ def record_allows(user, path):
         return None
 
 
+def report_file_allows(user, path):
+    """v1.67.17 (checklist 42 / 44): media/reports/<company>/<report>/<file>.json – the report screens write the company-wide
+    standard report (…std_report.json, for administrators) and one file per branch-limited user (…_u<user id>.json). Any signed-in
+    user of the company could open them by their address (a self-service login read every employee's details). Now: a user of
+    that company only; the company-wide file only for its administrators (and system administrators); a per-user file only for
+    that user or an administrator. Other report files (saved named reports): a user of the company. None = not a report file."""
+    parts = path.split('/')
+    if len(parts) < 3 or parts[0] != 'reports':
+        return None
+    schema = parts[1]
+    base = posixpath.splitext(parts[-1])[0]
+    try:
+        from ZeoCloud.companyadmin import sysadmin_in
+        if sysadmin_in(user, schema):
+            return True
+    except Exception:
+        pass
+    if not user.tenants.filter(schema_name=schema).exists():
+        return False
+    try:
+        from django_tenants.utils import schema_context
+        from ZeoCloud.rights import is_admin
+        with schema_context(schema):
+            admin = bool(is_admin(user, schema))
+    except Exception:
+        admin = False
+    if admin:
+        return True
+    import re as _re
+    m = _re.search(r'_u(\d+)$', base)
+    if m:
+        return m.group(1) == str(user.pk)
+    if base.endswith('std_report'):
+        return False
+    return True
+
+
 def set_cookie(response, request, user):
     token = make_token(user)
     response.set_cookie(COOKIE, token, max_age=MAX_AGE, httponly=True, samesite='Lax', secure=request.is_secure(), path='/media/')
@@ -118,6 +155,9 @@ def serve(request, path):
             return r
         # v1.62.0 the file's company and record: only a user of that company who may open the record (gap 1)
         ok = record_allows(user, path)
+        rep = report_file_allows(user, path)   # v1.67.17 (checklist 42 / 44): generated report files
+        if rep is not None:
+            ok = rep if ok is not False else False
         if ok is None and getattr(settings, 'ZEO_MEDIA_STRICT', False) and not user.is_superuser:
             ok = False
         if ok is False:

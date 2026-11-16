@@ -42,6 +42,18 @@ USER = settings.AUTH_USER_MODEL
 EMP = 'EmpManagement.emp_master'
 BRANCH = 'OrganisationManager.brnch_mstr'
 
+# v1.67.13 (service)
+SITE_TYPES = (('office', 'Office'), ('villa', 'Villa'), ('building', 'Building'), ('tower', 'Tower'), ('warehouse', 'Warehouse'),
+              ('factory', 'Factory'), ('shop', 'Shop'), ('hotel', 'Hotel'), ('hospital', 'Hospital'), ('school', 'School'),
+              ('other', 'Other'))
+EQUIPMENT_STATUS = (('in_service', 'In service'), ('under_repair', 'Under repair'), ('out_of_service', 'Out of service'),
+                    ('removed', 'Removed'))
+PARTS_COVER = (('none', 'Not included'), ('included', 'Included'), ('limit', 'Included up to a limit'))
+COVER_SCOPE = (('all', 'All equipment of the covered sites'), ('categories', 'Equipment of chosen categories'),
+               ('selected', 'Selected equipment only'))
+TICKET_KINDS = (('request', 'Request'), ('callout', 'Emergency call-out'), ('visit', 'Preventive visit'))
+COVER_KINDS = (('', '–'), ('covered', 'Covered'), ('warranty', 'Warranty'), ('chargeable', 'Chargeable'), ('internal', 'Internal'))
+
 PRIORITIES = (('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('critical', 'Critical'))
 PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 
@@ -79,8 +91,9 @@ CONTRACT_STATUS = (('draft', 'Draft'), ('active', 'Active'), ('expiring', 'Expir
 RENEWAL_STATUS = (('none', 'Not started'), ('in_progress', 'Follow-up'), ('quoted', 'Quotation sent'),
                   ('won', 'Renewed'), ('lost', 'Lost'))
 SUPPORT_TIMING = (('business', 'Business hours'), ('24x7', '24 / 7'))
-INVOICE_STATUS = (('planned', 'Planned'), ('to_invoice', 'Ready to invoice'), ('invoiced', 'Invoiced'), ('paid', 'Paid'),
-                  ('cancelled', 'Cancelled'))
+INVOICE_STATUS = (('planned', 'Planned'), ('pi_to_create', 'PI to create'), ('pi_created', 'PI created'), ('pi_sent', 'PI sent'),
+                  ('to_invoice', 'Invoice to create'), ('invoiced', 'Invoiced'), ('partly_paid', 'Partly paid'), ('paid', 'Paid'),
+                  ('cancelled', 'Cancelled'))   # v1.67.13 (billing): PI stages and part payment added
 PROJECT_TYPES = (('implementation', 'Implementation'), ('customization', 'Customization'), ('migration', 'Migration'),
                  ('integration', 'Integration'), ('infrastructure', 'Infrastructure'), ('consulting', 'Consulting'),
                  ('internal', 'Internal product development'))
@@ -141,6 +154,21 @@ class ProjectsSettings(models.Model):
     default_team = models.ForeignKey('SupportTeam', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     default_sla = models.ForeignKey('SLAPolicy', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     # e-mail to ticket (IMAP, read by the scheduled job; no paid service)
+    # v1.67.13 (billing): proforma / tax invoices, payments and collection follow-ups
+    invoices_made_in = models.CharField(max_length=10, default='zeo', choices=(('zeo', 'ZEO'), ('external', 'External accounting system')))
+    default_payment_days = models.PositiveSmallIntegerField(default=30, help_text='Invoice due after N days when the customer has no terms')
+    default_vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('5.00'))
+    billing_user = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+                                     help_text='Gets the billing to-dos; empty = the project managers / support managers')
+    pi_followup_days = models.PositiveSmallIntegerField(default=3, help_text='Follow up a sent PI after N days')
+    pi_to_create_days = models.PositiveSmallIntegerField(default=2, help_text='Remind when an item waits N days for its PI or invoice')
+    invoice_terms = models.TextField(blank=True, help_text='Printed at the bottom of PIs and invoices (bank details, terms)')
+    # v1.67.14 (service releases 3 – 5): field service
+    labour_rate = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('150.00'),
+                                      help_text='Chargeable hourly rate when the job has no contract rate')
+    parts_markup = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('25.00'), help_text='% on the part cost for chargeable parts')
+    report_to_customer = models.BooleanField(default=True, help_text='E-mail the service report to the customer when the job is finished')
+    ppm_horizon_days = models.PositiveSmallIntegerField(default=30, help_text='Preventive visits are planned this many days ahead')
     mailbox_enabled = models.BooleanField(default=False)
     mailbox_host = models.CharField(max_length=200, blank=True)
     mailbox_port = models.PositiveIntegerField(default=993)
@@ -178,6 +206,7 @@ class Customer(models.Model):
     city = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=100, blank=True, default='United Arab Emirates')
     email_domains = models.CharField(max_length=300, blank=True, help_text='Comma separated, used to match incoming e-mails')
+    payment_days = models.PositiveSmallIntegerField(null=True, blank=True, help_text='v1.67.13 – invoice due after N days; empty = company default')
     account_manager = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='zp_accounts')
     branch = models.ForeignKey(BRANCH, null=True, blank=True, on_delete=models.SET_NULL, related_name='zp_customers')
     default_sla = models.ForeignKey('SLAPolicy', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
@@ -318,6 +347,15 @@ class AMCContract(models.Model):
     renewal_note = models.TextField(blank=True)
     lost_reason = models.CharField(max_length=255, blank=True)
     reminders_sent = models.JSONField(default=list, blank=True, help_text='Reminder keys already sent, e.g. "90", "30", "after:2026-10-01"')
+    # v1.67.13 (service)
+    amc_type = models.ForeignKey('AMCType', null=True, blank=True, on_delete=models.PROTECT, related_name='contracts')
+    covered_sites = models.ManyToManyField('CustomerSite', blank=True, related_name='contracts', help_text='Empty = every site of the customer')
+    cover_scope = models.CharField(max_length=12, choices=COVER_SCOPE, default='all')
+    covered_categories = models.ManyToManyField('EquipmentCategory', blank=True, related_name='contracts')
+    covered_equipment = models.ManyToManyField('CustomerEquipment', blank=True, related_name='contracts')
+    visits_per_year = models.PositiveSmallIntegerField(default=0)
+    callouts_per_year = models.PositiveSmallIntegerField(null=True, blank=True, help_text='Empty = unlimited')
+    parts_limit = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True, help_text='Per contract year, when parts are included up to a limit')
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
@@ -397,6 +435,12 @@ class Ticket(models.Model):
     approval_at = models.DateTimeField(null=True, blank=True)
     satisfaction = models.PositiveSmallIntegerField(null=True, blank=True, help_text='1 – 5')
     satisfaction_note = models.TextField(blank=True)
+    # v1.67.13 (service)
+    site = models.ForeignKey('CustomerSite', null=True, blank=True, on_delete=models.PROTECT, related_name='tickets')
+    equipment = models.ForeignKey('CustomerEquipment', null=True, blank=True, on_delete=models.PROTECT, related_name='tickets')
+    ticket_kind = models.CharField(max_length=10, choices=TICKET_KINDS, default='request')
+    coverage_kind = models.CharField(max_length=12, choices=COVER_KINDS, blank=True)
+    parts_chargeable = models.BooleanField(default=False, help_text='Labour covered, parts charged (parts limit used up)')
     project_id = models.IntegerField(null=True, blank=True, db_index=True)
     task_id = models.IntegerField(null=True, blank=True, db_index=True)
     email_message_id = models.CharField(max_length=255, blank=True, db_index=True)
@@ -475,6 +519,8 @@ class WorkLog(models.Model):
     approved_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     approved_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.CharField(max_length=255, blank=True)
+    billed_doc = models.ForeignKey('BillDocument', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')   # v1.67.14 "Bill this job"
+    visit = models.ForeignKey('ServiceVisit', null=True, blank=True, on_delete=models.SET_NULL, related_name='worklogs')   # v1.67.14
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -700,3 +746,400 @@ class TaskFile(models.Model):
 
     class Meta:
         ordering = ['-uploaded_at', '-id']
+
+
+# ------------------------------------------------------------------ v1.67.13 (service) – sites, equipment, AMC types, industry packs
+class CustomerSite(models.Model):
+    """v1.67.13 (service): a place of a customer where service is given."""
+    code = models.CharField(max_length=30, unique=True, blank=True)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='sites')
+    name = models.CharField(max_length=150)
+    site_type = models.CharField(max_length=20, choices=SITE_TYPES, default='office')
+    address = models.CharField(max_length=255, blank=True)
+    area = models.CharField(max_length=100, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    emirate = models.CharField('emirate / state', max_length=100, blank=True)
+    country = models.CharField(max_length=100, blank=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    contact = models.ForeignKey(Contact, null=True, blank=True, on_delete=models.SET_NULL, related_name='sites')
+    contact_name = models.CharField(max_length=150, blank=True)
+    contact_phone = models.CharField(max_length=40, blank=True)
+    access_notes = models.TextField(blank=True, help_text='Gate pass, parking, permits needed')
+    working_hours = models.CharField(max_length=150, blank=True, help_text='When technicians may visit')
+    branch = models.ForeignKey(BRANCH, null=True, blank=True, on_delete=models.SET_NULL, related_name='zp_sites')
+    default_team = models.ForeignKey('SupportTeam', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    default_technician = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='zp_sites')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['customer__name', 'name']
+        unique_together = (('customer', 'name'),)
+
+    def __str__(self):
+        return f'{self.code} {self.name}'.strip()
+
+
+class EquipmentCategory(models.Model):
+    """v1.67.13 (service): kind of customer equipment; pack content (code = the pack's natural key)."""
+    code = models.CharField(max_length=40, unique=True)
+    name = models.CharField(max_length=120)
+    industry = models.CharField(max_length=30, blank=True, help_text='Pack that added it; empty = made by the company')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='children')
+    pm_months = models.PositiveSmallIntegerField(null=True, blank=True, help_text='Default preventive frequency in months')
+    checklist = models.JSONField(default=list, blank=True, help_text='v1.67.14: service checklist items (from the pack) for visits of this kind of unit')
+    default_team = models.ForeignKey('SupportTeam', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    extra_fields = models.JSONField(default=list, blank=True, help_text='[{"key", "label", "type", "options"}] from the pack')
+    to_review = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name_plural = 'Equipment categories'
+
+    def __str__(self):
+        return self.name
+
+
+class CustomerEquipment(models.Model):
+    """v1.67.13 (service): a unit the customer owns at a site (not the company's own assets – those are ZeoAssets)."""
+    number = models.CharField(max_length=30, unique=True, blank=True)
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='equipment')
+    site = models.ForeignKey(CustomerSite, on_delete=models.PROTECT, related_name='equipment')
+    category = models.ForeignKey(EquipmentCategory, on_delete=models.PROTECT, related_name='equipment')
+    name = models.CharField('name / tag', max_length=150)
+    make = models.CharField(max_length=100, blank=True)
+    model_no = models.CharField('model', max_length=100, blank=True)
+    serial_no = models.CharField('serial no.', max_length=100, blank=True)
+    item = models.ForeignKey('ZeoMasters.Product', null=True, blank=True, on_delete=models.SET_NULL, related_name='pj_equipment',
+                             verbose_name='item (master)')
+    location_in_site = models.CharField(max_length=150, blank=True, help_text='Floor, room, roof')
+    install_date = models.DateField(null=True, blank=True)
+    supplied_by_us = models.BooleanField(default=False)
+    warranty_start = models.DateField(null=True, blank=True)
+    warranty_end = models.DateField(null=True, blank=True)
+    warranty_by = models.CharField(max_length=100, blank=True, help_text='Manufacturer, us, installer')
+    last_pm_date = models.DateField(null=True, blank=True)    # v1.67.14: preventive visits
+    next_pm_date = models.DateField(null=True, blank=True, db_index=True)
+    capacity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    capacity_unit = models.CharField(max_length=20, blank=True)
+    extra = models.JSONField(default=dict, blank=True, help_text='Values of the category extra fields')
+    status = models.CharField(max_length=16, choices=EQUIPMENT_STATUS, default='in_service')
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['customer__name', 'site__name', 'name']
+
+    def __str__(self):
+        return f'{self.number} {self.name}'.strip()
+
+
+class EquipmentFile(models.Model):
+    """v1.67.13 (service): photos and documents of a piece of equipment."""
+    equipment = models.ForeignKey(CustomerEquipment, on_delete=models.CASCADE, related_name='files')
+    file = models.FileField(upload_to='zeo_projects/equipment/%Y/%m/')
+    name = models.CharField(max_length=255)
+    size = models.PositiveIntegerField(default=0)
+    uploaded_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+class AMCType(models.Model):
+    """v1.67.13 (service): kind of AMC; pack content (code = the pack's natural key)."""
+    code = models.CharField(max_length=40, unique=True)
+    name = models.CharField(max_length=120)
+    industry = models.CharField(max_length=30, blank=True)
+    parts = models.CharField(max_length=10, choices=PARTS_COVER, default='included')
+    labour_included = models.BooleanField(default=True)
+    visits_per_year = models.PositiveSmallIntegerField(default=0)
+    callouts_per_year = models.PositiveSmallIntegerField(null=True, blank=True, help_text='Empty = unlimited')
+    sla_policy = models.ForeignKey(SLAPolicy, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    legacy_contract_type = models.CharField(max_length=20, blank=True, help_text='Contract type of before 1.67.13 this type stands for')
+    terms = models.TextField(blank=True)
+    to_review = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class ProjectsIndustry(models.Model):
+    """v1.67.13 (service): an industry ticked for Projects (one is the main industry)."""
+    code = models.CharField(max_length=30, unique=True)
+    is_main = models.BooleanField(default=False)
+    pack_installed = models.BooleanField(default=False, help_text='False = pack comes in a later release; General content used')
+    added_at = models.DateTimeField(auto_now_add=True)
+    added_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-is_main', 'code']
+
+
+# ------------------------------------------------------------------ v1.67.13 (billing) PI, tax invoice, payments, follow-ups
+BILL_KINDS = (('pi', 'Proforma invoice'), ('invoice', 'Tax invoice'))
+BILL_STATUS = (('draft', 'Draft'), ('sent', 'Sent'), ('accepted', 'Accepted'), ('converted', 'Converted to invoice'),
+               ('issued', 'Issued to customer'), ('cancelled', 'Cancelled'))
+VAT_TYPES = (('standard', 'Standard rate'), ('zero', 'Zero-rated'), ('exempt', 'Exempt'))
+PAY_METHODS = (('transfer', 'Bank transfer'), ('cheque', 'Cheque'), ('cash', 'Cash'), ('card', 'Card'), ('other', 'Other'))
+FOLLOWUP_KINDS = (('pi', 'PI follow-up'), ('invoice', 'Invoice follow-up'), ('payment', 'Payment follow-up'))
+CONTACT_METHODS = (('call', 'Call'), ('email', 'E-mail'), ('visit', 'Visit'), ('whatsapp', 'WhatsApp'), ('other', 'Other'))
+
+
+class BillDocument(models.Model):
+    """A proforma invoice (PI) or a tax invoice for project milestones and AMC billing lines of one customer."""
+    kind = models.CharField(max_length=10, choices=BILL_KINDS)
+    number = models.CharField(max_length=40, unique=True)
+    external = models.BooleanField(default=False, help_text='Tax invoice made in the accounting system; only its number is kept')
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='bill_documents')
+    date = models.DateField()
+    supply_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=BILL_STATUS, default='draft')
+    client_ref = models.CharField(max_length=100, blank=True, help_text='Client PO / approval reference')
+    currency = models.CharField(max_length=3, default='AED')
+    exchange_rate = models.DecimalField(max_digits=12, decimal_places=6, default=Decimal('1'), help_text='AED per 1 unit of the currency')
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    vat_amount = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    paid_amount = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    from_pi = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='invoices')
+    notes = models.TextField(blank=True)
+    terms = models.TextField(blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    sent_to = models.CharField(max_length=300, blank=True)
+    cancel_reason = models.CharField(max_length=255, blank=True)
+    sync_status = models.CharField(max_length=12, blank=True, help_text='Later: accounting connector (Odoo / Zoho / ZEO Accounting)')
+    sync_ref = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-date', '-id']
+        verbose_name = 'Billing document'
+
+    def __str__(self):
+        return f'{self.number} – {self.customer.name}'
+
+    @property
+    def balance(self):
+        return (self.total or ZERO) - (self.paid_amount or ZERO)
+
+
+class BillLine(models.Model):
+    document = models.ForeignKey(BillDocument, on_delete=models.CASCADE, related_name='lines')
+    sequence = models.PositiveSmallIntegerField(default=1)
+    description = models.CharField(max_length=500)
+    quantity = models.DecimalField(max_digits=12, decimal_places=3, default=Decimal('1'))
+    unit_price = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    vat_type = models.CharField(max_length=10, choices=VAT_TYPES, default='standard')
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('5.00'))
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    vat_amount = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    milestone = models.ForeignKey(Milestone, null=True, blank=True, on_delete=models.SET_NULL, related_name='bill_lines')
+    amc_billing = models.ForeignKey(AMCBilling, null=True, blank=True, on_delete=models.SET_NULL, related_name='bill_lines')
+
+    class Meta:
+        ordering = ['document', 'sequence', 'id']
+
+
+class BillPayment(models.Model):
+    document = models.ForeignKey(BillDocument, on_delete=models.PROTECT, related_name='payments')
+    date = models.DateField()
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    method = models.CharField(max_length=10, choices=PAY_METHODS, default='transfer')
+    reference = models.CharField(max_length=100, blank=True)
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-date', '-id']
+        verbose_name = 'Billing payment'
+
+
+class BillFollowUp(models.Model):
+    """A collection follow-up on a milestone / AMC billing line (and its PI or invoice)."""
+    kind = models.CharField(max_length=10, choices=FOLLOWUP_KINDS, default='payment')
+    milestone = models.ForeignKey(Milestone, null=True, blank=True, on_delete=models.CASCADE, related_name='followups')
+    amc_billing = models.ForeignKey(AMCBilling, null=True, blank=True, on_delete=models.CASCADE, related_name='followups')
+    document = models.ForeignKey(BillDocument, null=True, blank=True, on_delete=models.SET_NULL, related_name='followups')
+    date = models.DateField()
+    method = models.CharField(max_length=10, choices=CONTACT_METHODS, default='call')
+    contact = models.CharField(max_length=150, blank=True)
+    note = models.TextField(blank=True)
+    promised_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    promised_date = models.DateField(null=True, blank=True)
+    next_date = models.DateField(null=True, blank=True)
+    assigned_to = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    is_open = models.BooleanField(default=True, help_text='The latest follow-up of the item while it is not paid')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-date', '-id']
+        verbose_name = 'Billing follow-up'
+
+    def __str__(self):
+        return f'{self.get_kind_display()} {self.date}'
+
+
+# ------------------------------------------------------------------ v1.67.13 (collections) collection planner
+COLLECTION_SOURCES = (('opening', 'Opening balance'), ('crm', 'CRM'), ('project', 'Project'), ('amc', 'AMC'), ('other', 'Other'))
+COLLECTION_STATUS = (('open', 'Open'), ('partly', 'Partly collected'), ('collected', 'Collected'), ('cancelled', 'Cancelled'))
+
+
+class CollectionLine(models.Model):
+    """One planned collection: an amount expected on a date, from an opening balance, a CRM opportunity / sales order,
+    a project milestone or an AMC billing line. Project and AMC lines take what was received from Billing (payments
+    against the tax invoice); the others are updated by hand."""
+    source = models.CharField(max_length=10, choices=COLLECTION_SOURCES)
+    crm_kind = models.CharField(max_length=12, blank=True, help_text='opportunity / sales_order')
+    crm_id = models.IntegerField(null=True, blank=True)
+    milestone = models.ForeignKey(Milestone, null=True, blank=True, on_delete=models.SET_NULL, related_name='collection_lines')
+    amc_billing = models.ForeignKey(AMCBilling, null=True, blank=True, on_delete=models.SET_NULL, related_name='collection_lines')
+    customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.SET_NULL, related_name='collection_lines')
+    customer_name = models.CharField(max_length=200)
+    reference = models.CharField(max_length=120, blank=True)
+    description = models.CharField(max_length=300, blank=True)
+    expected_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    expected_date = models.DateField()
+    collected_amount = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO)
+    collected_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=COLLECTION_STATUS, default='open')
+    next_followup = models.DateField(null=True, blank=True)
+    last_comment = models.TextField(blank=True)
+    assigned_to = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['expected_date', 'id']
+        verbose_name = 'Collection plan line'
+
+    def __str__(self):
+        return f'{self.customer_name} – {self.reference or self.get_source_display()}'
+
+
+class CollectionNote(models.Model):
+    line = models.ForeignKey(CollectionLine, on_delete=models.CASCADE, related_name='notes')
+    date = models.DateField()
+    comment = models.TextField()
+    next_followup = models.DateField(null=True, blank=True)
+    collected_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-date', '-id']
+        verbose_name = 'Collection note'
+
+
+# ------------------------------------------------------------------ v1.67.13 (support planner) planned support jobs
+ALLOC_STATUS = (('planned', 'Planned'), ('in_progress', 'In progress'), ('done', 'Done'), ('cancelled', 'Cancelled'))
+
+
+class SupportAllocation(models.Model):
+    """A support job planned for a day and allocated to a person. Allocating creates (or takes) a ticket assigned to
+    that person, who is notified and can open everything about the job (customer, site, equipment, AMC, ticket history)
+    until the ticket is closed."""
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='allocations')
+    employee = models.ForeignKey(EMP, on_delete=models.PROTECT, related_name='zp_allocations')
+    planned_date = models.DateField(db_index=True)
+    start_time = models.TimeField(null=True, blank=True)
+    hours = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('2.00'))
+    instructions = models.TextField(blank=True)
+    status = models.CharField(max_length=12, choices=ALLOC_STATUS, default='planned')
+    access_until = models.DateTimeField(null=True, blank=True, help_text='Set when the ticket is closed: the job is then read-only history')
+    notified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['planned_date', 'start_time', 'id']
+        verbose_name = 'Support allocation'
+
+    def __str__(self):
+        return f'{self.ticket.number} – {self.planned_date}'
+
+
+# ------------------------------------------------------------------ v1.67.14 (service releases 3 – 5): field service
+VISIT_STATUS = (('open', 'Open'), ('done', 'Done'), ('cancelled', 'Cancelled'))
+
+
+class ServiceVisit(models.Model):
+    """A technician's visit for a ticket (usually one support allocation): start / finish with location, checklist, work done,
+    parts used, customer signature – becomes the service report (SR number, PDF e-mailed to the customer)."""
+    number = models.CharField(max_length=30, unique=True, blank=True)
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='visits')
+    allocation = models.OneToOneField('SupportAllocation', null=True, blank=True, on_delete=models.SET_NULL, related_name='visit')
+    employee = models.ForeignKey(EMP, on_delete=models.PROTECT, related_name='zp_visits')
+    status = models.CharField(max_length=10, choices=VISIT_STATUS, default='open', db_index=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    start_lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    start_lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    end_lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    end_lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    checklist = models.JSONField(default=list, blank=True, help_text='[{"item", "result": ok|issue|na, "note"}]')
+    work_done = models.TextField(blank=True)
+    findings = models.TextField(blank=True)
+    recommendation = models.TextField(blank=True)
+    customer_name = models.CharField(max_length=150, blank=True)
+    customer_signature = models.TextField(blank=True, help_text='PNG data URL drawn on the phone')
+    rating = models.PositiveSmallIntegerField(null=True, blank=True, help_text='Customer rating 1 – 5')
+    job_completed = models.BooleanField(default=False, help_text='The technician finished the work (ticket resolved)')
+    report_sent_to = models.CharField(max_length=255, blank=True)
+    report_sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f'{self.number} {self.ticket.number}'
+
+    @property
+    def hours(self):
+        if self.started_at and self.finished_at:
+            return Decimal(str(round((self.finished_at - self.started_at).total_seconds() / 3600, 2)))
+        return ZERO
+
+
+class JobPart(models.Model):
+    """A part used on a ticket. part_id / location_id / stock_move_id point to Asset Management (its stock and vans); the code,
+    name and cost are copied so the job keeps them. Covered by the AMC, or chargeable (cost + markup) – billed with "Bill this job"."""
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='parts')
+    visit = models.ForeignKey(ServiceVisit, null=True, blank=True, on_delete=models.SET_NULL, related_name='parts')
+    part_id = models.IntegerField(null=True, blank=True, help_text='Asset Management part')
+    location_id = models.IntegerField(null=True, blank=True, help_text='Asset Management store / van the part came from')
+    stock_move_id = models.IntegerField(null=True, blank=True)
+    code = models.CharField(max_length=40, blank=True)
+    name = models.CharField(max_length=150)
+    unit = models.CharField(max_length=20, default='pcs')
+    qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('1'))
+    unit_cost = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO)
+    unit_price = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, help_text='Selling price when chargeable')
+    covered = models.BooleanField(default=False)
+    chargeable = models.BooleanField(default=False)
+    billed_doc = models.ForeignKey('BillDocument', null=True, blank=True, on_delete=models.SET_NULL, related_name='job_parts')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['id']
+
+    @property
+    def cost(self):
+        return (Decimal(self.qty or 0) * Decimal(self.unit_cost or 0)).quantize(Decimal('0.01'))
+
+    @property
+    def price(self):
+        return (Decimal(self.qty or 0) * Decimal(self.unit_price or 0)).quantize(Decimal('0.01'))

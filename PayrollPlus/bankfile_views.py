@@ -310,12 +310,17 @@ class _FileBase(_B):
                     raise S.Refused(tr(WPS_SIF_OFF))
             except ImportError:
                 pass
+        est = [int(x) for x in d.get('establishment') or [] if str(x).isdigit()]
+        if est:   # v1.67.19: the file of one WPS establishment of the run (the screen offers one button per establishment)
+            br = [b for b in br if b in est] if br else est
+            if not br:
+                raise S.Refused(tr('None of the set-up’s branches is yours.'), status=403)
         res = B.make(run, prof, branch_ids=br, justifications=d.get('justifications') or {})
         res['layout_name'], res['agent_name'] = tr(res['layout_name']), tr(res['agent_name'])
         res['skipped'] = [dict(x, reason=tr(x.get('reason') or '')) for x in res.get('skipped') or []]
         res['run'] = {'id': run.pk, 'name': run.name, 'month': run.month, 'year': run.year, 'status': run.status}
         res['profile'] = prof.get('id')
-        res['branch_ids'] = br
+        res['branch_ids'] = res.get('branch_ids') or br
         return run, prof, res
 
 

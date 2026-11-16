@@ -461,11 +461,12 @@ def settle_early(r, data, user=None):
     if not ref:
         raise Refused(tr('Check the marked fields.'), problems={'reference': tr('Enter the receipt or payment reference.')})
     with transaction.atomic():
-        RecoveryEntry.objects.create(recovery=r, kind='settled', month=on.replace(day=1), due=bal, amount=bal, note=f'{on:%d/%m/%Y} {ref}'[:255],
-                                     created_by_id=getattr(user, 'pk', None))
+        ent = RecoveryEntry.objects.create(recovery=r, kind='settled', month=on.replace(day=1), due=bal, amount=bal, note=f'{on:%d/%m/%Y} {ref}'[:255],
+                                           created_by_id=getattr(user, 'pk', None))
         r.status, r.settle_next = 'settled', False
         _note(r, 'settled', user, ref, amount=str(bal))
         r.save(update_fields=['status', 'settle_next', 'history', 'updated_at'])
+    auto_journal(r, ent, user)   # v1.67.15 (C11): the payment outside payroll is posted (Dr bank / Cr the recovery's receivable)
     return r
 
 
@@ -478,12 +479,15 @@ def write_off(r, reason, user=None):
         raise Refused(tr('Check the marked fields.'), problems={'reason': tr('Enter the reason.')})
     bal = balance(r)
     with transaction.atomic():
+        ent = None
         if bal > 0:
-            RecoveryEntry.objects.create(recovery=r, kind='write_off', month=timezone.localdate().replace(day=1), due=bal, amount=bal, note=reason,
-                                         created_by_id=getattr(user, 'pk', None))
+            ent = RecoveryEntry.objects.create(recovery=r, kind='write_off', month=timezone.localdate().replace(day=1), due=bal, amount=bal, note=reason,
+                                               created_by_id=getattr(user, 'pk', None))
         r.status = 'written_off'
         _note(r, 'written_off', user, reason, amount=str(bal))
         r.save(update_fields=['status', 'history', 'updated_at'])
+    if ent is not None:
+        auto_journal(r, ent, user)   # v1.67.15 (C11): the write-off is posted (Dr write-off expense / Cr the recovery's receivable)
     return r
 
 
@@ -707,8 +711,9 @@ def close_exit(st, user=None):
                 r.save(update_fields=['history'])
             elif balance(r) > 0:   # HR changed the line: the rest is written off with the exit
                 rest = balance(r)
-                RecoveryEntry.objects.create(recovery=r, kind='exit_write_off', month=when.replace(day=1), due=rest, amount=rest, settlement_id=st.pk,
-                                             note=tr('Rest written off at exit'), created_by_id=getattr(user, 'pk', None))
+                _ent = RecoveryEntry.objects.create(recovery=r, kind='exit_write_off', month=when.replace(day=1), due=rest, amount=rest, settlement_id=st.pk,
+                                                    note=tr('Rest written off at exit'), created_by_id=getattr(user, 'pk', None))
+                auto_journal(r, _ent, user)   # v1.67.15 (C11)
                 r.status = 'written_off'
                 r.save(update_fields=['status', 'updated_at'])
         elif r.exit_action == 'write_off' or ln is not None:
@@ -802,3 +807,57 @@ def import_rows(f, name='', apply=False, user=None, allowed=None):
     for x in out:
         x.pop('_d', None)
     return {'rows': out, 'ok': sum(1 for x in out if x['ok']), 'errors': sum(1 for x in out if not x['ok']), 'applied': applied, 'dry_run': not apply}
+
+
+# ------------------------------------------------------------------ v1.67.15 (C11): journals of the movements outside payroll
+# Before 1.67.15 a recovery settled early (paid by the employee outside payroll) or written off changed only the recovery: the
+# receivable the payroll journal had credited stayed in the books. Now each such entry builds its own journal (Accounting › Journals):
+#   settled early           Dr bank (Payroll › Loans and advances › accounts: bank)        Cr the recovery's account
+#   written off / at exit   Dr write-off expense (… accounts: write_off)                   Cr the recovery's account
+# The recovery's account is the credit mapping of its deduction component (Accounting › Accounts, as the payroll journal uses), else
+# the company's default deduction account. Instalments deducted by payroll are already in the payroll journal (nothing new there).
+JOURNAL_KINDS = ('settled', 'write_off', 'exit_write_off')
+
+
+def auto_journal(r, entry, user=None):
+    """Build the journal now – never stops the change itself (a missing account shows on the journal as a problem)."""
+    try:
+        from django.db import transaction as _tx
+        with _tx.atomic():
+            return build_journal(r, entry, user)
+    except Exception as e:   # noqa: BLE001
+        log.info('recovery journal not built: %s', getattr(e, 'message', e))
+        return None
+
+
+def build_journal(r, entry, user=None):
+    from ZeoAccounting.services import Builder, Refused as AccRefused
+    from .lending import settings as lend_settings
+    if entry.kind not in JOURNAL_KINDS or entry.status != 'taken' or q2(entry.amount) <= 0:
+        raise AccRefused(tr('Only a recovery settled early or written off makes its own journal.'))
+    e = M('EmpManagement', 'emp_master').objects.filter(pk=r.employee_id).first()
+    if e is None:
+        raise AccRefused(tr('Employee not found.'))
+    acc = lend_settings()['accounts']
+    dept, branch = e.emp_dept_id_id, e.emp_branch_id_id
+    ref = number_of(r)
+    comp = M('PayrollManagement', 'SalaryComponent').objects.filter(pk=r.component_id).first()
+    who = ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x)
+    label = (tr('Recovery {0} settled early', ref) if entry.kind == 'settled' else tr('Recovery {0} written off', ref)) + f' – {who}'
+    jdate = entry.created_at.date() if entry.created_at else timezone.localdate()
+    if entry.kind == 'settled':
+        try:
+            jdate = date.fromisoformat('-'.join(reversed((entry.note or '')[:10].split('/')))) if (entry.note or '')[2:3] == '/' else jdate
+        except ValueError:
+            pass
+    b = Builder('recovery', f'{r.pk}-{entry.pk}', label, jdate, ref)
+    b.dims.emps[e.pk] = e
+    amt = q2(entry.amount)
+    cr, lvl = b.accts.find('component', r.component_id, 'credit', e.pk, dept, branch, b.st.default_deduction_account)
+    name = comp.name if comp else tr('Recovery')
+    if entry.kind == 'settled':
+        b.add(acc['bank'], tr('Bank – recovery paid by the employee'), amt, 'debit', e.pk, dept, branch, group='bank')
+    else:
+        b.add(acc['write_off'], tr('Recovery written off'), amt, 'debit', e.pk, dept, branch, cost=True, group='wo')
+    b.add(cr, name, amt, 'credit', e.pk, dept, branch, level=lvl, group='rec')
+    return b.save(user)

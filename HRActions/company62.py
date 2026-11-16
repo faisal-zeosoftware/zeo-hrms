@@ -46,6 +46,7 @@ def _audience(obj, rels):
 
 class PoliciesView(APIView):
     permission_classes = [IsAuthenticated]
+    zeo_model_for = staticmethod(lambda kwargs: __import__('django.apps', fromlist=['apps']).apps.get_model('OrganisationManager', 'CompanyPolicy'))   # v1.67.15 (checklist scan): extra fields / record panel
 
     def get(self, request):
         from OrgStructure.views import PolicyStatusView
@@ -104,6 +105,7 @@ AUD = [('branches', 'Branches'), ('department', 'Departments'), ('designation', 
 
 class AnnouncementsView(APIView):
     permission_classes = [IsAuthenticated]
+    zeo_model_for = staticmethod(lambda kwargs: __import__('django.apps', fromlist=['apps']).apps.get_model('OrganisationManager', 'Announcement'))   # v1.67.15 (checklist scan): extra fields / record panel
 
     def get(self, request):
         if not _can(request, 'view_announcement', 'add_announcement', 'change_announcement'):

@@ -572,6 +572,8 @@ class PeriodDetail(Base):
 
     def patch(self, request, pk):
         p = get_period(self.r, pk, manage=True)
+        if not self.r.has('change_rosterperiod'):   # v1.67.19 (access rights field check): an add-only right changed rosters
+            deny(tr('You may not change rosters.'))
         S.check_editable(p)
         v = period_input(request.data, p)
         if 'branch_id' in v and v['branch_id'] != p.branch_id:
@@ -588,6 +590,8 @@ class PeriodDetail(Base):
 
     def delete(self, request, pk):
         p = get_period(self.r, pk, manage=True)
+        if not self.r.has('delete_rosterperiod'):   # v1.67.19 (access rights field check): an add / change right deleted rosters
+            deny(tr('You may not delete rosters.'))
         if p.status not in ('draft', 'rejected'):
             raise PlanError(tr('Only draft rosters can be deleted. Send it back to draft first.'), status=409)
         p.delete()
@@ -759,7 +763,8 @@ def grid_payload(p, r, a=None, b=None):
                      'hours': fl(hours), 'cells': cells, 'notes': week_probs})
     return {'period': period_row(p, r=r), 'from': a, 'to': b,
             'days': [{'date': d, 'weekday': d.strftime('%a'), 'day': d.day} for d in days],
-            'shifts': [shift_row(s, rules.get(s.pk)) for s in shifts.values() if not (rules.get(s.pk) and not rules[s.pk].active)],
+            'shifts': [shift_row(s, rules.get(s.pk)) for s in shifts.values() if not (rules.get(s.pk) and not rules[s.pk].active)
+                       and (not (rules.get(s.pk) and rules[s.pk].branch_ids) or p.branch_id in [int(x) for x in rules[s.pk].branch_ids])],   # v1.67.19 (10)
             'rows': rows}
 
 
@@ -1205,10 +1210,10 @@ class RequestsView(Base):
                 S.refuse_if_leave(x, dd)
             o_id, o_off = S.current_shift(other, sday)
             q.swap_employee_id, q.swap_date, q.swap_shift_id = other.pk, sday, None if o_off else o_id
+            if sday == day and q.swap_shift_id is None and q.from_shift_id is None:   # v1.67.19 (shift check 12): this test first
+                raise PlanError(tr('Neither of you has a shift that day – there is nothing to swap.'), status=409)
             if sday == day and q.swap_shift_id == q.from_shift_id:
                 raise PlanError(tr('You both work the same shift that day – there is nothing to swap.'), status=409)
-            if sday == day and q.swap_shift_id is None and q.from_shift_id is None:
-                raise PlanError(tr('You are both off that day – there is nothing to swap.'), status=409)
             q.status = 'peer'
         q.save()
         shift_txt = S.shift_label(shifts.get(q.from_shift_id)) if q.from_shift_id else 'Off'
@@ -1380,7 +1385,7 @@ class MyScheduleView(Base):
                          'notices': [{'id': x.id, 'kind': x.kind, 'title': x.title, 'message': x.message, 'read': x.read, 'created_at': x.created_at}
                                      for x in ShiftNotice.objects.filter(Q(employee_id=emp.pk) | Q(user_id=request.user.pk))[:20]],
                          'shifts': [{'id': s.pk, 'name': S.shift_label(s)} for s in shifts.values()
-                                    if not ShiftRule.objects.filter(shift_id=s.pk, active=False).exists()]})
+                                    if not ShiftRule.objects.filter(shift_id=s.pk, active=False).exists() and not _usable_problem(s.pk, emp)]})
 
 
 class TeamScheduleView(Base):
@@ -1741,7 +1746,7 @@ def oncall_row(o, r=None):
            'status': o.status, 'status_label': o.get_status_display(), 'decision_note': o.decision_note, 'decided_at': o.decided_at,
            'department': getattr(getattr(emp, 'emp_dept_id', None), 'dept_name', '') if emp else ''}
     if r is not None:
-        row['can_decide'] = o.status == 'pending' and r.can_decide_for(emp) and o.created_by_id != r.user.pk
+        row['can_decide'] = o.status == 'pending' and r.can_decide_for(emp) and (o.created_by_id != r.user.pk or r.admin)   # v1.67.19 (17): as the server
         row['can_edit'] = o.status == 'pending' and (r.manages_emp(emp) or r.is_manager_of(emp))
     return row
 
@@ -1820,7 +1825,41 @@ class OnCallView(Base):
         if OnCallDuty.objects.filter(employee_id=emp.pk, date=v['date']).exists():
             raise PlanError(tr('{0} is already on call on {1:%d/%m/%Y}.', emp.emp_first_name, v['date']), problems={'date': 'Duplicate.'})
         o = OnCallDuty.objects.create(employee_id=emp.pk, created_by_id=request.user.pk, **v)
-        return Response(oncall_row(o, self.r), status=201)
+        out = oncall_row(o, self.r)
+        w = _oncall_overlap(emp, o)   # v1.67.19 (shift check 15): on call while on the own shift – planned, with a warning
+        if w:
+            out['warning'] = w
+        return Response(out, status=201)
+
+
+def _usable_problem(shift_id, emp):
+    """v1.67.19 (shift check 10): '' when the employee may work the shift (branch)."""
+    try:
+        from .usable import branch_problem
+        return branch_problem(shift_id, emp)
+    except Exception:   # noqa: BLE001
+        return ''
+
+
+def _oncall_overlap(emp, o):
+    """v1.67.19 (shift check 15): a warning when the on-call time overlaps the employee's own shift that day."""
+    if not (o.start_time and o.end_time):
+        return ''
+    try:
+        from .resolver import shift_for
+        r = shift_for(emp, o.date)
+    except Exception:   # noqa: BLE001
+        return ''
+    if not r or r.get('off') or not r.get('start') or not r.get('end'):
+        return ''
+    a = datetime.combine(o.date, o.start_time)
+    b = datetime.combine(o.date, o.end_time)
+    if b <= a:
+        b += timedelta(days=1)
+    if a < r['end'] and r['start'] < b:
+        return tr('{0} works “{1}” ({2}–{3}) that day – the on-call time overlaps the shift.', person(emp), r.get('name') or '',
+                  r['start'].strftime('%H:%M'), r['end'].strftime('%H:%M'))
+    return ''
 
 
 class OnCallAction(Base):

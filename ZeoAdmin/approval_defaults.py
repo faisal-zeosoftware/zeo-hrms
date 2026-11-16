@@ -21,6 +21,16 @@ SIMPLE = [
     ('Resignation', 'EmpManagement.ResignationApprovalWorkflow', 'EmpManagement.ResignationApprovalLevel'),
     ('Air ticket', 'PayrollManagement.AirticketApprovalWorkflow', 'PayrollManagement.AirticketWorkflow'),
 ]
+PAYROLL = ('Advance salary', 'Air ticket')   # v1.67.19: made only while Payroll is active
+
+
+def _on(key):
+    """v1.67.19: the chains belong to HR (advance salary and air ticket to Payroll) – none while the app is off."""
+    try:
+        from ZeoApps.services import is_active
+        return is_active(key)
+    except Exception:   # noqa: BLE001
+        return True
 
 
 def _m(label):
@@ -61,10 +71,13 @@ def ensure(branches=None, user=None):
     """Adds the reporting-manager chains that are missing. Returns a list of what was added (labels)."""
     B = apps.get_model('OrganisationManager', 'brnch_mstr')
     brs = list(branches) if branches is not None else list(B.objects.all())
-    if not brs:
+    if not brs or not _on('hrms'):
         return []
+    pay = _on('payroll')
     added = []
     for label, wf, lv in SIMPLE:
+        if label in PAYROLL and not pay:
+            continue
         W, L = _m(wf), _m(lv)
         if W is None or L is None:
             continue
@@ -99,7 +112,7 @@ def ensure(branches=None, user=None):
             added.append(f'Leave: {n} leave types')
     # loan types: one reporting-manager workflow each
     LoT, LoW, LoL = _m('PayrollManagement.LoanType'), _m('PayrollManagement.LoanApprovalWorkflow'), _m('PayrollManagement.LoanApprovalLevels')
-    if LoT is not None and LoW is not None:
+    if LoT is not None and LoW is not None and pay:
         n = 0
         for t in LoT.objects.all():
             if t.use_common_workflow if hasattr(t, 'use_common_workflow') else False:
@@ -114,4 +127,43 @@ def ensure(branches=None, user=None):
                 w.branch.add(*missing_b)
         if n:
             added.append(f'Loans: {n} loan types')
+    # v1.67.19 (walkthrough): general requests, document requests and asset requests – one reporting-manager workflow per type
+    # and branch, like leave (the button said "every request type that has no chain yet" but left these out)
+    for label, tmodel, wmodel, fk in TYPED:
+        T, Wf = _m(tmodel), _m(wmodel)
+        if T is None or Wf is None:
+            continue
+        have = set(Wf.objects.values_list(f'{fk}_id', 'branch'))
+        # a workflow of the type without branches is used for every branch (the request falls back to it) – kept as it is
+        every = {t for t, b in have if b is None}
+        n = 0
+        for t in T.objects.all():
+            if getattr(t, 'use_common_workflow', False) or t.pk in every:
+                continue
+            bf = next((f for f in T._meta.get_fields() if f.name == 'branch'), None)
+            if bf is not None and bf.many_to_many:
+                only = set(t.branch.values_list('pk', flat=True))   # none ticked = every branch
+            else:
+                only = {t.branch_id} if getattr(t, 'branch_id', None) else set()
+            need = [b for b in brs if (not only or b.pk in only) and (t.pk, b.pk) not in have]
+            if not need:
+                continue
+            w = Wf.objects.filter(**{fk: t, 'approval_type': 'reporting_manager'}).order_by('id').first()
+            if w is None:
+                kw = {fk: t, 'approval_type': 'reporting_manager'}
+                if any(f.name == 'created_by' for f in Wf._meta.concrete_fields) and user is not None and getattr(user, 'pk', None):
+                    kw['created_by'] = user
+                w = Wf.objects.create(**kw)
+            w.branch.add(*need)
+            n += 1
+        if n:
+            added.append(f'{label}: {n} types')
     return added
+
+
+# (label, type model, workflow model, foreign key of the workflow to the type)
+TYPED = [
+    ('General requests', 'EmpManagement.RequestType', 'EmpManagement.ApprovalWorkflow', 'request_type'),
+    ('Document requests', 'EmpManagement.DocRequestType', 'EmpManagement.DocumentApprovalWorkflow', 'request_type'),
+    ('Asset requests', 'OrganisationManager.AssetType', 'OrganisationManager.AssetApprovalWorkflow', 'asset_type'),
+]

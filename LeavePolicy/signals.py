@@ -17,7 +17,7 @@ LR = 'calendars.employee_leave_request'
 
 @receiver(pre_save, sender=LR)
 def _remember_status(sender, instance, **kwargs):
-    old = sender.objects.filter(pk=instance.pk).values('status', 'approved_days', 'applied_days', 'number_of_days').first() if instance.pk else None
+    old = sender.objects.filter(pk=instance.pk).values('status', 'approved_days', 'applied_days', 'number_of_days', 'start_date').first() if instance.pk else None
     instance._lp_old = old
 
 
@@ -48,7 +48,8 @@ def _on_leave_saved(sender, instance, created, **kwargs):
                 log.exception('leave salary in advance failed for %s', instance.pk)
         elif was == 'approved' and now != 'approved':
             days = float((old or {}).get('approved_days') or (old or {}).get('number_of_days') or 0)
-            engine.post(instance.employee_id, instance.leave_type_id, date.today(), 'cancelled', days, ref=instance,
+            _sd = (old or {}).get('start_date') or instance.start_date   # v1.67.19: a future leave is given back on its own date
+            engine.post(instance.employee_id, instance.leave_type_id, max(date.today(), _sd) if _sd else date.today(), 'cancelled', days, ref=instance,
                         note=f'{instance.document_number} cancelled')
             engine.sync_calendar(instance, approved=False)
             engine.resync_year(instance)   # v1.62.2 (item 49): a cancelled request frees its steps for the later days
@@ -233,3 +234,30 @@ def _v16211_encashment_after(sender, instance, created, **kwargs):
         if last is not None:
             last.note = f'Encashed {days:g} days – AED {amt:,.2f} (amount changed; paid with the next payroll)'[:255]
             last.save(update_fields=['note'])
+
+
+# v1.67.14 (fixes): "Reports to" (an employee, from the bulk upload or the Data workbook) fills the reporting manager (a user)
+# once that employee has a login – loans, end of service, assets, documents, payroll requests … all ask for the reporting
+# manager and refused "Employee has no reporting manager" although Reports to was set (leave already used it).
+_EMP = apps.get_model('EmpManagement', 'emp_master')
+
+
+@receiver(pre_save, sender=_EMP, dispatch_uid='v16714_reports_to_manager')
+def _v16714_fill_manager(sender, instance, **kwargs):
+    try:
+        if instance.emp_reporting_manager_id is None and instance.emp_reports_to_id:
+            uid = sender.objects.filter(pk=instance.emp_reports_to_id).values_list('users_id', flat=True).first()
+            if uid and uid != instance.users_id:
+                instance.emp_reporting_manager_id = uid
+    except Exception:   # noqa: BLE001 – never block saving an employee
+        log.exception('reports-to → reporting manager')
+
+
+@receiver(post_save, sender=_EMP, dispatch_uid='v16714_reports_to_team')
+def _v16714_fill_team(sender, instance, **kwargs):
+    try:
+        if instance.users_id:
+            sender.objects.filter(emp_reports_to_id=instance.pk, emp_reporting_manager__isnull=True).exclude(users_id=instance.users_id) \
+                .update(emp_reporting_manager_id=instance.users_id)
+    except Exception:   # noqa: BLE001
+        log.exception('reports-to → reporting manager of the team')

@@ -52,8 +52,16 @@ def give_back(payslip):
     LE = M('PayrollManagement', 'LeaveEncashment')
     enc = list(LE.objects.filter(payroll_run_id=payslip.payroll_run_id, employee_id=payslip.employee_id, status='processed')
                .values_list('pk', flat=True)) if payslip.payroll_run_id else []
-    out = restore_consumed_items(payslip)   # advances, tickets, requests, inputs, leave encashments (deletes the note)
+    out = restore_consumed_items(payslip)   # advances, tickets, requests, inputs, leave encashments, expense reports (deletes the note)
     note = dict(used, given_back=True, encashments=enc)
+    note['expenses'] = out.pop('expense_ids', None) or []   # v1.67.15 (C10)
+    out['expenses'] = len(note['expenses'])
+    try:   # v1.67.15 (C10): deductions carried over – the carry-over this payslip made waits, the ones it took wait again
+        from PayrollManagement.payroll_guards import carry_give_back as _v16715_carry_back
+        note['carries'] = _v16715_carry_back(payslip)
+        out['carries'] = len(note['carries'].get('taken') or [])
+    except ImportError:
+        pass
     # arrear lines (salary arrears and the leave-pay recovery lines) the payslip took
     try:
         from .models import ArrearLine
@@ -130,6 +138,14 @@ def problems(payslip):
         from . import recoveries as _v1630_rec
         if _v1630_rec.rejected_problems(n['recoveries']):
             out.append(tr('recovery instalments'))
+    if n.get('expenses'):   # v1.67.15 (C10)
+        from ExpenseManagement.services import taken_since as _v16715_exp_taken
+        if _v16715_exp_taken(n['expenses']):
+            out.append(tr('expense reports'))
+    if n.get('carries'):   # v1.67.15 (C10)
+        from PayrollManagement.payroll_guards import carry_problems as _v16715_carry_problems
+        if _v16715_carry_problems(payslip, n['carries']):
+            out.append(tr('deductions carried over'))
     return out
 
 
@@ -186,6 +202,12 @@ def retake(payslip):
     if n.get('recoveries'):   # v1.63.0 (item 28): the instalments counted again
         from . import recoveries as _v1630_rec
         out['recoveries'] = _v1630_rec.retake_rejected(n['recoveries'])
+    if n.get('expenses'):   # v1.67.15 (C10): the expense reports are paid by this payslip again
+        from ExpenseManagement.services import retake_payslip as _v16715_exp_retake
+        out['expenses'] = _v16715_exp_retake(payslip, n['expenses'])
+    if n.get('carries'):   # v1.67.15 (C10)
+        from PayrollManagement.payroll_guards import carry_retake as _v16715_carry_retake
+        out['carries'] = _v16715_carry_retake(payslip, n['carries'])
     keep = {k: v for k, v in n.items() if k in ('advances', 'tickets', 'requests', 'inputs')}
     row.value = keep
     row.save(update_fields=['value'])

@@ -80,8 +80,8 @@ def r_att_corrections(run):
 
 
 REPORTS = {
-    'att-daily-status': ('Daily attendance status', 'Leave & attendance', 'Status of every employee and day from the attendance rules: in / out, worked hours, break, late, early, OT, night shift and punch method.', r_att_daily_status, 'month', ['view_attendance', 'view_attendancereport']),
-    'att-late-early': ('Late arrivals & early departures (rules)', 'Leave & attendance', 'Days late or left early against the planned shift, in minutes, with waived penalties.', r_att_late_early, 'month', ['view_attendance', 'view_attendancereport']),
-    'att-missing-punch': ('Missing punches (rules)', 'Leave & attendance', 'Clock-ins without a clock-out after the shift end, whether the employee was told and the correction status.', r_att_missing_punch, 'month', ['view_attendance', 'view_attendancereport']),
+    'att-daily-status': ('Daily attendance status', 'Leave & attendance', 'Status of every employee and day from the attendance rules: in / out, worked hours, break, late, early, OT, night shift and punch method – up to 3 months.', r_att_daily_status, 'month', ['view_attendance', 'view_attendancereport']),
+    'att-late-early': ('Late arrivals & early departures (rules)', 'Leave & attendance', 'Days late or left early against the planned shift, in minutes, with waived penalties – up to 3 months.', r_att_late_early, 'month', ['view_attendance', 'view_attendancereport']),
+    'att-missing-punch': ('Missing punches (rules)', 'Leave & attendance', 'Clock-ins without a clock-out after the shift end, whether the employee was told and the correction status – up to 3 months.', r_att_missing_punch, 'month', ['view_attendance', 'view_attendancereport']),
     'att-corrections': ('Attendance corrections', 'Leave & attendance', 'Correction requests with proposed times, manager and HR decisions.', r_att_corrections, 'month', ['view_attendance', 'view_attendancereport']),
 }

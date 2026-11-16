@@ -262,15 +262,20 @@ class Odoo:
             base = sum(net(l) for l, _r in other)
             vat_amt = sum(abs(float(l.credit - l.debit)) for l, _r in vat)
             tax_ids = []
-            if vat_amt and base:
+            if vat_amt and base and not doc.get('line_rates'):
                 rate = round(vat_amt * 100 / base, 2)
                 tax_ids = [self._tax(rate, 'sale' if sale else 'purchase', self.st.sale_tax_ref if sale else self.st.purchase_tax_ref)]
             lines = []
+            per_line = doc.get('line_rates') or {}   # v1.67.14 (billing connectors): Projects invoices mix 5 % and zero-rated lines
             for l, _r in other:
                 v = {'name': (l.label or doc.get('description') or batch.reference)[:250], 'quantity': 1, 'price_unit': round(net(l), 2),
                      'account_id': acc[l.account]['id']}
-                if tax_ids:
-                    v['tax_ids'] = [[6, 0, tax_ids]] if self.mode == 'json2' else [(6, 0, tax_ids)]
+                lt = tax_ids
+                if per_line and l.label in per_line:
+                    lt = [self._tax(float(per_line[l.label]), 'sale' if sale else 'purchase',
+                                    (self.st.sale_tax_ref if sale else self.st.purchase_tax_ref) if float(per_line[l.label]) else '')]
+                if lt:
+                    v['tax_ids'] = [[6, 0, lt]] if self.mode == 'json2' else [(6, 0, lt)]
                 refs = [str(x) for x in l.analytics.values() if x]
                 if refs:
                     v['analytic_distribution'] = {','.join(refs): 100} if self.mode == 'json2' else {r: 100 for r in refs}

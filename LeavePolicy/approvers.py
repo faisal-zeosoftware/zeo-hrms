@@ -84,7 +84,13 @@ def fallback_chain(emp):
     yield 'company_hr', holder('company_hr', emp)
     U = M('UserManagement', 'CustomUser')
     from django.db import connection   # v1.22.0: an administrator of this company, not of any company
-    yield 'admin', U.objects.filter(is_active=True, is_superuser=True, tenants__schema_name=connection.schema_name).order_by('pk').first()
+    adm = None
+    try:   # v1.67.15 a real administrator of the company, not the platform administrator
+        from ZeoCloud.companyadmin import approver_admin
+        adm = approver_admin(connection.schema_name, _own_user_ids(emp))   # v1.67.17 not the employee himself
+    except Exception:   # noqa: BLE001
+        adm = None
+    yield 'admin', adm or U.objects.filter(is_active=True, is_superuser=True, tenants__schema_name=connection.schema_name).order_by('pk').first()
 
 
 def resolve(level, emp, exclude_ids=()):

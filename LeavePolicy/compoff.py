@@ -61,6 +61,17 @@ def expire(on=None, user_id=None, preview=False):
         rows = Ledger.objects.filter(employee_id=emp.pk, leave_type_id=t.pk)
         credits = list(rows.filter(kind__in=('accrual', 'opening'), days__gt=0).order_by('date', 'id').values_list('date', 'days'))
         used = -float(rows.filter(kind__in=('taken', 'cancelled', 'encashed', 'lapsed')).aggregate(s=Sum('days'))['s'] or 0)
+        # v1.67.19: days already REQUESTED (waiting for approval) on a date inside the validity of the credits count as used –
+        # the expiry took them away and the request then went below zero on approval
+        try:
+            from django.apps import apps as _apps
+            LR = _apps.get_model('calendars', 'employee_leave_request')
+            last_valid = max((d + timedelta(days=line.comp_expiry_days) for d, n in credits), default=None)
+            if last_valid is not None:
+                for r in LR.objects.filter(employee_id=emp.pk, leave_type_id=t.pk, status='pending', start_date__lte=last_valid):
+                    used += float(r.applied_days or r.number_of_days or 0)
+        except Exception:   # noqa: BLE001
+            pass
         lapse = 0.0
         for d, n in credits:            # first in, first out
             take = min(n, max(used, 0))

@@ -4,7 +4,7 @@ import json
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import DataError, transaction
 from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from django.utils.dateparse import parse_date
@@ -20,7 +20,8 @@ from .models import (BILLABLE, BILLING_FREQ, BILLING_METHODS, CHANNELS, CONTRACT
                      DONE_STAGES, INVOICE_STATUS, LEVEL, MILESTONE_STATUS, OPEN_STAGES, PRIORITIES, PROJECT_TYPES, RENEWAL_STATUS,
                      RISK_KIND, RISK_STATUS, SUPPORT_TIMING, TICKET_STAGES, AMCBilling, AMCContract, ChangeRequest, Contact, Customer,
                      DevRequest, IssueCategory, Milestone, ProjectExpense, ProjectProfile, ProjectRisk, ProjectsSettings,
-                     ServiceProduct, SLAPolicy, SLATarget, SupportTeam, TaskDetail, Ticket, TicketFile, WorkLog, PlanTemplate)
+                     ServiceProduct, SLAPolicy, SLATarget, SupportTeam, TaskDetail, Ticket, TicketFile, WorkLog, PlanTemplate,
+                     CustomerEquipment, CustomerSite)   # v1.67.13 (service)
 
 
 # ------------------------------------------------------------------ plumbing
@@ -41,6 +42,8 @@ def guard(fn):
             return bad(e.message, status.HTTP_403_FORBIDDEN)
         except Http404:
             return bad('Not found.', status.HTTP_404_NOT_FOUND)
+        except DataError:   # v1.67.19 (field check): a value the database does not take – a message, not a server error
+            return bad('A value is too long or not valid for its field.')
     wrapper.__name__ = fn.__name__
     wrapper.__doc__ = fn.__doc__
     return wrapper
@@ -240,15 +243,37 @@ class LookupsView(Base):
             'levels': choices(LEVEL), 'risk_status': choices(RISK_STATUS),
             'product_categories': choices(ServiceProduct.CATEGORIES), 'expense_categories': choices(ProjectExpense.CATEGORIES),
             'stage_flow': {k: list(v) for k, v in S.ALLOWED.items()},
+            # v1.67.13 (service)
+            'service': _service_lookups(request),
         })
 
 
+def _service_lookups(request):
+    """v1.67.13 (service): choice lists, equipment categories, AMC types and the ticked industries."""
+    from . import views_service as VS
+    from .models import AMCType, EquipmentCategory
+    r = VS.lookups()
+    r['equipment_categories'] = [{'id': c.id, 'name': c.name, 'code': c.code, 'extra_fields': c.extra_fields or []}
+                                 for c in EquipmentCategory.objects.filter(is_active=True)]
+    r['amc_types'] = [{'id': t.id, 'name': t.name, 'parts': t.parts, 'visits_per_year': t.visits_per_year,
+                       'callouts_per_year': t.callouts_per_year} for t in AMCType.objects.filter(is_active=True)]
+    try:
+        from .packs import ticked
+        r['industries'] = ticked()
+    except Exception:   # noqa: BLE001
+        r['industries'] = []
+    return r
+
+
 SETTINGS_FIELDS = ('ticket_prefix', 'amc_prefix', 'dev_prefix', 'cr_prefix', 'project_prefix', 'customer_prefix', 'currency',
-                   'timezone', 'mailbox_host', 'mailbox_user', 'mailbox_folder', 'portal_url', 'weekly_report_emails')
+                   'timezone', 'mailbox_host', 'mailbox_user', 'mailbox_folder', 'portal_url', 'weekly_report_emails',
+                   'invoice_terms')   # v1.67.13 (billing)
 SETTINGS_INTS = ('number_padding', 'after_expiry_reminder_days', 'expiring_window_days', 'waiting_customer_reminder_days',
-                 'auto_close_resolved_days', 'escalation_minutes', 'mailbox_port')
+                 'auto_close_resolved_days', 'escalation_minutes', 'mailbox_port',
+                 'default_payment_days', 'pi_followup_days', 'pi_to_create_days',   # v1.67.13 (billing)
+                 'ppm_horizon_days')   # v1.67.14 (field service)
 SETTINGS_BOOLS = ('notify_customer', 'portal_enabled', 'portal_show_hours', 'portal_show_invoices', 'mailbox_enabled', 'mailbox_ssl', 'weekly_report_enabled',
-                  'approval_not_covered')
+                  'approval_not_covered', 'report_to_customer')   # v1.67.14 report_to_customer
 
 
 def settings_row(s):
@@ -257,6 +282,8 @@ def settings_row(s):
               'work_end': s.work_end.strftime('%H:%M') if hasattr(s.work_end, 'strftime') else str(s.work_end)[:5],
               'holiday_calendar_ids': s.holiday_calendar_ids or [], 'renewal_reminder_days': s.renewal_reminder_days or [90, 60, 30, 0],
               'default_team': s.default_team_id, 'default_sla': s.default_sla_id, 'mailbox_password_set': bool(s.mailbox_password),
+              'invoices_made_in': s.invoices_made_in, 'default_vat_rate': str(s.default_vat_rate), 'billing_user': s.billing_user_id,   # v1.67.13
+              'labour_rate': str(s.labour_rate), 'parts_markup': str(s.parts_markup),   # v1.67.14 (field service)
               'mailbox_last_check': RW.d(s.mailbox_last_check), 'mailbox_last_error': s.mailbox_last_error,
               'approval_hours_limit': RW.num(s.approval_hours_limit)})
     try:
@@ -310,6 +337,22 @@ class SettingsView(Base):
                     setattr(s, k, f'{int(h):02d}:{int(m):02d}')
                 except ValueError:
                     raise S.ProjectsError('Use HH:MM for working hours.', k)
+        if f.has('invoices_made_in'):   # v1.67.13 (billing)
+            s.invoices_made_in = 'external' if f.s('invoices_made_in') == 'external' else 'zeo'
+        if f.has('default_vat_rate'):
+            v = f.n('default_vat_rate', Decimal(0))
+            if v > 100:
+                raise S.ProjectsError('The VAT rate must be between 0 and 100.', 'default_vat_rate')
+            s.default_vat_rate = v
+        for k, top in (('labour_rate', Decimal('100000')), ('parts_markup', Decimal('1000'))):   # v1.67.14 (field service)
+            if f.has(k):
+                v = f.n(k, Decimal(0))
+                if v < 0 or v > top:
+                    raise S.ProjectsError('Enter a sensible amount.', k)
+                setattr(s, k, v)
+        if f.has('billing_user'):
+            from django.contrib.auth import get_user_model
+            s.billing_user = get_user_model().objects.filter(pk=f.i('billing_user')).first() if f.i('billing_user') else None
         if f.has('default_team'):
             s.default_team = f.obj('default_team', SupportTeam)
         if f.has('default_sla'):
@@ -473,6 +516,11 @@ def save_customer(c, f, user, request=None):
     for k in ('name', 'trn', 'email', 'phone', 'website', 'address', 'city', 'country', 'notes', 'email_domains'):
         if f.has(k):
             setattr(c, k, f.s(k))
+    if f.has('payment_days'):   # v1.67.13 (billing)
+        v = f.i('payment_days')
+        if v is not None and not 0 <= v <= 365:
+            raise S.ProjectsError('Payment days must be between 0 and 365.', 'payment_days')
+        c.payment_days = v
     if not c.name:
         raise S.ProjectsError('Customer name is required.', 'name')
     if Customer.objects.filter(name__iexact=c.name).exclude(pk=c.pk).exists():
@@ -522,7 +570,7 @@ class CustomerListView(Base):
 
     @guard
     def post(self, request):
-        A.need(request, 'customer_edit')
+        A.need(request, 'customer_add')
         f = In(request)
         with transaction.atomic():
             c = save_customer(Customer(), f, request.user, request)
@@ -551,7 +599,7 @@ class CustomerDetailView(Base):
 
     @guard
     def patch(self, request, pk):
-        A.need(request, 'customer_edit')
+        A.need(request, 'customer_change')
         return Response(RW.customer_row(save_customer(get_or_404(Customer, pk, request), In(request), request.user, request), True))
 
     put = patch
@@ -594,21 +642,21 @@ class ContactListView(Base):
 
     @guard
     def post(self, request):
-        A.need(request, 'customer_edit')
+        A.need(request, 'customer_change')
         return Response(RW.contact_row(save_contact(Contact(), In(request))), status=status.HTTP_201_CREATED)
 
 
 class ContactDetailView(Base):
     @guard
     def patch(self, request, pk):
-        A.need(request, 'customer_edit')
+        A.need(request, 'customer_change')
         return Response(RW.contact_row(save_contact(get_or_404(Contact, pk, request), In(request))))
 
     put = patch
 
     @guard
     def delete(self, request, pk):
-        A.need(request, 'customer_edit')
+        A.need(request, 'customer_change')
         c = get_or_404(Contact, pk, request)
         if c.tickets.exists() or c.portal_user_id:
             c.is_active = False
@@ -709,6 +757,8 @@ class TicketListView(Base):
             team=f.obj('team', SupportTeam) if staff else None,
             assigned_to=emp(f.i('assigned_to')) if staff and A.can(request, 'ticket_manage') else None,
             contract=f.obj('contract', AMCContract) if staff else None,
+            site=f.obj('site', CustomerSite), equipment=f.obj('equipment', CustomerEquipment),   # v1.67.13 (service)
+            ticket_kind=f.s('ticket_kind') or 'request',
             billable_status=f.choice('billable_status', BILLABLE) if staff else None,
             files=f.filelist(), approved_by=request.user if A.can(request, 'ticket_manage') else None)
         return Response(RW.ticket_detail(t), status=status.HTTP_201_CREATED)
@@ -938,6 +988,28 @@ def save_contract(c, f, user):
         c.sla_policy = f.obj('sla_policy', SLAPolicy)
     if f.has('account_manager'):
         c.account_manager = emp(f.i('account_manager'))
+    # v1.67.13 (service): AMC type, visits, call-outs, parts limit, coverage scope
+    from .models import AMCType, COVER_SCOPE
+    if f.has('amc_type'):
+        t = f.obj('amc_type', AMCType)
+        if t is not None and t.pk != c.amc_type_id:
+            c.amc_type = t
+            if not f.has('visits_per_year'):
+                c.visits_per_year = t.visits_per_year
+            if not f.has('callouts_per_year'):
+                c.callouts_per_year = t.callouts_per_year
+            if t.legacy_contract_type and not f.has('contract_type'):
+                c.contract_type = t.legacy_contract_type
+        elif t is None:
+            c.amc_type = None
+    if f.has('visits_per_year'):
+        c.visits_per_year = f.i('visits_per_year') or 0
+    if f.has('callouts_per_year'):
+        c.callouts_per_year = f.i('callouts_per_year')
+    if f.has('parts_limit'):
+        c.parts_limit = f.n('parts_limit')
+    if f.has('cover_scope'):
+        c.cover_scope = f.choice('cover_scope', COVER_SCOPE, 'all')
     if creating:
         c.number = S.next_number('amc')
         c.created_by = user
@@ -945,6 +1017,14 @@ def save_contract(c, f, user):
     c.save()
     if f.has('products'):
         c.products.set(ServiceProduct.objects.filter(pk__in=f.ids('products')))
+    # v1.67.13 (service): covered sites / categories / equipment (only the customer's own)
+    from .models import CustomerEquipment, CustomerSite, EquipmentCategory
+    if f.has('covered_sites'):
+        c.covered_sites.set(CustomerSite.objects.filter(pk__in=f.ids('covered_sites'), customer=c.customer))
+    if f.has('covered_categories'):
+        c.covered_categories.set(EquipmentCategory.objects.filter(pk__in=f.ids('covered_categories')))
+    if f.has('covered_equipment'):
+        c.covered_equipment.set(CustomerEquipment.objects.filter(pk__in=f.ids('covered_equipment'), customer=c.customer))
     if c.status != 'draft' and any(f.has(k) for k in ('value', 'billing_frequency', 'start_date', 'end_date')):
         S.build_billing(c)
     return c
@@ -979,7 +1059,7 @@ class ContractListView(Base):
 
     @guard
     def post(self, request):
-        A.need(request, 'amc_edit')
+        A.need(request, 'amc_add')
         f = In(request)
         with transaction.atomic():
             c = save_contract(AMCContract(), f, request.user)
@@ -1011,7 +1091,7 @@ class ContractDetailView(Base):
 
     @guard
     def patch(self, request, pk):
-        A.need(request, 'amc_edit')
+        A.need(request, 'amc_change')
         c = get_or_404(AMCContract, pk, request)
         if c.status in ('expired', 'renewed', 'cancelled') and not A.is_admin(request):
             raise S.ProjectsError('A closed contract cannot be changed.')
@@ -1028,10 +1108,10 @@ class ContractActionView(Base):
         c = get_or_404(AMCContract, pk, request)
         f = In(request)
         if action == 'activate':
-            A.need(request, 'amc_edit')
+            A.need(request, 'amc_change')
             S.activate_contract(c, request.user)
         elif action == 'cancel':
-            A.need(request, 'amc_edit')
+            A.need(request, 'amc_change')
             c.status = 'cancelled'
             c.notes = (c.notes + '\nCancelled: ' + f.s('reason')).strip()
             c.save(update_fields=['status', 'notes'])
@@ -1111,7 +1191,7 @@ class BillingDetailView(Base):
                 setattr(b, k, f.dt(k))
         if f.has('amount'):
             b.amount = f.n('amount', Decimal(0))
-        if b.status in ('invoiced', 'paid') and not b.invoice_no:
+        if b.status in ('invoiced', 'partly_paid', 'paid') and not b.invoice_no:
             raise S.ProjectsError('Enter the invoice number.', 'invoice_no')
         if b.status == 'paid' and not b.paid_date:
             b.paid_date = S.local_today()
@@ -1271,7 +1351,7 @@ class NotificationSettingsView(Base):
             c = Customer.objects.filter(pk=q.get('customer')).first()
             if c is None:
                 raise Http404
-            A.need(request, 'customer_edit' if write else 'customer_view')
+            A.need(request, 'customer_change' if write else 'customer_view')
             return c, None
         if write:
             A.need(request, 'setup')

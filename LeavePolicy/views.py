@@ -108,7 +108,21 @@ class LineSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(tr('Each service year once.'))
         return sorted(out, key=lambda x: x['from_year'])
 
+    NON_NEGATIVE = ('days_per_year', 'max_per_request', 'max_per_year', 'carry_forward_max', 'encash_max_per_year',
+                    'comp_full_day_hours', 'comp_half_day_hours')
+
     def validate(self, data):
+        # v1.67.19: days and hours of a line are never negative (−5 days a year took 5 days off every balance at the accrual);
+        # the screen's min="0" was the only check
+        bad = {}
+        for f in self.NON_NEGATIVE:
+            v = data.get(f)
+            if v is not None and float(v) < 0:
+                bad[f] = tr('Cannot be negative.')
+        if data.get('days_per_year') is not None and float(data['days_per_year']) > 366:
+            bad['days_per_year'] = tr('At most 366 days a year.')
+        if bad:   # the screen names the leave type of the line
+            raise serializers.ValidationError(bad)
         prorate = data.get('prorate', getattr(self.instance, 'prorate', 'calendar'))
         accrual = data.get('accrual', getattr(self.instance, 'accrual', 'monthly'))
         if prorate == 'worked' and accrual != 'monthly':
@@ -541,6 +555,7 @@ def _payroll_plus():
 class EncashmentView(APIView):
     """GET ?status=pending – encashments with their checks; POST {id, action: approve|reject, remarks}."""
     permission_classes = [IsAuthenticated]
+    from PayrollManagement.models import LeaveEncashment as zeo_model   # v1.67.15 data loads stamp the business date of the decision
 
     def get(self, request):
         if not can(request, ENCASH | {'view_leaveencashment'}):
@@ -926,7 +941,10 @@ class ConflictSettingsView(APIView):
             return Response({'detail': tr('Only HR changes the leave settings.')}, status=403)
         d = request.data
         a, b = parse_date(str(d.get('start_date') or '')), parse_date(str(d.get('end_date') or ''))
-        name = (d.get('name') or '').strip()[:120]
+        name = (d.get('name') or '').strip()
+        # v1.67.19 (field check): a longer name / note was cut without a word – said instead
+        if len(name) > 120 or len(d.get('note') or '') > 255:
+            return Response({'detail': tr('The name may have at most 120 characters and the note 255.')}, status=400)
         if not name or a is None or b is None or b < a:
             return Response({'detail': tr('Give the name and the dates (the end on or after the start).')}, status=400)
         ints = lambda v: [int(x) for x in (v or []) if str(x).isdigit()]  # noqa: E731
@@ -944,7 +962,8 @@ class ConflictSettingsView(APIView):
     def delete(self, request, pk=None):
         from .models import BlackoutPeriod
         c = _ctx(request)
-        if not (c.admin or c.codes & WRITE):
+        # v1.67.19 (access rights field check): an add / change right deleted blackout periods – deleting needs a delete right
+        if not (c.admin or c.codes & {'delete_leavepolicy', 'delete_leave_type', 'delete_leave_entitlement', 'delete_blackoutperiod'}):
             return Response({'detail': tr('Only HR changes the leave settings.')}, status=403)
         BlackoutPeriod.objects.filter(pk=pk).delete()
         return Response(status=204)

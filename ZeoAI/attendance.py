@@ -1,5 +1,6 @@
 """AI Attendance & Shift Management – coverage gaps, roster recommendations, patterns, overtime forecast, replacements, anomalies.
 Statistics over AttendancePlus (AttendanceDay) and ShiftPlanner (RosterEntry, Availability); explanations on every item."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
@@ -41,7 +42,7 @@ def _hourly(emp):
 def patterns(branch_id=None, dept_id=None, days=30):
     s = AIAssistantSettings.get()
     AD = M('AttendancePlus', 'AttendanceDay')
-    t = date.today()
+    t = _zt_today()
     since = t - timedelta(days=days)
     emps = {e.pk: e for e in _emps(branch_id, dept_id)}
     rows = AD.objects.filter(employee_id__in=list(emps), date__gte=since, date__lte=t)
@@ -98,7 +99,7 @@ def coverage(branch_id=None, dept_id=None, days=14):
     s = AIAssistantSettings.get()
     RE = M('ShiftPlanner', 'RosterEntry')
     AD = M('AttendancePlus', 'AttendanceDay')
-    t = date.today()
+    t = _zt_today()
     emps = {e.pk: e for e in _emps(branch_id, dept_id)}
     ids = list(emps)
     # usual presence per weekday from attendance history

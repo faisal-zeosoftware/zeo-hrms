@@ -1,4 +1,5 @@
 
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import datetime, timedelta
 from django.utils import timezone
 from .models import leave_entitlement, assign_weekend,assign_holiday,AttendancePolicy
@@ -41,7 +42,7 @@ def get_employee_holiday_calendar(employee):
     return None
 
 def calculate_leave_entitlement(employee, leave_type):
-    today = timezone.now().date()
+    today = _zt_today()
     leave_entitlements = leave_entitlement.objects.filter(leave_type=leave_type)
 
     for entitlement in leave_entitlements:
@@ -67,7 +68,7 @@ def calculate_leave_entitlement(employee, leave_type):
     return 0
 
 def prorated_accrual(entitlement, effective_date):
-    today = timezone.now().date()
+    today = _zt_today()
     total_days = (today - effective_date).days
     if entitlement.effective_after_unit == 'months':
         total_days //= 30
@@ -183,7 +184,7 @@ def _local_today():
         from AttendancePlus.engine import today
         return today()
     except Exception:
-        return timezone.localdate()
+        return _zt_today()
 
 
 def sync_attendance_calendar(employee, start_date, end_date):
@@ -637,7 +638,7 @@ def get_active_policy(employee):
 def _shift_window(day, shift, check_in_time=None):
     """v1.12.0: shift start / end datetimes for a day (end on the next day for cross-midnight shifts)."""
     from datetime import date as _d
-    day = day or _d.today()
+    day = day or _zt_today()
     start = datetime.combine(day, shift.start_time)
     end = datetime.combine(day, shift.end_time)
     if end <= start:
@@ -656,7 +657,7 @@ def apply_check_in_policy(employee, check_in_time, shift=None, day=None):
     from datetime import date as _d
     policy = get_employee_attendance_policy(employee)
 
-    dt = datetime.combine(day or _d.today(), check_in_time)
+    dt = datetime.combine(day or _zt_today(), check_in_time)
 
     if policy and policy.round_off:
         minutes = (dt.minute // 5) * 5
@@ -681,7 +682,7 @@ def apply_check_out_policy(employee, check_out_time, shift=None, day=None, check
     from datetime import date as _d
     policy = get_employee_attendance_policy(employee)
 
-    base = day or _d.today()
+    base = day or _zt_today()
     dt = datetime.combine(base, check_out_time)
     if check_in_time and check_out_time < check_in_time:
         dt += timedelta(days=1)       # out after midnight belongs to the shift start day
@@ -910,7 +911,7 @@ def leave_gender(leave_type_instance):
         lines = set()
     if len(lines) == 1 and lines <= {'F', 'M'}:
         return lines.pop()
-    if (leave_type_instance.leave_category or '') == 'maternity' or 'maternity' in (leave_type_instance.name or '').lower():
+    if __import__('LeavePolicy.categories', fromlist=['x']).system_of(leave_type_instance.leave_category or '') == 'maternity' or 'maternity' in (leave_type_instance.name or '').lower():
         return 'F'
     return None
 

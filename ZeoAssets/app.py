@@ -620,6 +620,15 @@ def run_check(o, request, old):
         raise AppError('"To" is before "From".', 'period_to')
     if o.period_to > SV.month_end(today()):
         raise AppError('The period cannot end after this month.', 'period_to')
+    if o.posting_date and o.posting_date < o.period_from:   # v1.70.5
+        raise AppError('The posting date cannot be before the period starts.', 'posting_date')
+    try:   # v1.70.5: not in a period the accounts have closed (when the Accounting connector is used; Assets also works alone)
+        from ZeoAccounting.services import period_problem
+        pp = period_problem(o.posting_date or o.period_to)
+    except Exception:   # noqa: BLE001
+        pp = None
+    if pp:
+        raise AppError(pp['text'].replace('Change the posting date of the journal.', 'Choose a later posting date.'), 'posting_date')
 
 
 def run_cards(o):
@@ -693,8 +702,8 @@ def journal(o):
 
 
 R(Reg('depreciation', DepreciationRun, 'Depreciation run', 'Depreciation runs', 'Finance',
-      cols=('number', 'period_from', 'period_to', 'status', 'assets', 'total', 'posted_at', 'posted_by'),
-      form=('period_from', 'period_to', 'note'), number=('depreciation', 'DEP'), manage=FIN, view=('ast_viewer', 'ast_auditor'),
+      cols=('number', 'period_from', 'period_to', 'posting_date', 'status', 'assets', 'total', 'posted_at', 'posted_by'),
+      form=('period_from', 'period_to', 'posting_date', 'note'), number=('depreciation', 'DEP'), manage=FIN, view=('ast_viewer', 'ast_auditor'),
       search=('number', 'note'), filters=('status',), subtitle='status', check=run_check, edit_when=lambda o: o.status == 'draft', files=False,
       extra=lambda o, r: {'journal': journal(o), 'journal_url': f'/zeo-assets/api/depreciation/{o.pk}/journal/'},
       children=(('Assets', 'dep_line', 'run'),),

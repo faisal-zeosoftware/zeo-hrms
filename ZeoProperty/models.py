@@ -7,6 +7,17 @@ from django.db import models
 
 from zeo.appkit.models import AppSettingsBase, EventBase, FileBase, PackItem, SequenceBase
 
+
+def _company_today():
+    """v1.70.5: today in the company's time zone (the server runs on UTC)."""
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    try:
+        from zeo.appkit.engine import company_tz
+        return _dt.datetime.now(ZoneInfo(company_tz())).date()
+    except Exception:   # noqa: BLE001
+        return _dt.datetime.now(ZoneInfo('Asia/Dubai')).date()
+
 USER = settings.AUTH_USER_MODEL
 EMP = 'EmpManagement.emp_master'
 MONEY = dict(max_digits=14, decimal_places=2)
@@ -469,6 +480,7 @@ class Bill(models.Model):
     period_from = models.DateField(null=True, blank=True)
     period_to = models.DateField(null=True, blank=True)
     due_date = models.DateField()
+    invoice_date = models.DateField(null=True, blank=True, help_text='v1.70.5: the date the record was issued (the invoice date in accounting); set when it is issued')
     amount = models.DecimalField(**MONEY)
     vat = models.DecimalField('VAT', default=0, **MONEY)
     total = models.DecimalField(default=0, **MONEY)
@@ -490,6 +502,13 @@ class Bill(models.Model):
     dispute_note = models.CharField(max_length=200, blank=True)
     promise_date = models.DateField('promised payment date', null=True, blank=True)
     promise_note = models.CharField(max_length=200, blank=True)
+
+    def save(self, *a, **kw):   # v1.70.5: the invoice date is the day the record is issued
+        if self.status in ('issued', 'part_paid', 'paid') and not self.invoice_date:
+            self.invoice_date = _company_today()
+            if kw.get('update_fields') is not None:
+                kw['update_fields'] = list(set(kw['update_fields']) | {'invoice_date'})
+        super().save(*a, **kw)
     reminders = models.JSONField('reminders sent', default=list, blank=True)
     escalated_on = models.DateField(null=True, blank=True)
     late_fee_billed = models.BooleanField(default=False)
@@ -577,6 +596,14 @@ class Commission(models.Model):
     share_percent = models.DecimalField('share of the commission %', max_digits=5, decimal_places=2, default=100)
     trigger = models.CharField(max_length=10, default='contract', choices=(('contract', 'On contract'), ('collection', 'On first collection')))
     created_at = models.DateTimeField(auto_now_add=True, null=True)
+    approved_on = models.DateField(null=True, blank=True, help_text='v1.70.5: the date the commission was approved (its date in accounting)')
+
+    def save(self, *a, **kw):   # v1.70.5
+        if self.status in ('approved', 'paid') and not self.approved_on:
+            self.approved_on = _company_today()
+            if kw.get('update_fields') is not None:
+                kw['update_fields'] = list(set(kw['update_fields']) | {'approved_on'})
+        super().save(*a, **kw)
 
     class Meta:
         ordering = ['-id']
@@ -1063,6 +1090,7 @@ class PurchaseOrder(models.Model):
     status = models.CharField(max_length=9, default='draft', choices=(('draft', 'Draft'), ('approval', 'Waiting for approval'), ('approved', 'Approved'), ('received', 'Received'), ('invoiced', 'Invoice matched'), ('paid', 'Paid'), ('cancelled', 'Cancelled')))
     invoice_no = models.CharField('vendor invoice no.', max_length=60, blank=True)
     invoice_amount = models.DecimalField(null=True, blank=True, **MONEY)
+    invoice_date = models.DateField("vendor's invoice date", null=True, blank=True, help_text='v1.70.5: the date on the supplier\'s invoice (its date in accounting)')
     charge_to = models.CharField(max_length=7, default='company', choices=(('company', 'Company'), ('owner', 'Owner of the unit'), ('tenant', 'Tenant of the unit'), ('budget', 'Service charge budget')))
     mnt_work_order_id = models.IntegerField('work order (Maintenance)', null=True, blank=True)
     external_ref = models.CharField('bill no. (accounting)', max_length=40, blank=True)

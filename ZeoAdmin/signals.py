@@ -5,11 +5,14 @@ from django.apps import apps
 from django.db.models.signals import post_delete, post_save, pre_save
 
 log = logging.getLogger(__name__)
-SKIP_APPS = {'ZeoAdmin', 'Chatter', 'sessions', 'admin', 'contenttypes', 'auth', 'django_celery_beat', 'ZeoMobile', 'ZeoCloud', 'ZeoLicence'}
+SKIP_APPS = {'migrations', 'ZeoAdmin', 'Chatter', 'sessions', 'admin', 'contenttypes', 'auth', 'django_celery_beat', 'ZeoMobile', 'ZeoCloud', 'ZeoLicence'}
 _done = False
 
 
 def _saved(sender, instance, created, raw=False, **kw):
+    # v1.67.31: 'migrations' skipped – the row that records a migration as applied fired webhooks too; in a company still being
+    # created (no webhook table yet) the failed query aborted the migration's transaction and Postgres rolled the whole migration
+    # back at COMMIT without an error (ZeoMasters 0007, RecruitmentManagement 0003 … missing on new companies)
     if raw or sender._meta.app_label in SKIP_APPS or sender.__module__ == '__fake__':   # v1.62.0: not inside migrations
         return
     try:

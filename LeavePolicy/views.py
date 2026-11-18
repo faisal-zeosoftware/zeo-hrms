@@ -1,4 +1,5 @@
 """Leave policies, UAE setup, accrual / year end, ledger, planner and encashment approval (v1.10.0)."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar as cal
 from datetime import date, datetime, timedelta
 
@@ -107,6 +108,14 @@ class LineSerializer(serializers.ModelSerializer):
         if len(years) != len(set(years)):
             raise serializers.ValidationError(tr('Each service year once.'))
         return sorted(out, key=lambda x: x['from_year'])
+
+    def validate_more(self, v):
+        """v1.73.8 – the more rules (LeavePolicy/more.py): known keys only, numbers checked."""
+        from .more import clean
+        try:
+            return clean(v or {})
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
 
     NON_NEGATIVE = ('days_per_year', 'max_per_request', 'max_per_year', 'carry_forward_max', 'encash_max_per_year',
                     'comp_full_day_hours', 'comp_half_day_hours')
@@ -310,18 +319,18 @@ class EffectiveView(APIView):
         out = {'employee': person(emp), 'employee_id': emp.pk, 'policy': p.name if p else None, 'policy_id': p.pk if p else None,
                'how': ('assigned to the employee' if EmployeeLeavePolicy.objects.filter(employee_id=emp.pk).exists() else
                        'by category' if p and emp.emp_ctgry_id_id in (p.category_ids or []) else 'default policy') if p else 'no policy',
-               'service_months': engine.months_of_service(emp, date.today()), 'lines': []}
+               'service_months': engine.months_of_service(emp, _zt_today()), 'lines': []}
         for l in (engine.emp_lines(emp, p) if p else []):   # v1.62.1: the employee's branch copy of each leave type
             bal = float(engine.balance_row(emp.pk, l.leave_type_id).balance or 0)
             taken = None
             if l.accrual in ('per_event', 'none'):   # no running balance: show what was taken this leave year
-                ys, ye = engine.leave_year(p, date.today())
+                ys, ye = engine.leave_year(p, _zt_today(), emp)
                 taken, bal = float(engine.used_in(emp.pk, l.leave_type_id, ys, ye) or 0), None
-            now_days, st = engine.step_on(l, emp, date.today())
+            now_days, st = engine.step_on(l, emp, _zt_today())
             out['lines'].append({'leave_type': names.get(l.leave_type_id), 'leave_type_id': l.leave_type_id, 'days_per_year': now_days,
-                                 'service_year': engine.service_year(emp, date.today()), 'step_from_year': st[0] if st else None,
+                                 'service_year': engine.service_year(emp, _zt_today()), 'step_from_year': st[0] if st else None,
                                  'accrual': l.get_accrual_display(), 'balance': bal, 'taken': taken, 'eligible': (l.gender in ('B', emp.emp_gender or '')) and
-                                 engine.months_of_service(emp, date.today()) >= l.min_service_months})
+                                 engine.months_of_service(emp, _zt_today()) >= l.min_service_months})
         return Response(out)
 
 
@@ -378,7 +387,7 @@ class LedgerStartView(APIView):
     def post(self, request):
         if not can(request, RUN):
             return Response({'detail': tr('You may not do this.')}, status=403)
-        d = parse_date(str(request.data.get('date') or '')) or date.today()
+        d = parse_date(str(request.data.get('date') or '')) or _zt_today()
         n = 0
         for b in limit_by_branch(request, M('calendars', 'emp_leave_balance').objects.all(), emp_field='employee'):  # v1.22.0 branch rights
             if not LeaveLedger.objects.filter(employee_id=b.employee_id, leave_type_id=b.leave_type_id).exists() and b.balance:
@@ -395,7 +404,7 @@ class OpeningsView(APIView):
     def post(self, request):
         if not can(request, RUN | {'add_emp_leave_balance', 'change_emp_leave_balance', 'import_emp_leave_balance'}):
             return Response({'detail': tr('You may not load opening balances.')}, status=403)
-        d = parse_date(str(request.data.get('date') or '')) or date.today()
+        d = parse_date(str(request.data.get('date') or '')) or _zt_today()
         mode = request.data.get('mode') or 'set'
         adj = request.data.get('kind') == 'adjustment'   # v1.62.0 people
         adj_note = str(request.data.get('note') or '').strip()
@@ -492,7 +501,7 @@ class PlannerView(APIView):
     def get(self, request):
         c = _ctx(request)
         q = request.query_params
-        d0 = parse_date(q.get('from') or '') or date.today().replace(day=1)
+        d0 = parse_date(q.get('from') or '') or _zt_today().replace(day=1)
         d1 = parse_date(q.get('to') or '') or (d0.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
         if (d1 - d0).days > 120:
             return Response({'detail': tr('Choose at most 4 months.')}, status=400)
@@ -620,7 +629,7 @@ class EncashmentView(APIView):
             if request.data.get('remarks'):
                 e.remarks = str(request.data['remarks'])[:500]
             e.save()
-            engine.post(e.employee_id, e.leave_type_id, date.today(), 'encashed', -days, ref=e,
+            engine.post(e.employee_id, e.leave_type_id, _zt_today(), 'encashed', -days, ref=e,
                         note=f'Encashed {days:g} days – AED {float(e.encashment_amount):,.2f} (paid with the next payroll)', user_id=request.user.pk, move_balance=True)
             if _pp:
                 _pp.record_final_encashment(e, request.user, request.data.get('remarks') or '')
@@ -807,8 +816,8 @@ class BalanceExplainedView(APIView):
         p = engine.policy_for(emp)
         if p is None:
             return Response({'employee': person(emp), 'policy': None, 'types': []})
-        today = date.today()
-        ys, ye = engine.leave_year(p, today)
+        today = _zt_today()
+        ys, ye = engine.leave_year(p, today, emp)
         names = _type_names()
         out = []
         for l in engine.emp_lines(emp, p):   # v1.62.1: the employee's branch copy of each leave type
@@ -966,4 +975,108 @@ class ConflictSettingsView(APIView):
         if not (c.admin or c.codes & {'delete_leavepolicy', 'delete_leave_type', 'delete_leave_entitlement', 'delete_blackoutperiod'}):
             return Response({'detail': tr('Only HR changes the leave settings.')}, status=403)
         BlackoutPeriod.objects.filter(pk=pk).delete()
+        return Response(status=204)
+
+
+# ================================================================== v1.73.7 leave categories
+def _lcat(c, used):
+    return {'id': c.pk, 'key': c.key, 'name': c.name, 'name_ar': c.name_ar, 'header': c.header, 'header_ar': c.header_ar, 'order': c.order,
+            'system': c.system, 'like': c.like, 'active': c.active, 'types': used.get(c.key, 0)}
+
+
+class LeaveCategoriesView(APIView):
+    """GET the leave categories (with how many leave types use each); POST a company category."""
+    permission_classes = [LeaveHR]
+
+    def get(self, request):
+        from django.db.models import Count
+        from .categories import ensure
+        from .models import LeaveCategory
+        ensure()
+        used = dict(M('calendars', 'leave_type').objects.values('leave_category').annotate(n=Count('id')).values_list('leave_category', 'n'))
+        return Response({'categories': [_lcat(c, used) for c in LeaveCategory.objects.all()]})
+
+    def post(self, request):
+        import re
+        from .categories import SYSTEM, ensure
+        from .models import LeaveCategory
+        ensure()
+        b = request.data
+        name = ' '.join(str(b.get('name') or '').split())[:80]
+        probs = {}
+        if not name:
+            probs['name'] = 'Required.'
+        like = str(b.get('like') or '')
+        if like not in SYSTEM:
+            probs['like'] = 'Choose the system category it behaves like.'
+        key = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')[:28] or 'category'
+        if key in SYSTEM:
+            probs['name'] = 'This is the name of a system category – rename that one instead.'
+        elif LeaveCategory.objects.filter(key=key).exists() or LeaveCategory.objects.filter(name__iexact=name).exists():
+            probs['name'] = 'There is a category with this name already.'
+        if probs:
+            return Response({'detail': 'Check the marked fields.', 'errors': probs}, status=400)
+        base = LeaveCategory.objects.filter(key=like).first()
+        c = LeaveCategory.objects.create(key=key, name=name, name_ar=str(b.get('name_ar') or '')[:80], header=str(b.get('header') or '')[:80],
+                                         header_ar=str(b.get('header_ar') or '')[:80], order=int(b.get('order') or ((base.order + 1) if base else 100)),
+                                         system=False, like=like)
+        return Response(_lcat(c, {}), status=201)
+
+
+class LeaveCategoryOneView(APIView):
+    permission_classes = [LeaveHR]
+
+    def patch(self, request, pk):
+        from .models import LeaveCategory
+        c = LeaveCategory.objects.filter(pk=pk).first()
+        if c is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        b, probs = request.data, {}
+        if 'name' in b:
+            name = ' '.join(str(b.get('name') or '').split())[:80]
+            if not name:
+                probs['name'] = 'Required.'
+            elif LeaveCategory.objects.filter(name__iexact=name).exclude(pk=c.pk).exists():
+                probs['name'] = 'There is a category with this name already.'
+            else:
+                c.name = name
+        for f in ('name_ar', 'header', 'header_ar'):
+            if f in b:
+                setattr(c, f, str(b.get(f) or '').strip()[:80])
+        if 'order' in b:
+            try:
+                c.order = max(0, min(9999, int(b.get('order'))))
+            except (TypeError, ValueError):
+                probs['order'] = 'A whole number.'
+        if 'active' in b:
+            on = str(b.get('active')).lower() in ('1', 'true')
+            if not on and c.key == 'annual':
+                probs['active'] = 'Annual leave is used by accruals, leave salary and the gratuity – it stays active.'
+            else:
+                c.active = on
+        if 'key' in b and b.get('key') != c.key:
+            probs['key'] = 'The key of a category does not change.'
+        if 'like' in b and b.get('like') != c.like and not c.system:
+            from .categories import SYSTEM
+            if b.get('like') not in SYSTEM:
+                probs['like'] = 'Choose the system category it behaves like.'
+            else:
+                c.like = b.get('like')
+        if probs:
+            return Response({'detail': 'Check the marked fields.', 'errors': probs}, status=400)
+        c.save()
+        n = M('calendars', 'leave_type').objects.filter(leave_category=c.key).count()
+        return Response(_lcat(c, {c.key: n}))
+
+    def delete(self, request, pk):
+        from .models import LeaveCategory
+        c = LeaveCategory.objects.filter(pk=pk).first()
+        if c is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        if c.system:
+            return Response({'detail': 'A system category is not deleted – make it inactive instead.'}, status=409)
+        n = M('calendars', 'leave_type').objects.filter(leave_category=c.key).count()
+        if n:
+            return Response({'detail': f'{n} leave types use this category – move them to another category first.'}, status=409)
+        c.delete()
         return Response(status=204)

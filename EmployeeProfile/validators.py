@@ -2,6 +2,7 @@
 
 Every checker returns the cleaned value or raises ValueError with a message that says how to fix it.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from datetime import date
 from Translations.i18n import tr  # v1.15.0 language packs: messages in the user's language
@@ -39,7 +40,7 @@ def clean_emirates_id(v):
     if not s.startswith('784'):
         raise ValueError(tr('An Emirates ID starts with 784.'))
     year = int(s[3:7])
-    if year < 1900 or year > date.today().year:
+    if year < 1900 or year > _zt_today().year:
         raise ValueError(tr('The 4 digits after 784 are the year of birth – check them.'))
     if not luhn_ok(s):
         raise ValueError(tr('This Emirates ID number is not valid (the last digit does not match). Check the number on the card.'))
@@ -179,7 +180,7 @@ MAX_VALIDITY_YEARS = 15
 
 def check_dates(issue, expiry, label, errors, issue_key, expiry_key, today=None):
     """issue not in the future / not absurd; expiry after issue and within a sensible validity."""
-    today = today or date.today()
+    today = today or _zt_today()
     if issue and issue > today:
         errors[issue_key] = tr('The {0} issue date cannot be in the future.', label)
     if issue and issue.year < 1950:

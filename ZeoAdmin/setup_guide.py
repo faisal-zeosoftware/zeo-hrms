@@ -5,6 +5,7 @@ the country pack's defaults, saves them on Next and lists what is missing in pla
 Checks of level 'block' stop Next (and go-live); 'warn' are listed and can be accepted at go-live with a note.
 Re-running a step adds what is missing and never deletes data.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime
 import logging
 from decimal import Decimal
@@ -140,7 +141,7 @@ def company_paystructure(create=False):
             return p
     if create:
         return PS.objects.create(salary_calculation_type='FIXED_DAYS', fixed_working_days=30, attendance_cycle_type='MONTH', payday=28,
-                                 working_days=['MON', 'TUE', 'WED', 'THU', 'FRI'], payroll_start_month=timezone.localdate().replace(day=1))
+                                 working_days=['MON', 'TUE', 'WED', 'THU', 'FRI'], payroll_start_month=_zt_today().replace(day=1))
     return PS.objects.order_by('id').first()
 
 
@@ -491,7 +492,7 @@ def eid_holidays(year):
 
 
 def s_time():
-    year = timezone.localdate().year
+    year = _zt_today().year
     W = M('calendars', 'weekend_calendar')
     H = M('calendars', 'holiday')
     wk = W.objects.filter(year=year).first() or W.objects.order_by('-year').first()
@@ -535,7 +536,7 @@ def _v1626_working_day_gaps():
     for them: every day counts as a working day)."""
     from datetime import timedelta
     from calendars.workdays import Plan
-    today = timezone.localdate()
+    today = _zt_today()
     p = Plan(today, today + timedelta(days=30))
     out = []
     for e in employees().order_by('emp_code'):
@@ -555,7 +556,7 @@ def _v1626_draft_rosters():
     if not has('ShiftPlanner.RosterPeriod'):
         return []
     import calendar as _c
-    t = timezone.localdate()
+    t = _zt_today()
     y, m = (t.year + 1, 1) if t.month == 12 else (t.year, t.month + 1)
     a, b = t.replace(year=y, month=m, day=1), t.replace(year=y, month=m, day=_c.monthrange(y, m)[1])
     R = M('ShiftPlanner', 'RosterPeriod')
@@ -628,7 +629,7 @@ def act_load_time(v, user):
     """The country's public holidays (this year and next) and, when the company has none, the weekend of the rule set –
     both assigned to every branch when nothing is assigned yet."""
     from CountryPack.holidays import seed_calendar
-    year = timezone.localdate().year
+    year = _zt_today().year
     HC, AH = M('calendars', 'holiday_calendar'), M('calendars', 'assign_holiday')
     cal = HC.objects.filter(year=year).order_by('id').first() or HC.objects.create(calendar_title=tr('Public holidays {0}', year)[:100], year=year, created_by=user)
     added, _ = seed_calendar(cal, pack().get('pack') or 'GEN', year, user)
@@ -657,7 +658,7 @@ def act_load_time(v, user):
 
 def act_confirm_eid(v, user):
     H = M('calendars', 'holiday')
-    year = timezone.localdate().year
+    year = _zt_today().year
     ids = []
     for row in v.get('eid') or []:
         h = H.objects.filter(pk=row.get('id')).first()
@@ -713,7 +714,7 @@ def s_leave():
     for p in pols:
         names = [c.ctgry_title for c in cats if c.pk in (p.category_ids or [])]
         covered.update(p.category_ids or [])
-        annual = p.lines.filter(leave_type_id__in=LT.objects.filter(leave_category='annual').values('id')).first() if hasattr(p, 'lines') else None
+        annual = p.lines.filter(leave_type_id__in=LT.objects.filter(leave_category__in=__import__('LeavePolicy.categories', fromlist=['x']).keys_like('annual')).values('id')).first() if hasattr(p, 'lines') else None
         rows.append([p.name, ', '.join(names) or (tr('Every category') if p.is_default else '–'), f'{annual.days_per_year} {tr("days")}' if annual else '–'])
     missing = [c.ctgry_title for c in cats if c.pk not in covered] if not default else []
     Bal = M('calendars', 'emp_leave_balance')
@@ -1394,7 +1395,7 @@ def home_items():
 def eid_reminder():
     """Daily: an Eid holiday starting within 21 days whose dates were not confirmed this year → the company administrators
     are reminded once (dates follow the moon sighting)."""
-    today = timezone.localdate()
+    today = _zt_today()
     g = guide()
     conf = set((g.eid or {}).get(str(today.year), {}).get('confirmed', []))
     sent = set((g.eid or {}).get(str(today.year), {}).get('reminded', []))

@@ -6,6 +6,7 @@ GET  api/history/people/           employees with their training count, passed, 
 
 Read only; the attendance sheet and the training history keep their own endpoints.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from collections import defaultdict
 from datetime import timedelta
 
@@ -31,7 +32,7 @@ class AttendanceSessionsView(LPView):
         if not is_hr(request, 'participantresult', 'change'):
             raise PermissionDenied(tr('The attendance sheet is for L&D / HR.'))
         m = _lm()
-        today = timezone.localdate()
+        today = _zt_today()
         qs = (m.TrainingSession.objects.filter(status__in=('published', 'in_progress', 'completed'))
               .select_related('course', 'trainer_employee').order_by('-start_date'))
         sessions = list(qs[:200])
@@ -71,7 +72,7 @@ class HistoryPeopleView(LPView):
         if not is_hr(request):
             raise PermissionDenied(tr('Training history of other employees is for L&D / HR.'))
         m = _lm()
-        today = timezone.localdate()
+        today = _zt_today()
         emps = list(employees_qs(request).exclude(is_active=False).select_related('emp_dept_id', 'emp_desgntn_id').order_by('emp_code'))
         ids = [e.id for e in emps]
         noms = (m.Nomination.objects.filter(employee_id__in=ids, seat_status='confirmed').select_related('session', 'session__course'))

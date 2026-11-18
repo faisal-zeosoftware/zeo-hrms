@@ -22,6 +22,7 @@ This importer:
     mode), identity (Emirates ID, passport, visa, labour card + expiry dates, Arabic name), MoHRE person ID, salary
     (one column per salary component, e.g. "Basic Salary", "Housing Allowance"), status / exit date.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import csv
 import io
 import logging
@@ -452,7 +453,7 @@ def check_row(values, masters, codes_in_file):
         err.append('Date of Birth is required')
     if not out.get('joined') and not any(e.startswith('Joining Date') for e in err):
         err.append('Joining Date is required')
-    if out.get('dob') and out['dob'] > date.today():
+    if out.get('dob') and out['dob'] > _zt_today():
         err.append('Date of Birth is in the future')
     elif out.get('dob') and out.get('joined'):
         j, d = out['joined'], out['dob']
@@ -568,7 +569,7 @@ def check_row(values, masters, codes_in_file):
         err.append(f'Reporting Manager user "{t("reporting_manager")}" not found in this company')
     # status / exit
     sv = t('status').lower()
-    out['left'] = bool(sv in LEFT_WORDS or (out.get('exit_date') and out['exit_date'] <= date.today()))
+    out['left'] = bool(sv in LEFT_WORDS or (out.get('exit_date') and out['exit_date'] <= _zt_today()))
     # bank
     iban = t('iban').replace(' ', '').upper()
     if iban and not re.fullmatch(r'[A-Z0-9]{23}', iban):

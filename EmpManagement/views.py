@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from zeo.report_files import report_file, report_rel  # v1.7.0: report files per company and report
 from django.shortcuts import render
 from django.conf import settings
@@ -169,6 +170,27 @@ class EmpViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         employee = self.get_object()
+
+        # v1.67.24 (L-BUG-18): an employee not used anywhere yet (a record made by mistake – only the zero leave balances and empty
+        # salary rows ZEO makes by itself) is deleted for good, as the Delete button says; an employee with any transaction is
+        # deactivated as before (the screens show "in use – make inactive" first)
+        try:
+            from DataTools.usage import usage as _usage
+            _n, _k = _usage(employee)
+        except Exception:   # noqa: BLE001
+            _n = 1
+        if _n == 0 and str(request.query_params.get('deactivate') or '') not in ('1', 'true'):
+            code = employee.emp_code
+            from django.db import transaction as _tx
+            with _tx.atomic():
+                if employee.users_id:
+                    try:
+                        from ZeoCloud.sharedrows import deactivate_login_here
+                        deactivate_login_here(employee.users)
+                    except Exception:   # noqa: BLE001
+                        pass
+                type(employee).objects.filter(pk=employee.pk).delete()   # the model's delete() only deactivates – a real delete here
+            return Response({'message': f'Employee {code} deleted.', 'deleted': True, 'employee_code': code}, status=status.HTTP_200_OK)
 
         # Already inactive
         if employee.is_active is False:
@@ -665,6 +687,16 @@ class EmpViewSet(viewsets.ModelViewSet):
                                                                           if _bv.gender(t) and (user.emp_gender or '').upper()[:1] != _bv.gender(t)])
         except Exception:   # noqa: BLE001
             logger.exception('leave balance filter')
+        try:   # v1.67.24 (L-BUG-14): a zero balance of a leave type that is not in the employee's leave policy is no tile in
+            # self service (the zero rows every new employee gets for every type); a type with days left or used stays
+            from LeavePolicy.engine import policy_for as _pf
+            _pol = _pf(user)
+            if _pol is not None:
+                _g = (user.emp_gender or '').upper()[:1]
+                _in = {ln.leave_type_id for ln in _pol.lines.all() if getattr(ln, 'gender', 'B') in ('B', '', None) or ln.gender == _g}
+                leave_balance = leave_balance.exclude(~_Q(leave_type_id__in=_in) & (_Q(balance=0) | _Q(balance__isnull=True)))
+        except Exception:   # noqa: BLE001
+            logger.exception('leave balance – types outside the policy')
         # Serialize data
         leave_balance_serializer = EmployeeLeaveBalanceSerializer(leave_balance, many=True)
         leave_type_serializer = LeaveTypeSerializer(available_leave_types, many=True)
@@ -2906,9 +2938,11 @@ class RequestTypeViewset(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         request_type = serializer.save()
 
+        # v1.73.1 (ESS test B9) a new request type started as "No approval", so every request of it was approved the moment it was
+        # sent – by nobody. It starts with the reporting manager; HR chooses "No approval" on the workflow when that is wanted.
         workflow = ApprovalWorkflow.objects.create(
             request_type=request_type,
-            approval_type="no_approval"
+            approval_type="reporting_manager"
         )
 
         workflow.branch.set(request_type.branch.all())
@@ -3002,7 +3036,7 @@ class GeneralRequestViewset(viewsets.ModelViewSet):
                     f"No document numbering configuration found for branch {branch_id} and general request."
                 )
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # ✅ Manual document number validation
             if document_number:
@@ -3294,7 +3328,7 @@ class UserNotificationsViewSet(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = RequestNotification.objects.filter(
             Q(recipient_user=user.id, is_deligate=False) |
-            Q(recipient_employee__users=user, is_deligate=False) |
+            Q(recipient_employee__users=user, is_deligate=False) & (Q(recipient_user__isnull=True) | Q(recipient_user=user.id)) |   # v1.73.1 (ESS test B19) not the approver's copy
             Q(deligate_user=user.id, is_deligate=True)
         ).distinct().order_by('-created_at')
 
@@ -3891,9 +3925,10 @@ class DocRequestTypeViewset(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         request_type = serializer.save()
 
+        # v1.73.1 (ESS test B9) as for general request types: the reporting manager approves until HR sets up the workflow
         workflow =  DocumentApprovalWorkflow.objects.create(
             request_type=request_type,
-            approval_type="no_approval"
+            approval_type="reporting_manager"
         )
 
         workflow.branch.set(request_type.branch.all())
@@ -3941,7 +3976,7 @@ class DocumentRequestViewset(viewsets.ModelViewSet):
                     f"for branch {branch} and document request."
                 )
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # ✅ Manual document number validation
             if document_number:
@@ -4193,7 +4228,7 @@ class DocRequestNotificationViewset(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = DocRequestNotification.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
+            Q(recipient_employee__users=user) & (Q(recipient_user__isnull=True) | Q(recipient_user=user))   # v1.73.1 (ESS test B19) the employee's own notifications – not the copies sent to his approvers (they name him too)
         ).order_by('-created_at')
 
         return qs
@@ -4235,7 +4270,7 @@ class EmployeeResignationViewset(viewsets.ModelViewSet):
                     f"{branch_id} and resignation request."
                 )
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # ✅ Manual document number validation
             if document_number:
@@ -4583,7 +4618,7 @@ class ResignationRequestNotificationViewset(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = ResignationRequestNotification.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
+            Q(recipient_employee__users=user) & (Q(recipient_user__isnull=True) | Q(recipient_user=user))   # v1.73.1 (ESS test B19) the employee's own notifications – not the copies sent to his approvers (they name him too)
         ).order_by('-created_at')
 
         return qs
@@ -4761,7 +4796,7 @@ class ResignationRequestNotificationViewSet(viewsets.ReadOnlyModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = ResignationRequestNotification.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
+            Q(recipient_employee__users=user) & (Q(recipient_user__isnull=True) | Q(recipient_user=user))   # v1.73.1 (ESS test B19) the employee's own notifications – not the copies sent to his approvers (they name him too)
         ).order_by('-created_at')
 
         return qs

@@ -284,12 +284,13 @@ STATUTORY = {
          'law_reference': 'Federal Decree-Law 13/2022: AED 5 / month (basic ≤ 16,000) or AED 10 / month; paid by the employee (often by the employer on their behalf)'},
     ],
     'SA': [
-        {'code': 'gosi', 'name': 'GOSI annuities (Saudi nationals)', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+        {'code': 'gosi', 'name': 'GOSI annuities (Saudi nationals)', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing',
          'min_base': 1500, 'max_base': 45000, 'employee_rate': 9, 'employer_rate': 9,
-         'law_reference': 'Social Insurance Law; new entrants from 3 July 2024 move in 0.5 % steps to 11 % / 11 % (Royal Decree M/273)'},
-        {'code': 'gosi_oh', 'name': 'GOSI occupational hazards', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'all', 'base': 'basic_housing_transport',
+         'law_reference': 'Social Insurance Law; contribution wage basic + housing, SAR 1,500 – 45,000. First insured from 03/07/2024 (Royal Decree M/273): '
+                          '9 % each, +0.5 % every 1 July from 2025 to 11 % in 2028 – applied by ZEO from the "first insured" date (Payroll › Legal rates › Pension)'},
+        {'code': 'gosi_oh', 'name': 'GOSI occupational hazards', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'all', 'base': 'basic_housing',
          'min_base': 400, 'max_base': 45000, 'employee_rate': 0, 'employer_rate': 2, 'law_reference': 'Occupational hazards branch: employer 2 % for Saudis and expatriates'},
-        {'code': 'saned', 'name': 'SANED unemployment insurance (Saudi nationals)', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
+        {'code': 'saned', 'name': 'SANED unemployment insurance (Saudi nationals)', 'authority': 'GOSI', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing',
          'min_base': 1500, 'max_base': 45000, 'employee_rate': 0.75, 'employer_rate': 0.75, 'law_reference': 'SANED: 0.75 % employee + 0.75 % employer'},
     ],
     'QA': [
@@ -297,19 +298,30 @@ STATUTORY = {
          'employee_rate': 7, 'employer_rate': 14, 'law_reference': 'Law No. 1 of 2022 on social insurance: employee 7 %, employer 14 % of the pension salary (basic + social + housing allowance)'},
     ],
     'OM': [
+        {'code': 'om_savings', 'name': 'Savings scheme for non-Omanis (replaces the gratuity)', 'authority': 'Social Protection Fund', 'kind': 'percent',
+         'applies_to': 'expats', 'base': 'basic', 'employee_rate': 0, 'employer_rate': 9,
+         'law_reference': 'Social Protection Law: 9 % of the basic wage a month paid by the employer from 19/07/2027; the gratuity of the service before stays owed. '
+                          'ZEO charges nothing before 19/07/2027.'},
         {'code': 'pasi', 'name': 'Social Protection Fund – insurance (Omani nationals)', 'authority': 'Social Protection Fund (ex-PASI)', 'kind': 'percent', 'applies_to': 'nationals',
-         'base': 'basic_housing_transport', 'min_base': 325, 'max_base': 3000, 'employee_rate': 7.5, 'employer_rate': 11.5,
-         'law_reference': 'Social Protection Law (RD 52/2023): employee 7 % pension + 0.5 % job security; employer 10.5 % pension + 1 % occupational injury (job security 1 %)'},
+         'base': 'basic_housing_transport', 'min_base': 325, 'max_base': 3000, 'employee_rate': 8, 'employer_rate': 13.5,
+         'law_reference': 'Social Protection Law (RD 52/2023): employee 7.5 % pension + 0.5 % job security; employer 11 % pension + 1 % work injury + 1 % maternity '
+                          '+ 0.5 % job security, + 1 % sick leave from 19/07/2026 (14.5 %). ZEO uses the rate in force for an Oman branch (v1.73.19).'},
     ],
     'BH': [
         {'code': 'sio', 'name': 'SIO social insurance (Bahraini nationals)', 'authority': 'SIO', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
          'employee_rate': 7, 'employer_rate': 15, 'law_reference': 'Law 32/2022: employer share rises 1 % a year from 2023 to 20 % in 2028; unemployment insurance 1 % each included in the SIO return'},
+        {'code': 'sio_eos', 'name': 'SIO end-of-service contribution (non-Bahrainis)', 'authority': 'SIO', 'kind': 'percent', 'applies_to': 'expats',
+         'base': 'basic_housing_transport', 'employee_rate': 0, 'employer_rate': 4.2,
+         'law_reference': 'Edict 109/2023: from 01/03/2024 the employer pays the SIO 4.2 % of the wage a month for the first 3 years of service and 8.4 % after; '
+                          'the SIO pays the end-of-service award for that service. ZEO uses the fixed wage and the employee\'s service (4.2 → 8.4 %).'},
         {'code': 'sio_exp', 'name': 'SIO work injury (expatriates)', 'authority': 'SIO', 'kind': 'percent', 'applies_to': 'expats', 'base': 'basic_housing_transport',
          'employee_rate': 1, 'employer_rate': 3, 'law_reference': 'Expatriates: employer 3 % work injury; employee 1 % unemployment insurance'},
     ],
     'KW': [
         {'code': 'pifss', 'name': 'PIFSS social security (Kuwaiti nationals)', 'authority': 'PIFSS', 'kind': 'percent', 'applies_to': 'nationals', 'base': 'basic_housing_transport',
-         'max_base': 2750, 'employee_rate': 8, 'employer_rate': 11.5, 'law_reference': 'Law 61/1976 as amended: employee 8 % (incl. 0.5 % unemployment), employer 11.5 %, salary ceiling KWD 2,750'},
+         'min_base': 230, 'max_base': 2750, 'employee_rate': 10.5, 'employer_rate': 11.5,
+         'law_reference': 'Decree-Law 61/1976, Laws 101/2013 and 110/2014: employee 10.5 % up to KWD 1,500 and 8 % on 1,500 – 2,750; employer 11.5 % up to 2,750; '
+                          'wage at least 230. ZEO works out the tiers for a Kuwait branch (v1.73.19).'},
     ],
     'IN': [
         {'code': 'epf', 'name': 'Employees’ Provident Fund (EPF)', 'authority': 'EPFO', 'kind': 'percent', 'applies_to': 'all', 'base': 'basic_da',
@@ -323,10 +335,10 @@ STATUTORY = {
         {'code': 'pt', 'name': 'Professional tax (state slabs – Maharashtra default)', 'authority': 'State government', 'kind': 'slab', 'applies_to': 'all', 'base': 'gross',
          'slabs': [{'to': 7500, 'employee': 0, 'employer': 0}, {'to': 10000, 'employee': 175, 'employer': 0}, {'to': None, 'employee': 200, 'employer': 0}],
          'law_reference': 'Maharashtra State Tax on Professions Act (₹ 300 in February; women earning ≤ ₹ 25,000 exempt). Replace the slabs with your state’s.'},
-        {'code': 'tds', 'name': 'Income tax (TDS – new regime FY 2025-26)', 'authority': 'Income Tax Department', 'kind': 'annual_slab', 'applies_to': 'all', 'base': 'gross',
+        {'code': 'tds', 'name': 'Income tax (TDS – new regime, Income-tax Act 2025)', 'authority': 'Income Tax Department', 'kind': 'annual_slab', 'applies_to': 'all', 'base': 'gross',
          'standard_deduction': 75000, 'rebate_income_limit': 1200000, 'cess_rate': 4,
          'slabs': [{'to': 400000, 'rate': 0}, {'to': 800000, 'rate': 5}, {'to': 1200000, 'rate': 10}, {'to': 1600000, 'rate': 15}, {'to': 2000000, 'rate': 20}, {'to': 2400000, 'rate': 25}, {'to': None, 'rate': 30}],
-         'law_reference': 'Finance Act 2025, section 115BAC: standard deduction ₹ 75,000, rebate u/s 87A up to ₹ 12,00,000 taxable income, 4 % health & education cess. Monthly TDS = yearly tax ÷ 12 on the annualised salary; declarations and other income are not considered.'},
+         'law_reference': 'Income-tax Act 2025 from 01/04/2026 (tax year 2026-27, slabs unchanged by Budget 2026; before: Finance Act 2025, s. 115BAC): standard deduction ₹ 75,000, rebate u/s 87A up to ₹ 12,00,000 taxable income, 4 % health & education cess. Monthly TDS = yearly tax ÷ 12 on the annualised salary; declarations and other income are not considered.'},
     ],
     'GEN': [],
 }

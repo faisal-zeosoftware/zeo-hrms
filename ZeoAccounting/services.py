@@ -10,6 +10,7 @@ Posting rules (AccountingSettings):
 GL resolution of a line:  AccountMap for the employee › for the department › for the branch › for everyone › the default
 account; then, for each dimension in GL mode that the explicit row did not already cover, the pattern
 ({account}-{dept}, {account}-{emp}, {account}-{branch}) with the dimension's GL code (DimensionMap) or its ZEO code."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 import logging
 from collections import OrderedDict, defaultdict
@@ -144,11 +145,12 @@ class Accounts:
 class Builder:
     """Collects entries (one per employee / component) and turns them into the journal lines the rules ask for."""
 
-    def __init__(self, source, source_id, label, jdate, reference=''):
+    def __init__(self, source, source_id, label, jdate, reference='', doc_date=None):
         self.st = settings()
         self.dims = Dims()
         self.accts = Accounts()
         self.source, self.source_id, self.label, self.date, self.reference = source, str(source_id), label, jdate, reference or label
+        self.doc_date = doc_date or jdate   # v1.70.5: the document's own date; the posting date (self.date) defaults to it
         self.entries = []
         self.problems = []
         self.extra = {}
@@ -266,22 +268,73 @@ class Builder:
         return out
 
     # -- save
+    def _groups(self):
+        """v1.67.28 (optional by-branch connections): the entries of each branch that posts to its own accounting connection,
+        and the rest (key None, the company connection). Without branch connections – or when some entry has no branch –
+        there is one group, as before."""
+        own = branch_connection_ids()
+        if not own:
+            return {None: self.entries}
+        if any(e.get('branch') is None for e in self.entries):
+            if any(e.get('branch') in own for e in self.entries):
+                self.problem('branch_conn', 'Some lines have no branch, so this journal goes through the company connection, not the branch connection.',
+                             block=False)
+            return {None: self.entries}
+        g = {}
+        for e in self.entries:
+            g.setdefault(e['branch'] if e['branch'] in own else None, []).append(e)
+        return g
+
     @transaction.atomic
     def save(self, user=None):
-        """Makes (or remakes) the open batch of this source. A posted batch is never touched: reverse it first."""
-        version = JournalBatch.objects.filter(source=self.source, source_id=self.source_id, status__in=('reversed', 'cancelled')).count()
-        key = f'{self.source}:{self.source_id}:{version}'
+        """Makes (or remakes) the open batch of this source. A posted batch is never touched: reverse it first.
+        v1.67.28: one batch per branch that has its own accounting connection (and one for the rest)."""
+        groups = self._groups()
+        if len(groups) == 1 and None in groups:
+            out = self._save_one(user, None)
+            keep = {out.pk}
+        else:
+            all_entries, base = self.entries, [p for p in self.problems if p.get('code') != 'balance']
+            out, keep = None, set()
+            for br in sorted(groups, key=lambda x: (x is not None, x or 0)):
+                self.entries, self.problems = groups[br], [dict(p) for p in base]
+                b = self._save_one(user, br)
+                keep.add(b.pk)
+                out = out or b
+            self.entries, self.problems = all_entries, base
+        # a journal of a branch that no longer has its own connection (or the other way round) is not posted twice
+        JournalBatch.objects.filter(source=self.source, source_id=self.source_id, status__in=('draft', 'ready', 'failed')).exclude(pk__in=keep).update(
+            status='cancelled', last_error='Replaced: the branch connections changed (v1.67.28).')
+        return out
+
+    def _save_one(self, user, branch):
+        version = JournalBatch.objects.filter(source=self.source, source_id=self.source_id, status__in=('reversed', 'cancelled'),
+                                              **({'branch_id': branch} if branch is not None else {})).exclude(
+                                                  last_error__startswith='Replaced: the branch connections').count() if branch is not None else \
+            JournalBatch.objects.filter(source=self.source, source_id=self.source_id, status__in=('reversed', 'cancelled'), branch_id__isnull=True).exclude(
+                last_error__startswith='Replaced: the branch connections').count()
+        key = f'{self.source}:{self.source_id}:{version}' + (f':b{branch}' if branch is not None else '')
         b = JournalBatch.objects.select_for_update().filter(idempotency_key=key).first()
         if b and b.status not in ('draft', 'ready', 'failed'):
             raise Refused(f'This journal is already {b.get_status_display().lower()} ({b.number}). Reverse it to build it again.')
         lines = self.lines()
         if not lines:
             raise Refused('There is nothing to post.')
+        if self.date is None:   # v1.70.5: no fallback to today – a journal needs the document's date
+            raise Refused('The document has no date, so its journal cannot be made. Enter the date on the document first.')
         if b is None:
             b = JournalBatch(idempotency_key=key, source=self.source, source_id=self.source_id, created_by=user if getattr(user, 'pk', None) else None)
-        b.source_label, b.date, b.reference, b.connector = self.label, self.date, self.reference[:120], self.st.connector
+        b.source_label, b.reference = self.label, self.reference[:120]
+        b.document_date = self.doc_date   # v1.70.5
+        if not (b.pk and b.posting_date_set):   # a posting date the user changed is kept when the journal is built again
+            b.date = self.date
+        pp = period_problem(b.date, self.st)
+        if pp and pp not in self.problems:
+            self.problems.append(pp)
+        b.connector = branch_connection(branch).connector if branch is not None else self.st.connector   # v1.67.28
+        b.branch_id = branch
         b.rules = {'department': self.st.department_mode, 'employee': self.st.employee_mode, 'branch': self.st.branch_mode,
-                   'dims_on': self.st.dims_on, **self.extra}
+                   'dims_on': self.st.dims_on, **self.extra, **({'branch_connection': branch} if branch is not None else {})}
         b.problems = self.problems
         b.status = 'draft' if any(p['block'] for p in self.problems) else 'ready'
         b.total_debit = sum((x['debit'] for x in lines), ZERO)
@@ -303,6 +356,38 @@ class Builder:
         return b
 
 
+def lock_date(st=None):
+    return getattr(st or settings(), 'lock_date', None)
+
+
+def period_problem(on, st=None):
+    """v1.70.5: a posting date on or before "books closed up to" blocks the journal (change the posting date or open the period)."""
+    lk = lock_date(st)
+    if on and lk and on <= lk:
+        return {'code': 'period', 'text': f'The posting date {on:%d/%m/%Y} is in a closed period (books closed up to {lk:%d/%m/%Y}). '
+                                          f'Change the posting date of the journal.', 'block': True}
+    return None
+
+
+def set_posting_date(batch, on, user=None):
+    """v1.70.5: change the posting date of a journal that is not posted yet; it must be after "books closed up to"."""
+    if batch.status not in ('draft', 'ready', 'failed'):
+        raise Refused(f'The journal is {batch.get_status_display().lower()} – its posting date cannot change. Reverse it instead.')
+    if on is None:
+        raise Refused('Give the posting date.')
+    pp = period_problem(on)
+    if pp:
+        raise Refused(pp['text'].replace(' Change the posting date of the journal.', ''))
+    old = batch.date
+    batch.date, batch.posting_date_set = on, True
+    batch.problems = [p for p in (batch.problems or []) if p.get('code') != 'period']
+    if batch.status in ('draft', 'ready'):
+        batch.status = 'draft' if any(p.get('block') for p in batch.problems) else 'ready'
+    batch.save(update_fields=['date', 'posting_date_set', 'problems', 'status'])
+    logit(batch, 'posting_date', True, f'{old:%d/%m/%Y} → {on:%d/%m/%Y}', user)
+    return batch
+
+
 # ------------------------------------------------------------------ sources
 def build_payroll(run_id, user=None):
     Run = M('PayrollManagement', 'PayrollRun')
@@ -314,7 +399,8 @@ def build_payroll(run_id, user=None):
     st = settings()
     jdate = run.payment_date or month_end(date(run.year, run.month, 1))
     label = f'Payroll {run.get_month_display()} {run.year}' + (f' – {run.name}' if run.name else '')
-    b = Builder('payroll', run.pk, label, jdate, f'Payroll {run.year}-{run.month:02d}')
+    # v1.70.5: the document is the payroll of the month (its last day); the posting date stays the run's payment date when it has one
+    b = Builder('payroll', run.pk, label, jdate, f'Payroll {run.year}-{run.month:02d}', doc_date=month_end(date(run.year, run.month, 1)))
     slips = run.payslips.exclude(status='rejected').select_related('employee').prefetch_related('components__component')
     acc_of, payout_of = _accrual_accounts()   # v1.62.7 (item 18)
     try:   # v1.62.11 (item 228)
@@ -326,6 +412,11 @@ def build_payroll(run_id, user=None):
     # v1.66.0 (item 118): an air ticket cash payout paid on the payslip is taken from the posted air ticket provision first (Dr provision),
     # the rest is expense – only with Air ticket rules › "Post the air ticket provision" on
     _air_on = _v1660_air_posting()
+    try:   # v1.67.24 (P-BUG-26)
+        from PayrollPlus.monthly_inputs import quantity_input_ids
+        _qty = quantity_input_ids()
+    except Exception:   # noqa: BLE001
+        _qty = set()
     _air_prov = {pb.employee_id: pb.amount for pb in ProvisionBalance.objects.filter(kind='air_ticket')} if _air_on else {}
     _air_used = {}
     if _air_on:
@@ -339,7 +430,7 @@ def build_payroll(run_id, user=None):
         for pc in p.components.all():
             c = pc.component
             amt = q2(pc.amount)
-            if not amt:
+            if not amt or c.pk in _qty:   # v1.67.24 (P-BUG-26): an hours / days quantity input is no money – no journal line
                 continue
             if c.component_type == 'addition':
                 if not c.show_in_payslip:
@@ -486,7 +577,7 @@ def build_provisions(as_of=None, user=None, amounts=None):
     """Month-end provisions: the change since the last posted provision, per employee (Dr expense / Cr provision; a fall is
     the other way round). Employees no longer active fall to zero only through their final settlement."""
     st = settings()
-    as_of = month_end(as_of or date.today())
+    as_of = month_end(as_of or _zt_today())
     amounts = amounts if amounts is not None else provision_amounts(as_of)
     prev = {(p.kind, p.employee_id): p.amount for p in ProvisionBalance.objects.all()}
     b = Builder('provision', as_of.strftime('%Y-%m'), (f'Gratuity, leave salary and air ticket provisions {as_of:%B %Y}' if 'air_ticket' in amounts
@@ -557,7 +648,7 @@ def build_settlement(settlement_id, user=None):
     e = M('EmpManagement', 'emp_master').objects.filter(pk=s.employee_id).first()
     dept, branch = (e.emp_dept_id_id, e.emp_branch_id_id) if e else (None, None)
     b = Builder('settlement', s.pk, f'Final settlement {s.number or s.pk} – {emp_name(e)}', getattr(s, 'accounting_date', None) or s.paid_on or s.last_working_date,
-                s.number or f'Settlement {s.pk}')   # v1.62.11 (EOS settings): the accounting date of the settlement first
+                s.number or f'Settlement {s.pk}', doc_date=s.paid_on or s.last_working_date)   # v1.62.11 (EOS settings): the accounting date first; v1.70.5: document = paid on / last day
     if e:
         b.dims.emps[e.pk] = e
     prov = {p.kind: p.amount for p in ProvisionBalance.objects.filter(employee_id=s.employee_id)}
@@ -653,19 +744,45 @@ def build_expenses(date_from, date_to, user=None):
     emps = {e.pk: e for e in Emp.objects.filter(pk__in={r.employee_id for r in reps})}
     b.dims.emps.update(emps)
     exp_default = (est.default_expense_account if est else '') or st.default_expense_account
+    # v1.67.22 (pending C12): air ticket claims (Air ticket settings › expense categories that are air tickets) are taken from the employee's
+    # air ticket provision first – only with "Post the air ticket provision" on
+    try:
+        from PayrollPlus.air_policy import claim_provision_split as _v16722_split, accounts as _v16722_air_acc
+        _air_take = _v16722_split([(r.employee_id, x.category_id, x.amount_aed) for r in reps for x in r.expenses.exclude(status='rejected')])
+        _air_prov_acc = _v16722_air_acc()[1]
+    except ImportError:
+        _air_take, _air_prov_acc = {}, ''
+    _air_used = {}
+    try:
+        from PayrollPlus.air_policy import settings as _v16722_ast
+        _air_cats = set(_v16722_ast().get('expense_category_ids') or [])
+    except ImportError:
+        _air_cats = set()
     for r in reps:
         e = emps.get(r.employee_id)
         branch = r.branch_id or (e.emp_branch_id_id if e else None)
         rdept = r.department_id or (e.emp_dept_id_id if e else None)
         for x in r.expenses.exclude(status='rejected').select_related('category'):
             dept = x.department_id or rdept
+            _amt = q2(x.amount_aed)
+            if x.category_id in _air_cats and q2(_air_take.get(r.employee_id, 0)) > 0:   # v1.67.22 (C12)
+                _t = min(_amt, q2(_air_take[r.employee_id]))
+                _air_take[r.employee_id] = q2(_air_take[r.employee_id]) - _t
+                pa, pl = b.accts.find('provision', 'air_ticket', 'credit', r.employee_id, dept, branch, _air_prov_acc)
+                b.add(pa, f'{x.category.name} (from air ticket provision)', _t, 'debit', r.employee_id, dept, branch, cost=False, level=pl, group=f'cat{x.category_id}p')
+                _air_used[str(r.employee_id)] = str(q2(Decimal(str(_air_used.get(str(r.employee_id), 0))) + _t))
+                _amt -= _t
+                if not _amt:
+                    continue
             acct, lvl = b.accts.find('expense', x.category_id, 'debit', r.employee_id, dept, branch, x.category.gl_account or exp_default)
-            b.add(acct, x.category.name, x.amount_aed, 'debit', r.employee_id, dept, branch, cost=True, level=lvl, group=f'cat{x.category_id}')
+            b.add(acct, x.category.name, _amt, 'debit', r.employee_id, dept, branch, cost=True, level=lvl, group=f'cat{x.category_id}')
         if r.advance_applied:
             b.add(est.advance_account if est else '1450', 'Advances used', r.advance_applied, 'credit', r.employee_id, rdept, branch, group='adv')
         if r.amount_to_reimburse:
             b.add(est.payable_account if est else '2150', 'Reimbursements due', r.amount_to_reimburse, 'credit', r.employee_id, rdept, branch, group='pay')
     b.extra = {'reports': [r.pk for r in reps]}
+    if _air_used:   # v1.67.22 (C12): taken off ProvisionBalance when the journal is posted / exported
+        b.extra['air_provision_used'] = _air_used
     return b.save(user)
 
 
@@ -761,7 +878,7 @@ def build_prop_bill(pk, user=None):
     b.put('vat_output', f"VAT – {it['number']}", it.get('vat') or 0, cr, branch=br)
     b.extra = {'prop_kind': 'bills', 'prop_id': it['id'], 'building': it.get('building', ''),
                'doc': {**b.extra.get('doc', {}), 'kind': 'credit_note' if it['credit'] else 'invoice', 'number': it['number'],
-                       'date': str(it['date']), 'due': str(it['date']), 'party': it['party'], 'charge': it['charge'],
+                       'date': str(it['date']), 'due': str(it.get('due') or it['date']), 'party': it['party'], 'charge': it['charge'],
                        'description': desc, 'unit': unit, 'amount': float(it['amount']), 'vat': float(it.get('vat') or 0),
                        'total': float(it['total'])}}   # v1.62.0
     return b.save(user)
@@ -972,7 +1089,7 @@ def _apply_provisions(batch, undo=False):
             for kind, rows in (r.get('provision_before') or {}).items():
                 for emp, amt in rows.items():
                     ProvisionBalance.objects.filter(kind=kind, employee_id=int(emp)).update(amount=Decimal(amt))
-    elif batch.source == 'payroll' and r.get('air_provision_used'):   # v1.66.0 (item 118): cash payouts paid from the air ticket provision
+    elif batch.source in ('payroll', 'expense', 'air_ticket') and r.get('air_provision_used'):   # v1.66.0 (item 118); v1.67.22 (C12) claims, bought tickets
         for emp, amt in r['air_provision_used'].items():
             p = ProvisionBalance.objects.filter(kind='air_ticket', employee_id=int(emp)).first()
             if p:
@@ -1005,6 +1122,54 @@ def mark_done(batch, status, user=None, external_id='', external_ref=''):
     hooks_fire('journal.posted' if status == 'posted' else 'journal.exported', batch)
 
 
+# ------------------------------------------------------------------ v1.67.28 branch connections
+def branch_connection_ids():
+    from .models import BranchConnection
+    return set(BranchConnection.objects.filter(active=True).values_list('branch_id', flat=True))
+
+
+def branch_connection(branch_id):
+    from .models import BranchConnection
+    return BranchConnection.objects.filter(branch_id=branch_id, active=True).first() if branch_id is not None else None
+
+
+class BranchSettings:
+    """The company AccountingSettings with the branch's own connection on top: the address, database / organisation, login,
+    keys and (when given) the journal of the branch; every posting rule stays the company's. save() keeps the branch's
+    tokens (Zoho refreshes the access token)."""
+    OWN = ('connector', 'odoo_url', 'odoo_db', 'odoo_login', 'odoo_api', 'odoo_company_id', 'zoho_api_domain', 'zoho_accounts_domain',
+           'zoho_org_id', 'zoho_client_id', 'secrets')
+
+    def __init__(self, st, bc):
+        object.__setattr__(self, '_st', st)
+        object.__setattr__(self, '_bc', bc)
+
+    def __getattr__(self, name):
+        bc = object.__getattribute__(self, '_bc')
+        if name in BranchSettings.OWN:
+            return getattr(bc, name)
+        if name == 'journal_code' and bc.journal_code:
+            return bc.journal_code
+        return getattr(object.__getattribute__(self, '_st'), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._bc if name in BranchSettings.OWN else self._st, name, value)
+
+    def save(self, *a, **kw):
+        fields = kw.get('update_fields')
+        if fields is None or set(fields) & set(BranchSettings.OWN):
+            self._bc.save()
+        if fields is not None and set(fields) - set(BranchSettings.OWN):
+            self._st.save(update_fields=[f for f in fields if f not in BranchSettings.OWN])
+
+
+def settings_for(branch_id=None):
+    """the settings a journal of this branch is posted with (the company's when the branch has no connection of its own)"""
+    st = settings()
+    bc = branch_connection(branch_id)
+    return BranchSettings(st, bc) if bc else st
+
+
 # ------------------------------------------------------------------ posting
 def connector(st=None):
     st = st or settings()
@@ -1018,13 +1183,18 @@ def connector(st=None):
 
 
 def post(batch, user=None):
-    st = settings()
+    st = settings_for(batch.branch_id) if batch.branch_id is not None and (batch.rules or {}).get('branch_connection') is not None else settings()
+    if batch.source == 'reversal' and batch.reversal_of_id and (batch.reversal_of.rules or {}).get('branch_connection') is not None:
+        st = settings_for(batch.reversal_of.branch_id)   # v1.67.28: a reversal goes where the journal went
     if batch.status in DONE:
         return batch
     if batch.status not in ('ready', 'failed'):
         raise Refused('Fix the problems first – the journal is not ready to post.', problems=batch.problems)
     if any(p.get('block') for p in batch.problems or []):
         raise Refused('Fix the problems first.', problems=batch.problems)
+    pp = period_problem(batch.date)   # v1.70.5: the period may have been closed after the journal was built
+    if pp:
+        raise Refused(pp['text'], problems=[pp])
     if batch.source == 'reversal' and batch.connector and batch.connector != st.connector:
         raise Refused(f'This reversal belongs to {batch.connector.title()} – enter it there and mark it as exported.')
     con = connector(st)
@@ -1101,12 +1271,15 @@ def reverse(batch, user=None, on=None):
     the source can be built again."""
     if batch.status not in DONE:
         raise Refused('Only a posted or exported journal can be reversed.')
-    on = on or date.today()
+    on = on or _zt_today()
+    pp = period_problem(on)   # v1.70.5: not into a closed period
+    if pp:
+        raise Refused(pp['text'].replace('Change the posting date of the journal.', 'Give a later reversal date.'))
     r = JournalBatch.objects.create(source='reversal', source_id=str(batch.pk), source_label=f'Reversal of {batch.number} – {batch.source_label}'[:200],
-                                    date=on, reference=f'Reversal {batch.number}', connector=batch.connector, reversal_of=batch,
+                                    date=on, document_date=on, reference=f'Reversal {batch.number}', connector=batch.connector, reversal_of=batch,
                                     total_debit=batch.total_credit, total_credit=batch.total_debit, lines_count=batch.lines_count,
                                     idempotency_key=f'reversal:{batch.pk}', rules=batch.rules, status='ready',
-                                    created_by=user if getattr(user, 'pk', None) else None)
+                                    created_by=user if getattr(user, 'pk', None) else None, branch_id=batch.branch_id)
     r.number = f'ZJ-{on:%Y}-{r.pk:05d}'
     r.save(update_fields=['number'])
     JournalLine.objects.bulk_create([JournalLine(batch=r, seq=l.seq, account=l.account, base_account=l.base_account, label=f'Reversal – {l.label}'[:255],
@@ -1119,7 +1292,8 @@ def reverse(batch, user=None, on=None):
     property_posted(batch, 'not_sent')   # v1.40.0: the Property document can be journalled again
     logit(batch, 'reverse', True, r.number, user)
     if batch.connector in ('odoo', 'zoho') and batch.external_id:   # posted there – post the reversal there too
-        if batch.connector == settings().connector:
+        _via = settings_for(batch.branch_id) if (batch.rules or {}).get('branch_connection') is not None else settings()   # v1.67.28
+        if batch.connector == _via.connector:
             transaction.on_commit(lambda: _post_quiet(r.pk, user))
         else:   # the company has moved to another application since: the reversal is entered there by hand
             r.problems = [{'code': 'connector', 'block': True, 'text': f'{batch.number} was posted to {batch.connector.title()}, which is no longer '
@@ -1147,7 +1321,8 @@ def cancel(batch, user=None):
 
 # ------------------------------------------------------------------ export (Tally, Sage, QuickBooks, Xero … or any other app)
 EXPORT_COLS = ['Journal', 'Date', 'Reference', 'Line', 'Account', 'Base account', 'Description', 'Debit', 'Credit', 'Department', 'Department code',
-               'Employee', 'Employee code', 'Branch', 'Analytic department', 'Analytic employee', 'Analytic branch', 'Partner']
+               'Employee', 'Employee code', 'Branch', 'Analytic department', 'Analytic employee', 'Analytic branch', 'Partner',
+               'Document date']   # v1.70.5: "Date" stays the posting date (the column the import templates already use); the document date is added last
 
 
 def export_rows(batches):
@@ -1157,7 +1332,7 @@ def export_rows(batches):
             yield [b.number, b.date.isoformat(), b.reference, l.seq, l.account, l.base_account, l.label, float(l.debit), float(l.credit),
                    l.department, d.code('department', l.department_id) if l.department_id else '', l.employee,
                    d.code('employee', l.employee_id) if l.employee_id else '', l.branch, l.analytics.get('department', l.department if b.rules.get('department') in ('analytic', 'both') else ''),
-                   l.analytics.get('employee', ''), l.analytics.get('branch', ''), l.partner_ref]
+                   l.analytics.get('employee', ''), l.analytics.get('branch', ''), l.partner_ref, (b.document_date or b.date).isoformat()]
 
 
 def export_csv(batches):
@@ -1307,6 +1482,13 @@ def create_accounts(codes):
 # ------------------------------------------------------------------ automatic steps (signals / Celery)
 def on_payroll_status(run):
     st = settings()
+    if run.status == 'paid' and st.auto_build:   # v1.67.22 (pending C3): the salary payments journal of the parts not marked paid yet
+        try:
+            from PayrollPlus.pay_journal import on_run_paid
+            transaction.on_commit(lambda: on_run_paid(run))
+        except ImportError:
+            pass
+        return
     if run.status != 'approved' or not st.auto_build:
         return
     if JournalBatch.objects.filter(source='payroll', source_id=str(run.pk)).exclude(status__in=('cancelled',)).exists():
@@ -1357,7 +1539,7 @@ def month_end_provisions():
     st = settings()
     if not st.auto_build:
         return None
-    last = date.today().replace(day=1) - timezone.timedelta(days=1)
+    last = _zt_today().replace(day=1) - timezone.timedelta(days=1)
     if JournalBatch.objects.filter(source='provision', source_id=last.strftime('%Y-%m')).exists():
         return None
     try:
@@ -1391,7 +1573,8 @@ def make_roles():
 # ------------------------------------------------------------------ webhooks (pull API users)
 def hooks_fire(event, batch):
     from .models import ApiClientHook
-    hooks = [h for h in ApiClientHook.objects.filter(is_active=True) if event in (h.events or [])]
+    hooks = [h for h in ApiClientHook.objects.filter(is_active=True) if event in (h.events or [])
+             and (not h.branches or batch.branch_id in {int(x) for x in h.branches if str(x).isdigit()})]   # v1.67.28: optional branch filter
     if not hooks:
         return
     import hashlib
@@ -1399,7 +1582,8 @@ def hooks_fire(event, batch):
     import json
     from django.db import connection
     body = json.dumps({'event': event, 'company': connection.schema_name, 'journal': {'id': batch.pk, 'number': batch.number,
-                       'source': batch.source, 'date': batch.date.isoformat(), 'status': batch.status, 'total': str(batch.total_debit)}}).encode()
+                       'source': batch.source, 'date': batch.date.isoformat(), 'status': batch.status, 'total': str(batch.total_debit),
+                       'branch_id': batch.branch_id}}).encode()
 
     def send():
         import urllib.request

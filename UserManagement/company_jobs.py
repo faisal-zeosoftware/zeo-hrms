@@ -38,6 +38,22 @@ def _job(job, **kw):
     cache.set(JOB.format(job), d, 60 * 60 * 12)
 
 
+CREATING = 'zeo:companyjob:schema:{}'   # v1.73.4: schema -> job while the company is being made
+
+
+def creating(schema):
+    """v1.73.4: the job (with its % and step) while the company of this schema is still being made, else None.
+    The company row exists from the first step on, so the company list showed it – with its app labels – and it could be
+    opened 20–40 minutes before the branches, leave types and salary components were there."""
+    job = cache.get(CREATING.format(schema))
+    if not job:
+        return None
+    d = cache.get(JOB.format(job)) or {}
+    if d.get('state') != 'running':
+        return None
+    return {'job': job, 'percent': d.get('percent'), 'step': d.get('step'), 'detail': d.get('detail')}
+
+
 def status(job):
     from ZeoApps.job_progress import with_elapsed
     return with_elapsed(cache.get(JOB.format(job)))
@@ -79,6 +95,7 @@ def start(validated_data, apps, user, run_now=False, copy=None):
     _job(job, state='running', step=STEPS[0], step_no=1, steps=len(STEPS), name=data.get('name', ''), schema=schema,
          company_id=None, apps=[], failed={}, defaults=[], error='', by=getattr(user, 'pk', None), copy=copy or None, copied=None)
     args = (job, data, list(apps or []), getattr(user, 'pk', None))
+    cache.set(CREATING.format(schema), job, 60 * 60 * 12)   # v1.73.4
     if run_now:
         _make(*args, own_thread=False, copy=copy)
     else:
@@ -247,6 +264,7 @@ def _make(job, data, apps, user_id, own_thread=True, copy=None):
         except Exception:
             log.exception('clean-up after a failed company')
     finally:
+        cache.delete(CREATING.format(schema))   # v1.73.4
         if tok is not None:
             try:
                 from OrganisationManager.signals import FIRST_BRANCH

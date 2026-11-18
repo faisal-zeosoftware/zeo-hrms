@@ -4,6 +4,7 @@ Every figure is read company by company (`schema_context`), with the rights of a
 summaries and reports (see scope.acting_user) and with the person's own rights for the approval inbox. Own-database
 companies work the same way: the connection follows the company (ZeoCloud router).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime as dt
 import logging
 from decimal import Decimal
@@ -55,7 +56,7 @@ def company_summary(comp, user, fresh=False):
         hit = cache.get(key)
         if hit:
             return dict(hit, cached=True)
-    today = timezone.localdate()
+    today = _zt_today()
     m_from = today.replace(day=1)
     out = {'company_id': comp.id, 'company': comp.name, 'schema_name': comp.schema_name, 'error': '',
            'employees': 0, 'joiners': 0, 'leavers': 0, 'on_leave': 0, 'payroll_month': '', 'payroll_gross': 0.0,
@@ -153,7 +154,7 @@ def dashboard(group, user, fresh=False):
         total['payroll_gross'], total['payroll_net'] = round(g_rc, 2), round(n_rc, 2)
     except Exception:
         log.exception('group dashboard currency')
-    return {'companies': rows, 'total': total, 'today': timezone.localdate().isoformat(), 'currency': out_cur, 'currency_missing': missing}
+    return {'companies': rows, 'total': total, 'today': _zt_today().isoformat(), 'currency': out_cur, 'currency_missing': missing}
 
 
 # ------------------------------------------------------------------ reports

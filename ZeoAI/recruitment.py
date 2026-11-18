@@ -1,5 +1,6 @@
 """AI Recruitment Assistant – CV extraction, skill match, summaries and missing qualifications, job descriptions and interview
 questions, interview scheduling help, time-to-hire. Assists the recruiter; never decides."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -89,8 +90,8 @@ def extract(text):
 
 def _years_from_dates(low):
     ys = [int(y) for y in re.findall(r'(?:19|20)\d{2}', low)]
-    ys = [y for y in ys if 1980 <= y <= date.today().year]
-    return max(0, min(40, (date.today().year if re.search(r'present|current|till date|to date', low) else max(ys)) - min(ys))) if len(ys) >= 2 else 0
+    ys = [y for y in ys if 1980 <= y <= _zt_today().year]
+    return max(0, min(40, (_zt_today().year if re.search(r'present|current|till date|to date', low) else max(ys)) - min(ys))) if len(ys) >= 2 else 0
 
 
 def _employers(t):
@@ -258,8 +259,8 @@ def slots(job, days=7, per_day=('10:00', '11:00', '14:00', '15:00')):
     taken = set(Interview.objects.filter(application__job=job, scheduled_at__gte=datetime.now()).values_list('scheduled_at', flat=True))
     taken = {t.replace(second=0, microsecond=0) for t in taken}
     out = []
-    d = date.today() + timedelta(days=1)
-    while len(out) < 12 and (d - date.today()).days <= days + 3:
+    d = _zt_today() + timedelta(days=1)
+    while len(out) < 12 and (d - _zt_today()).days <= days + 3:
         if d.weekday() < 5:
             for hm in per_day:
                 h, mi = map(int, hm.split(':'))
@@ -275,7 +276,7 @@ def metrics(days=180):
     Job = M('RecruitmentManagement', 'JobOpening')
     App = M('RecruitmentManagement', 'Application')
     Offer = M('RecruitmentManagement', 'Offer')
-    since = date.today() - timedelta(days=days)
+    since = _zt_today() - timedelta(days=days)
     rows = []
     for j in Job.objects.filter(created_at__date__gte=since).select_related('department'):
         apps_ = App.objects.filter(job=j)
@@ -289,7 +290,7 @@ def metrics(days=180):
         rows.append({'job': j.title, 'code': j.job_code, 'status': j.status, 'openings': j.openings, 'opened': j.created_at.date(), 'department': getattr(j.department, 'dept_name', '') if j.department_id else '',
                      'applied': by.get('applied', 0), 'screening': by.get('screening', 0), 'interview': by.get('interview', 0), 'offer': by.get('offer', 0), 'hired': by.get('hired', 0) + by.get('joined', 0),
                      'rejected': by.get('rejected', 0), 'total': apps_.count(), 'offers': offers.count(), 'accepted': accepted.count(), 'time_to_hire_days': tth,
-                     'days_open': (date.today() - j.created_at.date()).days if j.status in ('open', 'published') else None})
+                     'days_open': (_zt_today() - j.created_at.date()).days if j.status in ('open', 'published') else None})
     tths = [r['time_to_hire_days'] for r in rows if r['time_to_hire_days'] is not None]
     return {'jobs': rows, 'avg_time_to_hire': round(sum(tths) / len(tths), 1) if tths else None, 'open_jobs': sum(1 for r in rows if r['days_open'] is not None),
             'applications': sum(r['total'] for r in rows), 'offer_acceptance': round(100 * sum(r['accepted'] for r in rows) / max(1, sum(r['offers'] for r in rows)))}

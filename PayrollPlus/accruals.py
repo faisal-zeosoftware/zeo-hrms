@@ -1,4 +1,5 @@
 # v1.62.7 (item 18): new module – accrue now, pay later
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.62.7 (item 18) – "Accrue now – pay later" salary components (asked by a client for on-call / shift allowance).
 
 A salary component with this setting is worked out by payroll every month as usual (fixed amount, formula, monthly input …), but the
@@ -316,7 +317,7 @@ def exit_lines(st, emp, a, b, add, info, ai=None):
 def exit_paid(st, user=None):
     """The paid settlement takes the balance to 0: the days after the last payroll are accrued, the line amount paid."""
     AccrualEntry.objects.filter(settlement_id=st.pk).delete()
-    lwd = st.last_working_date or date.today()
+    lwd = st.last_working_date or _zt_today()
     m = date(lwd.year, lwd.month, 1)
     n = 0
     for ln in (st.lines or []):

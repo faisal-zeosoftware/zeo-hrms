@@ -9,6 +9,7 @@ urlpatterns = app.urls() + [
     path('api/public-sign/<str:token>/', V.PublicSignView.as_view()),
     path('api/public-sign/<str:token>/document/', V.PublicSignDocumentView.as_view()),
     path('api/survey/<int:pk>/take/', V.SurveyTakeView.as_view(app=app)),
+    path('api/okr-tree/', V.OkrTreeView.as_view(app=app)),   # v1.67.26 OKR alignment
     path('api/survey/<int:pk>/results/', V.SurveyResultsView.as_view(app=app)),
     path('api/forms/', V.MyFormsView.as_view(app=app)),
     path('api/forms/<int:pk>/', V.FormFillView.as_view(app=app)),

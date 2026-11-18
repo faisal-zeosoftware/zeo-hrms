@@ -39,7 +39,8 @@ from Translations.i18n import tr   # v1.67.19
 log = logging.getLogger(__name__)
 
 OPT_KEY = 'ooo_auto'   # v1.62.11 (item 95)
-DEFAULTS = {'on': False, 'to': 'named', 'types': 'full_days', 'type_ids': [], 'give_back': True}
+# v1.67.22 (pending C13) 'rights': refuse (a colleague without the right to approve a type cannot be chosen for it) | warn (as before)
+DEFAULTS = {'on': False, 'to': 'named', 'types': 'full_days', 'type_ids': [], 'give_back': True, 'rights': 'refuse'}
 # approval kind → level model of its workflow (the workflow model is the level's `workflow`) and the request's type field
 LEVELS = {'leave': ('calendars.LeaveApprovalLevels', 'leave_type_id'), 'latein': ('calendars.LateinEarlyoutApprovalLevel', None),
           'general': ('EmpManagement.ApprovalLevel', 'request_type_id'), 'document': ('EmpManagement.DocumentApprovalLevel', 'request_type_id'),
@@ -147,6 +148,8 @@ def settings_set(data):
         cur['to'] = 'named'
     if cur['types'] not in ('full_days', 'all', 'some'):
         cur['types'] = 'full_days'
+    if cur.get('rights') not in ('refuse', 'warn'):   # v1.67.22 (pending C13)
+        cur['rights'] = 'refuse'
     cur['type_ids'] = [int(x) for x in (cur.get('type_ids') or []) if str(x).isdigit()]
     CO.objects.update_or_create(key=OPT_KEY, defaults={'value': cur})
     return cur
@@ -575,6 +578,44 @@ def check(user, delegate, a, b, exclude_id=None, rules=None):
     return ''
 
 
+def approves_kinds(user_id):
+    """v1.67.22 (pending C13): the approval kinds (of the company's apps) the user approves – a level of a workflow names them (or HR
+    rights to decide that kind)."""
+    out = []
+    for key, label, *_ in kinds_on():
+        if key == FLOW:
+            continue
+        lm = LEVELS.get(key)
+        try:
+            if lm and apps.get_model(*lm[0].split('.')).objects.filter(approver_id=user_id).exists():
+                out.append((key, label))
+        except Exception:
+            pass
+    return out
+
+
+def rights_problem(user, delegate_id, rules):
+    """v1.67.22 (pending C13): with Out of office › "A colleague without the right" = refuse, the colleague of each approval type must
+    be able to approve it; the default colleague must be able to approve every type the user approves that has no colleague of its own.
+    '' when fine, else the message."""
+    if settings_get().get('rights', 'refuse') != 'refuse':
+        return ''
+    from Translations.i18n import msg, tr as _tr
+    labels = {k: _tr(l) for k, l, *_ in kinds()}
+    names = _names([delegate_id] + [r.get('delegate_id') for r in rules or []])
+    for r in rules or []:
+        if r.get('delegate_id') and not can_approve(r['delegate_id'], r.get('kind')):
+            return msg('{0} cannot approve {1} (no right to approve them). Choose another colleague, or give them the right first.',
+                       names.get(r['delegate_id'], ''), labels.get(r.get('kind'), r.get('kind')))
+    if delegate_id:
+        covered = {r.get('kind') for r in rules or [] if r.get('delegate_id') and not r.get('leave_type_id')}
+        missing = [_tr(l) for k, l in approves_kinds(user.pk) if k not in covered and not can_approve(delegate_id, k)]
+        if missing:
+            return msg('{0} cannot approve {1} (no right to approve them). Choose another colleague, give them the right, or add a colleague for those approvals.',
+                       names.get(delegate_id, ''), ', '.join(missing))
+    return ''
+
+
 def warnings(rules, delegate_id):
     """The colleagues who have no right to approve the type they get (saved anyway)."""
     out = []
@@ -762,10 +803,18 @@ def leave_deleted(req_id):
             cancel(o)
 
 
+class Refused(Exception):   # v1.67.22 (pending C13)
+    pass
+
+
 def choose_for_leave(req, user, delegate_id, rules=None):
     """The applicant's "Approvals go to" on a leave request: kept on a waiting row until the leave is approved; on a leave
-    already approved (no workflow) the automatic row takes the colleague (what it handed over moves to them)."""
+    already approved (no workflow) the automatic row takes the colleague (what it handed over moves to them).
+    v1.67.22 (pending C13): refused (Refused) for a colleague without the right, as the out-of-office screen refuses it."""
     from .models import OutOfOffice
+    p = rights_problem(user, delegate_id, rules)
+    if p:
+        raise Refused(p)
     o = OutOfOffice.objects.filter(leave_request_id=req.pk, cancelled=False).first()
     if o is None:
         if req.status == 'approved':

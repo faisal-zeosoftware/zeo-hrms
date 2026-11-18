@@ -19,6 +19,7 @@ Server settings (environment / .env):
                              OpenAI-compatible server). Default false: only public https addresses.
 """
 import base64
+import re
 import ipaddress
 import json
 import logging
@@ -36,10 +37,11 @@ log = logging.getLogger(__name__)
 DEFAULT_URLS = {
     'anthropic': 'https://api.anthropic.com/v1/messages',
     'openai': 'https://api.openai.com/v1/chat/completions',
+    'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',   # v1.72.0: Google's OpenAI-compatible address
     'azure': '',   # https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-10-21
 }
-DEFAULT_MODELS = {'anthropic': 'claude-sonnet-5-5', 'openai': 'gpt-4o-mini', 'azure': ''}
-FEATURE_FIELDS = {'ask': 'use_ask', 'documents': 'use_documents', 'tickets': 'use_tickets'}   # v1.61.0 tickets
+DEFAULT_MODELS = {'anthropic': 'claude-sonnet-5-5', 'openai': 'gpt-4o-mini', 'gemini': 'gemini-3.8-flash', 'azure': ''}
+FEATURE_FIELDS = {'ask': 'use_ask', 'documents': 'use_documents', 'tickets': 'use_tickets', 'crm': 'use_crm'}   # v1.61.0 tickets; v1.67.30 CRM
 TIMEOUT = 90
 
 
@@ -221,11 +223,14 @@ def _openai_to_anthropic(r):
             args = {}
         blocks.append({'type': 'tool_use', 'id': tc.get('id') or f"call_{len(blocks)}", 'name': fn.get('name'), 'input': args})
     stop = 'tool_use' if any(b['type'] == 'tool_use' for b in blocks) else 'end_turn'
-    return {'content': blocks, 'stop_reason': stop}
+    u = r.get('usage') or {}   # v1.72.0 (Ask ZEO cost controls): the tokens of the call
+    return {'content': blocks, 'stop_reason': stop, 'usage': {'input_tokens': u.get('prompt_tokens') or 0, 'output_tokens': u.get('completion_tokens') or 0}}
 
 
 def _build(cfg, system, messages, tools, max_tokens):
     p = cfg['provider']
+    if p != 'anthropic' and isinstance(system, list):   # v1.72.0: a cached system prompt (Anthropic blocks) as plain text for the others
+        system = '\n'.join(b.get('text', '') for b in system)
     if p == 'anthropic':
         body = {'model': cfg['model'], 'max_tokens': max_tokens, 'system': system, 'messages': messages}
         if tools:
@@ -303,8 +308,9 @@ def _send(request, feature, cfg, system, messages, tools, max_tokens):
     return r
 
 
-def chat(request, feature, system, messages, tools=None, max_tokens=2000):
-    """External call for a feature (ask / documents) with every check. Raises ExternalUnavailable → use the built-in mode."""
+def chat(request, feature, system, messages, tools=None, max_tokens=2000, model=None):
+    """External call for a feature (ask / documents) with every check. Raises ExternalUnavailable → use the built-in mode.
+    v1.72.0: model = another model of the same provider for this call (Ask ZEO: a smaller model for documents and mapping)."""
     from Translations.i18n import tr
     if not server_allows_external():
         raise ExternalUnavailable(tr('External AI is switched off by the server administrator.'))
@@ -318,6 +324,8 @@ def chat(request, feature, system, messages, tools=None, max_tokens=2000):
                                    'no key': tr('No API key is saved in Settings → AI settings.'),
                                    'key unreadable': tr('The saved API key cannot be read. Enter it again in Settings → AI settings.')}[why])
     cfg = config_for(row)
+    if model:
+        cfg['model'] = str(model)[:120]
     if month_usage() >= row.monthly_limit:
         _log(request, feature, cfg, False, False, 'limit reached')
         raise ExternalUnavailable(tr('The monthly limit of {0} external AI calls is reached.', row.monthly_limit))
@@ -348,3 +356,55 @@ def test_connection(request, row, override=None):
     return {'ok': True, 'ms': int((time.time() - t0) * 1000),
             'message': tr('Connected. The AI answered in {0} ms.', int((time.time() - t0) * 1000)),
             'reply': text[:40]}
+
+
+
+# ------------------------------------------------------------------ v1.73.5 speech to text (the spoken words of an SOP video)
+def transcribe(request, audio, filename='audio.mp3'):
+    """The spoken words of a recording, through the company's AI provider when it offers speech to text (OpenAI or an
+    OpenAI-compatible address: <base>/audio/transcriptions, model ZEO_AI_TRANSCRIBE_MODEL – default whisper-1). The same checks as a
+    chat: the server's switch, the company's mode, the feature "documents", the monthly limit, the address check; logged.
+    Returns the text. Raises ExternalUnavailable (the caller then reads only what is shown on screen)."""
+    import uuid
+    from Translations.i18n import tr
+    if not server_allows_external():
+        raise ExternalUnavailable(tr('External AI is switched off by the server administrator.'))
+    row = settings_row()
+    mode, why = feature_mode('documents', row)
+    if mode != 'external':
+        raise ExternalUnavailable(tr('External AI is not switched on for documents (Settings → AI settings).'))
+    if row.provider != 'openai':
+        raise ExternalUnavailable(tr('The AI provider of this company does not offer speech to text through ZEO.'))
+    if month_usage() >= row.monthly_limit:
+        raise ExternalUnavailable(tr('The monthly limit of {0} external AI calls is reached.', row.monthly_limit))
+    cfg = config_for(row)
+    base = re.sub(r'/chat/completions/?$', '', (cfg.get('url') or '').rstrip('/'))
+    url = base + '/audio/transcriptions'
+    bad = check_url(url)
+    if bad:
+        _log(request, 'documents', cfg, False, False, 'address refused')
+        raise ExternalUnavailable(bad)
+    model = _env('ZEO_AI_TRANSCRIBE_MODEL', 'whisper-1') or 'whisper-1'
+    b = uuid.uuid4().hex
+    body = (f'--{b}\r\nContent-Disposition: form-data; name="model"\r\n\r\n{model}\r\n'
+            f'--{b}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\ntext\r\n'
+            f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() \
+        + audio + f'\r\n--{b}--\r\n'.encode()
+    headers = {'Content-Type': f'multipart/form-data; boundary={b}', 'Authorization': f'Bearer {cfg.get("key") or ""}'}
+    t0 = time.time()
+    try:
+        raw = _post(dict(cfg, url=url), body, headers)
+    except urllib.error.HTTPError as e:
+        _log(request, 'documents', dict(cfg, model=model), True, False, f'http {e.code}', len(body), 0, int((time.time() - t0) * 1000))
+        raise ExternalUnavailable(tr('The AI provider answered with error {0}.', e.code))
+    except (urllib.error.URLError, socket.timeout, TimeoutError, OSError):
+        _log(request, 'documents', dict(cfg, model=model), True, False, 'unreachable', len(body), 0, int((time.time() - t0) * 1000))
+        raise ExternalUnavailable(tr('The AI provider could not be reached.'))
+    _log(request, 'documents', dict(cfg, model=model), True, True, 'ok', len(body), len(raw), int((time.time() - t0) * 1000))
+    txt = raw.decode('utf-8', 'replace')
+    try:   # a JSON answer {"text": …} when the provider ignores response_format
+        import json as _j
+        txt = _j.loads(txt).get('text', txt)
+    except Exception:
+        pass
+    return str(txt).strip()

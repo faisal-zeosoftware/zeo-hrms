@@ -143,3 +143,61 @@ def _service_packs():
 
 
 PACKS.update(_service_packs())
+
+
+# ------------------------------------------------------------------ v1.67.27 CRM industry release 1 (industry_packs.py)
+# Every industry of the CRM scope: its fields, reports, sources, lost reasons and score rules; the new industries also get their
+# workflow as a pipeline. Pipelines of an industry pack are marked with the industry (not the general Sales pipeline).
+GENERAL_PIPELINES = {'SALES'}
+
+
+def _wf_pipe(w):
+    stages = [(c, n, p, c == 'WON', c == 'LOST') for c, n, p in w['stages']]
+    return pipe(w['code'], w['name'], w.get('kind', 'sales'), 1, stages)
+
+
+def _add(rows, key, new, nat):
+    have = {r[nat] for r in rows.get(key, [])}
+    rows[key] = list(rows.get(key, [])) + [r for r in new if r[nat] not in have]
+
+
+def _merge_industries():
+    from .industry_packs import INDUSTRY_CONTENT
+    for code, c in INDUSTRY_CONTENT.items():
+        if code in PACKS:
+            p = PACKS[code]
+            p['rows'] = rows_ = {k: [dict(x) for x in v] for k, v in p['rows'].items()}
+            if c.get('pipeline'):   # an existing pack with a second workflow (IT: implementation projects next to subscriptions)
+                pp = _wf_pipe(c['pipeline'])
+                pp[0]['order'] = 2
+                _add(rows_, 'pipeline', [pp[0]], 'code')
+                _add(rows_, 'stage', pp[1], 'code')
+        else:
+            pipes = ([_wf_pipe(c['pipeline'])] if c.get('pipeline') else []) + [G_SALES]
+            p = PACKS[code] = _ind(c['label'], c['description'], [], pipes, [], [])
+            rows_ = p['rows'] = {k: [dict(x) for x in v] for k, v in p['rows'].items()}
+        _add(rows_, 'source', [{'code': a, 'name': b} for a, b in c.get('sources', [])], 'code')
+        _add(rows_, 'lost_reason', [{'code': a, 'name': b} for a, b in c.get('lost', [])], 'code')
+        n0 = len(rows_.get('score_rule', []))
+        _add(rows_, 'score_rule', [{'name': n, 'when': w, 'value': v, 'points': pts, 'order': n0 + i + 1} for i, (n, w, v, pts) in enumerate(c.get('score', []))], 'name')
+        rows_['field'] = [dict(x, industry=code, order=(i + 1) * 10) for i, x in enumerate(c.get('fields', []))]
+        rows_['report'] = [dict(x, industry=code, order=(i + 1) * 10) for i, x in enumerate(c.get('reports', []))]
+        for r in rows_.get('pipeline', []):
+            if r['code'] not in GENERAL_PIPELINES:
+                r['industry'] = code
+        hl = list(p.get('highlights') or [])
+        hl += [f'{len(rows_["field"])} industry fields', f'{len(rows_["report"])} industry reports']
+        p['highlights'] = hl
+        if not p.get('description'):
+            p['description'] = c['description']
+    # the other packs (property sales pipelines, service industries without content yet): their pipelines carry the industry too
+    for code, p in PACKS.items():
+        if code == 'general':
+            continue
+        p['rows'] = {k: [dict(x) for x in v] for k, v in p['rows'].items()}
+        for r in p['rows'].get('pipeline', []):
+            if r['code'] not in GENERAL_PIPELINES:
+                r.setdefault('industry', code)
+
+
+_merge_industries()

@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -395,3 +396,200 @@ class PIPReviewViewSet(EmployeeScopedQuerysetMixin, BaseViewSet):
 
     def perform_create(self, serializer):
         serializer.save(reviewed_by=self.request.user)
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 234) compensation cycle
+from rest_framework.views import APIView as _APIView  # noqa: E402
+from rest_framework.permissions import IsAuthenticated as _IsAuth  # noqa: E402
+from rest_framework.response import Response as _Resp  # noqa: E402
+
+from . import compensation as CMP  # noqa: E402
+from .models import CompensationCycle as _CC  # noqa: E402
+
+
+def _cright(request, verb):
+    from AccessControl.access import ctx as zctx
+    c = zctx(request)
+    return bool(c.admin or f'{verb}_appraisaloutcome' in c.codes)
+
+
+def _cfail(e):
+    from Translations.i18n import tr
+    return _Resp({'detail': tr(str(e)), **({'field': e.field} if e.field else {})}, status=e.status)
+
+
+class CompCyclesView(_APIView):
+    """GET the cycles; POST a new one {name, effective_date, budget_percent, appraisal_cycle, branches, departments, joined_before}."""
+    permission_classes = [_IsAuth]
+
+    def get(self, request):
+        if not _cright(request, 'view'):
+            return _Resp({'detail': 'You do not have the right to see salary reviews.'}, status=403)
+        from .models import AppraisalCycle
+        return _Resp({'cycles': [CMP.cycle_json(c, lines=False) for c in _CC.objects.all()[:100]],
+                      'appraisal_cycles': [{'id': a.pk, 'name': a.name, 'status': a.status} for a in AppraisalCycle.objects.all()[:100]]})
+
+    def post(self, request):
+        if not _cright(request, 'change'):
+            return _Resp({'detail': 'You do not have the right to prepare salary reviews.'}, status=403)
+        return self._save(request, _CC())
+
+    @staticmethod
+    def _save(request, c):
+        from datetime import date as _d
+        from decimal import Decimal, InvalidOperation
+        d = request.data
+        name = str(d.get('name', c.name) or '').strip()
+        if not name:
+            return _Resp({'detail': 'Give the cycle a name.', 'field': 'name'}, status=400)
+        if _CC.objects.filter(name__iexact=name).exclude(pk=c.pk).exists():
+            return _Resp({'detail': 'Another cycle has this name.', 'field': 'name'}, status=400)
+        try:
+            eff = _d.fromisoformat(str(d.get('effective_date') or c.effective_date)[:10])
+        except ValueError:
+            return _Resp({'detail': 'Enter the effective date.', 'field': 'effective_date'}, status=400)
+        try:
+            bud = Decimal(str(d.get('budget_percent', c.budget_percent) or 0))
+        except InvalidOperation:
+            return _Resp({'detail': 'Budget %: a number.', 'field': 'budget_percent'}, status=400)
+        if bud < 0 or bud > 100:
+            return _Resp({'detail': 'Budget %: from 0 to 100.', 'field': 'budget_percent'}, status=400)
+        if c.pk and c.status != 'draft':
+            return _Resp({'detail': 'Only a draft cycle can be changed.'}, status=409)
+        c.name, c.effective_date, c.budget_percent = name[:150], eff, bud
+        c.appraisal_cycle_id = d.get('appraisal_cycle') or None
+        jb = d.get('joined_before')
+        c.joined_before = _d.fromisoformat(str(jb)[:10]) if jb else None
+        c.save()
+        if 'branches' in d:
+            c.branches.set(d.get('branches') or [])
+        if 'departments' in d:
+            c.departments.set(d.get('departments') or [])
+        return _Resp(CMP.cycle_json(c), status=201)
+
+
+class CompCycleView(_APIView):
+    """GET one cycle with its lines; PUT changes the draft; POST {action: fill|line|submit|approve|return|apply|letters|cancel}."""
+    permission_classes = [_IsAuth]
+
+    def get(self, request, pk):
+        if not _cright(request, 'view'):
+            return _Resp({'detail': 'You do not have the right to see salary reviews.'}, status=403)
+        c = _CC.objects.filter(pk=pk).first()
+        if c is None:
+            return _Resp({'detail': 'Not found.'}, status=404)
+        out = CMP.cycle_json(c)
+        out['can_approve'] = c.status == 'review' and c.prepared_by_id != request.user.pk and _cright(request, 'change')
+        return _Resp(out)
+
+    def put(self, request, pk):
+        if not _cright(request, 'change'):
+            return _Resp({'detail': 'You do not have the right to prepare salary reviews.'}, status=403)
+        c = _CC.objects.filter(pk=pk).first()
+        if c is None:
+            return _Resp({'detail': 'Not found.'}, status=404)
+        return CompCyclesView._save(request, c)
+
+    def post(self, request, pk):
+        if not _cright(request, 'change'):
+            return _Resp({'detail': 'You do not have the right to change salary reviews.'}, status=403)
+        c = _CC.objects.filter(pk=pk).first()
+        if c is None:
+            return _Resp({'detail': 'Not found.'}, status=404)
+        a = request.data.get('action')
+        extra = {}
+        try:
+            if a == 'fill':
+                extra['filled'] = CMP.fill(c)
+            elif a == 'line':
+                CMP.set_line(c, request.data.get('line'), request.data)
+            elif a == 'submit':
+                CMP.submit(c, request.user)
+            elif a in ('approve', 'return'):
+                CMP.decide(c, request.user, a == 'approve', request.data.get('note', ''))
+            elif a == 'apply':
+                extra['applied'] = CMP.apply(c, request.user)
+            elif a == 'letters':
+                out, failed, sent = CMP.letters(c, request.user, request.data.get('language') or 'en', str(request.data.get('email')).lower() in ('1', 'true'))
+                extra.update({'letters': len(out), 'failed': failed, 'emailed': sent, 'letter_ids': [x.pk for x in out]})
+            elif a == 'cancel':
+                if c.status in ('applied',):
+                    return _Resp({'detail': 'An applied cycle cannot be cancelled.'}, status=409)
+                c.status = 'cancelled'
+                c.save(update_fields=['status'])
+            else:
+                return _Resp({'detail': 'Unknown action.'}, status=400)
+        except CMP.CompError as e:
+            return _cfail(e)
+        c.refresh_from_db()
+        return _Resp({**CMP.cycle_json(c), **extra})
+
+
+# ====================================================================== v1.67.27 (pending item 1.62.13, item 241) nine-box grid
+class NineBoxView(_APIView):
+    """GET the nine-box of the employees the user may rate (HR: every employee of the user's branches; a line manager: their team):
+    {rows: [{employee_id, employee, code, department, rating, cycle, performance, potential, box, box_label, note, can_set}], grid: {box: n}}.
+    POST {employee, potential: 1 | 2 | 3, note} sets the potential (HR with "change goal sheet", or the employee's line manager)."""
+    permission_classes = [_IsAuth]
+
+    @staticmethod
+    def _scope(request):
+        from AccessControl.access import ctx as zctx
+        from EmpManagement.models import emp_master
+        c = zctx(request)
+        hr = bool(c.admin or 'change_goalsheet' in c.codes or 'view_goalsheet' in c.codes)
+        qs = emp_master.objects.filter(is_active=True).select_related('emp_dept_id', 'emp_branch_id', 'emp_desgntn_id')
+        if hr:
+            if c.branches is not None:
+                qs = qs.filter(emp_branch_id__in=c.branches)
+        else:
+            qs = qs.filter(emp_reporting_manager=request.user)
+        can_hr = bool(c.admin or 'change_goalsheet' in c.codes)
+        return qs, hr, can_hr
+
+    def get(self, request):
+        from DashboardManagement.rep_1627 import nine_box_rows
+        qs, hr, can_hr = self._scope(request)
+        emps = list(qs.order_by('emp_code'))
+        L = {1: 'Low', 2: 'Medium', 3: 'High'}
+        rows, grid = [], {}
+        for x in nine_box_rows(emps):
+            e = x['e']
+            rows.append({'employee_id': e.pk, 'employee': ' '.join(v for v in (e.emp_first_name, e.emp_last_name) if v), 'code': e.emp_code,
+                         'department': e.emp_dept_id.dept_name if e.emp_dept_id_id else '', 'rating': x['rating'], 'cycle': x['cycle'],
+                         'performance': x['performance'], 'performance_label': L.get(x['performance'], ''), 'potential': x['potential'],
+                         'box': x['box'], 'box_label': x['box_label'], 'note': x['note'], 'set_on': x['set_on'].isoformat() if x['set_on'] else None,
+                         'can_set': can_hr or e.emp_reporting_manager_id == request.user.pk})
+            if x['box']:
+                grid[str(x['box'])] = grid.get(str(x['box']), 0) + 1
+        if not rows and not hr:
+            return _Resp({'detail': 'You do not have the right to see the nine-box grid.'}, status=403)
+        return _Resp({'rows': rows, 'grid': grid, 'hr': hr})
+
+    def post(self, request):
+        from datetime import date as _d
+        from .models import TalentPotential
+        qs, _hr, can_hr = self._scope(request)
+        try:
+            eid = int(request.data.get('employee'))
+            pot = int(request.data.get('potential'))
+        except (TypeError, ValueError):
+            return _Resp({'detail': 'Choose the employee and the potential (low, medium or high).'}, status=400)
+        if pot not in (1, 2, 3):
+            return _Resp({'detail': 'The potential is low, medium or high.', 'field': 'potential'}, status=400)
+        e = qs.filter(pk=eid).first()
+        if e is None:
+            return _Resp({'detail': 'Employee not found.'}, status=404)
+        if not (can_hr or e.emp_reporting_manager_id == request.user.pk):
+            return _Resp({'detail': 'Only HR or the line manager can set the potential.'}, status=403)
+        note = str(request.data.get('note') or '').strip()[:255]
+        who = request.user.get_full_name() or request.user.username
+        tp = TalentPotential.objects.filter(employee=e).first()
+        if tp is None:
+            tp = TalentPotential(employee=e)
+        elif tp.potential != pot or tp.note != note:
+            tp.history = (tp.history or []) + [{'potential': tp.potential, 'note': tp.note, 'by': tp.set_by.username if tp.set_by_id else '',
+                                                'on': tp.set_on.isoformat() if tp.set_on else None}]
+        tp.potential, tp.note, tp.set_by, tp.set_on = pot, note, request.user, _zt_today()
+        tp.save()
+        return self.get(request)

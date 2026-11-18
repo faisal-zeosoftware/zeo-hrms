@@ -4,6 +4,7 @@ For every company: open probations ending in 30, 14, 7 or 1 days, today, or over
 the reporting manager and to the HR users of the employee's branch (company admins and users with change_emp_master
 whose branch access includes the branch). Employees on notice whose last working day has passed get their final status.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 import logging
 from datetime import date, timedelta
@@ -38,7 +39,7 @@ def remind_company(today=None):
     from django_tenants.utils import schema_context
     from . import services as S
     from .models import EmploymentInfo
-    today = today or date.today()
+    today = today or _zt_today()
     Emp = apps.get_model('EmpManagement', 'emp_master')
     schema = connection.schema_name
     # employees without a row yet (created before the app was installed)

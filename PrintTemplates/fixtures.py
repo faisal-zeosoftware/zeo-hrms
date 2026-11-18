@@ -1,5 +1,6 @@
 """v1.62.0 print – sample data for the gallery thumbnails and for previews without a record (the company's own letterhead and
 branding with a made-up employee)."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 
 from .contexts import BY_KEY, T, base, d, money, period, signers, words, offer_text, loan_terms
@@ -23,7 +24,7 @@ def sample(doc_type, lang='en'):
         c['company'].update(name='Golden Dune Integrated Services LLC', initials='GD')
     c['employee'] = _emp(lang)
     name = c['employee']['name']
-    today = date.today()
+    today = _zt_today()
     sign = (c['company'].get('signatory_name') or 'Sara Al Hashimi')
     stitle = c['company'].get('signatory_title') or T(lang, 'HR Manager', 'مديرة الموارد البشرية')
     c['company']['signatory_name'], c['company']['signatory_title'] = sign, stitle

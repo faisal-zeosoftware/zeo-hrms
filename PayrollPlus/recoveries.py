@@ -1,4 +1,5 @@
 # v1.63.0 (item 28): new module – recovery schedules for any deduction
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.63.0 (item 28) – recovery schedules (Payroll › Recoveries).
 
 HR creates a recovery: employee, type (a deduction salary component – accommodation, transport, uniform, damage …), total, start month,
@@ -47,6 +48,18 @@ class Refused(Exception):
     def __init__(self, message, status=400, problems=None):
         super().__init__(message)
         self.message, self.status, self.problems = message, status, problems or {}
+
+
+
+def _company_date():
+    """v1.70.5: today in the company's time zone (the server runs on UTC)."""
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    try:
+        from zeo.appkit.engine import company_tz
+        return _dt.datetime.now(ZoneInfo(company_tz())).date()
+    except Exception:   # noqa: BLE001
+        return _dt.datetime.now(ZoneInfo('Asia/Dubai')).date()
 
 
 def q2(v):
@@ -456,12 +469,12 @@ def settle_early(r, data, user=None):
         return r
     if mode != 'paid':
         raise Refused(tr('Check the marked fields.'), problems={'mode': tr('Invalid.')})
-    on = _parse_day(data.get('paid_on')) or timezone.localdate()
+    on = _parse_day(data.get('paid_on')) or _company_date()   # v1.70.5: the company's date (not UTC)
     ref = str(data.get('reference') or '').strip()[:120]
     if not ref:
         raise Refused(tr('Check the marked fields.'), problems={'reference': tr('Enter the receipt or payment reference.')})
     with transaction.atomic():
-        ent = RecoveryEntry.objects.create(recovery=r, kind='settled', month=on.replace(day=1), due=bal, amount=bal, note=f'{on:%d/%m/%Y} {ref}'[:255],
+        ent = RecoveryEntry.objects.create(recovery=r, kind='settled', month=on.replace(day=1), entry_date=on, due=bal, amount=bal, note=f'{on:%d/%m/%Y} {ref}'[:255],
                                            created_by_id=getattr(user, 'pk', None))
         r.status, r.settle_next = 'settled', False
         _note(r, 'settled', user, ref, amount=str(bal))
@@ -481,7 +494,8 @@ def write_off(r, reason, user=None):
     with transaction.atomic():
         ent = None
         if bal > 0:
-            ent = RecoveryEntry.objects.create(recovery=r, kind='write_off', month=timezone.localdate().replace(day=1), due=bal, amount=bal, note=reason,
+            _wd = _company_date()   # v1.70.5: the company's date, kept on the entry
+            ent = RecoveryEntry.objects.create(recovery=r, kind='write_off', month=_wd.replace(day=1), entry_date=_wd, due=bal, amount=bal, note=reason,
                                                created_by_id=getattr(user, 'pk', None))
         r.status = 'written_off'
         _note(r, 'written_off', user, reason, amount=str(bal))
@@ -690,7 +704,7 @@ def close_exit(st, user=None):
     from .models import Recovery, RecoveryEntry
     out = []
     lines = {str(l.get('key')): l for l in (st.lines or [])}
-    when = (st.paid_on or timezone.localdate())
+    when = (st.paid_on or _zt_today())
     for r in Recovery.objects.filter(employee_id=st.employee_id, status__in=OPEN):
         bal = balance(r)
         ln = lines.get(f'recovery_{r.pk}')
@@ -844,12 +858,7 @@ def build_journal(r, entry, user=None):
     comp = M('PayrollManagement', 'SalaryComponent').objects.filter(pk=r.component_id).first()
     who = ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x)
     label = (tr('Recovery {0} settled early', ref) if entry.kind == 'settled' else tr('Recovery {0} written off', ref)) + f' – {who}'
-    jdate = entry.created_at.date() if entry.created_at else timezone.localdate()
-    if entry.kind == 'settled':
-        try:
-            jdate = date.fromisoformat('-'.join(reversed((entry.note or '')[:10].split('/')))) if (entry.note or '')[2:3] == '/' else jdate
-        except ValueError:
-            pass
+    jdate = entry.entry_date or (entry.created_at.date() if entry.created_at else None)   # v1.70.5: the entry's own date (no date read out of the note)
     b = Builder('recovery', f'{r.pk}-{entry.pk}', label, jdate, ref)
     b.dims.emps[e.pk] = e
     amt = q2(entry.amount)

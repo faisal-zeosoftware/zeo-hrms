@@ -7,6 +7,7 @@ Rights: the record type must be one the user may view (company administrator, or
 the rows are limited like the lists (branches, own records – AccessControl.scope_queryset). Password and code fields are
 never offered.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -161,7 +162,7 @@ def _val(v, typ):
 
 
 def q_of(filters, fmap, today=None):
-    today = today or date.today()
+    today = today or _zt_today()
     q = Q()
     for f in filters or []:
         k, op, v, v2 = f['field'], f['op'], f.get('value'), f.get('value2')
@@ -248,6 +249,9 @@ def value_of(obj, path, f):
         except Exception:
             return ''
     if hasattr(v, '_meta'):
+        if hasattr(v, 'emp_first_name') and hasattr(v, 'emp_code'):   # v1.73.2: an employee by name ("Daniel Okafor (DPT-007)"), not the code only
+            nm = ' '.join(x for x in (getattr(v, 'emp_first_name', ''), getattr(v, 'emp_last_name', '')) if x)
+            return f'{nm} ({v.emp_code})' if nm else str(v)
         return str(v)
     if isinstance(v, bool):
         return 'Yes' if v else 'No'

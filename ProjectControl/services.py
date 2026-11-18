@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """
 Project control rules in one place: who sees what, timesheet validation, hours, billable default,
 hourly cost rate from the salary structure, approval and the project / employee summaries.
@@ -60,7 +61,7 @@ def week_start(d):
 
 
 def local_today():
-    return timezone.localdate()
+    return _zt_today()
 
 
 # ------------------------------------------------------------------ who sees what
@@ -313,10 +314,15 @@ def monthly_fixed_pay(emp_id, on_date=None, setting=None):
 
 
 def working_days_per_month(emp):
-    """fixed_working_days of the pay structure of the employee's branch, else 30."""
+    """fixed_working_days of the employee's own pay structure (v1.73.7: the most specific match), else 30."""
     from PayrollManagement.models import PayStructure
     ps = None
-    if emp.emp_branch_id_id:
+    try:
+        from PayrollManagement.signals import structure_for
+        ps = structure_for(emp)
+    except Exception:
+        ps = None
+    if ps is None and emp.emp_branch_id_id:
         ps = PayStructure.objects.filter(branch=emp.emp_branch_id_id).order_by('-id').first()
     if ps is None:
         ps = PayStructure.objects.filter(branch__isnull=True).order_by('-id').first()

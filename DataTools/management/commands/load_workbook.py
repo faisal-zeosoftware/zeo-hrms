@@ -46,6 +46,7 @@ twice, and the reason of every refused row (with the column and how to fix it) a
 Every failed row is listed (sheet, row, column, reason, fix) and written to <workbook>.log.json; nothing stops the rest of the load.
 The same engine runs the Settings › Data workbook screen and its API (DataTools/workbook_jobs.py).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime
 import difflib
 import hashlib
@@ -608,7 +609,7 @@ class Loader:
         after = self.stamps(model, pk)
         if not after or before is None:
             return
-        now, today = timezone.now(), timezone.localdate()
+        now, today = timezone.now(), _zt_today()
         upd = {}
         with schema_context(self.schema):
             for f in model._meta.fields:
@@ -622,6 +623,8 @@ class Loader:
                     upd[f.name] = day
             if upd:
                 model.objects.filter(pk=pk).update(**upd)
+                if model._meta.label == 'ZeoProjects.Ticket':   # v1.67.24: breaches of a dated response / resolution
+                    self._ticket_sla_from_date(pk)
 
     def backdate(self, model, pk, day, tod=None):
         if model is None or not pk or not day:
@@ -647,6 +650,31 @@ class Loader:
                     upd[f.name] = day
             if upd:
                 model.objects.filter(pk=pk).update(**upd)
+                if model._meta.label == 'ZeoProjects.Ticket' and 'created_at' in upd:
+                    self._ticket_sla_from_date(pk)
+
+    def _ticket_sla_from_date(self, pk):
+        """v1.67.24 (item 272): a ticket loaded with an @date – its SLA due times count from that date (the create set them from
+        the load day); breach flags follow the dated first response / resolution. Never fails the row."""
+        try:
+            from ZeoProjects import services as PS
+            from ZeoProjects.models import Ticket
+            t = Ticket.objects.filter(pk=pk).first()
+            if t is None:
+                return
+            PS.apply_sla(t)
+            fields = ['sla_policy', 'sla_business_hours', 'response_minutes', 'resolution_minutes', 'response_due', 'resolution_due']
+            if hasattr(t, 'response_breached'):
+                t.response_breached = bool(t.response_due and ((t.first_response_at or PS.now()) > t.response_due))
+                fields.append('response_breached')
+            done = getattr(t, 'resolved_at', None)
+            if hasattr(t, 'resolution_breached'):
+                t.resolution_breached = bool(t.resolution_due and ((done or PS.now()) > t.resolution_due))
+                fields.append('resolution_breached')
+            Ticket.objects.filter(pk=pk).update(**{f: getattr(t, f) for f in fields if hasattr(t, f)})
+        except Exception:   # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception('ticket SLA from the loaded date %s', pk)
 
     # ------------------------------------------------------------------ results
     def note(self, sheet, row, ok, msg=''):
@@ -809,7 +837,8 @@ class Loader:
             return self._import(spec, rows, default_as)
         if how == 'job':   # v1.62.0 the scheduler's daily job of an app (only these – a workbook cannot run anything else)
             from django_tenants.utils import schema_context
-            jobs = {'maintenance-daily': ('ZeoMaintenance.app', 'daily')}
+            jobs = {'maintenance-daily': ('ZeoMaintenance.app', 'daily'),
+                    'demo-attendance': ('DataTools.demo_attendance', 'from_row')}   # v1.73.15 demo data: punches of one month (takes the row)
             for rn, row in rows:
                 self.stop_check()
                 name_ = str(row.get('job') or '').strip()
@@ -821,7 +850,8 @@ class Loader:
                     import importlib
                     mod, fn = jobs[name_]
                     with schema_context(self.schema):
-                        res = getattr(importlib.import_module(mod), fn)()
+                        f = getattr(importlib.import_module(mod), fn)
+                        res = f(row) if name_.startswith('demo-') else f()
                     self.note(sheet, rn, 'ok' if (res or {}).get('preventive_jobs', 1) else 'skipped')
                 except Exception as e:   # noqa: BLE001
                     self.note(sheet, rn, 'failed', f'{type(e).__name__}: {e}')

@@ -1,4 +1,5 @@
 """Business logic for the appraisal cycle (kept out of views so it can be tested and reused)."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -187,7 +188,7 @@ def generate_outcomes(cycle):
         outcome.save()
         made += int(created)
         if sheet.final_rating <= 2 and not sheet.pips.exists():
-            start = timezone.localdate()
+            start = _zt_today()
             PerformanceImprovementPlan.objects.create(
                 employee=sheet.employee, sheet=sheet, start_date=start, end_date=start + timedelta(days=90),
                 objectives=f"Improve performance after {cycle.name} rating {sheet.final_rating}. Agree measurable targets with the manager.",
@@ -209,7 +210,7 @@ def push_to_payroll(outcome, user=None):
             raise ValidationError("Employee has no active Basic salary component.")
         line._revised_by = user
         line._remarks = f"Appraisal {outcome.sheet.cycle.name}: rating {outcome.final_rating}, +{outcome.increment_percent}%"
-        eff = outcome.effective_date or timezone.localdate()
+        eff = outcome.effective_date or _zt_today()
         line._effective_period = eff.strftime('%B%Y')
         line.amount = outcome.new_basic
         # v1.62.2 (item 45): the new basic is valid from the effective date – payroll of earlier months keeps the old basic

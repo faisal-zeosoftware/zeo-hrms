@@ -30,7 +30,7 @@ app = App(
 )
 app.settings_fields = ('first_contact_hours', 'duplicate_check', 'auto_assign', 'assign_leads', 'renewal_days', 'currency', 'discount_limit_pct', 'qualify_score', 'quote_validity_days', 'quote_terms', 'capture_key')
 
-MANAGE = ('crm_manager', 'crm_team_lead')
+MANAGE = ('crm_manager', 'crm_team_lead', 'crm_director')   # v1.67.28: + Sales director / management
 VIEW = ('crm_viewer',)
 
 
@@ -92,7 +92,7 @@ def me_as_owner(o, request):
 
 def agents():
     from EmpManagement.models import emp_master
-    users = [u for u in app.users_with_role('crm_agent')]
+    users = [u for u in app.users_with_role('crm_agent', strict=True)]   # v1.73.2: not HR / administrators holding every right
     return list(emp_master.objects.filter(users__in=users).order_by('pk'))
 
 
@@ -680,7 +680,7 @@ def my_work(request):
 
 def daily():
     out = {'late_first_contact': 0, 'offers_expired': 0}
-    leads = app.users_with_role('crm_team_lead')
+    leads = (app.users_with_role('crm_team_lead', fallback=False) or app.users_with_role('crm_manager'))
     for o in Opportunity.objects.filter(status='open', first_contact_due__lt=now(), first_contacted_at__isnull=True).select_related('contact'):
         for u in leads:
             app.todo(u, f'Late first contact: {o.title}', 'opportunity', o.pk, f'{o.number} {o.title}', PAGE + f'r/opportunity/{o.pk}')
@@ -711,3 +711,15 @@ app.dashboard, app.my_work, app.daily = dashboard, my_work, daily
 # v1.41.0 business partners: partner picker, shared-partner lock and duplicate warning on contacts and accounts
 from ZeoMasters.extensions import attach as _attach_partners  # noqa: E402
 _attach_partners(app)
+
+
+# v1.67.27 CRM industry release 1: industry fields on leads / opportunities / quotations / sales orders, several industries,
+# stage rules, industry reports (report centre and CRM home) – industry.py
+from . import general as _general  # noqa: E402   v1.67.28 release 2 (general CRM): before the industry wiring (enquiries get industry fields)
+GENERAL = _general.setup(app, MANAGE, VIEW, can_work, PAGE, SALES)
+from . import marketing as _marketing  # noqa: E402   v1.67.29 release 3 (communication and marketing)
+MARKETING = _marketing.setup(app, MANAGE, VIEW, can_work, PAGE)
+from . import ai as _ai  # noqa: E402   v1.67.30 release 4 (CRM AI)
+AI = _ai.setup(app, MANAGE, VIEW, can_work, PAGE)
+from . import industry as _industry  # noqa: E402
+INDUSTRY = _industry.setup(app, MANAGE, VIEW)

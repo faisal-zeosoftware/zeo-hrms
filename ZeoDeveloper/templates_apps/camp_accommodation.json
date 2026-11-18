@@ -1,0 +1,294 @@
+{
+ "format": "zeo-developer-package",
+ "format_version": 1,
+ "api_version": "v1",
+ "title": "Camp accommodation",
+ "description": "Camp rooms and beds, allocation of employees with a script that finds a free bed by gender and grade, and an occupancy report.",
+ "modules": [
+  {
+   "key": "camp_room",
+   "name": "Camp room",
+   "plural": "Camp rooms",
+   "icon": "bed",
+   "description": "Rooms of the labour camps: gender, grades allowed, beds.",
+   "prefix": "ROOM",
+   "who_create": "hr",
+   "who_view": "hr",
+   "fields": [
+    {
+     "key": "room_no",
+     "label": "Room",
+     "type": "text",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "camp",
+     "label": "Camp",
+     "type": "choice",
+     "options": "Camp A|Camp B|Camp C",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "gender",
+     "label": "Gender",
+     "type": "choice",
+     "options": "Male|Female",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "grade",
+     "label": "Grades allowed (categories, comma separated – empty = all)",
+     "type": "text",
+     "in_list": false
+    },
+    {
+     "key": "capacity",
+     "label": "Beds",
+     "type": "number",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "occupied",
+     "label": "Occupied",
+     "type": "number",
+     "in_list": true
+    },
+    {
+     "key": "free_beds",
+     "label": "Free beds",
+     "type": "formula",
+     "options": "MAX(capacity - occupied, 0)",
+     "result": "number",
+     "in_list": true
+    },
+    {
+     "key": "occupancy",
+     "label": "Occupancy %",
+     "type": "formula",
+     "options": "IF(capacity > 0, ROUND(occupied / capacity * 100, 1), 0)",
+     "result": "number",
+     "in_list": false
+    }
+   ],
+   "blueprint": {
+    "states": [
+     {
+      "key": "active",
+      "label": "In use"
+     },
+     {
+      "key": "closed",
+      "label": "Closed",
+      "final": true
+     }
+    ],
+    "start": "active",
+    "transitions": [
+     {
+      "key": "close",
+      "label": "Close",
+      "from": [
+       "active"
+      ],
+      "to": "closed",
+      "who": "hr",
+      "require": [],
+      "note": true
+     },
+     {
+      "key": "reopen",
+      "label": "Reopen",
+      "from": [
+       "closed"
+      ],
+      "to": "active",
+      "who": "admin",
+      "require": [],
+      "note": false
+     }
+    ]
+   }
+  },
+  {
+   "key": "camp_allocation",
+   "name": "Bed allocation",
+   "plural": "Bed allocations",
+   "icon": "hotel",
+   "description": "An employee in a room and bed of a camp.",
+   "prefix": "ALLOC",
+   "who_create": "hr",
+   "who_view": "own",
+   "fields": [
+    {
+     "key": "employee",
+     "label": "Employee",
+     "type": "employee",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "from_date",
+     "label": "From",
+     "type": "date",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "to_date",
+     "label": "To",
+     "type": "date",
+     "in_list": false
+    },
+    {
+     "key": "room",
+     "label": "Room",
+     "type": "link",
+     "options": "custom:camp_room",
+     "in_list": true
+    },
+    {
+     "key": "bed",
+     "label": "Bed",
+     "type": "number",
+     "in_list": true
+    },
+    {
+     "key": "nights",
+     "label": "Nights so far",
+     "type": "formula",
+     "options": "IF(BLANK(from_date), 0, DAYS(from_date, TODAY()))",
+     "result": "number",
+     "in_list": false
+    },
+    {
+     "key": "note",
+     "label": "Note",
+     "type": "textarea",
+     "in_list": false
+    }
+   ],
+   "blueprint": {
+    "states": [
+     {
+      "key": "requested",
+      "label": "Requested"
+     },
+     {
+      "key": "allocated",
+      "label": "Allocated"
+     },
+     {
+      "key": "vacated",
+      "label": "Vacated",
+      "final": true
+     }
+    ],
+    "start": "requested",
+    "transitions": [
+     {
+      "key": "allocate",
+      "label": "Allocate",
+      "from": [
+       "requested"
+      ],
+      "to": "allocated",
+      "who": "hr",
+      "require": [
+       "room",
+       "bed"
+      ],
+      "note": false
+     },
+     {
+      "key": "vacate",
+      "label": "Vacate",
+      "from": [
+       "allocated"
+      ],
+      "to": "vacated",
+      "who": "hr",
+      "require": [],
+      "note": true
+     }
+    ]
+   }
+  }
+ ],
+ "rate_tables": [],
+ "scripts": [
+  {
+   "key": "camp_find_free_bed",
+   "name": "Find a free bed",
+   "description": "Allocates a free bed by gender and grade.",
+   "module_key": "camp_allocation",
+   "trigger": "button",
+   "button_label": "Find a free bed",
+   "code": "# Find a free bed for the employee of this allocation (button \"Find a free bed\").\n# A room fits when its gender is the employee's, it has a free bed and its grade list is empty or holds the employee's category.\nemp = employees.get(record[\"employee\"])\nif emp is None:\n    stop(\"The employee is not found (or you may not see the employee).\")\nif record[\"room\"]:\n    stop(\"A room is already allocated – vacate it first.\")\nrooms = records.search(\"camp_room\", {\"state\": \"active\", \"gender\": emp.gender, \"free_beds__gt\": 0}, limit=500, order=\"free_beds\")\nchosen = None\nfor room in rooms:\n    grades = [g.strip().lower() for g in (room[\"grade\"] or \"\").split(\",\") if g.strip()]\n    if not grades or emp.category.lower() in grades:\n        chosen = room\n        break\nif chosen is None:\n    stop(f\"No free bed for {emp.name} ({emp.gender}, {emp.category or 'no category'}).\")\n# the bed numbers already taken in that room\ntaken = [int(a[\"bed\"]) for a in records.search(\"camp_allocation\", {\"room\": chosen.id, \"state__in\": [\"requested\", \"allocated\"]}, limit=1000) if a[\"bed\"]]\nbed = 1\nwhile bed in taken:\n    bed += 1\nrecord.update({\"room\": chosen.id, \"bed\": bed})\nchosen.update({\"occupied\": (chosen[\"occupied\"] or 0) + 1})\nrecord.move(\"allocate\", f\"Room {chosen['room_no']}, bed {bed} (found by the script)\")\nlog(f\"{emp.name}: {chosen['camp']} room {chosen['room_no']} bed {bed}\")\nif emp.user_id:\n    notify(emp, \"Camp accommodation\", f\"Your room: {chosen['camp']} {chosen['room_no']}, bed {bed}, from {record['from_date']}.\")\n"
+  },
+  {
+   "key": "camp_vacate_bed",
+   "name": "Free the bed when vacated",
+   "description": "One more free bed in the room after \"Vacate\".",
+   "module_key": "camp_allocation",
+   "trigger": "move",
+   "move_key": "vacate",
+   "code": "# When an allocation is vacated, the room has one more free bed.\nif record[\"room\"]:\n    room = records.get(\"camp_room\", record[\"room\"])\n    if room is not None and (room[\"occupied\"] or 0) > 0:\n        room.update({\"occupied\": room[\"occupied\"] - 1})\n        log(f\"Room {room['room_no']}: {room['occupied']} occupied\")\n"
+  }
+ ],
+ "reports": [
+  {
+   "module_key": "camp_room",
+   "name": "Camp occupancy",
+   "description": "Beds, occupied and free beds per camp.",
+   "section": "Camp accommodation",
+   "kind": "summary",
+   "columns": [
+    "capacity",
+    "occupied",
+    "free_beds"
+   ],
+   "group_by": [
+    "camp",
+    "gender"
+   ],
+   "date_field": "",
+   "states": [
+    "active"
+   ],
+   "who": "hr"
+  },
+  {
+   "module_key": "camp_allocation",
+   "name": "Bed allocations",
+   "description": "Who sleeps where.",
+   "section": "Camp accommodation",
+   "kind": "list",
+   "columns": [
+    "employee",
+    "room",
+    "bed",
+    "from_date",
+    "to_date"
+   ],
+   "group_by": [],
+   "date_field": "",
+   "states": [
+    "allocated"
+   ],
+   "who": "hr"
+  }
+ ],
+ "prints": [
+  {
+   "module_key": "camp_allocation",
+   "name": "Allocation letter",
+   "paper": "A4",
+   "html": "<h2>{{ company }}</h2><h3>Camp accommodation – {{ number }}</h3><p>Date: {{ today }}</p><table><tr><th>Employee</th><td>{{ employee }}</td></tr><tr><th>Room</th><td>{{ room }}</td></tr><tr><th>Bed</th><td>{{ bed }}</td></tr><tr><th>From</th><td>{{ from_date }}</td></tr></table><p>Please keep the room clean and follow the camp rules.</p>"
+  }
+ ],
+ "scheduled": []
+}

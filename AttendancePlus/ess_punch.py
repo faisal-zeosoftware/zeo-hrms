@@ -18,7 +18,9 @@ New:
 * Company setting (Attendance › Self-service punch, ZeoApps.CompanyOption 'ess_punch'): barcode on / off, face on / off,
   accept own card, accept site QR, match threshold.
 
-Honest limits: the face check has no liveness test (a good photo of the employee held to the camera can match); use it with
+v1.67.24: liveness – the employee blinks once (setting "Liveness check", off by default: a phone app older than 1.67.24 cannot send the
+blink, so the company switches it on once the phones are updated; a photo held to the camera is then refused).
+Honest limits: a recorded video could still pass; use it with
 the geofence / IP rules, or keep it off. The browser computes the descriptor, so a tampered browser could send a descriptor
 made elsewhere – the server only compares numbers.
 """
@@ -39,7 +41,7 @@ MAX_SAMPLES = 5
 CONSENT_TEXT = ('I agree that ZEO keeps a numeric description of my face (not a photo) so that I can punch in and out with my face '
                 'on this company\'s attendance. It is used for attendance only, it is not shared, and I can remove it at any '
                 'time in My profile; HR can also remove it.')
-DEFAULTS = {'barcode': True, 'face': True, 'own_card': True, 'site_qr': True, 'threshold': 0.5}
+DEFAULTS = {'barcode': True, 'face': True, 'own_card': True, 'site_qr': True, 'threshold': 0.5, 'liveness': False}   # v1.67.24 liveness (off until the phones have the new app)
 
 
 def settings():
@@ -59,7 +61,7 @@ def settings():
 
 def save_settings(data):
     cur = settings()
-    for k in ('barcode', 'face', 'own_card', 'site_qr'):
+    for k in ('barcode', 'face', 'own_card', 'site_qr', 'liveness'):
         if k in data:
             cur[k] = str(data[k]).lower() in ('1', 'true', 'yes', 'on')
     if 'threshold' in data:
@@ -180,6 +182,8 @@ def punch(request, employee, method, data):
         kiosk, how = code_check(employee, data.get('code'))
         source, verified, extra['matched'] = 'qr', 'qr', how
     else:
+        if st.get('liveness'):
+            liveness_check(data.get('liveness'))
         ok, dist = match(employee, data.get('descriptor'))
         extra['distance'] = dist
         if not ok:
@@ -190,16 +194,33 @@ def punch(request, employee, method, data):
                              ip=S.client_ip(request), lat=lat or None, lng=lng or None, location=str(data.get('location') or '')[:255],
                              photo=photo, verified_by=verified, user_id=request.user.id,
                              note=('Self service · ' + (extra.get('matched') or 'face'))[:255])
-    p.geofence_ok = geo
-    p.save(update_fields=['geofence_ok'])
+    if created:   # v1.69.0: a repeated punch (same minute) returns the first one – its geofence result is kept, not overwritten
+        p.geofence_ok = geo
+        p.save(update_fields=['geofence_ok'])
     return p, created, extra
+
+
+def liveness_check(lv):
+    """v1.67.24 – the face punch needs a blink (company setting "Liveness check", on by default): the eye openness the browser measured
+    over the frames must go from open to closed and open again. A printed photo or a still picture on a phone held to the camera
+    keeps the same openness and is refused. (A recorded video could still pass – combine with geofence / IP rules.)"""
+    ears = (lv or {}).get('ears') if isinstance(lv, dict) else None
+    try:
+        ears = [float(x) for x in (ears or [])][:200]
+    except (TypeError, ValueError):
+        ears = []
+    i_open = next((i for i, e in enumerate(ears) if e >= 0.25), None)
+    i_closed = next((i for i, e in enumerate(ears) if i_open is not None and i > i_open and e <= 0.2), None)
+    i_again = next((i for i, e in enumerate(ears) if i_closed is not None and i > i_closed and e >= 0.25), None)
+    if i_again is None or max(ears) - min(ears) < 0.08:
+        raise S.Refused(tr('No blink was seen. Press Punch again and blink once while looking at the camera.'), 403)
 
 
 def status(employee):
     st = settings()
     fp = M.FaceProfile.objects.filter(employee_id=employee.id).first() if employee else None
     rule = E.rule_for(employee) if employee else None
-    return {'barcode_on': st['barcode'], 'face_on': st['face'], 'own_card': st['own_card'], 'site_qr': st['site_qr'],
+    return {'barcode_on': st['barcode'], 'face_on': st['face'], 'own_card': st['own_card'], 'site_qr': st['site_qr'], 'liveness': st['liveness'],
             'has_card': bool(employee and employee.barcode_number), 'face_registered': bool(fp and fp.descriptors),
             'face_samples': len(fp.descriptors) if fp else 0, 'face_registered_at': fp.consent_at if fp else None,
             'consent_text': tr(CONSENT_TEXT), 'next': E.next_kind(employee.id, E.work_date_for(employee, E.now(), rule)) if employee else None,

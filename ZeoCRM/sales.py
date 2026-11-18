@@ -96,6 +96,9 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
                 hit = bool(v) and lead.interest_kind == v
             elif w == 'meeting':
                 hit = bool(lead.pk and lead.activities.filter(status='done', kind='meeting').exists())
+            elif w in ('field', 'industry'):   # v1.67.27 industry fields
+                from .industry import score_hit
+                hit = score_hit(lead, w, r.value)
             if hit:
                 pts += r.points
         return max(-99, min(999, pts))
@@ -236,7 +239,10 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
 
     def a_lead_convert(o, request, f):
         """Contact (reuse by e-mail) + account (when a company is given; reuse by name / tax id) + opportunity in the chosen pipeline."""
-        pipe = f.obj('pipeline', Pipeline, False, 'Pipeline') or Pipeline.objects.filter(is_active=True).order_by('order').first()
+        pipe = f.obj('pipeline', Pipeline, False, 'Pipeline')
+        if pipe is None and o.industry:   # v1.67.27: the first pipeline of the lead's industry
+            pipe = Pipeline.objects.filter(is_active=True, industry=o.industry).order_by('order', 'id').first()
+        pipe = pipe or Pipeline.objects.filter(is_active=True, industry='').order_by('order').first() or Pipeline.objects.filter(is_active=True).order_by('order').first()
         if pipe is None:
             raise AppError('Set up a pipeline first (Setup → Pipelines and stages).', 'pipeline')
         acc = f.obj('account', Account, False, 'Account')
@@ -263,6 +269,9 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
                               lead=o, branch_id=o.branch_id, expected_close=f.dt('expected_close'), budget_max=o.budget_max, bedrooms=o.bedrooms, unit_id=o.unit_id)
             opp.stage = pipe.stages.filter(is_active=True, is_won=False, is_lost=False).order_by('order').first()
             opp.first_contacted_at = o.first_contacted_at
+            opp.industry = pipe.industry or o.industry   # v1.67.27 industry and the values of the industry fields
+            from .industry import carry
+            carry(o, opp, 'opportunity')
             opp.save()
             app.event('opportunity', opp.pk, f'Converted from lead {o.number}', request.user)
             o.activities.update(opportunity=opp, contact=c)
@@ -393,6 +402,8 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
                       terms=app.settings().quote_terms, branch_id=o.branch_id, price_book=(o.account.price_book if o.account_id else None),
                       payment_term=(o.account.payment_term if o.account_id and o.account.payment_term_id else PaymentTerm.objects.filter(is_default=True, is_active=True).first()))
         q.items = []
+        from .industry import carry   # v1.67.27
+        carry(o, q, 'quotation')
         compute(q)
         q.save()
         app.event('quotation', q.pk, f'Created from opportunity {o.number}', request.user)
@@ -532,13 +543,19 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
             pid = int(it['product']) if str(it.get('product') or '').isdigit() else None
             p = prods.get(pid)
             qty = _d(it.get('qty'), '1')
-            if qty <= 0:
+            if qty < 0:   # v1.73.19 (item 289): a line of -5 was dropped without a word; a negative price or discount was taken
+                raise AppError(f'Line {i + 1}: the quantity cannot be below 0.', 'items')
+            if qty == 0:
                 continue
             price = it.get('unit_price')
             if price in (None, '') and p is not None:
                 price = price_for(p, doc.price_book, qty)
             price = _d(price)
             dpct = _d(it.get('discount_pct'))
+            if price < 0:
+                raise AppError(f'Line {i + 1}: the unit price cannot be below 0.', 'items')
+            if dpct < 0 or dpct > 100:
+                raise AppError(f'Line {i + 1}: the discount is a percent from 0 to 100.', 'items')
             tid = int(it['tax']) if str(it.get('tax') or '').isdigit() else (p.tax_id if p is not None and it.get('tax') in (None, '') else None)
             t = taxes.get(tid)
             rate = _d(t.rate) if t else Decimal('0')
@@ -725,6 +742,8 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
         so = SalesOrder(number=app.next_number('sales_order', 'SO'), quotation=q, opportunity=q.opportunity, account=q.account, contact=q.contact, date=today(),
                         owner=q.owner, currency=q.currency, price_book=q.price_book, payment_term=q.payment_term, reference=q.reference, items=q.items,
                         discount_pct=q.discount_pct, notes=q.notes, terms=q.terms, branch_id=q.branch_id, delivery_date=delivery)
+        from .industry import carry   # v1.67.27
+        carry(q, so, 'sales_order')
         compute(so)
         so.save()
         sync_lines(so, SalesOrderLine, 'sales_order')
@@ -744,7 +763,7 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
         n = Quotation(number=app.next_number('quotation', 'QT'), opportunity=o.opportunity, contact=o.contact, account=o.account, owner=o.owner, date=today(),
                       valid_until=today() + timedelta(days=app.settings().quote_validity_days or 30), currency=o.currency, price_book=o.price_book,
                       payment_term=o.payment_term, reference=o.reference, items=o.items, discount_pct=o.discount_pct, notes=o.notes, terms=o.terms,
-                      branch_id=o.branch_id, revision=o.revision + 1, previous=o)
+                      branch_id=o.branch_id, revision=o.revision + 1, previous=o, industry=o.industry, extra=dict(o.extra or {}))   # v1.67.27
         compute(n)
         n.status = 'approval' if needs_approval(n) else 'draft'
         n.approval_note = needs_approval(n)
@@ -895,6 +914,45 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
         app.event('sales_order', o.pk, f'Updated by another app: {status or ""} {delivery_ref} {invoice_ref}'.strip(), user)
         return o.pk
 
+    def _capture_industry(lead, kw):
+        """v1.67.27: {industry: <pack code>, fields: {code: value}} or x_<code> keys from a web form / API."""
+        from zeo.appkit.engine import dyn_value
+        from .industry import default_industry
+        from .models import IndustryField
+        ind = str(kw.get('industry') or '').strip()
+        lead.industry = ind if ind in app.packs and ind != 'general' else default_industry()
+        given = dict(kw.get('fields') or {}) if isinstance(kw.get('fields'), dict) else {}
+        for k, v in kw.items():
+            if str(k).startswith('x_'):
+                given[str(k)[2:]] = v
+        if not given:
+            return
+        vals = {}
+        for x in IndustryField.objects.filter(is_active=True, on_lead=True, code__in=list(given)):
+            if x.industry and x.industry != lead.industry:
+                continue
+            try:
+                v = dyn_value({'code': x.code, 'label': x.label, 'type': x.field_type, 'choices': x.choice_list()}, given[x.code], 'x_' + x.code)
+            except AppError:
+                continue
+            if v is not None:
+                vals[x.code] = v
+        lead.extra = vals
+
+    def _value_in(text):
+        import re as _re
+        m = _re.search(r'(?:aed|usd|sar|qar|kwd|bhd|omr|inr|dhs?|\$)\s?(\d[\d,]*(?:\.\d+)?)\s?(k|m|million|thousand|lakhs?|crores?)?|'
+                       r'(\d[\d,]*(?:\.\d+)?)\s?(k|m|million|thousand|lakhs?|crores?)?\s?(?:aed|usd|sar|qar|dhs|dirhams?|riyals?|dollars?)', str(text or ''), _re.I)
+        if not m:
+            return None
+        num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        try:
+            v = float(num.replace(',', ''))
+        except ValueError:
+            return None
+        v *= {'k': 1e3, 'thousand': 1e3, 'm': 1e6, 'million': 1e6, 'lakh': 1e5, 'lakhs': 1e5, 'crore': 1e7, 'crores': 1e7}.get((unit or '').lower(), 1)
+        return _d(round(v, 2)) if 0 < v < 1e11 else None
+
     def h_lead_capture(name, email='', phone='', company='', message='', source='WEB', channel='web', city='', campaign='', user=None, area='', interest='', budget=None, bedrooms=None, **kw):
         """Web form / e-mail / API capture: makes a lead (scored, assigned) – returns {id, number}."""
         src = Source.objects.filter(code__iexact=source).first() or Source.objects.filter(is_active=True).first()
@@ -903,7 +961,8 @@ def setup(app, MANAGE, VIEW, can_work, PAGE, auto_assign, first_contact, norm_ph
                     requirements=message or '', source=src, campaign=cmp, channel=channel if channel in dict(Lead._meta.get_field('channel').choices) else 'api', city=(city or '')[:60],
                     area=(area or '')[:100], interest_kind=interest if interest in dict(INTEREST) else 'other', budget_max=_d(budget) if budget not in (None, '') else None,
                     bedrooms=int(bedrooms) if str(bedrooms or '').isdigit() else None)
-        lead.value = lead.budget_max or 0
+        _capture_industry(lead, kw)   # v1.67.27 industry and industry fields from the form
+        lead.value = lead.budget_max or _value_in(message) or 0   # v1.73.2: "budget around AED 400,000" in the enquiry counts for the rules
         lead.territory = territory_for(lead.city, '', lead.area)
         lead.score = score_of(lead)
         lead.rating = rating_of(lead.score)

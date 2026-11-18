@@ -71,7 +71,9 @@ class Rights:
         self.admin = c.admin
         self.codes = c.codes
         self.emp = c.emp
-        self.branches = None if c.admin else (c.branches or [])
+        # v1.73.2 (one branch filter): an administrator who ticked branches in the top bar sees those (reads only – the
+        # header narrows reads; writes keep every branch)
+        self.branches = (list(c.pick) if getattr(c, 'pick', None) else None) if c.admin else (c.branches or [])
         self.manage = self.admin or any(x in self.codes for x in MANAGE_CODES)
         self._team = None
 
@@ -238,9 +240,31 @@ def upsert_entry(p, emp, day, shift_id, off, source, user=None, note=None, notif
     return e
 
 
+_HMODE = {}
+
+
+def _holiday_mode(schedule_id):
+    """v1.67.24 (shift check, decision 14 Nov): the pattern's "On a public holiday" – 'off' (default: the roster gives the day off)
+    or 'work' (continuous operations: the rotation is kept and the day marked "Public holiday – worked"). Kept in the pattern's
+    own settings (calendars ShiftPattern.pattern_config 'holiday_mode' – no new column in the core table)."""
+    if not schedule_id:
+        return 'off'
+    if schedule_id not in _HMODE:
+        try:
+            from django.apps import apps as _apps
+            S_ = _apps.get_model('calendars', 'EmployeeShiftSchedule')
+            s = S_.objects.filter(pk=schedule_id).select_related('shift_pattern').first()
+            cfg = (s.shift_pattern.pattern_config or {}) if (s and s.shift_pattern_id) else {}
+            _HMODE[schedule_id] = 'work' if cfg.get('holiday_mode') == 'work' else 'off'
+        except Exception:   # noqa: BLE001
+            _HMODE[schedule_id] = 'off'
+    return _HMODE[schedule_id]
+
+
 def generate(p, user=None, overwrite=False):
     """Fill the roster from shift overrides, shift schedules / patterns and the default shift. Returns counts."""
     check_editable(p)
+    _HMODE.clear()
     emps = period_employees(p)
     book = Book(p.date_from, p.date_to, [e.pk for e in emps], roster=False)
     existing = {(x.employee_id, x.date): x for x in RosterEntry.objects.filter(period=p)}
@@ -260,7 +284,10 @@ def generate(p, user=None, overwrite=False):
                 if r is not None:
                     shift_id, off = r['shift_id'], r['off']
                     if d in hol and not off:
-                        shift_id, off, note = None, True, 'Public holiday'
+                        if _holiday_mode(r.get('schedule_id')) == 'work':   # v1.67.24: a continuous rotation keeps its shift
+                            note = 'Public holiday – worked'
+                        else:
+                            shift_id, off, note = None, True, 'Public holiday'
                 elif p.default_shift_id:
                     off = d.strftime('%A') in _wk_rules.weekend_days(emp, d) or d in hol   # v1.62.6 (item 22): one rule, per day
                     shift_id = None if off else p.default_shift_id

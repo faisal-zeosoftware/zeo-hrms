@@ -14,6 +14,7 @@ existing models of the newer modules, with the same rights and scope as the modu
   * My shift (ShiftPlanner resolver), open shifts of the team, my expense reports by status, my certificates.
   * Report-centre lists behind the new HR operations figures: policy-acks, expense-reports, expense-advances, leaver-clearance.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
@@ -427,7 +428,7 @@ class TransferMod(Mod):
     CODES = ('run_employee_transfer', 'add_employeetransfer', 'change_emp_master')
 
     def open_q(self):
-        return Q(status='scheduled', effective_date__lte=timezone.localdate())
+        return Q(status='scheduled', effective_date__lte=_zt_today())
 
     def requests_of(self, emp_ids, open_only=False, cache=None):
         return [] if not open_only else super().requests_of(emp_ids, True, cache)
@@ -551,7 +552,7 @@ def queue_rows(run):
     """requests-pending: every waiting item of the newer modules for the employees the user may see, with level and approver.
     Complaints only for their handlers (confidential)."""
     from .reports import emp_cols
-    today = timezone.localdate()
+    today = _zt_today()
     ids = set(run.all_employees.values_list('id', flat=True))
     cache, out = {}, []
     B = _m('OrganisationManager.brnch_mstr')
@@ -617,7 +618,7 @@ def _state(acked, v, due, today):
 
 def my_policies(emp, user_id=None, today=None):
     """Policies that apply to the employee with their state; [] when none / OrgStructure is not installed."""
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     pc = _policy_ctx() if emp is not None else None
     if not pc:
         return []
@@ -637,7 +638,7 @@ def my_policies(emp, user_id=None, today=None):
 
 def policy_ack_rows(emps, today=None):
     """[(employee, policy row)] for every employee × policy that needs acknowledgement (HR report / team)."""
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     pc = _policy_ctx()
     if not pc:
         return []
@@ -693,7 +694,7 @@ def team_policy_rows(emps, today=None):
 
 # ====================================================================================================== entitlements
 def entitlements(emp, today=None):
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     out = {}
     if emp is None:
         return out
@@ -742,7 +743,7 @@ def my_shift(emp, today=None, days=7):
     """Today and the next `days` days from the shift planner resolver; None when no shift information exists."""
     if emp is None or not _on('ShiftPlanner'):
         return None
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     try:
         from ShiftPlanner.resolver import Book
         book = Book(today, today + timedelta(days=days), [emp.pk])
@@ -768,7 +769,7 @@ def open_shifts(emps, today=None):
     OS_ = _m('ShiftPlanner.OpenShift')
     if OS_ is None:
         return []
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     emps = list(emps)
     if not emps:
         return []

@@ -1,0 +1,348 @@
+{
+ "format": "zeo-developer-package",
+ "format_version": 1,
+ "api_version": "v1",
+ "title": "Vehicle log",
+ "description": "Vehicles, trips and fuel with a child table, a script that flags fuel above the norm, monthly straight-line depreciation and a monthly cost report.",
+ "modules": [
+  {
+   "key": "vehicle",
+   "name": "Vehicle",
+   "plural": "Vehicles",
+   "icon": "local_shipping",
+   "description": "Company vehicles with their fuel norm and book value.",
+   "prefix": "VEH",
+   "who_create": "hr",
+   "who_view": "all",
+   "fields": [
+    {
+     "key": "plate",
+     "label": "Plate",
+     "type": "text",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "make_model",
+     "label": "Make and model",
+     "type": "text",
+     "in_list": true
+    },
+    {
+     "key": "vehicle_type",
+     "label": "Type",
+     "type": "choice",
+     "options": "Pick-up|Van|Sedan|Truck",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "norm",
+     "label": "Fuel norm (l/100 km)",
+     "type": "lookup",
+     "options": "fuel_norm.litres_100km(vehicle_type)",
+     "in_list": true
+    },
+    {
+     "key": "driver",
+     "label": "Driver",
+     "type": "employee",
+     "in_list": true
+    },
+    {
+     "key": "purchase_date",
+     "label": "Bought on",
+     "type": "date",
+     "in_list": false
+    },
+    {
+     "key": "cost",
+     "label": "Cost",
+     "type": "money",
+     "in_list": false
+    },
+    {
+     "key": "life_months",
+     "label": "Useful life (months)",
+     "type": "number",
+     "in_list": false
+    },
+    {
+     "key": "book_value",
+     "label": "Book value",
+     "type": "money",
+     "in_list": true,
+     "help": "set every month by the scheduled calculation (straight line)"
+    },
+    {
+     "key": "label",
+     "label": "QR label",
+     "type": "qr",
+     "options": "{number} {plate}",
+     "in_list": false
+    }
+   ],
+   "blueprint": {
+    "states": [
+     {
+      "key": "in_use",
+      "label": "In use"
+     },
+     {
+      "key": "retired",
+      "label": "Retired",
+      "final": true
+     }
+    ],
+    "start": "in_use",
+    "transitions": [
+     {
+      "key": "retire",
+      "label": "Retire",
+      "from": [
+       "in_use"
+      ],
+      "to": "retired",
+      "who": "hr",
+      "require": [],
+      "note": true
+     }
+    ]
+   }
+  },
+  {
+   "key": "vehicle_trip",
+   "name": "Trip",
+   "plural": "Trips",
+   "icon": "route",
+   "description": "A trip with its kilometres and fuel.",
+   "prefix": "TRIP",
+   "who_create": "all",
+   "who_view": "own",
+   "fields": [
+    {
+     "key": "vehicle",
+     "label": "Vehicle",
+     "type": "link",
+     "options": "custom:vehicle",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "driver",
+     "label": "Driver",
+     "type": "employee",
+     "in_list": true
+    },
+    {
+     "key": "trip_date",
+     "label": "Date",
+     "type": "date",
+     "required": true,
+     "in_list": true
+    },
+    {
+     "key": "start_km",
+     "label": "Start km",
+     "type": "number",
+     "required": true,
+     "in_list": false
+    },
+    {
+     "key": "end_km",
+     "label": "End km",
+     "type": "number",
+     "required": true,
+     "in_list": false
+    },
+    {
+     "key": "distance",
+     "label": "Distance (km)",
+     "type": "formula",
+     "options": "end_km - start_km",
+     "result": "number",
+     "in_list": true
+    },
+    {
+     "key": "fuel",
+     "label": "Fuel",
+     "type": "table",
+     "options": "litres:Litres:number, cost:Cost:money, station:Station:text",
+     "in_list": false
+    },
+    {
+     "key": "fuel_litres",
+     "label": "Litres",
+     "type": "formula",
+     "options": "SUMROWS(\"fuel\", \"litres\")",
+     "result": "number",
+     "in_list": true
+    },
+    {
+     "key": "fuel_cost",
+     "label": "Fuel cost",
+     "type": "formula",
+     "options": "SUMROWS(\"fuel\", \"cost\")",
+     "result": "money",
+     "in_list": true
+    },
+    {
+     "key": "consumption",
+     "label": "l/100 km",
+     "type": "formula",
+     "options": "IF(distance > 0, ROUND(fuel_litres / distance * 100, 2), 0)",
+     "result": "number",
+     "in_list": true
+    },
+    {
+     "key": "norm",
+     "label": "Norm",
+     "type": "number",
+     "in_list": false
+    },
+    {
+     "key": "flagged",
+     "label": "Above the norm",
+     "type": "yesno",
+     "in_list": true
+    }
+   ],
+   "blueprint": {
+    "states": [
+     {
+      "key": "logged",
+      "label": "Logged"
+     },
+     {
+      "key": "checked",
+      "label": "Checked",
+      "final": true
+     }
+    ],
+    "start": "logged",
+    "transitions": [
+     {
+      "key": "check",
+      "label": "Mark checked",
+      "from": [
+       "logged"
+      ],
+      "to": "checked",
+      "who": "hr",
+      "require": [],
+      "note": false
+     }
+    ]
+   }
+  }
+ ],
+ "rate_tables": [
+  {
+   "key": "fuel_norm",
+   "name": "Fuel norm by vehicle type",
+   "columns": [
+    "type",
+    "litres_100km"
+   ],
+   "rows": [
+    {
+     "type": "Pick-up",
+     "litres_100km": "12"
+    },
+    {
+     "type": "Van",
+     "litres_100km": "10"
+    },
+    {
+     "type": "Sedan",
+     "litres_100km": "8"
+    },
+    {
+     "type": "Truck",
+     "litres_100km": "30"
+    }
+   ]
+  }
+ ],
+ "scripts": [
+  {
+   "key": "vehicle_check_fuel",
+   "name": "Flag fuel above the norm",
+   "description": "Compares l/100 km with the vehicle type norm (+10 %).",
+   "module_key": "vehicle_trip",
+   "trigger": "create",
+   "code": "# After a trip is saved: compare its fuel use with the norm of the vehicle type and flag it when it is more than 10 % above.\nv = records.get(\"vehicle\", record[\"vehicle\"])\nif v is None:\n    stop(\"The vehicle of the trip is not found.\")\nnorm = v[\"norm\"] or 0\nuse = record[\"consumption\"] or 0\nover = norm > 0 and use > norm * number(\"1.10\")\nrecord.update({\"norm\": norm, \"flagged\": over})\nlog(f\"{record.number}: {use} l/100 km, norm {norm} – {'ABOVE the norm' if over else 'ok'}\")\nif over and record[\"driver\"]:\n    d = employees.get(record[\"driver\"])\n    if d is not None and d.user_id:\n        notify(d, \"Fuel above the norm\", f\"Trip {record.number} ({v['plate']}): {use} l/100 km, norm {norm}.\")\n"
+  },
+  {
+   "key": "vehicle_check_fuel_button",
+   "name": "Check fuel again",
+   "description": "The same check, from a button (after the fuel rows were changed).",
+   "module_key": "vehicle_trip",
+   "trigger": "button",
+   "button_label": "Check fuel",
+   "code": "# After a trip is saved: compare its fuel use with the norm of the vehicle type and flag it when it is more than 10 % above.\nv = records.get(\"vehicle\", record[\"vehicle\"])\nif v is None:\n    stop(\"The vehicle of the trip is not found.\")\nnorm = v[\"norm\"] or 0\nuse = record[\"consumption\"] or 0\nover = norm > 0 and use > norm * number(\"1.10\")\nrecord.update({\"norm\": norm, \"flagged\": over})\nlog(f\"{record.number}: {use} l/100 km, norm {norm} – {'ABOVE the norm' if over else 'ok'}\")\nif over and record[\"driver\"]:\n    d = employees.get(record[\"driver\"])\n    if d is not None and d.user_id:\n        notify(d, \"Fuel above the norm\", f\"Trip {record.number} ({v['plate']}): {use} l/100 km, norm {norm}.\")\n"
+  }
+ ],
+ "reports": [
+  {
+   "module_key": "vehicle_trip",
+   "name": "Vehicle monthly cost",
+   "description": "Kilometres, litres and fuel cost per vehicle and month.",
+   "section": "Vehicle log",
+   "kind": "summary",
+   "columns": [
+    "distance",
+    "fuel_litres",
+    "fuel_cost"
+   ],
+   "group_by": [
+    "vehicle",
+    "month:trip_date"
+   ],
+   "date_field": "trip_date",
+   "states": [],
+   "who": "hr"
+  },
+  {
+   "module_key": "vehicle_trip",
+   "name": "Trips",
+   "description": "Every trip with its fuel use and the norm.",
+   "section": "Vehicle log",
+   "kind": "list",
+   "columns": [
+    "vehicle",
+    "driver",
+    "trip_date",
+    "distance",
+    "fuel_litres",
+    "consumption",
+    "norm",
+    "flagged"
+   ],
+   "group_by": [],
+   "date_field": "trip_date",
+   "states": [],
+   "who": "hr"
+  }
+ ],
+ "prints": [
+  {
+   "module_key": "vehicle_trip",
+   "name": "Trip sheet",
+   "paper": "A4",
+   "html": "<h2>{{ company }}</h2><h3>Trip {{ number }} – {{ vehicle }}</h3><p>{{ trip_date }} · Driver: {{ driver }}</p><p>{{ start_km }} → {{ end_km }} km = {{ distance }} km</p><table><tr><th>#</th><th>Litres</th><th>Cost</th><th>Station</th></tr>{% rows fuel %}<tr><td>{{ n }}</td><td>{{ row.litres }}</td><td>{{ row.cost }}</td><td>{{ row.station }}</td></tr>{% endrows %}</table><p>Total {{ fuel_litres }} l, {{ fuel_cost }} · {{ consumption }} l/100 km (norm {{ norm }})</p>"
+  }
+ ],
+ "scheduled": [
+  {
+   "module_key": "vehicle",
+   "name": "Monthly depreciation (straight line)",
+   "field_key": "book_value",
+   "formula": "IF(BLANK(purchase_date) or life_months <= 0, cost, MAX(cost - cost / life_months * MONTHS(purchase_date, TODAY()), 0))",
+   "frequency": "monthly",
+   "states": [
+    "in_use"
+   ]
+  }
+ ]
+}

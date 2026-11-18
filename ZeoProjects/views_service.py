@@ -443,7 +443,32 @@ def save_category(x, f):
         x.to_review = f.b('to_review')
     if f.has('is_active'):
         x.is_active = f.b('is_active', True)
+    edited = False
+    if f.has('checklist'):   # v1.67.23 (pending 271): the service checklist set on screen – one line per item
+        v = f.d.get('checklist')
+        if isinstance(v, str):
+            v = v.splitlines()
+        if not isinstance(v, list):
+            raise S.ProjectsError('The checklist must be a list of lines.', 'checklist')
+        items, seen = [], set()
+        for it in v:
+            t = ' '.join(str((it.get('item') if isinstance(it, dict) else it) or '').split())
+            if not t:
+                continue
+            if len(t) > 120:
+                raise S.ProjectsError(f'Checklist line too long (120 characters at most): {t[:40]}…', 'checklist')
+            if t.lower() in seen:
+                raise S.ProjectsError(f'"{t}" is in the checklist twice.', 'checklist')
+            seen.add(t.lower())
+            items.append(t)
+        if len(items) > 60:
+            raise S.ProjectsError('At most 60 checklist lines.', 'checklist')
+        x.checklist = items
+        edited = True
     x.save()
+    if edited:
+        from .packs import mark_checklist_edited
+        mark_checklist_edited(x.pk)
     return x
 
 

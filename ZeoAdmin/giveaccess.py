@@ -679,6 +679,16 @@ def first_check(user, schema_name, eid_last4, dob):
             eid = (I.objects.filter(employee_id=e.pk).values_list('emirates_id', flat=True).first() or '')
         except Exception:
             pass
+        if not eid:
+            # v1.73.1 (ESS test B12) employees loaded from the workbook have the Emirates ID in their document list only – the check
+            # fell back to the date of birth alone; now the active Emirates ID document (the number the employee sees) is asked
+            try:
+                from EmployeeProfile.services import doc_types_for
+                D = apps.get_model('EmpManagement', 'Emp_Documents')
+                eid = (D.objects.filter(emp_id_id=e.pk, is_active=True, document_type__in=doc_types_for('emirates_id'))
+                       .order_by('-emp_doc_expiry_date').values_list('emp_doc_number', flat=True).first() or '')
+            except Exception:
+                eid = ''
         digits = ''.join(ch for ch in eid if ch.isdigit())
         eid_ok = bool(digits) and digits[-4:] == ''.join(ch for ch in str(eid_last4 or '') if ch.isdigit())[-4:]
         if not digits:   # no Emirates ID on file: the date of birth alone

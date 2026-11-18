@@ -2,6 +2,7 @@
 Compensatory off (v1.11.0): days earned by working on a weekend or public holiday, credited to the employee's
 compensatory leave type, used through normal leave requests, and lapsing when not used in time.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from datetime import date, timedelta
 
@@ -42,13 +43,13 @@ def credit(emp, days, ref=None, note='', user_id=None, on=None):
     t = comp_type(emp)
     if t is None:
         raise ValueError(tr('No compensatory leave type: create a leave type with "Compensatory" switched on.'))
-    engine.post(emp.pk, t.pk, on or date.today(), 'accrual', days, ref=ref, note=note or 'Compensatory off', user_id=user_id, move_balance=True)
+    engine.post(emp.pk, t.pk, on or _zt_today(), 'accrual', days, ref=ref, note=note or 'Compensatory off', user_id=user_id, move_balance=True)
     return t
 
 
 def expire(on=None, user_id=None, preview=False):
     """Compensatory days not used within the policy line's expiry days lapse (oldest used first)."""
-    on = on or date.today()
+    on = on or _zt_today()
     _, _, _, Ledger = engine._models()
     out = []
     for emp in engine._active_employees():

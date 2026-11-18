@@ -1,4 +1,5 @@
 
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.utils.deprecation import MiddlewareMixin
 from django_tenants.utils import schema_context
 from oauth2_provider.models import AccessToken
@@ -60,33 +61,35 @@ def _zone(name):
 
 
 class TenantTimezoneMiddleware:
+    """v1.73.16: the request runs in the person's zone – the user's own time zone, else (self service) the branch of their
+    employee record, else the company's (Company › time zone, else its country), else Asia/Dubai (zeo/tz.py). Before, the
+    company's country only. _zt_today() / zeo.tz.today() then give the person's day, not the server's UTC day."""
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        tenant = getattr(request, 'tenant', None)  # Get the current tenant
-
-        if tenant and hasattr(tenant, 'country') and tenant.country:
-            # Activate timezone based on the tenant's country
-            tenant_timezone = tenant.country.timezone
-            # v1.67.19 (field check): a zoneinfo zone, not a pytz one. Django 5 gives a typed date and time its zone with
-            # replace(tzinfo=…); a pytz zone then uses its first (local mean time) offset – Asia/Dubai +03:41 – so every
-            # "Show from 14/11 00:00" was stored 19 minutes off (13/11 20:19 UTC instead of 20:00).
-            try:
-                timezone.activate(_zone(tenant_timezone))
-            except Exception:
-                # Fallback to UTC if the tenant's timezone is invalid
-                timezone.activate(_zone('UTC'))
-        else:
-            # Use the server's local timezone for public tenants
-            from django.conf import settings
-            timezone.activate(_zone(getattr(settings, 'TIME_ZONE', 'UTC')))
-
-        response = self.get_response(request)
-
-        # Deactivate timezone after the request is processed
-        timezone.deactivate()
-        return response
+        from zeo import tz as ZT
+        tenant = getattr(request, 'tenant', None)
+        tok = None
+        try:
+            if tenant is not None and getattr(tenant, 'schema_name', 'public') != 'public':
+                uid = None
+                try:
+                    from LanguagePack.middleware import jwt_user_id
+                    uid = jwt_user_id(request)
+                except Exception:   # noqa: BLE001
+                    uid = None
+                tok = ZT.activate(ZT.user_zone_name(uid) if uid else ZT.company_zone_name(tenant.schema_name))
+            else:
+                from django.conf import settings
+                tok = ZT.activate(getattr(settings, 'TIME_ZONE', 'UTC'))
+        except Exception:   # noqa: BLE001
+            logging.getLogger(__name__).exception('time zone of the request')
+            timezone.activate(_zone('Asia/Dubai'))
+        try:
+            return self.get_response(request)
+        finally:
+            ZT.deactivate(tok)
 
 
 class SchemaMiddleware(MiddlewareMixin):

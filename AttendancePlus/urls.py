@@ -1,4 +1,5 @@
 """AttendancePlus API – include in zeo/urls.py as path('attendance-plus/', include('AttendancePlus.urls'))."""
+from .punch_map import PunchMapView   # v1.69.0
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
@@ -38,5 +39,6 @@ urlpatterns = [
     path('api/late-early/<int:pk>/<str:action>/', R62.LateEarlyActionView.as_view()),
     path('api/shift-overrides/', R62.OverridesView.as_view()),   # v1.62.0 people: overrides as date ranges
     path('api/shift-overrides/<int:pk>/<str:action>/', R62.OverrideActionView.as_view()),
+    path('api/punch-map/', PunchMapView.as_view()),   # v1.69.0 punches and geofences on a map
     path('api/', include(router.urls)),
 ]

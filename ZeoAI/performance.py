@@ -1,6 +1,7 @@
 """AI Performance & Development – review summaries, skill gaps, course recommendations, appraisal templates/objectives,
 training completion and certificate expiry, development plan drafts. Rule-based on ZEO's own data; wording optionally polished by
 an external model when the company configured one."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 
@@ -196,7 +197,7 @@ def appraisal_template(designation_id=None, department_id=None):
 def training_status(department_id=None, branch_id=None, days=90):
     """Completion of nominated training (attended/passed) and overdue training needs."""
     Nom, PR, TN = M('LearningManagement', 'Nomination'), M('LearningManagement', 'ParticipantResult'), M('LearningManagement', 'TrainingNeed')
-    since = date.today() - timedelta(days=days)
+    since = _zt_today() - timedelta(days=days)
     noms = Nom.objects.filter(session__start_date__gte=since).select_related('employee', 'session__course')
     if department_id:
         noms = noms.filter(employee__emp_dept_id=department_id)
@@ -207,9 +208,9 @@ def training_status(department_id=None, branch_id=None, days=90):
     for n in noms:
         r = res.get(n.id)
         rows.append({'employee': f'{n.employee.emp_first_name} {n.employee.emp_last_name or ""}'.strip(), 'course': n.session.course.title, 'date': n.session.start_date,
-                     'status': 'passed' if r and r.passed else 'attended' if r and r.attended else 'failed' if r and r.attended is False else 'scheduled' if n.session.start_date >= date.today() else 'no result'})
+                     'status': 'passed' if r and r.passed else 'attended' if r and r.attended else 'failed' if r and r.attended is False else 'scheduled' if n.session.start_date >= _zt_today() else 'no result'})
     by = Counter(r['status'] for r in rows)
-    needs = TN.objects.exclude(status__in=('closed', 'completed', 'cancelled')).filter(target_date__lt=date.today()).select_related('employee', 'course')
+    needs = TN.objects.exclude(status__in=('closed', 'completed', 'cancelled')).filter(target_date__lt=_zt_today()).select_related('employee', 'course')
     overdue = [{'employee': f'{n.employee.emp_first_name} {n.employee.emp_last_name or ""}'.strip(), 'course': n.course.title if n.course_id else n.need, 'target_date': n.target_date, 'priority': n.priority} for n in needs[:50]]
     return {'rows': rows, 'counts': dict(by), 'completion_pct': round(100 * (by['passed'] + by['attended']) / max(1, len([r for r in rows if r['status'] != 'scheduled']))), 'overdue_needs': overdue}
 
@@ -217,18 +218,18 @@ def training_status(department_id=None, branch_id=None, days=90):
 def certificates(employee_id=None, within=90):
     """Certificates (Learning) and employee documents expiring within N days, or already expired."""
     Cert, Doc = M('LearningManagement', 'Certificate'), M('EmpManagement', 'Emp_Documents')
-    lim = date.today() + timedelta(days=within)
+    lim = _zt_today() + timedelta(days=within)
     cq = Cert.objects.filter(expiry_date__lte=lim).select_related('employee', 'course')
     dq = Doc.objects.filter(emp_doc_expiry_date__lte=lim).select_related('emp_id', 'document_type')
     if employee_id:
         cq, dq = cq.filter(employee_id=employee_id), dq.filter(emp_id=employee_id)
     exp, done = [], []
     for c in cq.order_by('expiry_date')[:200]:
-        d = (c.expiry_date - date.today()).days
+        d = (c.expiry_date - _zt_today()).days
         row = {'kind': 'certificate', 'employee': f'{c.employee.emp_first_name} {c.employee.emp_last_name or ""}'.strip(), 'employee_id': c.employee_id, 'title': c.title, 'course': c.course.title if c.course_id else '', 'course_id': c.course_id, 'expiry_date': c.expiry_date, 'days': d}
         (exp if d >= 0 else done).append(row)
     for c in dq.order_by('emp_doc_expiry_date')[:200]:
-        d = (c.emp_doc_expiry_date - date.today()).days
+        d = (c.emp_doc_expiry_date - _zt_today()).days
         row = {'kind': 'document', 'employee': f'{c.emp_id.emp_first_name} {c.emp_id.emp_last_name or ""}'.strip(), 'employee_id': c.emp_id_id, 'title': (c.document_type.type_name if c.document_type_id else 'Document'), 'course': '', 'course_id': None, 'expiry_date': c.emp_doc_expiry_date, 'days': d}
         (exp if d >= 0 else done).append(row)
     return {'expiring': sorted(exp, key=lambda r: r['days']), 'expired': sorted(done, key=lambda r: r['days'])}
@@ -239,7 +240,7 @@ def development_plan(employee_id):
     """Draft plan: steps from skill gaps (course + practice), weakest goals (coaching), certificates (renewal), 360 needs."""
     g = skill_gaps(employee_id)
     rv = review_summary(employee_id, cycles=1)
-    steps, m = [], date.today()
+    steps, m = [], _zt_today()
     for row in g['gaps'][:3]:
         due = m + timedelta(days=90)
         c = (row.get('courses') or [{}])[0]
@@ -274,14 +275,14 @@ def attention(branch_ids=None, within=90):
         emps = emps.filter(emp_branch_id__in=branch_ids)
     try:   # leavers whose last working day has passed need no development
         R_ = M('EmpManagement', 'EmployeeResignation')
-        gone = set(R_.objects.filter(status__iexact='approved', last_working_date__lt=date.today()).values_list('employee_id', flat=True))
+        gone = set(R_.objects.filter(status__iexact='approved', last_working_date__lt=_zt_today()).values_list('employee_id', flat=True))
         emps = emps.exclude(pk__in=gone)
     except LookupError:
         pass
     emps = {e.id: e for e in emps}
     ids = list(emps)
     flags = defaultdict(list)
-    today = date.today()
+    today = _zt_today()
     # latest final rating per employee
     try:
         GS = M('PerformanceManagement', 'GoalSheet')

@@ -282,10 +282,35 @@ def _letter_from(data, emp, user, direct=False):
                          travel_to=parse_date(str(data.get('travel_to') or '')) if data.get('travel_to') else None, issued_directly=direct, created_by_id=user.pk)
 
 
+def _doc_request_rows(emp):
+    """v1.73.1 (ESS test B14) letters asked through My requests › Document or letter (EmpManagement.DocumentRequest) – My letters
+    said "You have not requested a letter yet" although a salary certificate was approved there. Shown read-only, in the same shape."""
+    try:
+        from django.apps import apps
+        DR = apps.get_model('EmpManagement', 'DocumentRequest')
+    except LookupError:
+        return []
+    out = []
+    for r in DR.objects.filter(employee_id=emp.pk).select_related('request_type').order_by('-id'):
+        st = str(r.status or 'Pending').strip().lower()
+        out.append({'id': f'doc-{r.pk}', 'source': 'document_request', 'number': r.document_number or '', 'letter_type': 'document_request',
+                    'letter_label': (getattr(r.request_type, 'type_name', '') or tr('Document request')) if r.request_type_id else tr('Document request'),
+                    'language': 'en', 'addressee': getattr(r, 'remarks', '') or '', 'purpose': r.reason or '', 'status': st,
+                    'status_label': tr(str(r.status or 'Pending').capitalize()), 'issued_directly': False, 'reference_no': '', 'verification_code': '',
+                    'has_pdf': False, 'decided_by': '', 'decided_at': None,
+                    'decision_note': tr('Asked in My requests – HR hands over the document.') if st == 'approved' else '',
+                    'created_at': getattr(r, 'created_at', None) or getattr(r, 'created_at_date', None)})
+    return out
+
+
 class MyLettersView(Base):
     def get(self, request):
         emp = self.emp(request)
-        return Response([letter_json(x) for x in LetterRequest.objects.filter(employee_id=emp.pk)] if emp else [])
+        if not emp:
+            return Response([])
+        rows = [letter_json(x) for x in LetterRequest.objects.filter(employee_id=emp.pk)] + _doc_request_rows(emp)
+        rows.sort(key=lambda x: str(x.get('created_at') or ''), reverse=True)
+        return Response(rows)
 
     def post(self, request):
         emp = self.emp(request)
@@ -854,3 +879,129 @@ class DocumentFileView(Base):
         if not own and not hr:
             return deny(tr('Document not found.'), 404)
         return _file(d.emp_doc_document)
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 236) calendar sync
+from django.http import HttpResponse as _HttpResponse  # noqa: E402
+from rest_framework.permissions import AllowAny  # noqa: E402
+
+from . import calfeed as CF  # noqa: E402
+
+
+class CalendarFeedSettingsView(APIView):
+    """GET my calendar link and what it holds; POST {action: renew} for a new link (the old one stops), or {team, holidays,
+    interviews} to choose what it holds; DELETE turns the link off."""
+    permission_classes = [IsAuthenticated]
+
+    def _out(self, request, f):
+        if f is None:
+            return {'on': False}
+        return {'on': True, 'url': CF.url(request, f), 'team': f.team, 'holidays': f.holidays, 'interviews': f.interviews, 'last_used': f.last_used,
+                'webcal': CF.url(request, f).replace('https://', 'webcal://').replace('http://', 'webcal://')}
+
+    def get(self, request):
+        return Response(self._out(request, CF.feed_for(request.user, make=False)))
+
+    def post(self, request):
+        if request.data.get('action') == 'renew':
+            f = CF.renew(request.user)
+        else:
+            f = CF.feed_for(request.user)
+            for k in ('team', 'holidays', 'interviews'):
+                if k in request.data:
+                    setattr(f, k, str(request.data[k]).lower() in ('1', 'true', 'yes'))
+            f.save()
+        return Response(self._out(request, f))
+
+    def delete(self, request):
+        from .models import CalendarFeed
+        CalendarFeed.objects.filter(user_id=request.user.pk).delete()
+        return Response({'on': False})
+
+
+class CalendarFeedView(APIView):
+    """The iCalendar file (public by its private token; ?schema=<company>)."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    zeo_access = False
+    zeo_scope = False
+
+    def get(self, request, token):
+        from .models import CalendarFeed
+        f = CalendarFeed.objects.filter(token=token).first()
+        if f is None:
+            return _HttpResponse('Not found', status=404, content_type='text/plain')
+        CalendarFeed.objects.filter(pk=f.pk).update(last_used=timezone.now())
+        r = _HttpResponse(CF.build(f), content_type='text/calendar; charset=utf-8')
+        r['Content-Disposition'] = 'inline; filename="zeo.ics"'
+        r['Cache-Control'] = 'private, max-age=900'
+        return r
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 234) mail merge
+from . import mailmerge as MM  # noqa: E402
+
+
+class LetterMergeView(Base):
+    """POST {letter_type, language, employees: [ids] | branch / department / category: [ids], purpose, addressee, email, preview}
+    → one letter per employee (or with preview=true the text of the first one only); GET ?ids=1,2 → the ZIP of those letters."""
+
+    def post(self, request):
+        if not S.can(request, *S.LETTER_HR):
+            return deny(tr('Only HR can issue letters.'))
+        d = _data(request)
+        ids = d.get('employees') or []
+        qs = MM.employees(ids or None, d.get('branch') or None, d.get('department') or None, d.get('category') or None)
+        qs = [e for e in qs if S.branch_ok(request, e.emp_branch_id_id)]
+        if str(d.get('preview')).lower() in ('1', 'true'):
+            if not qs:
+                return Response({'detail': tr('Choose at least one employee.')}, status=400)
+            tpl = L.template_for(d.get('letter_type'), d.get('language') or 'en', qs[0].emp_branch_id_id)
+            if tpl is None:
+                return Response({'detail': tr('There is no active template for this letter type and language – add one in Letter templates.')}, status=400)
+            lr = LetterRequest(employee_id=qs[0].pk, letter_type=d.get('letter_type'), language=d.get('language') or 'en', purpose=d.get('purpose') or '',
+                               addressee=d.get('addressee') or '')
+            return Response({'count': len(qs), 'first': qs[0].emp_code, 'title': tpl.title, 'text': L.fill(tpl.body, L.values(qs[0], lr))})
+        try:
+            out, failed, sent = MM.run(d.get('letter_type'), d.get('language') or 'en', qs, request.user, d.get('purpose') or '',
+                                       None, str(d.get('email')).lower() in ('1', 'true'), d.get('addressee') or '')
+        except MM.MergeError as e:
+            return Response({'detail': str(e)}, status=400)
+        for lr in out:
+            S.notify(employee=S.employee(lr.employee_id), title=tmsg('HR letter ready'),
+                     message=tmsg('Your {0} ({1}) is ready in My letters.', lr.get_letter_type_display().lower(), lr.reference_no))
+        return Response({'issued': len(out), 'failed': failed, 'emailed': sent, 'ids': [x.pk for x in out],
+                         'letters': [letter_json(x, hr=True) for x in out[:50]]}, status=201)
+
+    def get(self, request):
+        if not S.can(request, *S.LETTER_HR):
+            return deny(tr('Only HR can issue letters.'))
+        import re as _r
+        ids = [int(x) for x in _r.findall(r'\d+', request.GET.get('ids', ''))]
+        ok = [lr.pk for lr in LetterRequest.objects.filter(pk__in=ids) if S.branch_ok(request, lr.branch_id)]
+        from django.http import HttpResponse
+        r = HttpResponse(MM.zip_of(ok), content_type='application/zip')
+        r['Content-Disposition'] = 'attachment; filename="letters.zip"'
+        r['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        return r
+
+
+# ================================================================================================ v1.73.1 withdraw a request
+class RequestWithdrawView(Base):
+    """POST {module, id} – the employee withdraws his own request while no approver has acted on it (ESS test B7: a wrong request
+    stayed until an approver rejected it; leave and profile changes already had Withdraw)."""
+
+    def post(self, request):
+        emp = self.emp(request)
+        if emp is None:
+            return deny(tr('No employee record is linked to your login.'), 404)
+        d = _data(request)
+        try:
+            pk = int(d.get('id'))
+        except (TypeError, ValueError):
+            return deny(tr('Request not found.'), 404)
+        from DashboardManagement.services import withdraw
+        ok, msg = withdraw(emp, str(d.get('module') or ''), pk)
+        if not ok:
+            return Response({'detail': tr(msg)}, status=400)
+        return Response({'detail': tr(msg)})

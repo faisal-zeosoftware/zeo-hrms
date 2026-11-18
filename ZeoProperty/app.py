@@ -756,6 +756,7 @@ def own_agent(field='agent'):
 R = app.reg
 R(Reg('building', Building, 'Building', 'Buildings', 'Portfolio', cols=('number', 'name', 'kind', 'city', 'owner', 'manager', 'is_active'),
       form=('number', 'name', 'kind', 'address', 'city', 'owner', 'floors', 'manager', 'notes', 'is_active'), manage=MGR + ('prop_leasing',),
+      number=('building', 'BLD'),   # v1.73.2: the code was optional with no number – the 2nd building without a code was refused as a duplicate
       view=ALL_STAFF, search=('name', 'number', 'city'), filters=('kind', 'is_active'), title='name', subtitle='city',
       children=(('Units', 'unit', 'building'),), help='Buildings, towers and communities.'))
 R(Reg('unit', Unit, 'Unit', 'Units', 'Portfolio',

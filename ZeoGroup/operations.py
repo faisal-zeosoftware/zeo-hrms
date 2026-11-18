@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.27.0 – copy settings to sister companies, and move an employee to a sister company.
 
 Copy settings: leave types, leave policies (with their lines), salary components, letter templates and form designs
@@ -268,7 +269,7 @@ def transfer_form(group, source_schema, emp_id, target_schema):
         prop[k] = hit['id'] if hit else (lists[key][0]['id'] if len(lists[key]) == 1 else None)
     return {'employee': emp, 'target': {'company': tgt.name, 'schema_name': tgt.schema_name, **lists},
             'proposed': dict(prop, emp_code=emp['emp_code'] if code_free else f"{emp['emp_code']}-T", code_free=code_free,
-                             effective_date=timezone.localdate().isoformat(), keep_service_date=True)}
+                             effective_date=_zt_today().isoformat(), keep_service_date=True)}
 
 
 def transfer(group, user, source_schema, emp_id, target_schema, opts):
@@ -278,7 +279,7 @@ def transfer(group, user, source_schema, emp_id, target_schema, opts):
     src, tgt = company_in(group, source_schema), company_in(group, target_schema)
     if src.schema_name == tgt.schema_name:
         raise ValueError('Choose another company.')
-    eff = opts.get('effective_date') or timezone.localdate().isoformat()
+    eff = opts.get('effective_date') or _zt_today().isoformat()
     eff = timezone.datetime.fromisoformat(str(eff)).date()
     keep = bool(opts.get('keep_service_date', True))
     new_code = (opts.get('emp_code') or '').strip()

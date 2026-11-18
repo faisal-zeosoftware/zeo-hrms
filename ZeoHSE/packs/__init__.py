@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from . import construction, education, general, healthcare, manufacturing, office, oil_gas, retail   # v1.38.0 + education, retail, office
 from .extras import EXTRAS, SAMPLE
+from . import industries   # v1.67.27 (HSE scope): 15 more industry packs
 
 PACKS = {'general': general.PACK, 'construction': construction.PACK, 'manufacturing': manufacturing.PACK,
          'healthcare': healthcare.PACK, 'oil_gas': oil_gas.PACK,
@@ -33,6 +34,12 @@ DESCRIPTIONS = {
     'office': 'Display screen equipment, ergonomics, fire and evacuation, electrical and server-room work, contractor control, '
               'first aid, wellbeing and lone working.',
 }
+# v1.67.27 (HSE scope): the 15 new packs join the same lists (extras keep the existing ones when a code is shared)
+PACKS.update(industries.PACKS)
+LABELS.update(industries.LABELS)
+DESCRIPTIONS.update(industries.DESCRIPTIONS)
+for _k, _v in industries.EXTRAS.items():
+    EXTRAS.setdefault(_k, _v)
 
 
 def _form_def(code):

@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -121,7 +122,7 @@ class JobOpening(models.Model):
     def on_careers_page(self):
         """v1.57.0: listed on the public careers page and in the job-board feed."""
         return self.status in ('published', 'interviewing') and 'Careers page' in (self.channels or []) and \
-            (self.closing_date is None or self.closing_date >= timezone.localdate())
+            (self.closing_date is None or self.closing_date >= _zt_today())
 
     def clean(self):
         if self.requisition_id and self.requisition.status != 'approved':
@@ -182,7 +183,7 @@ class Candidate(models.Model):
     @property
     def may_contact(self):
         """v1.57.0: the candidate agreed that we keep the CV and the agreement has not run out."""
-        return bool(self.consent_to_retain) and (self.consent_until is None or self.consent_until >= timezone.localdate())
+        return bool(self.consent_to_retain) and (self.consent_until is None or self.consent_until >= _zt_today())
 
     @property
     def full_name(self):
@@ -333,7 +334,7 @@ class Offer(models.Model):
     def clean(self):
         if self.basic_salary is not None and self.basic_salary <= 0:
             raise ValidationError("Basic salary must be greater than zero.")
-        if self.valid_until and self.valid_until < timezone.localdate() and self.status in ('draft', 'pending_approval'):
+        if self.valid_until and self.valid_until < _zt_today() and self.status in ('draft', 'pending_approval'):
             raise ValidationError("Offer validity date is in the past.")
 
     def save(self, *args, **kwargs):
@@ -476,3 +477,43 @@ class TalentCampaign(models.Model):
 
     class Meta:
         ordering = ['-sent_at']
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 233) candidate pre-onboarding portal
+class PreOnboarding(models.Model):
+    """The new joiner's own page before the first day: a private link (no login) where the candidate fills the details HR needs
+    (personal, passport, address, emergency contact, salary account) and uploads the documents; HR reviews and the answers go to
+    the employee record when the offer becomes an employee."""
+    STATUS = [('sent', 'Link sent'), ('opened', 'Opened by the candidate'), ('submitted', 'Submitted – HR to review'),
+              ('returned', 'Returned to the candidate'), ('accepted', 'Accepted by HR'), ('closed', 'Closed')]
+    offer = models.OneToOneField(Offer, on_delete=models.CASCADE, related_name='preonboarding')
+    token = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=12, choices=STATUS, default='sent')
+    details = models.JSONField(default=dict, blank=True)
+    documents = models.JSONField(default=list, blank=True, help_text='[{"key": "passport", "label": "Passport copy", "required": true}] – what the candidate uploads')
+    message = models.TextField(blank=True, default='', help_text='Welcome text shown to the candidate')
+    hr_note = models.CharField(max_length=500, blank=True, default='', help_text='Why it was returned (shown to the candidate)')
+    expires_on = models.DateField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    opened_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    applied_at = models.DateTimeField(null=True, blank=True, help_text='When the answers went to the employee record')
+    created_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class PreOnboardingFile(models.Model):
+    pre = models.ForeignKey(PreOnboarding, on_delete=models.CASCADE, related_name='files')
+    key = models.CharField(max_length=40)
+    label = models.CharField(max_length=120, blank=True, default='')
+    file = models.FileField(upload_to='recruitment/preonboarding/')
+    name = models.CharField(max_length=200, blank=True, default='')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['key', '-uploaded_at']

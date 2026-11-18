@@ -40,8 +40,17 @@ def standard_hours(employee, start, end):
     _wdp = working_day_plan(employee, start, end)
     total, shift_days, d = 0, 0, start
     any_shift = False
+    from . import v167 as _V167   # v1.67.22 (pending C7): Ramadan days count their shorter hours (and the Ramadan break)
+    ramadan_days = 0
+    ramadan_cut = 0   # minutes less on the Ramadan days without a shift
     while d <= end:
         sh = E.shift_info(employee, d, rule, book=book)
+        _rule_d = rule
+        _rm = None
+        try:
+            sh, _rule_d, _rm = _V167.apply_ramadan(employee, d, sh, rule, E.aware, E.minutes)
+        except Exception:   # noqa: BLE001 – planned hours without Ramadan rather than none
+            _rm = None
         if sh and sh.get('off'):
             d += timedelta(days=1)
             continue
@@ -53,12 +62,26 @@ def standard_hours(employee, start, end):
             shift_days += 1
             m = E.minutes(sh['end'] - sh['start'])
             if not rule.break_paid:
-                m -= (sh.get('break_minutes') or rule.break_minutes or 0)
+                m -= (int(sh.get('break_minutes') or 0) if sh.get('ramadan_break') else (sh.get('break_minutes') or rule.break_minutes or 0))
             total += max(0, m)
         else:
-            total += 8 * 60
+            cut = 0
+            if _rm:
+                try:
+                    _r2 = _V167.ramadan_for(employee, d)
+                    cut = int(_r2['reduce_minutes']) if _r2 else 0
+                except Exception:   # noqa: BLE001
+                    cut = 0
+            total += max(60, 8 * 60 - cut)   # v1.67.22 (pending C7): a day without a shift is 8 h less the Ramadan reduction
+            ramadan_cut += min(cut, 7 * 60)
+        if _rm:
+            ramadan_days += 1
         d += timedelta(days=1)
+    _LAST_RAMADAN_DAYS[employee.pk] = (ramadan_days, ramadan_cut)
     return (_d(Decimal(total) / 60) if any_shift else None), shift_days
+
+
+_LAST_RAMADAN_DAYS = {}   # v1.67.22 (pending C7): Ramadan days of the last standard_hours() per employee (formula variable)
 
 
 def variables(employee, start, end, overtime_ids=None):
@@ -115,6 +138,10 @@ def variables(employee, start, end, overtime_ids=None):
 
     hrs, days = standard_hours(employee, start, end)
     out['scheduled_shift_days'] = _d(days, '1')
+    _rd, _rcut = _LAST_RAMADAN_DAYS.get(employee.pk, (0, 0))
+    out['ramadan_days'] = _d(_rd, '1')   # v1.67.22 (pending C7)
+    if hrs is None and _rcut:   # no shift planned: the 160 h of the month less the Ramadan reduction of its working days
+        hrs = _d(Decimal(160) - Decimal(_rcut) / 60)
     if hrs is not None:
         out['standard_hours'] = hrs
     return out

@@ -43,6 +43,7 @@ class CustomDashboard(models.Model):
     cards = models.JSONField(default=list, blank=True, help_text='[{id, title, report, period, view, value, group, size, limit, columns}]')
     shared = models.CharField(max_length=8, choices=SHARE, default='me')
     groups = models.JSONField(default=list, blank=True)
+    options = models.JSONField(default=dict, blank=True, help_text='v1.73.5: {theme, filter: {preset, from, to}}')
     owner = models.ForeignKey(USER, on_delete=models.CASCADE, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -52,3 +53,13 @@ class CustomDashboard(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class DashboardDefault(models.Model):
+    """v1.73.6: a default dashboard made for the company (key: company, hr, payroll, crm …) – made once; not made again after a delete."""
+    key = models.CharField(max_length=30, unique=True)
+    dashboard_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.key

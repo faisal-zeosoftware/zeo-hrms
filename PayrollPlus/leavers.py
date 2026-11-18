@@ -7,6 +7,7 @@ A leaver is an EmpManagement.EmployeeResignation (approved); its EndOfService is
 is PayrollPlus.ExitSettlement (services.py calculates it). "New leaver" records a termination / end of contract without a resignation
 request: an approved EmployeeResignation of HR (no approval workflow – it is the employer's decision) and its settlement at once.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from datetime import date, timedelta
 from decimal import Decimal
@@ -99,7 +100,7 @@ def _maps(res_ids):
 
 
 def row(res, eos, st, today=None):
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     e = res.employee
     key = exit_key(res, st)
     stage = stage_of(st)
@@ -127,7 +128,7 @@ def leaver_rows(c, stage='', branch='', q=''):
         qs = qs.filter(employee__emp_branch_id=branch)
     res = list(qs.order_by('-last_working_date', '-id')[:1000])
     eos, sts = _maps([r.pk for r in res])
-    today = timezone.localdate()
+    today = _zt_today()
     rows = []
     for r in res:
         ev = eos.get(r.pk)
@@ -373,7 +374,7 @@ def decide_asset(st, data, user):
                 from AssetPlus import services as AP
                 a = M('OrganisationManager', 'Asset').objects.get(pk=it['asset_id'])
                 rd = data.get('return_date')
-                rd = date.fromisoformat(str(rd)[:10]) if rd else min(timezone.localdate(), max(st.last_working_date, it.get('since') or st.last_working_date))
+                rd = date.fromisoformat(str(rd)[:10]) if rd else min(_zt_today(), max(st.last_working_date, it.get('since') or st.last_working_date))
                 AP.complete_return(a, user, return_date=rd, condition=data.get('condition') or 'healthy', accessories_returned=True,
                                    notes=note or tr('Returned at exit (final settlement)'))
             except S.Refused:

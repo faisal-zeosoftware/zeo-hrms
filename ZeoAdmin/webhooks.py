@@ -87,11 +87,14 @@ def hooks_for(key):
         from .models import Webhook
         m = {}
         try:
-            for h in Webhook.objects.filter(active=True).only('id', 'models_list', 'events'):
-                for k in h.models_list or []:
-                    m.setdefault(k.lower(), []).append((h.pk, tuple(h.events or EVENTS)))
+            # v1.67.28: in a savepoint – while migrate_schemas runs, a record saved in a company whose tables are not migrated yet
+            # (the new column of this version) must not break the migration's own transaction; nothing is kept in the cache then
+            with transaction.atomic():
+                for h in Webhook.objects.filter(active=True).only('id', 'models_list', 'events', 'branches'):
+                    for k in h.models_list or []:
+                        m.setdefault(k.lower(), []).append((h.pk, tuple(h.events or EVENTS), frozenset(int(b) for b in (h.branches or []) if str(b).isdigit())))
         except Exception:
-            m = {}
+            return []
         c = _cache[schema] = (time.time() + 60, m)
     return c[1].get(key.lower(), [])
 
@@ -122,14 +125,40 @@ def record_data(obj):
     return out
 
 
+def branch_of(obj):
+    """v1.67.28: the branch a record belongs to – its own branch field, else its employee's branch (None when it has none)"""
+    for a in ('branch_id', 'emp_branch_id_id', 'brnch_id', 'branch_id_id'):
+        v = getattr(obj, a, None)
+        if isinstance(v, int):
+            return v
+    for rel in ('employee', 'emp', 'emp_id'):
+        try:
+            e = getattr(obj, rel, None)
+        except Exception:   # noqa: BLE001
+            e = None
+        v = getattr(e, 'emp_branch_id_id', None) if e is not None else None
+        if isinstance(v, int):
+            return v
+    return None
+
+
+def wants(branches, obj_branch):
+    """a webhook with a branch filter gets only the records of those branches"""
+    return not branches or (obj_branch is not None and obj_branch in branches)
+
+
 def fire(obj, event):
     key = f'{obj._meta.app_label}.{obj._meta.model_name}'
-    hooks = [hid for hid, evs in hooks_for(key) if event in evs]
+    found = [(hid, brs) for hid, evs, brs in hooks_for(key) if event in evs]
+    if not found:
+        return
+    br = branch_of(obj) if any(brs for _h, brs in found) else None
+    hooks = [hid for hid, brs in found if wants(brs, br)]
     if not hooks:
         return
     from .models import WebhookDelivery
     payload = {'event': f'{key.lower()}.{event}', 'model': key, 'id': obj.pk, 'at': timezone.now().isoformat(),
-               'company': getattr(connection, 'schema_name', ''), 'data': record_data(obj)}
+               'company': getattr(connection, 'schema_name', ''), 'branch_id': br if br is not None else branch_of(obj), 'data': record_data(obj)}
     schema = getattr(connection, 'schema_name', '')
     ids = [WebhookDelivery.objects.create(webhook_id=hid, event=payload['event'], payload=payload).pk for hid in hooks]
     transaction.on_commit(lambda: threading.Thread(target=_thread, args=(schema, ids), daemon=True).start())

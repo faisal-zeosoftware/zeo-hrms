@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from .models import (applicablity_critirea, emp_leave_balance,leave_type, LvApprovalNotify,Attendance,employee_leave_request,leave_entitlement,
@@ -204,7 +205,7 @@ def update_leave_balance(sender, instance, created, **kwargs):
     if not created:  # Run only when a new employee is created
         return
 
-    today = timezone.now().date()
+    today = _zt_today()
     join_date = instance.emp_joined_date
 
     # Fetch entitlements where accrual and proration are enabled

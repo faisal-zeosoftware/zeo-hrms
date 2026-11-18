@@ -1,0 +1,71 @@
+from django.urls import path
+
+from . import views as V
+from . import phase4_views as P4   # v1.73.9 DMS phase 4
+
+urlpatterns = [
+    path('tree/', V.Tree.as_view()),
+    path('folders/', V.Folders.as_view()),
+    path('folders/<int:pk>/', V.FolderOne.as_view()),
+    path('folders/<int:pk>/move/', V.FolderMove.as_view()),
+    path('folders/<int:pk>/rights/', V.FolderRights.as_view()),
+    path('folders/<int:pk>/zip/', V.FolderZip.as_view()),
+    path('hr-file/<int:pk>/', V.HrDocFile.as_view()),
+    path('documents/', V.Documents.as_view()),
+    path('documents/<int:pk>/', V.DocOne.as_view()),
+    path('documents/<int:pk>/versions/', V.DocVersions.as_view()),
+    path('documents/<int:pk>/compare/', V.DocCompare.as_view()),
+    path('documents/<int:pk>/action/', V.DocAction.as_view()),
+    path('documents/<int:pk>/rights/', V.DocRights.as_view()),
+    path('documents/<int:pk>/distribute/', V.DocDistribute.as_view()),
+    path('documents/<int:pk>/links/', V.DocLinks.as_view()),
+    path('versions/<int:pk>/file/', V.VersionFile.as_view()),
+    path('links/<int:pk>/revoke/', V.LinkRevoke.as_view()),
+    path('approvals/<int:pk>/decide/', V.Decide.as_view()),
+    path('inbox/', V.Inbox.as_view()),
+    path('search/', V.Search.as_view()),
+    path('trash/', V.Trash.as_view()),
+    path('report/', V.Report.as_view()),
+    path('categories/', V.Categories.as_view()),
+    path('categories/<int:pk>/', V.CategoryOne.as_view()),
+    path('workflows/', V.Workflows.as_view()),
+    path('workflows/<int:pk>/', V.WorkflowOne.as_view()),
+    path('lookups/', V.Lookups.as_view()),
+    path('linked/<str:ref>/file/', V.LinkedFile.as_view()),          # v1.70.8 the files of the other apps
+    path('linked/<str:ref>/copy/', V.LinkedCopy.as_view()),
+    path('fields/<str:scope>/', V.FieldDefs.as_view()),              # v1.70.7 fields of every document / folder
+    path('fields/<str:scope>/order/', V.FieldOrder.as_view()),
+    path('fields/<str:scope>/<int:pk>/', V.FieldDefOne.as_view()),
+    path('documents/<int:pk>/renew/', V.DocRenew.as_view()),            # v1.73.6 DMS phase 3
+    path('documents/<int:pk>/dispose/', V.DocDispose.as_view()),
+    path('expiring/', V.Expiring.as_view()),
+    path('retention/', V.RetentionDue.as_view()),
+    path('disposals/<int:pk>/evidence/', V.DisposalEvidence.as_view()),
+    path('correspondence/', V.CorrList.as_view()),
+    path('correspondence/<int:pk>/', V.CorrOne.as_view()),
+    path('correspondence/<int:pk>/action/', V.CorrAction.as_view()),
+    # v1.73.9 DMS phase 4: checklists, upload links (external portal), templates and forms, e-signature
+    path('checklists/', P4.Checklists.as_view()),
+    path('checklists/gaps/', P4.ChecklistGaps.as_view()),
+    path('checklists/record/', P4.RecordChecklist.as_view()),
+    path('checklists/<int:pk>/', P4.ChecklistOne.as_view()),
+    path('folders/<int:pk>/checklist/', P4.FolderChecklist.as_view()),
+    path('upload-requests/', P4.UploadRequests.as_view()),
+    path('upload-requests/<int:pk>/', P4.UploadRequestOne.as_view()),
+    path('documents/<int:pk>/review-upload/', P4.ReviewUpload.as_view()),
+    path('templates/', P4.Templates.as_view()),
+    path('templates/records/', P4.TemplateRecords.as_view()),
+    path('templates/<int:pk>/', P4.TemplateOne.as_view()),
+    path('sign-requests/', P4.SignRequests.as_view()),
+    path('sign-requests/<int:pk>/', P4.SignRequestOne.as_view()),
+    path('signers/<int:pk>/sign/', P4.SignInternal.as_view()),
+    path('signers/<int:pk>/file/', P4.SignerFile.as_view()),
+    path('verify/', P4.Verify.as_view()),
+    path('ocr/', P4.OcrView.as_view()),                                 # v1.73.10 DMS phase 5
+    path('smart-search/', P4.SmartSearch.as_view()),
+    path('industry-packs/', P4.IndustryPacks.as_view()),               # v1.73.11 DMS phase 6
+    path('p/<str:token>/', P4.Portal.as_view()),
+    path('sign/<str:token>/', P4.PublicSign.as_view()),
+    path('s/<str:token>/', V.PublicLink.as_view()),
+    path('s/<str:token>/file/', V.PublicLinkFile.as_view()),
+]

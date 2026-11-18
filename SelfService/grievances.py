@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.13.0 – complaints / grievances.
 
 * Confidential: a case is visible to its assigned grievance officers and to users holding `handle_grievance`
@@ -94,7 +95,7 @@ def submit(request, emp, data, files=()):
         number=S.next_number(Grievance, 'GRV'), employee_id=0 if anon else emp.pk, branch_id=emp.emp_branch_id_id, category=cat,
         subject=subject[:200], description=desc, against=(data.get('against') or '')[:200],
         incident_date=data.get('incident_date') or None, confidential=conf or anon, anonymous=anon, token_hash=token_hash(token) if anon else '',
-        assigned_user_ids=assigned, sla_days=st.sla_days, due_date=date.today() + timedelta(days=st.sla_days or 10))
+        assigned_user_ids=assigned, sla_days=st.sla_days, due_date=_zt_today() + timedelta(days=st.sla_days or 10))
     GrievanceMessage.objects.create(grievance=case, author_user_id=None if anon else request.user.pk, from_employee=True, event='submitted',
                                     text='Complaint submitted.' + (' (anonymous)' if anon else ''))
     for f in files or ():
@@ -177,7 +178,7 @@ def feedback(case, rating, text=''):
 
 def escalate_overdue(today=None):
     """Escalate cases not acknowledged within acknowledge_days or not resolved by the due date. Returns the number escalated."""
-    today = today or date.today()
+    today = today or _zt_today()
     n = 0
     for case in Grievance.objects.exclude(status__in=('resolved', 'closed')):
         st = settings_for(case.category)
@@ -204,7 +205,7 @@ def case_json(case, request=None, handler=False):
     if not handler:
         msgs = [m for m in msgs if not m.internal]
     emp = S.employee(case.employee_id) if (handler and case.employee_id and not case.anonymous) else None
-    overdue = bool(case.due_date and case.status not in ('resolved', 'closed') and date.today() > case.due_date)
+    overdue = bool(case.due_date and case.status not in ('resolved', 'closed') and _zt_today() > case.due_date)
     out = {'id': case.id, 'number': case.number, 'category': case.category, 'category_label': CATS.get(case.category, case.category),
            'subject': case.subject, 'description': case.description, 'against': case.against, 'incident_date': case.incident_date,
            'confidential': case.confidential, 'anonymous': case.anonymous, 'status': case.status, 'next_steps': list(FLOW.get(case.status, ())),

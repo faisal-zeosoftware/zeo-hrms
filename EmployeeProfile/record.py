@@ -14,6 +14,7 @@ GET  api/duplicates/?emirates_id&passport_no&company_email&personal_email&mobile
                                             other employees that already use one of these values (duplicate check while typing)
 Writes of the cards and rows use the existing api/change/<emp_id>/ (one group at a time) and api/identity/<emp_id>/.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 from collections import defaultdict
@@ -53,7 +54,7 @@ def expiry(d, today=None):
     """Badge of a document by days to expiry: >60 valid (green), 31–60 amber, 1–30 red outline, expired solid red."""
     if not d:
         return None
-    today = today or date.today()
+    today = today or _zt_today()
     days = (d - today).days
     if days < 0:
         return {'date': d, 'days': days, 'level': 'expired', 'label': tr('Expired {0} days ago', -days) if days < -1 else tr('Expired yesterday')}
@@ -171,7 +172,7 @@ def ym_text(y, m):
 
 # ------------------------------------------------------------------ header + groups
 def header(request, emp, ident, info, comp, docs):
-    today = date.today()
+    today = _zt_today()
     st = info.status if info else 'active'
     chips = [{'level': {'active': 'ok', 'probation': 'info', 'on_notice': 'warn'}.get(st, 'bad'),
               'label': dict(EmploymentInfo.STATUS).get(st, st)}]
@@ -222,7 +223,7 @@ def group_defs():
 
 
 def record(request, emp, can_edit):
-    today = date.today()
+    today = _zt_today()
     ident = S.merged_identity(emp.pk)   # v1.62.0 people: identity details, else the employee's documents
     info = S.ensure_info(emp)
     contacts = list(EmergencyContact.objects.filter(employee_id=emp.pk).order_by('-is_primary', 'id'))
@@ -413,7 +414,7 @@ def time_summary(emp):
             line = engine.line_for(emp, lt.pk)
             if line is None and not b.balance:
                 continue
-            y0, y1 = engine.leave_year(line.policy, date.today()) if line else (date(date.today().year, 1, 1), date(date.today().year, 12, 31))
+            y0, y1 = engine.leave_year(line.policy, _zt_today(), emp) if line else (date(_zt_today().year, 1, 1), date(_zt_today().year, 12, 31))
             taken = engine.used_in(emp.pk, lt.pk, y0, y1, statuses=('approved',)) if line else 0
             pending = engine.used_in(emp.pk, lt.pk, y0, y1, statuses=('pending',)) if line else 0
             ent = float(line.days_per_year or 0) if line else None
@@ -448,7 +449,7 @@ def attendance_month(emp, y, m):
     out, totals = [], defaultdict(int)
     d = first
     while d <= last:
-        x = days.get(d, {'status': 'future' if d > date.today() else 'not_marked', 'late': False, 'worked': 0})
+        x = days.get(d, {'status': 'future' if d > _zt_today() else 'not_marked', 'late': False, 'worked': 0})
         totals[x['status']] += 1
         out.append({'date': d, **x})
         d += timedelta(days=1)
@@ -481,7 +482,7 @@ class RecordAttendanceView(Base):
         emp, err = _emp(request, emp_id)
         if err:
             return err
-        m = request.GET.get('month') or date.today().strftime('%Y-%m')
+        m = request.GET.get('month') or _zt_today().strftime('%Y-%m')
         try:
             y, mo = [int(x) for x in m.split('-')[:2]]
             date(y, mo, 1)
@@ -519,7 +520,7 @@ class RecordJobView(Base):
 
 
 def directory_rows(request, emps, today=None):
-    today = today or date.today()
+    today = today or _zt_today()
     ids = [e.pk for e in emps]
     idn0 = {i.employee_id: i for i in EmployeeIdentity.objects.filter(employee_id__in=ids)}
     # v1.62.0 people: identity details, else the employee's documents (as Expiring documents / self service)
@@ -667,8 +668,16 @@ class LookupsView(Base):
         B = M('OrganisationManager', 'brnch_mstr')
         E = M('EmpManagement', 'emp_master')
         users = {}
-        for e in E.objects.filter(is_active=True, users__isnull=False).select_related('users').order_by('emp_first_name'):
-            users[e.users_id] = f'{S.full_name(e)} ({e.emp_code})'
+        # v1.67.24 (L-BUG-17): only working logins (a switched-off login cannot approve), not the employee being edited
+        # (?employee=<id> – nobody reports to themself), with the designation, in name order
+        _self = str(request.query_params.get('employee') or '')
+        _emp_of = {}
+        for e in E.objects.filter(is_active=True, users__isnull=False, users__is_active=True).select_related('users', 'emp_desgntn_id').order_by('emp_first_name'):
+            if _self and str(e.pk) == _self:
+                continue
+            _d = getattr(e.emp_desgntn_id, 'desgntn_job_title', '') if e.emp_desgntn_id_id else ''
+            users[e.users_id] = f'{S.full_name(e)} ({e.emp_code})' + (f' – {_d}' if _d else '')
+            _emp_of[e.users_id] = e.pk
         # v1.67.16 (bug list 11/11 item 15): the reporting manager is a login; the list held only employees with a login, so in a new
         # company (no employee logins yet) it was empty – the company's other logins (administrators, HR, managers without an
         # employee record) are offered too
@@ -688,7 +697,7 @@ class LookupsView(Base):
             'departments': rows('OrganisationManager.dept_master', 'dept_name'),
             'designations': rows('OrganisationManager.desgntn_master', 'desgntn_job_title'),
             'categories': rows('OrganisationManager.ctgry_master', 'ctgry_title'),
-            'managers': [{'value': k, 'label': v} for k, v in users.items()],
+            'managers': sorted(({'value': k, 'label': v, 'employee_id': _emp_of.get(k)} for k, v in users.items()), key=lambda x: x['label'].lower()),
             'managers_note': '' if users else tr('A reporting manager needs a ZEO login – make one in Settings › Users (or Employees › the manager › Login).'),
             'nationalities': rows('Core.Nationality', 'N_name'), 'religions': rows('Core.ReligionMaster', 'religion'),
             'countries': rows('Core.cntry_mstr', 'country_name'), 'states': rows('Core.state_mstr', 'state_name'),

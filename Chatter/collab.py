@@ -8,6 +8,7 @@ Messages    "Send message" goes to the followers – an inbox line and a bell no
 Replies     an e-mail reply carries [ZEO#M<id>] in the subject (and our Message-ID in In-Reply-To): the mailbox job puts it back on
             the record as an "E-mail reply" and tells the followers.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import base64
 import email
 import email.utils
@@ -480,7 +481,7 @@ def send_reminders(user=None):
     """Reminder activities due today or earlier that were not sent yet → inbox line and bell for the person."""
     from django.utils import timezone as tz
     n = 0
-    qs = Activity.objects.filter(activity_type='reminder', state='open', due_date__lte=tz.localdate(), notified_at__isnull=True).select_related('assigned_to')
+    qs = Activity.objects.filter(activity_type='reminder', state='open', due_date__lte=_zt_today(), notified_at__isnull=True).select_related('assigned_to')
     if user is not None:
         qs = qs.filter(assigned_to=user)
     for a in qs:

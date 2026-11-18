@@ -12,6 +12,7 @@ GET  api/air-tickets/approvals/?box=waiting|decided   approval steps waiting for
 GET  api/air-tickets/levels/                    approval workflows with their levels and escalation
 GET  api/air-tickets/mine/                      the signed-in employee's entitlement, next eligible date and requests
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import json
 from datetime import date, timedelta
 from decimal import Decimal
@@ -223,7 +224,7 @@ class PoliciesView(AtBase):
         self.need(POLICY_READ | ALLOC_READ)
         P = M('PayrollManagement', 'AirTicketPolicy')
         A = M('PayrollManagement', 'AirTicketAllocation')
-        today = timezone.localdate()
+        today = _zt_today()
         counts = {}
         for a in A.objects.filter(is_active=True).exclude(status='REJECTED'):
             if is_open(a, today):
@@ -240,7 +241,7 @@ class AllocationsView(AtBase):
         self.need(ALLOC_READ)
         A = M('PayrollManagement', 'AirTicketAllocation')
         R = M('PayrollManagement', 'AirTicketRequest')
-        today = timezone.localdate()
+        today = _zt_today()
         qs = A.objects.select_related('employee', 'employee__emp_branch_id', 'policy', 'policy__country').prefetch_related('policy__rules')
         qs = self.in_branches(qs, 'employee__emp_branch_id', request).order_by('employee__emp_code', '-allocated_date')
         taken = set(R.objects.filter(status__in=USED_REQ, request_type='TICKET').values_list('allocation_id', flat=True))
@@ -336,7 +337,7 @@ class MineView(AtBase):
             return Response({'employee': None, 'allocations': [], 'requests': [], 'policies': []})
         A = M('PayrollManagement', 'AirTicketAllocation')
         R = M('PayrollManagement', 'AirTicketRequest')
-        today = timezone.localdate()
+        today = _zt_today()
         taken = set(R.objects.filter(employee=emp, status__in=USED_REQ, request_type='TICKET').values_list('allocation_id', flat=True))
         from .air_policy import taken_ids as _v1660_taken
         taken = _v1660_taken(taken)   # v1.66.0 (item 120)

@@ -30,23 +30,43 @@ _tz_cache = {}
 
 
 # ----------------------------------------------------------------------------- basics
+import contextvars as _cv
+import functools as _ft
+_EMP_ZONE = _cv.ContextVar('zeo_att_emp_zone', default=None)   # v1.73.16 the zone of the employee being worked out
+
+
 def tz():
-    schema = getattr(connection, 'schema_name', 'public')
-    if schema in _tz_cache:
-        return _tz_cache[schema]
-    name = None
-    try:
-        from UserManagement.models import company
-        comp = company.objects.filter(schema_name=schema).select_related('country').first()
-        name = getattr(getattr(comp, 'country', None), 'timezone', None)
+    """v1.73.16: the zone of the employee being worked out (their branch: Branch details › Time zone),
+    else the company's (company time zone, else its country), else Asia/Dubai – before, always the company's country"""
+    z = _EMP_ZONE.get()
+    if z is not None:
+        return z
+    try:   # remembered for 5 minutes in zeo/tz.py (a change of the company's zone shows without a restart)
+        from zeo.tz import company_zone_name, zone as _z
+        return _z(company_zone_name(getattr(connection, 'schema_name', 'public'))) or ZoneInfo('Asia/Dubai')
     except Exception:
-        name = None
-    try:
-        zone = ZoneInfo(name or 'Asia/Dubai')
-    except Exception:
-        zone = ZoneInfo('Asia/Dubai')
-    _tz_cache[schema] = zone
-    return zone
+        return ZoneInfo('Asia/Dubai')
+
+
+def in_employee_zone(fn):
+    """v1.73.16: run fn (whose first argument is the employee or its id) in that employee's branch zone"""
+    @_ft.wraps(fn)
+    def wrap(employee, *a, **k):
+        if _EMP_ZONE.get() is not None:
+            return fn(employee, *a, **k)
+        tok = None
+        try:
+            from zeo.tz import employee_zone_name, zone as _z
+            e = employee if hasattr(employee, 'emp_branch_id_id') else __import__('EmpManagement.models', fromlist=['emp_master']).emp_master.objects.filter(pk=getattr(employee, 'pk', employee)).only('id', 'emp_branch_id').first()
+            tok = _EMP_ZONE.set(_z(employee_zone_name(e)) if e is not None else None)
+        except Exception:
+            tok = None
+        try:
+            return fn(employee, *a, **k)
+        finally:
+            if tok is not None:
+                _EMP_ZONE.reset(tok)
+    return wrap
 
 
 def now():
@@ -155,6 +175,7 @@ def _calendars_shift(employee, day):
     return None
 
 
+@in_employee_zone
 def shift_info(employee, day, rule=None, book=None):
     """{'shift_id','name','start','end','break_minutes','off','night_shift','grace_in','grace_out',
     'min_hours','max_hours','half_day_hours','ot_after_minutes','source'} or None (no shift planned).
@@ -287,6 +308,7 @@ SHORT_LEAVE_ADJUST = threading.local()   # v1.62.11 (item 260): LeavePolicy/paid
 MAX_SHIFT_HOURS = 12   # v1.62.6 (item 24): the longest shift without a shift plan when the rule sets no maximum hours
 
 
+@in_employee_zone
 def work_date_for(employee, ts, rule=None):
     rule = rule or rule_for(employee)
     lt = local(ts)
@@ -446,6 +468,7 @@ def _absence_exempt(employee, rule):
     return False
 
 
+@in_employee_zone
 def _legacy_punches(employee, day):
     """No punches in AttendancePlus: use the calendars Attendance row (manual entry / old import)."""
     from calendars.models import Attendance
@@ -469,6 +492,7 @@ def _dec(v, default=0):
         return Decimal(str(default))
 
 
+@in_employee_zone
 def compute(employee, day, rule=None, at=None):
     """The daily result as a dict (not saved)."""
     rule = rule or rule_for(employee, day)   # v1.67.12 (effective): the rule of that day
@@ -555,6 +579,8 @@ def compute(employee, day, rule=None, at=None):
     gross = sum(minutes(b - a) for a, b in intervals)
     split_gap = int((working_shift or {}).get('split_gap_minutes') or 0)
     shift_break = ((working_shift or {}).get('break_minutes') or 0) - split_gap or rule.break_minutes or 0
+    if (working_shift or {}).get('ramadan_break'):   # v1.67.22 (pending C7): the Ramadan break (also 0) – not the rule's break
+        shift_break = int(working_shift.get('break_minutes') or 0)
     if split_gap:   # v1.62.0 split shift: the gap between the parts is the break – the rule's break was deducted on top (8 h → 7 h)
         shift_break = max(0, ((working_shift or {}).get('break_minutes') or 0) - split_gap)
     deduct = 0
@@ -766,7 +792,8 @@ def _overtime(employee, rule, r, working_shift, worked, is_workday, half_leave, 
         if rule.ot_basis == 'shift' and working_shift:
             sched = minutes(working_shift['end'] - working_shift['start'])
             if not rule.break_paid:
-                sched -= (working_shift.get('break_minutes') or rule.break_minutes or 0)
+                sched -= (int(working_shift.get('break_minutes') or 0) if working_shift.get('ramadan_break')   # v1.67.22 (pending C7)
+                          else (working_shift.get('break_minutes') or rule.break_minutes or 0))
             else:   # v1.61.0 the time between the parts of a split shift is never paid
                 sched -= int(working_shift.get('split_gap_minutes') or 0)
             extra = worked - sched
@@ -994,6 +1021,7 @@ class PunchError(Exception):
     pass
 
 
+@in_employee_zone   # v1.73.16 a device's local time and the punch's day in the employee's branch zone
 def add_punch(employee, ts=None, kind='auto', source='web', *, device=None, kiosk=None, device_ref='', ip='',
               lat=None, lng=None, location='', photo=None, verified_by='', user_id=None, correction=None,
               note='', check=True, recompute=True):

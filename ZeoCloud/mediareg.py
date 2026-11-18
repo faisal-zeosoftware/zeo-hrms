@@ -21,7 +21,7 @@ from django.db.models.signals import post_delete, post_save
 
 log = logging.getLogger(__name__)
 _fields = {}
-SKIP_APPS = {'ZeoCloud', 'admin', 'sessions', 'contenttypes', 'auth'}
+SKIP_APPS = {'migrations', 'ZeoCloud', 'admin', 'sessions', 'contenttypes', 'auth'}
 
 
 def file_fields(model):

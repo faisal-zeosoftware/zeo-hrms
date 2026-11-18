@@ -11,6 +11,7 @@ Status:
   evaluation no file yet, within ZEO_LICENCE_EVALUATION_DAYS (30) days of the installation – everything works
   missing    no valid file and the evaluation ended – read-only
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime as dt
 import time
 
@@ -66,7 +67,7 @@ def current(fresh=False):
     if not fresh and _cache['until'] > time.time() and _cache['value'] is not None:
         return _cache['value']
     from .models import Installation, LicenceFile
-    today = timezone.localdate()
+    today = _zt_today()
     out = {'edition': 'enterprise' if edition_on() else '', 'installation_id': installation_id(), 'licence': None,
            'status': 'off', 'read_only': False, 'days_left': None, 'message': '', 'problem': ''}
     lic, problem = None, ''

@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """
 v1.55.0 – pay calendars, off-cycle runs and arrears.
 
@@ -77,7 +78,7 @@ def closes_month(cal, start, end):
 
 
 def periods(cal, around=None, before=4, after=6):
-    around = around or date.today()
+    around = around or _zt_today()
     s, e = period_containing(cal, around)
     out = []
     cur = s
@@ -184,6 +185,23 @@ def excluded(run, employee):
 def skip_events(run):
     kind, cr = _run_info(run)
     return kind == 'calendar' and not cr.closes_month
+
+
+def instalment_factor(run):
+    """v1.67.22 (pending C11): None – loans and advances as before (a monthly run; a pay-calendar run takes them only in the period
+    that closes the month). A Decimal – Payroll › Loan and advance settings › "every period": each period of a pay calendar takes
+    this share of the monthly instalment (12 ÷ periods a year: weekly 0.230769, every two weeks 0.461538, twice a month 0.5)."""
+    kind, cr = _run_info(run)
+    if kind != 'calendar' or cr is None:
+        return None
+    try:
+        from .lending import settings as _ls
+        mode = (_ls().get('loans') or {}).get('calendar_instalments')
+    except Exception:
+        mode = None
+    if mode != 'every_period':
+        return None
+    return Decimal(str(cr.factor or 1))
 
 
 def scalable(comp):

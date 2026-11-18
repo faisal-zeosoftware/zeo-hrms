@@ -11,6 +11,7 @@ GET    tag-values/?endpoint=&ids=1,2,3   {id: [{id, name, color}]} – list colu
 POST   mass/                     {endpoint, ids, action: tag_add|tag_remove|message|activity|follow, …} – selected rows of a list
 GET/PUT mail-settings/           the reply mailbox (admins);  POST mail-settings/check/ – read the mailbox now
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime
 
 import datetime as _dt
@@ -105,7 +106,7 @@ def _approvals(user):
 
 def _activities(user):
     out = []
-    today = timezone.localdate()
+    today = _zt_today()
     # v1.67.19 (inbox): reminders are not listed here – on their day they come in as a Reminder line (send_reminders),
     # listing the open reminder activity as well showed every reminder twice
     for a in Activity.objects.filter(assigned_to=user, state='open').exclude(activity_type='reminder').select_related('created_by')[:300]:

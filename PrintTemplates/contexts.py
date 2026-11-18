@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.62.0 print – the document types and their data (the template context).
 
 Every context is plain data (dicts, lists, text) – never a model – so a template can only show what is listed here.
@@ -223,7 +224,7 @@ def employee_ctx(emp, lang='en'):
 def doc_ctx(doc_type, lang, number='', when=None, status='', subtitle='', code=''):
     _, en, ar = BY_KEY[doc_type][:3]
     title, title_ar = (ar, '') if lang == 'ar' else ((en, ar) if lang == 'bi' else (en, ''))
-    return {'title': title, 'title_ar': title_ar, 'subtitle': subtitle, 'number': number or '', 'date': d(when or date.today(), 'ar' if lang == 'ar' else 'en'),
+    return {'title': title, 'title_ar': title_ar, 'subtitle': subtitle, 'number': number or '', 'date': d(when or _zt_today(), 'ar' if lang == 'ar' else 'en'),
             'status': status or '', 'verification_code': code or '',
             'generated': timezone.localtime().strftime('%d/%m/%Y %H:%M')}   # v1.67.8 (fixes) items 3 / 9: dd/mm/yyyy (was "08 Nov 2026" – English month on Arabic prints)
 
@@ -291,11 +292,16 @@ def payslip_ctx(p, lang='en'):
         'net_display': f'{cur or "AED"} {money(net)}', 'status': p.status or '',
         'net_words': words(net, 'ar' if lang == 'ar' else 'en'), 'net_words_ar': words(net, 'ar') if lang == 'bi' else '',
     }
+    try:   # v1.67.22 (pending C3): a salary split over two methods (Payroll › Salary splits) – each part on the payslip
+        from PayrollPlus.paysplit import payslip_parts as _v16722_parts
+        c['payslip']['paid_parts'] = [{'method': x['method'], 'amount': money(x['amount']), 'account': x['account']} for x in _v16722_parts(p, lang)]
+    except ImportError:
+        c['payslip']['paid_parts'] = []
     c['ytd'] = {'year': y, 'count': yq.count(), 'gross': money(agg['g']), 'deductions': money(agg['dd']), 'net': money(agg['n'])}
     c['leave'] = leave
     c['bank'] = bank_ctx(emp, lang)
     c['doc'].update(number=f'PS-{y}{m:02d}-{emp.emp_code}', subtitle=T(lang, 'For the month of ', 'عن شهر ') + period(y, m, lang),
-                    date=d(r.payment_date or date.today(), 'ar' if lang == 'ar' else 'en'), status='')
+                    date=d(r.payment_date or _zt_today(), 'ar' if lang == 'ar' else 'en'), status='')
     c['signers'] = signers(c, lang, ('Prepared by', 'أعدّه', '', T(lang, 'Payroll', 'الرواتب'), False),
                            ('Approved by', 'اعتمده', c['company']['signatory_name'], '', True),
                            ('Employee signature', 'توقيع الموظف', c['employee'].get('name'), '', False))
@@ -424,7 +430,7 @@ def offer_ctx(o, lang='en'):
                    'paragraphs': offer_text(lang, cand.full_name, pos, co, d(o.joining_date, lang), d(o.valid_until, lang)),
                    'signatory_name': c['company']['signatory_name'], 'signatory_title': c['company']['signatory_title'] or T(lang, 'Human Resources', 'الموارد البشرية')}
     c['employee'] = {'name': cand.full_name}
-    c['doc'].update(number=o.document_number or '', date=d(o.sent_on or o.created_at or date.today(), 'ar' if lang == 'ar' else 'en'))
+    c['doc'].update(number=o.document_number or '', date=d(o.sent_on or o.created_at or _zt_today(), 'ar' if lang == 'ar' else 'en'))
     return c
 
 
@@ -461,7 +467,7 @@ def warning_ctx(o, lang='en'):
                  'status': o.get_status_display()}
     c['letter'] = {'title': title, 'addressee': c['employee'].get('name', ''), 'paragraphs': paras,
                    'signatory_name': c['company']['signatory_name'], 'signatory_title': c['company']['signatory_title'] or T(lang, 'Human Resources', 'الموارد البشرية')}
-    c['doc'].update(number=o.number, date=d(o.decision_date or o.show_cause_sent or date.today(), 'ar' if lang == 'ar' else 'en'))
+    c['doc'].update(number=o.number, date=d(o.decision_date or o.show_cause_sent or _zt_today(), 'ar' if lang == 'ar' else 'en'))
     return c
 
 
@@ -474,7 +480,7 @@ def loan_ctx(o, lang='en'):
     emi = o.emi_amount or (Decimal(amt) / n if n else 0)
     rep = list(M('PayrollManagement', 'LoanRepayment').objects.filter(loan=o).order_by('repayment_date', 'id'))
     sched, bal = [], Decimal(str(amt))
-    start = o.disbursement_date or (o.approved_on.date() if isinstance(o.approved_on, datetime) else o.approved_on) or date.today()
+    start = o.disbursement_date or (o.approved_on.date() if isinstance(o.approved_on, datetime) else o.approved_on) or _zt_today()
     for i in range(int(n)):
         y, m = start.year + (start.month + i) // 12, (start.month + i) % 12 + 1
         paid = rep[i] if i < len(rep) else None

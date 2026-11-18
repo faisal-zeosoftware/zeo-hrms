@@ -29,7 +29,8 @@ VARIABLES = {
     'present_days': 'Days present in the attendance calendar for the period',
     'scheduled_working_days': 'Working days in the period: calendar days without weekends and public holidays',
     'unpaid_leave_days': 'Unpaid leave days in the period (incl. the unpaid part of sick / maternity leave)',
-    'standard_hours': 'Planned working hours in the period from the shifts (net of unpaid breaks); 160 when no shift is planned',
+    'standard_hours': 'Planned working hours in the period from the shifts (net of unpaid breaks; Ramadan days count their shorter hours); 160 when no shift is planned (less the Ramadan reduction)',
+    'ramadan_days': 'Working days of the period inside a Ramadan period of Attendance › Ramadan',   # v1.67.22 (pending C7)
     'worked_hours': 'Hours worked in the period (attendance)',
     'ot_hours': 'All approved overtime hours in the period (attendance OT after approval + OT entered by HR)',
     'normal_ot_hours': 'Approved normal overtime hours',

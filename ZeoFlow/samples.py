@@ -41,6 +41,33 @@ SAMPLES = [
          {'type': 'branch', 'conditions': {'op': 'and', 'items': [{'field': 'status', 'operator': 'eq', 'value': 'pending'}]},
           'then': [{'type': 'notify', 'to': [{'type': 'role', 'value': 'HR Manager'}], 'title': 'Leave request still pending',
                     'message': 'The leave request {{ record.document_number }} of {{ record.employee }} has waited 2 days.'}], 'else': []}]},
+    # v1.67.24: built-in examples for the other apps too (before, only HR had samples – their Notifications pages were empty)
+    {'name': 'AMC contract ends in 60 days', 'module': 'projects', 'model': 'ZeoProjects.amccontract', 'trigger': 'date',
+     'trigger_config': {'date_field': 'end_date', 'when': 'before', 'offset_days': 60},
+     'description': 'Two months before an AMC contract ends: a renewal task and a notification for the person responsible for the contract (its owner, else who created it).',
+     'actions': [
+         {'type': 'notify', 'to': [{'type': 'owner'}], 'title': 'AMC renewal due',
+          'message': 'The AMC {{ record.number }} – {{ record.title }} ends on {{ record.end_date }}. Prepare the renewal.'},
+         {'type': 'create_task', 'assign': [{'type': 'owner'}], 'summary': 'Renew AMC {{ record.number }}', 'due_in_days': 14}]},
+    {'name': 'Lease ends in 90 days', 'module': 'property', 'model': 'ZeoProperty.lease', 'trigger': 'date',
+     'trigger_config': {'date_field': 'end', 'when': 'before', 'offset_days': 90},
+     'description': 'Three months before a lease ends: a renewal task for the person responsible for the lease.',
+     'actions': [
+         {'type': 'notify', 'to': [{'type': 'owner'}], 'title': 'Lease renewal due',
+          'message': 'The lease {{ record.number }} ({{ record.unit }}) ends on {{ record.end }}. Offer the renewal or give notice.'},
+         {'type': 'create_task', 'assign': [{'type': 'owner'}], 'summary': 'Renewal of lease {{ record.number }}', 'due_in_days': 10}]},
+    {'name': 'Urgent work order – tell the team', 'module': 'maintenance', 'model': 'ZeoMaintenance.workorder', 'trigger': 'created',
+     'conditions': {'op': 'and', 'items': [{'field': 'priority', 'operator': 'eq', 'value': 'urgent'}]},
+     'description': 'A new urgent work order notifies the person it is assigned to (else who created it) at once.',
+     'actions': [
+         {'type': 'notify', 'to': [{'type': 'owner'}], 'title': 'Urgent work order',
+          'message': 'Urgent work order {{ record.number }}: {{ record.title }}.'}]},
+    {'name': 'Opportunity won – start the handover', 'module': 'crm', 'model': 'ZeoCRM.opportunity', 'trigger': 'field_changed',
+     'trigger_config': {'field': 'status', 'to': 'won'},
+     'description': 'When an opportunity is won: a handover task for the agent of the opportunity (else who created it).',
+     'actions': [
+         {'type': 'create_task', 'assign': [{'type': 'owner'}], 'summary': 'Handover of {{ record.number }} – {{ record.title }}', 'due_in_days': 3,
+          'note': 'Contract, first invoice, project or AMC set-up.'}]},
 ]
 
 

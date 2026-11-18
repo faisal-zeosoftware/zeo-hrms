@@ -67,6 +67,7 @@ urlpatterns = [
     path('api/workspace/runs/', WS.WorkspaceRunsView.as_view()),                       # v1.62.0 payroll
     path('api/workspace/runs/<int:pk>/', WS.WorkspaceRunView.as_view()),
     path('api/workspace/runs/<int:pk>/wps-made/', WS.WorkspaceWpsMadeView.as_view()),
+    path('api/workspace/runs/<int:pk>/recalculate/', WS.WorkspaceRecalcView.as_view()),   # v1.67.24 (P-BUG-08 / 12)
     path('api/workspace/approvals/', WS.WorkspaceApprovalsView.as_view()),
     path('api/workspace/salaries/', WS.WorkspaceSalariesView.as_view()),
     path('api/workspace/components/', WS.WorkspaceComponentsView.as_view()),
@@ -88,6 +89,8 @@ urlpatterns = [
     path('api/air-tickets/rules/provision/', ATR.ProvisionReportView.as_view()),
     path('api/air-tickets/rules/travel/', ATR.TravelView.as_view()),
     path('api/air-tickets/rules/pay-outside/', ATR.PayOutsideView.as_view()),
+    path('api/air-tickets/rules/bought/', ATR.BoughtView.as_view()),           # v1.67.22 (pending C12)
+    path('api/air-tickets/rules/relations/', ATR.RelationsView.as_view()),
     path('api/run-payments/<int:pk>/', RPV.RunPaymentsView.as_view()),                    # v1.62.11 (item 227)
     path('api/run-payments/<int:pk>/file/', RPV.RunPaymentFileView.as_view()),
     path('api/run-payments/<int:pk>/mark/', RPV.RunPaymentMarkView.as_view()),

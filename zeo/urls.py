@@ -46,9 +46,11 @@ urlpatterns = [
     path('asset-plus/', include('AssetPlus.urls')),              # v1.12.0
     path('employee-profile/', include('EmployeeProfile.urls')),  # v1.13.0
     path('zeo-projects/', include('ZeoProjects.urls')),          # v1.20.0 Projects app
+    path('zeo-apps/dms/', include('ZeoDocs.urls')),             # v1.70.1 Document Center (before zeo-apps/)
     path('zeo-apps/', include('ZeoApps.urls')),                  # v1.21.0 apps of the company (Settings → Apps)
     path('zeo-hse/', include('ZeoHSE.urls')),                    # v1.21.0 HSE
     path('flow/', include('ZeoFlow.urls')),                       # v1.29.0 workflow automation
+    path('developer/', include('ZeoDeveloper.urls')),             # v1.74.0 ZEO Developer
     path('zeo-crm/', include('ZeoCRM.urls')),                    # v1.21.0 CRM
     path('zeo-property/', include('ZeoProperty.urls')),          # v1.21.0 Property
     path('zeo-masters/', include('ZeoMasters.urls')),          # v1.41.0 business partners (shared masters under every business app)
@@ -66,7 +68,9 @@ urlpatterns = [
     path('translations/', include('Translations.urls')),        # v1.15.0
     path('ai/', include('AISettings.urls')),                    # v1.16.0
     path('views/', include('SavedViews.urls')),                  # v1.16.0
+    path('payroll-plus/extras/', include('PayrollExtras.urls')),   # v1.68.0 UAE payroll extras (under payroll-plus/: no web-server change)
     path('payroll-plus/', include('PayrollPlus.urls')),         # v1.18.0
+    path('ask-zeo/', include('AskZeo.urls')),                   # v1.71.0 Ask ZEO
     path('print-templates/', include('PrintTemplates.urls')),   # v1.62.0 print – print templates (designs of the printed documents)
     path('cloud/', include('ZeoCloud.urls')),                  # v1.23.0 ZEO Cloud
     path('scim/v2/', include('ZeoCloud.scim_urls')),            # v1.54.0 user provisioning (Entra ID, Okta …)

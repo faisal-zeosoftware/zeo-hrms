@@ -15,6 +15,7 @@
              POST /cloud/api/notices/seen/
     Adept    /cloud/api/console/…                          customers, plans, app licences, invoices, actions, history
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 from datetime import date, timedelta
@@ -660,7 +661,7 @@ class AccountDatabaseView(Base):
                     srv.paid_until = until
                     S.event(acc, 'database', f'Database {srv.label or srv.name} paid until {until}', request.user)
                 elif a == 'extend':
-                    base = max(srv.trial_ends or timezone.localdate(), timezone.localdate())
+                    base = max(srv.trial_ends or _zt_today(), _zt_today())
                     srv.trial_ends = base + timedelta(days=S.DB_TRIAL_DAYS)
                     S.event(acc, 'database', f'Database {srv.label or srv.name}: trial extended to {srv.trial_ends}', request.user)
                 if 'price' in request.data:
@@ -803,7 +804,7 @@ class ConsoleCustomersView(ConsoleBase):
         if st:
             rows = [r for r in rows if r['status'] == st]
         if request.GET.get('renewal') == '30':
-            soon = (timezone.localdate() + timedelta(days=30)).isoformat()
+            soon = (_zt_today() + timedelta(days=30)).isoformat()
             rows = [r for r in rows if (r['renews_on'] or r['trial_ends'] or '9999') <= soon]
         counts = {}
         for r in rows:
@@ -921,8 +922,8 @@ class ConsoleActionView(ConsoleBase):
             text = 'Suspended (read-only)'
         elif a == 'reactivate':
             acc.state = 'active'
-            if not acc.renews_on or acc.renews_on < timezone.localdate():
-                acc.renews_on = timezone.localdate() + timedelta(days=int(request.data.get('days') or 30))
+            if not acc.renews_on or acc.renews_on < _zt_today():
+                acc.renews_on = _zt_today() + timedelta(days=int(request.data.get('days') or 30))
             text = f'Reactivated until {acc.renews_on}'
         elif a == 'cancel':
             acc.state = 'cancelled'
@@ -930,14 +931,14 @@ class ConsoleActionView(ConsoleBase):
         elif a == 'extend':
             to = _d(request.data.get('until'))
             if acc.state == 'trial':
-                acc.trial_ends = to or (acc.trial_ends or timezone.localdate()) + timedelta(days=int(request.data.get('days') or 14))
+                acc.trial_ends = to or (acc.trial_ends or _zt_today()) + timedelta(days=int(request.data.get('days') or 14))
                 text = f'Trial extended to {acc.trial_ends}'
             else:
-                acc.renews_on = to or (acc.renews_on or timezone.localdate()) + timedelta(days=int(request.data.get('days') or 30))
+                acc.renews_on = to or (acc.renews_on or _zt_today()) + timedelta(days=int(request.data.get('days') or 30))
                 text = f'Renewal extended to {acc.renews_on}'
         elif a == 'activate':   # trial → active without an invoice (Adept's decision)
             acc.state = 'active'
-            acc.renews_on = _d(request.data.get('until')) or timezone.localdate() + timedelta(days=365)
+            acc.renews_on = _d(request.data.get('until')) or _zt_today() + timedelta(days=365)
             acc.apps.filter(trial=True).update(trial=False, valid_until=None)
             text = f'Activated until {acc.renews_on}'
         else:
@@ -965,7 +966,7 @@ class ConsoleAppsView(ConsoleBase):
         lic.users = int(d['users']) if d.get('users') not in (None, '') else None
         lic.valid_until = _d(d.get('valid_until'))
         if lic.trial and not lic.valid_until:
-            lic.valid_until = timezone.localdate() + timedelta(days=int(d.get('trial_days') or 30))
+            lic.valid_until = _zt_today() + timedelta(days=int(d.get('trial_days') or 30))
         lic.price = d.get('price') if d.get('price') not in (None, '') else None
         lic.save()
         S.event(acc, 'app', f'{S.APP_TITLES.get(app, app)}: ' + ('not licensed' if not lic.licensed else
@@ -1274,3 +1275,16 @@ class ConsoleChangePlanView(ConsoleBase):
         out = account_json(acc, full=True)
         out['moving'] = moving
         return Response(out)
+
+
+# ------------------------------------------------------------------ v1.67.26 (pending item 1.62.12, item 237) custom domain (public)
+class DomainCompanyView(APIView):
+    """GET ?host=hr.acme.ae – the company whose verified own address this is (the sign-in page opens it straight away)."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    zeo_access = False
+    zeo_scope = False
+
+    def get(self, request):
+        from ZeoAdmin.customdomain import company_for_host
+        return Response(company_for_host(request.query_params.get('host', '')) or {})

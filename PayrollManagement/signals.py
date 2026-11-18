@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.db.models.signals import pre_delete   # v1.62.0 payroll
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -353,11 +354,16 @@ def pension_variables(employee, start_date=None, end_date=None, rows=None):
     if not nat:
         return out
     ESS = apps.get_model("PayrollManagement", "EmployeeSalaryStructure")
+    try:   # v1.73.7: the categories ticked "counts for pension" (default: Basic, HRA, Housing, Transport – as before)
+        from PayrollExtras.categories import keys_with as _kw
+        _pens = tuple(_kw('pension'))
+    except Exception:
+        _pens = PENSION_CATEGORIES
     sal = sum((Decimal(str(r.amount or 0)) for r in ESS.objects.filter(employee=employee, is_active=True,
-                                                                         component__payroll_category__in=PENSION_CATEGORIES,
+                                                                         component__payroll_category__in=_pens,
                                                                          component__component_type='addition')), Decimal('0'))
     if rows is not None:   # v1.62.2 (item 45): the payroll passes the rows with the salary valid in the pay period
-        sal = sum((Decimal(str(r.amount or 0)) for r in rows if r.component.payroll_category in PENSION_CATEGORIES
+        sal = sum((Decimal(str(r.amount or 0)) for r in rows if r.component.payroll_category in _pens
                    and r.component.component_type == 'addition'), Decimal('0'))
     # v1.59.0: the rates and limits in force on the first day of the pay period (Payroll › Legal rates; built-in values otherwise)
     try:
@@ -1030,6 +1036,11 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
         variables["worked_hours"] = (Decimal(str(round(_wh.total_seconds() / 3600, 2))) if _wh else Decimal("0.00"))
     except Exception:
         variables["worked_hours"] = Decimal("0.00")
+    try:   # v1.68.0 (items 33, 34): hourly_rate / daily_rate / is_hourly / is_daily and the GCC nationals' pension (PayrollExtras)
+        from PayrollExtras.services import formula_vars as _v168_vars
+        variables.update(_v168_vars(employee))
+    except Exception:   # noqa: BLE001
+        pass
 
     # ========================================================
     # EMPLOYEE VARIABLES
@@ -1280,20 +1291,12 @@ def _get_formula_variables(employee, start_date=None, end_date=None):
     basic_salary = Decimal("0.00")
 
     # v1.16.0 (D15): from the rows already read (was a second query; same row: the first by id, rows are unique per component)
-    _basic_rows = [sc for sc in salary_structs if sc.component.payroll_category == "basic"]
-    basic_component = min(_basic_rows, key=lambda sc: sc.pk) if _basic_rows else None
-
-    if basic_component and basic_component.amount is not None:
-
-        basic_salary = Decimal(
-            str(basic_component.amount)
-        )
-
-        if basic_component.component.code:
-
-            variables[
-                basic_component.component.code
-            ] = basic_salary
+    # v1.73.7: Basic = the sum of the Basic-category lines (was the first line by id) – PayrollManagement/basic.py
+    from .basic import basic_from_rows, basic_rows
+    basic_salary = basic_from_rows(salary_structs)
+    for _b in basic_rows(salary_structs):
+        if _b.component.code and _b.amount is not None:
+            variables[_b.component.code] = Decimal(str(_b.amount))   # each Basic item's own code keeps its own amount
 
     variables["basic_salary"] = basic_salary
 
@@ -1964,7 +1967,7 @@ def _v16211_loan_carried(loan, payslip, run, amount, left_before, left_after):
     tag = f"[carry {month}]"
     if LoanEvent.objects.filter(loan_id=loan.pk, kind="carry", note__startswith=tag).exists():
         return   # the run calculated again: noted and told once
-    LoanEvent.objects.create(loan_id=loan.pk, kind="carry", date=run.payment_date or date.today(), amount=amount,
+    LoanEvent.objects.create(loan_id=loan.pk, kind="carry", date=run.payment_date or _zt_today(), amount=amount,
                              balance_after=left_after, old_period=loan.repayment_period, user_name="Payroll",
                              note=(f"{tag} " + tr("Balance left after the last planned instalment: {0} – {1} deducted in the {2} payroll, {3} still owed.",
                                                   f"{left_before:,.2f}", f"{amount:,.2f}", month, f"{left_after:,.2f}"))[:255])
@@ -2172,6 +2175,12 @@ def _process_payroll(
             )
 
             continue
+
+        try:   # v1.67.22 (pending C14): monthly inputs entered for this run's month (PayrollPlus.monthly_inputs, kept per month)
+            from PayrollPlus import monthly_inputs as _pp_mi
+            _pp_mi.apply_month(employee, instance)
+        except ImportError:
+            _pp_mi = None
 
         try:
 
@@ -2622,7 +2631,12 @@ def _process_payroll(
             from PayrollPlus import lending as _v16711_lend
         except ImportError:
             _v16711_lend = None
-        if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
+        # v1.67.22 (pending C11): a pay calendar set to "every period" takes a share of the instalment in each period
+        try:
+            _v16722_f = _pp_cycles.instalment_factor(instance) if _pp_cycles is not None else None
+        except Exception:
+            _v16722_f = None
+        if _pp_skip_events and _v16722_f is None:   # v1.55.0 once a month: in the last period of the month
             active_loans = LoanRequest.objects.none()
 
         _loan_lines = set()   # v1.62.2 (item 42): loan lines already on this payslip – the next loan's instalment is added
@@ -2646,6 +2660,12 @@ def _process_payroll(
                 loan, repayment_count,
                 Decimal(str(loan.amount_requested or "0.00")) - Decimal(str(_paid_so_far))
             )
+
+            if _v16722_f is not None and emi_amount > 0:   # v1.67.22 (pending C11): this period's share of the instalment
+                _v16722_bal = Decimal(str(loan.amount_requested or "0.00")) - Decimal(str(_paid_so_far))
+                emi_amount = min((Decimal(str(loan.emi_amount or "0.00")) * _v16722_f).quantize(Decimal("0.01")), _v16722_bal)
+                if Decimal("0.00") < _v16722_bal - emi_amount <= LOAN_LEFTOVER:
+                    emi_amount = _v16722_bal
 
             if emi_amount <= 0:
 
@@ -2758,7 +2778,8 @@ def _process_payroll(
                     )
 
                 # v1.62.11 (item 259): an instalment after the planned ones – note, loan history, HR told
-                if repayment_count >= (loan.repayment_period or 0):
+                if (repayment_count >= (loan.repayment_period or 0) if _v16722_f is None   # v1.67.22: shares – by the amount paid
+                        else Decimal(str(_paid_so_far)) >= Decimal(str(loan.emi_amount or 0)) * (loan.repayment_period or 0)):
                     _v16211_loan_carried(loan, payslip, instance, emi_amount, remaining_balance + emi_amount,
                                          max(remaining_balance, Decimal("0.00")))
 
@@ -2799,7 +2820,7 @@ def _process_payroll(
                 employee=employee,
             )
         )
-        if _pp_skip_events:   # v1.55.0 once a month: in the last period of the month
+        if _pp_skip_events and _v16722_f is None:   # v1.55.0 once a month: in the last period of the month (v1.67.22: unless every period)
             approved_advances = AdvanceSalaryRequest.objects.none()
 
         _adv_line = False   # v1.62.2 (item 43): the first advance sets the line, the next ones are added to it
@@ -2815,7 +2836,8 @@ def _process_payroll(
             # v1.67.11 (loans, item 115): an advance repaid in instalments – this month's instalment (+ what the deduction limit cut
             # last month); the advance is Deducted when its last instalment is taken
             if _v16711_lend is not None:
-                requested_amount = _v16711_lend.advance_due(advance, payslip)
+                requested_amount = (_v16711_lend.advance_period_due(advance, payslip, _v16722_f) if _v16722_f is not None   # v1.67.22 (C11)
+                                    else _v16711_lend.advance_due(advance, payslip))
 
             if (
                 not advance_component
@@ -2988,6 +3010,8 @@ def _process_payroll(
             amount=Decimal("0.00")
         )
         _v1622_save_consumed(payslip, _used)   # v1.62.2 (item 44)
+        if _pp_mi is not None:   # v1.67.22 (pending C14)
+            _pp_mi.mark_used(employee, instance, payslip)
 
         # ====================================================
         # FINALIZE PAYSLIP TOTALS
@@ -3136,7 +3160,26 @@ def payrollrun_m2m_changed(sender, instance, action, pk_set, **kwargs):
                 logger.exception(f"Invalid date for PayrollRun {getattr(instance,'id', None)} in m2m handler: {e}")
                 return
             windows.add((start_date, end_date))
-            process_payroll(instance, employees_qs.filter(pk__in=ids), start_date, end_date, total_days)
+            # v1.73.7: no day paid twice, none missed after a payroll-rule change (PayrollExtras/paid.py) – each employee's
+            # window starts after the days already paid to them in other runs; nothing left = left out of the run (noted)
+            try:
+                from PayrollExtras import paid as _paid
+            except ImportError:
+                _paid = None
+            if _paid is None:
+                process_payroll(instance, employees_qs.filter(pk__in=ids), start_date, end_date, total_days)
+                continue
+            by_win = {}
+            for e in employees_qs.filter(pk__in=ids):
+                ws, we, why = _paid.window(e, instance, start_date, end_date)
+                if ws is None:
+                    _paid.skip(instance, e, why)
+                    continue
+                by_win.setdefault((ws, we), []).append(e.pk)
+            for (ws, we), wids in by_win.items():
+                process_payroll(instance, employees_qs.filter(pk__in=wids), ws, we, total_days)
+                for ps in apps.get_model("PayrollManagement", "Payslip").objects.filter(payroll_run=instance, employee_id__in=wids):
+                    _paid.record(ps, ws, we, ps_id)
     _store_window(instance, windows)
 
 
@@ -3150,15 +3193,61 @@ except Exception as e:
     # but your apps.py should import signals in ready() so this normally won't happen.
     logger.exception(f"Could not connect m2m_changed for PayrollRun.employees: {e}")
 
+# v1.73.4: an import of many salary lines recalculated every formula component of the employee after each line (0.4 s a
+# line – a file of 939 lines took longer than the 300 s a request may take, so "Check" said "The file could not be checked").
+# The Import (DataTools) now runs its trial saves with the recalculation skipped (they are rolled back) and its real saves
+# with it deferred: once per employee, after the rows, with every changed fixed component.
+import contextlib as _ctx1734
+import contextvars as _cv1734
+_DEP_STATE = _cv1734.ContextVar('zeo_salary_dependents', default=None)
+
+
+@_ctx1734.contextmanager
+def dependents_skipped():
+    tok = _DEP_STATE.set('skip')
+    try:
+        yield
+    finally:
+        _DEP_STATE.reset(tok)
+
+
+@_ctx1734.contextmanager
+def dependents_deferred():
+    if _DEP_STATE.get() is not None:   # nested: the outer one decides
+        yield
+        return
+    pending = {}
+    tok = _DEP_STATE.set(pending)
+    try:
+        yield
+    finally:
+        _DEP_STATE.reset(tok)
+        for emp_id, codes in pending.items():
+            try:
+                employee = emp_master.objects.filter(pk=emp_id).first()
+                if employee is not None:
+                    _recalc_dependents(employee, codes)
+            except Exception as e:   # noqa: BLE001
+                logger.error(f"Error updating dependent components of employee {emp_id}: {e}")
+
+
 @receiver(post_save, sender="PayrollManagement.EmployeeSalaryStructure")
 def update_dependents_on_fixed_change(sender, instance, **kwargs):
     """
     If a fixed component changes (e.g. Basic), recalc dependent formula components for that employee.
     """
-    # if not instance.component.is_fixed:
-    #     return
     if instance.component.component_value_type != "fixed":
         return
+    _st = _DEP_STATE.get()
+    if _st == 'skip':
+        return
+    if isinstance(_st, dict):
+        _st.setdefault(instance.employee_id, set()).add(instance.component.code)
+        return
+    _recalc_dependents(instance.employee, {instance.component.code})
+
+
+def _recalc_dependents(employee, codes):
     SalaryComponent = apps.get_model("PayrollManagement", "SalaryComponent")
     EmployeeSalaryStructure = apps.get_model("PayrollManagement", "EmployeeSalaryStructure")
 
@@ -3173,36 +3262,36 @@ def update_dependents_on_fixed_change(sender, instance, **kwargs):
     # v1.15.1: formula components (overtime, leave encashment, expense reimbursement …) are given to every employee when
     # the component is saved; an employee whose salary is entered later got none of them and was paid 0 for them.
     # Add the missing ones (inactive rows that HR switched off stay off); payroll calculates the amount every run.
-    have = set(EmployeeSalaryStructure.objects.filter(employee=instance.employee).values_list('component_id', flat=True))
+    have = set(EmployeeSalaryStructure.objects.filter(employee=employee).values_list('component_id', flat=True))
     # v1.67.15 only the formula components of the employee's own branch (or of no branch), and never the gratuity accrual: every
     # formula component of every branch was added – two of each in a 2-branch company – and the default "Gratuity" (GTY, the
     # monthly gratuity accrual) was then PAID as an addition in every payslip of an employee whose salary was entered after it.
     # Gratuity is paid by the final settlement; its monthly accrual is a provision (Payroll › Accruals), not pay.
     from django.db.models import Q as _Q16715
-    _br = getattr(instance.employee, 'emp_branch_id_id', None)
+    _br = getattr(employee, 'emp_branch_id_id', None)
     formula_components = formula_components.filter(_Q16715(branch__isnull=True) | _Q16715(branch_id=_br)).exclude(payroll_category='gratuity')
     for comp in formula_components:
         if comp.pk not in have:
-            EmployeeSalaryStructure.objects.get_or_create(employee=instance.employee, component=comp,
+            EmployeeSalaryStructure.objects.get_or_create(employee=employee, component=comp,
                                                           defaults={'amount': Decimal('0.00'), 'is_active': True})
 
     # v1.16.0 (D15): the variables were calculated again for every dependent component (same values: they read the fixed
     # components only, and the rows were completed above) – calculated once
     _vars = None
     for comp in formula_components:
-        if comp.formula and instance.component.code in comp.formula:
+        if comp.formula and any(c in comp.formula for c in codes):
             try:
                 emp_struct, _ = EmployeeSalaryStructure.objects.get_or_create(
-                    employee=instance.employee, component=comp
+                    employee=employee, component=comp
                 )
                 if _vars is None:
-                    _vars = get_formula_variables(instance.employee, date.today(), date.today())   # v1.18.0: dates, not date-times (the preview failed)
+                    _vars = get_formula_variables(employee, _zt_today(), _zt_today())   # v1.18.0: dates, not date-times (the preview failed)
                 emp_struct.amount = evaluate_formula(
-                    comp.formula, dict(_vars), instance.employee, comp
+                    comp.formula, dict(_vars), employee, comp
                 )
                 emp_struct.save(update_fields=["amount"])
             except Exception as e:
-                logger.error(f"Error updating dependent component {comp.name} for {instance.employee}: {e}")
+                logger.error(f"Error updating dependent component {comp.name} for {employee}: {e}")
 
 
 # ============================================================

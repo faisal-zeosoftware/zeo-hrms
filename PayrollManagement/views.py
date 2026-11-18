@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.shortcuts import render
 from .models import (SalaryComponent,EmployeeSalaryStructure,PayslipComponent,Payslip,PayrollRun,LoanType,LoanApplication,
                      LoanRepayment,LoanApprovalLevels,LoanApproval,PayslipApproval,PayslipCommonWorkflow,AdvanceSalaryRequest,AdvanceSalaryApproval,AdvanceCommonWorkflow,AirTicketPolicy,AirTicketAllocation,AirTicketRequest,
@@ -128,7 +129,7 @@ class SalaryComponentViewSet(viewsets.ModelViewSet):
             from EmpManagement.models import emp_master
             emp = emp_master.objects.filter(pk=emp_id).first()
             if emp:
-                today = _date.today()
+                today = _zt_today()
                 y, m = int(request.data.get('year') or today.year), int(request.data.get('month') or today.month)
                 v = get_formula_variables(emp, _date(y, m, 1), _date(y, m, monthrange(y, m)[1]))
                 value, err, warns = calculate(formula, v)
@@ -413,6 +414,29 @@ class PayslipViewSet(viewsets.ModelViewSet):
             )
         except ValueError:
             return Response({"error": "Invalid year or month format"}, status=status.HTTP_400_BAD_REQUEST)
+    def _server_pdf(self, request, payslip):
+        """v1.67.24 (P-BUG-10 / 32): the payslip PDF made on the server – the company's payslip design (text, English, Arabic or
+        both as Payroll controls › Payslip language says, ?lang=en|ar|en_ar to choose), else the standard PDF. Never a picture."""
+        _r = None
+        try:
+            from PrintTemplates.hooks import payslip_response
+            _r = payslip_response(request, payslip)
+        except ImportError:
+            _r = None
+        return _r if _r is not None else generate_payslip_pdf(request, payslip)
+
+    @action(detail=True, methods=['get'], url_path='pdf')
+    def pdf(self, request, pk=None):   # v1.67.24 (P-BUG-10 / 32): Download on the payslip page – a text PDF, not a screenshot
+        payslip = self.get_object()
+        _r = self._server_pdf(request, payslip)
+        try:
+            from PayrollPlus import payslip_lock as _lock
+            if _lock.for_download(payslip, request.user):
+                return _lock.protect_response(payslip, _r)
+        except ImportError:
+            pass
+        return _r
+
     @action(detail=True, methods=['post'], url_path='upload-pdf')
     def upload_pdf(self, request, pk=None):
         payslip = self.get_object()
@@ -422,6 +446,15 @@ class PayslipViewSet(viewsets.ModelViewSet):
         # Convert string to boolean
         if isinstance(send_email, str):
             send_email = send_email.lower() in ['true', '1', 'yes']
+        if not pdf_file and str(request.data.get('make') or '').lower() in ('1', 'true', 'yes'):
+            # v1.67.24 (P-BUG-10 / 32): "Save PDF" keeps the server's text PDF on the payslip (before: a screenshot of the screen)
+            from django.core.files.base import ContentFile
+            _r = self._server_pdf(request, payslip)
+            data = getattr(_r, 'content', None)
+            if not data or getattr(_r, 'status_code', 200) >= 400:
+                return Response({'error': 'The payslip PDF could not be made.'}, status=status.HTTP_400_BAD_REQUEST)
+            run = payslip.payroll_run
+            pdf_file = ContentFile(data, name=f'payslip_{payslip.employee.emp_code}_{run.year}{run.month:02d}.pdf')
 
         if not pdf_file:
             return Response({'error': 'PDF file is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -531,7 +564,7 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 f"{branch} and payslip request."
             )
  
-        current_date = timezone.now().date()
+        current_date = _zt_today()
         if doc_config.start_date and doc_config.end_date:
             if not (doc_config.start_date <= current_date <= doc_config.end_date):
                 raise ValidationError(
@@ -975,7 +1008,7 @@ class LoanApplicationviewset(viewsets.ModelViewSet):
                     f"No document numbering configuration found for branch {branch_id} and loan request."
                 )
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # ✅ Manual document number validation
             if document_number:
@@ -1591,7 +1624,7 @@ class AdvanceSalaryRequestViewset(viewsets.ModelViewSet):
             except DocumentNumbering.DoesNotExist:
                 raise NotFound(f"No document numbering configuration found for branch {branch_id} and Advance Salary request.")
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # Validate if the manually entered document number is within the date range
             if document_number:
@@ -1851,7 +1884,38 @@ class AirTicketAllocationViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error triggering automatic allocation: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
+    # v1.73.2 (test run): a new allocation stayed "Pending" for ever – no screen could approve it, so the employee's
+    # air ticket request was refused ("no approved entitlement"). HR with the change right (or an admin) approves / rejects it.
+    def _decide(self, request, new_status):
+        from ZeoAdmin.delegation import user_codes
+        admin, codes = user_codes(request.user.pk)
+        if not (admin or {'change_airticketallocation', 'approve_airticketallocation'} & codes):
+            return Response({'detail': 'You do not have permission to approve air ticket allocations.'}, status=status.HTTP_403_FORBIDDEN)
+        a = self.get_object()
+        if a.status != 'PENDING':
+            return Response({'detail': f'This allocation is already {a.get_status_display().lower()}.'}, status=status.HTTP_400_BAD_REQUEST)
+        a.status = new_status
+        if new_status == 'REJECTED':
+            a.is_active = False
+        try:
+            from EmpManagement.models import emp_master
+            emp = emp_master.objects.filter(users=request.user).first()
+        except Exception:
+            emp = None
+        if emp is not None and not a.allocated_by_id:
+            a.allocated_by = emp
+        a.save()
+        return Response(self.get_serializer(a).data)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        return self._decide(request, 'APPROVED')
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        return self._decide(request, 'REJECTED')
+
 class AirTicketRequestViewSet(viewsets.ModelViewSet):
     queryset = AirTicketRequest.objects.all()
     serializer_class = AirTicketRequestSerializer
@@ -1878,7 +1942,7 @@ class AirTicketRequestViewSet(viewsets.ModelViewSet):
                     f"No document numbering configuration found for branch {branch_id}"
                 )
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # Validate manual document number
             if document_number:
@@ -2134,7 +2198,7 @@ class AirticketNotificationsViewSet(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = AirticketNotification.objects.filter(
             Q(recipient_user=user.id, is_deligate=False) |
-            Q(recipient_employee__users=user,is_deligate=False) |
+            Q(recipient_employee__users=user, is_deligate=False) & (Q(recipient_user__isnull=True) | Q(recipient_user=user.id)) |   # v1.73.1 (ESS test B19) not the approver's copy
             Q(deligate_user=user.id,is_deligate=True)
         ).distinct().order_by('-created_at')
 
@@ -2213,7 +2277,7 @@ class LoanNotificationViewSet(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = LoanNotification.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
+            Q(recipient_employee__users=user) & (Q(recipient_user__isnull=True) | Q(recipient_user=user))   # v1.73.1 (ESS test B19) the employee's own notifications – not the copies sent to his approvers (they name him too)
         ).order_by('-created_at')
 
         return qs
@@ -2257,7 +2321,7 @@ class AdvSalaryNotificationViewSet(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = AdvanceSalaryNotification.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
+            Q(recipient_employee__users=user) & (Q(recipient_user__isnull=True) | Q(recipient_user=user))   # v1.73.1 (ESS test B19) the employee's own notifications – not the copies sent to his approvers (they name him too)
         ).order_by('-created_at')
 
         return qs
@@ -2379,17 +2443,17 @@ class CalculateLeaveEncashmentAPIView(APIView):
         from .utils import evaluate_formula
         component = SalaryComponent.objects.filter(payroll_category='leave_encashment', branch=employee.emp_branch_id).first()
 
-        basic_struct = EmployeeSalaryStructure.objects.filter(
-            employee=employee,
-            component__payroll_category='basic',
-            is_active=True
-        ).first()
-        basic_salary = Decimal(str(basic_struct.amount)) if basic_struct and basic_struct.amount else Decimal("0.00")
+        from .basic import base_of   # v1.73.7: the categories ticked for encashment (default: every Basic line)
+        basic_salary = base_of(employee, 'encashment')
 
         all_structs = EmployeeSalaryStructure.objects.filter(employee=employee, is_active=True)
         total_salary = sum(Decimal(str(s.amount)) for s in all_structs if s.amount)
 
-        pay_structure = PayStructure.objects.filter(branch=employee.emp_branch_id).first()
+        try:   # v1.73.7: the employee's own payroll rule (most specific match), not the branch's first
+            from .signals import structure_for
+            pay_structure = structure_for(employee)
+        except Exception:
+            pay_structure = PayStructure.objects.filter(branch=employee.emp_branch_id).first()
         fixed_days = Decimal(str(pay_structure.fixed_working_days)) if pay_structure and pay_structure.fixed_working_days else Decimal("30.00")
         calendar_days = Decimal("30.00")
 

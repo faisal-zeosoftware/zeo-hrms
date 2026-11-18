@@ -24,6 +24,7 @@ GET/PUT layout/dashboard/?name=main     dashboard designer (per user)
 GET/PUT layout/list/?key=               column chooser and last view (per user)
 GET    orgchart/                        employees with their manager, by the user's rights
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime
 import mimetypes
 import re
@@ -218,7 +219,7 @@ def uname_id(uid):
 
 
 def act_json(a, today=None):
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     due = a.due_date
     when = 'overdue' if a.state == 'open' and due < today else 'today' if a.state == 'open' and due == today else 'planned' if a.state == 'open' else a.state
     return {'id': a.id, 'model': a.model, 'object_id': a.object_id, 'record_label': a.record_label, 'screen': a.screen,
@@ -493,7 +494,7 @@ class ActivitiesView(APIView):
             return err
         d = request.data
         summary = str(d.get('summary') or '').strip()
-        due = _parse_date(d.get('due_date')) or timezone.localdate()
+        due = _parse_date(d.get('due_date')) or _zt_today()
         atype = d.get('activity_type') or 'todo'
         if atype not in dict(Activity.TYPES):
             return Response({'detail': 'Unknown activity type.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -564,7 +565,7 @@ class TodoView(APIView):
         state = request.query_params.get('state', 'open')
         if state != 'any':
             qs = qs.filter(state=state)
-        today = timezone.localdate()
+        today = _zt_today()
         rows = [act_json(a, today) for a in qs.order_by('due_date', 'id')[:1000]]
         mine = Activity.objects.filter(assigned_to=request.user, state='open')
         return Response({'results': rows, 'counts': {
@@ -578,7 +579,7 @@ class TodoView(APIView):
         summary = str(d.get('summary') or '').strip()
         if not summary:
             return Response({'detail': 'Write what is to be done.'}, status=status.HTTP_400_BAD_REQUEST)
-        due = _parse_date(d.get('due_date')) or timezone.localdate()
+        due = _parse_date(d.get('due_date')) or _zt_today()
         who = request.user
         if d.get('assigned_to') and str(d.get('assigned_to')) != str(request.user.id):
             who = _company_users(request).filter(pk=d.get('assigned_to')).first()
@@ -859,7 +860,7 @@ def _affected(f, merged, rules):
 
 EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 PHONE = re.compile(r'^[+0-9 ()\-]{6,20}$')
-URL = re.compile(r'^(https?://)?[^\s/$.?#].[^\s]*$', re.I)
+URL = re.compile(r'^(https?://)?((?:[^\s/$.?#:]+\.)+(?:[^\W\d_]{2,}|xn--[a-z0-9-]+)|localhost)(:\d{1,5})?([/?#][^\s]*)?$', re.I)   # v1.70.7: a domain with a dot ("zeo" is not a web link)
 COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 
 

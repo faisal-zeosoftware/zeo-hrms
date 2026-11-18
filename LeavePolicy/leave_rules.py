@@ -25,6 +25,7 @@ Legal facts used (each checked in two sources, 3 Nov 2026):
 * Public holidays inside annual leave count as part of the leave (u.ae "Annual leave") – the law's default; "calendar days except
   public holidays" (item 87) and the sandwich rule (item 86) are company options.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar as _cal
 import logging
 import threading
@@ -326,7 +327,7 @@ def projected_extra(emp, line, start, today=None):
     from . import engine
     if line is None or line.accrual != 'monthly':
         return 0.0
-    today = today or date.today()
+    today = today or _zt_today()
     upto = start.replace(day=1) - timedelta(days=1)   # the end of the month before the leave starts
     if upto < today.replace(day=1) - timedelta(days=1):
         return 0.0
@@ -394,7 +395,7 @@ def catch_up(today=None, dry=False, user_id=None):
     s = settings()
     if not s.catch_up:
         return {'months': [], 'count': 0}
-    today = today or date.today()
+    today = today or _zt_today()
     last = today.replace(day=1) - timedelta(days=1)
     tags = set()
     for n in LeaveLedger.objects.filter(kind='accrual', date__gte=last - timedelta(days=31 * (s.catch_up_max_months + 2)), date__lte=last) \
@@ -430,7 +431,7 @@ def nursing_minutes(emp, day):
     extra_ids = set(LeaveTypeRule.objects.filter(nursing_breaks=True).values_list('leave_type_id', flat=True))
     qs = LR.objects.filter(employee_id=getattr(emp, 'pk', emp), status='approved', end_date__lt=day,
                            end_date__gte=day - timedelta(days=31 * (s.nursing_months + 1)))
-    qs = qs.filter(Q(leave_type__leave_category='maternity', leave_type__type='paid') | Q(leave_type_id__in=extra_ids))
+    qs = qs.filter(Q(leave_type__leave_category__in=__import__('LeavePolicy.categories', fromlist=['x']).keys_like('maternity'), leave_type__type='paid') | Q(leave_type_id__in=extra_ids))
     ids = list(qs.values_list('pk', flat=True))
     if not ids:
         return 0
@@ -448,7 +449,7 @@ def nursing_window(req):
         return None
     lt = req.leave_type
     r = rule_for(lt)
-    if not ((lt.leave_category == 'maternity' and lt.type == 'paid') or (r is not None and r.nursing_breaks)):
+    if not ((__import__('LeavePolicy.categories', fromlist=['x']).system_of(lt.leave_category) == 'maternity' and lt.type == 'paid') or (r is not None and r.nursing_breaks)):
         return None
     last = add_months(i.birth_date, int(s.nursing_months or 6)) - timedelta(days=1)
     first = req.end_date + timedelta(days=1)
@@ -538,7 +539,7 @@ def cancel_part(lr, from_date, reason, user=None):
         if back:
             # v1.67.19: days given back from a FUTURE leave are booked on their own date (the year they belong to), not today –
             # the leave year end of this year counted them (3 days too many lapsed); days already passed stay on today
-            engine.post(lr.employee_id, lr.leave_type_id, max(date.today(), from_date), 'cancelled', back, ref=lr, user_id=uid, move_balance=True,
+            engine.post(lr.employee_id, lr.leave_type_id, max(_zt_today(), from_date), 'cancelled', back, ref=lr, user_id=uid, move_balance=True,
                         note=f'{lr.document_number} {from_date:%d/%m/%Y}–{old_end:%d/%m/%Y} given back ({back:g})'[:255])
         AC.objects.filter(employee=lr.employee, date__range=(from_date, old_end), is_manual=False, remarks__startswith=engine.TAG,
                           leave_type=lr.leave_type).delete()
@@ -651,7 +652,7 @@ def advance_on_approved(lr, user_id=None):
     if (i.advance or {}).get('status') in ('pending', 'paid'):
         return i.advance
     s = settings()
-    today = date.today()
+    today = _zt_today()
     p = advance_plan(lr)
     amount = Decimal(p['amount'])
     if amount <= 0:
@@ -731,7 +732,7 @@ def advance_cancelled(lr, user=None):
         ArrearLine.objects.filter(pk__in=(a.get('advance_lines') or []) + (a.get('offset_lines') or []), status='pending').update(status='cancelled')
         i.advance = dict(i.advance, status='cancelled')
     else:
-        ArrearLine.objects.filter(pk__in=a.get('offset_lines') or [], status='pending').update(effective_from=date.today())
+        ArrearLine.objects.filter(pk__in=a.get('offset_lines') or [], status='pending').update(effective_from=_zt_today())
         i.advance = dict(i.advance, status='recovering', why=tr('Leave cancelled: the advance is taken back from the next payroll.'))
     i.save(update_fields=['advance', 'updated_at'])
     return advance_state(lr)

@@ -54,8 +54,9 @@ def template_checklist(t):
     cat = t.equipment.category if t.equipment_id else None
     items = list(cat.checklist or []) if cat else []
     if not items:
-        from .packs import GENERAL_CHECKLIST
-        items = GENERAL_CHECKLIST
+        from .packs import GENERAL_CHECKLIST, edited_checklists
+        # v1.67.23 (pending 271): a checklist emptied on screen means no checklist for that kind of equipment
+        items = [] if cat is not None and cat.pk in edited_checklists() else GENERAL_CHECKLIST
     return [{'item': i, 'result': '', 'note': ''} for i in items]
 
 

@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from zeo.report_files import report_file, report_rel  # v1.7.0: report files per company and report
 from django.shortcuts import render
 from .models import( weekend_calendar,assign_weekend,holiday,holiday_calendar,assign_holiday,WeekendDetail,leave_type,leave_entitlement,applicablity_critirea,emp_leave_balance,leave_accrual_transaction,leave_reset_transaction,employee_leave_request,Attendance,Shift,
@@ -259,7 +260,7 @@ class LvApprovalNotifyviewset(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = LvApprovalNotify.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
+            Q(recipient_employee__users=user) & (Q(recipient_user__isnull=True) | Q(recipient_user=user))   # v1.73.1 (ESS test B19) the employee's own notifications – not the copies sent to his approvers (they name him too)
         ).order_by('-created_at')
 
         return qs
@@ -282,7 +283,7 @@ class LeaveEntitlementviewset(viewsets.ModelViewSet):
                 leave_accrual_transaction.objects.create(
                     employee=emp_balance.employee,
                     leave_type=instance.leave_type,
-                    accrual_date=timezone.now().date(),
+                    accrual_date=_zt_today(),
                     amount=instance.accrual_rate
                 )
                 emp_balance.balance += instance.accrual_rate
@@ -336,7 +337,7 @@ class leave_balance_viewset(viewsets.ModelViewSet):
         with transaction.atomic():
             left = round(float(Ledger.objects.filter(employee_id=instance.employee_id, leave_type_id=instance.leave_type_id).aggregate(s=Sum('days'))['s'] or 0), 2)
             if abs(left) >= 0.005:
-                engine.post(instance.employee_id, instance.leave_type_id, date.today(), 'adjustment', -left,
+                engine.post(instance.employee_id, instance.leave_type_id, _zt_today(), 'adjustment', -left,
                             note='Balance row deleted', user_id=getattr(self.request.user, 'pk', None))
             instance.delete()
     # permission_classes = [EmpLeaveBalancePermission] 
@@ -362,7 +363,7 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
     permission_classes = [EmployeeLeaveRequestPermission]
     def get_queryset(self):
         # Filter queryset based on user access
-        if self.request.user.is_ess:
+        if self.request.user.is_ess or getattr(self.request, '_lv_own_only', False):   # v1.67.22: own requests of a back-office employee too
             # Return only requests related to the ESS user's employee record (v1.13.0: through the login link –
             # the username is not always the employee code, which made edit / delete answer 404) and their team's
             user = self.request.user
@@ -376,6 +377,11 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
         serializer = self.get_serializer(approved_queryset, many=True)
         return Response(serializer.data)
     def perform_create(self, serializer):
+        if getattr(self.request, '_lv_own_only', False):   # v1.67.22: without the HR right only for oneself
+            _emp = serializer.validated_data.get('employee')
+            if _emp is None or getattr(_emp, 'users_id', None) != self.request.user.pk:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied('You can only ask for your own leave.')
         with transaction.atomic():
             employee = serializer.validated_data.get('employee')
             branch_id = employee.emp_branch_id.id  # Ensure this field exists
@@ -394,7 +400,7 @@ class LeaveRequestviewset(viewsets.ModelViewSet):
 
             if document_number:
                 # Validate the entered document number falls within the allowed date range
-                current_date = timezone.now().date()
+                current_date = _zt_today()
                 if doc_config.start_date and doc_config.end_date:
                     if not (doc_config.start_date <= current_date <= doc_config.end_date):
                         raise ValidationError("The document number cannot be assigned outside the valid date range.")
@@ -1058,7 +1064,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if punch_type == 'check_in':
             attendance, _ = Attendance.objects.get_or_create(
                 employee=employee,
-                date=localtime(now()).date()
+                date=_zt_today()
             )
         else:
             attendance = Attendance.objects.filter(
@@ -1068,7 +1074,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if not attendance:
                 attendance, _ = Attendance.objects.get_or_create(
                     employee=employee,
-                    date=localtime(now()).date()
+                    date=_zt_today()
                 )
 
         tenant_time = localtime(now()).time()
@@ -1233,7 +1239,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         attendance, _ = Attendance.objects.get_or_create(
             employee=employee,
-            date=localtime(now()).date()
+            date=_zt_today()
         )
 
         current_time = localtime(now()).time()
@@ -1369,7 +1375,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Outside geofence"}, status=400)
 
         # v1.12.0: a night shift checks out after midnight – use today's row, else yesterday's open row
-        _today = localtime(now()).date()
+        _today = _zt_today()
         attendance = Attendance.objects.filter(employee=employee, date=_today).first() or Attendance.objects.filter(
             employee=employee, date=_today - timedelta(days=1), check_in_time__isnull=False, check_out_time__isnull=True).first()
         if attendance is None:
@@ -1597,7 +1603,7 @@ class AttendanceRecheckViewSet(viewsets.ModelViewSet):
                 status=400
             )
 
-        date = self.parse_date(date_str) if date_str else timezone.now().date()
+        date = self.parse_date(date_str) if date_str else _zt_today()
 
         try:
             attendance = Attendance.objects.get(employee_id=emp_id, date=date)
@@ -3306,6 +3312,24 @@ class CompensatoryLeaveRequestviewset(viewsets.ModelViewSet):
     serializer_class = CompensatoryLeaveRequestSerializer
     permission_classes = [CompensatoryLeaveRequestPermission]
 
+    # v1.73.4: the compensatory work requests had no screen to approve them (the requests imported from a file stayed
+    # pending); Leave › Compensatory work requests approves / rejects here – an approved request credits the day (model save)
+    def _decide(self, request, to):
+        obj = self.get_object()
+        if (obj.status or '').lower() != 'pending':
+            return Response({'detail': 'This request is already decided.'}, status=status.HTTP_400_BAD_REQUEST)
+        obj.status = to
+        obj.save()
+        return Response(self.get_serializer(obj).data)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        return self._decide(request, 'approved')
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        return self._decide(request, 'rejected')
+
 class CompensatoryLeaveBalancetviewset(viewsets.ModelViewSet):
     queryset = CompensatoryLeaveBalance.objects.all()
     serializer_class = CompensatoryLeaveBalanceSerializer
@@ -3796,8 +3820,8 @@ class ImmediateRejectAPIView(APIView):
         )
 class EmployeeAttendanceSummaryAPIView(APIView):
     def get(self, request):
-        month = int(request.query_params.get("month", date.today().month))
-        year = int(request.query_params.get("year", date.today().year))
+        month = int(request.query_params.get("month", _zt_today().month))
+        year = int(request.query_params.get("year", _zt_today().year))
 
         start_date = date(year, month, 1)
         end_date = start_date + relativedelta(months=1) - relativedelta(days=1)
@@ -3846,7 +3870,7 @@ class MonthwiseAccrualSimulationView(APIView):
         except emp_master.DoesNotExist:
             return Response({"error": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        today = timezone.now().date()
+        today = _zt_today()
         start_date = datetime(year, 1, 1).date()
 
         entitlements = leave_entitlement.objects.filter(accrual=True).order_by("leave_type", "min_experience")
@@ -3985,7 +4009,7 @@ class LateinEarlyRequestNotificationViewset(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs =LateinEarlyRequestNotification.objects.filter(
             Q(recipient_user=user) |
-            Q(recipient_employee__users=user)      # employee assigned to this user
+            Q(recipient_employee__users=user) & (Q(recipient_user__isnull=True) | Q(recipient_user=user))   # v1.73.1 (ESS test B19) the employee's own notifications – not the copies sent to his approvers (they name him too)
         ).order_by('-created_at')
 
         return qs
@@ -4020,7 +4044,7 @@ class LateinEarlyoutRequestViewset(viewsets.ModelViewSet):
                     f"No document numbering configuration found for branch {branch_id} and lateinearly request."
                 )
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # ✅ Manual document number validation
             if document_number:
@@ -4419,8 +4443,8 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
             start_date, end_date = sd, ed
             year, month = sd.year, sd.month
         else:
-            year = int(request.data.get("year", date.today().year))
-            month_input = request.data.get("month", date.today().month)
+            year = int(request.data.get("year", _zt_today().year))
+            month_input = request.data.get("month", _zt_today().month)
             month = get_month_number(month_input)
             if not month:
                 return Response(
@@ -4458,7 +4482,7 @@ class MonthlyAttendanceSummaryViewSet(viewsets.ModelViewSet):
         if designation_ids:
             employees = employees.filter(emp_desgntn_id__in=designation_ids)
 
-        today = date.today()
+        today = _zt_today()
         result = []
 
         for employee in employees:

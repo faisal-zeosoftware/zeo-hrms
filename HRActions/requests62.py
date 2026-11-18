@@ -8,6 +8,7 @@ POST api/requests/<kind>/              new request through the EmpManagement API
 POST api/requests/<kind>/<id>/approve|reject/ {note}    the current level (the approver, the person it was delegated to, an admin)
 The approvals ("General approvals", "Document approvals") are the same register with "Waiting for me".
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from datetime import date
 
@@ -158,10 +159,42 @@ class RequestStatsView(APIView):
             return Response({'detail': tr('Unknown list.')}, status=404)
         rows = rows_for(request, kind, {})
         from datetime import timedelta
-        m0 = date.today() - timedelta(days=30)   # the last 30 days
+        m0 = _zt_today() - timedelta(days=30)   # the last 30 days
         return Response({'waiting': sum(1 for r in rows if r['waiting_for_me']), 'pending': sum(1 for r in rows if r['status'] == 'pending'),
                          'approved_30': sum(1 for r in rows if r['status'] == 'approved' and r['submitted'] and r['submitted'] >= m0),
                          'rejected_30': sum(1 for r in rows if r['status'] == 'rejected' and r['submitted'] and r['submitted'] >= m0)})
+
+
+class RequestOneView(APIView):
+    """v1.73.2 (same screen rules): Delete on the General / Document requests lists – only a request no approver decided on
+    yet (a mistaken or duplicate entry); otherwise 409 with what uses it (a decided request is kept with its history)."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, kind, pk):
+        c = _cfg(kind)
+        if not c:
+            return Response({'detail': tr('Unknown list.')}, status=404)
+        R = M('EmpManagement', c['model'])
+        r = R.objects.filter(pk=pk).select_related('employee').first()
+        if r is None:
+            return Response({'detail': tr('Not found.')}, status=404)
+        if not _can(request, 'delete_' + c['model'].lower()):
+            return Response({'detail': tr('You may not delete requests.')}, status=403)
+        br = allowed_branches(request)
+        if br is not None and getattr(r.employee, 'emp_branch_id_id', None) not in br:
+            return Response({'detail': tr('Not found.')}, status=404)
+        from DataTools.usage import used_counts_answer, usage
+        decided = getattr(r, c['rel']).exclude(status__in=('Pending', 'pending')).count()
+        counts = {'approval decisions': decided} if decided else {}
+        _n, kinds = usage(r)   # anything else that refers to it (payroll …) – its own approval steps do not count
+        for k in kinds:
+            if k not in ('approvals', 'document approvals'):
+                counts.setdefault(k, 0)
+        used = used_counts_answer(getattr(r, 'document_number', None) or str(r.pk), counts, active=False)
+        if used is not None:
+            return used
+        r.delete()   # its pending approval steps go with it
+        return Response(status=204)
 
 
 class RequestActionView(APIView):

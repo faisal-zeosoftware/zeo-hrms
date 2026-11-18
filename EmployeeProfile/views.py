@@ -10,6 +10,7 @@ same rules are applied here):
   * employee code numbering: HR with change_emp_master for their branches; the company default needs an
     unrestricted user (company admin / all branches).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from datetime import date
 
@@ -418,7 +419,7 @@ class ProbationDueView(Base):
             days = 30
         qs = S.emp_qs(request).filter(Q(is_active=True) | Q(is_active__isnull=True))
         emps = {e.pk: e for e in qs}
-        today = date.today()
+        today = _zt_today()
         out = []
         for i in S.probation_due(qs, days).order_by('probation_end_date'):
             e = emps.get(i.employee_id)

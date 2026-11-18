@@ -16,6 +16,7 @@ endpoint; the key's user must be a staff user, and the key sees the branches of 
 (?page=, ?page_size= up to 500). Field names and meanings in v1 do not change; new fields may be added.
 Keys marked "API v1 only" cannot call ZEO's internal endpoints at all.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date, datetime, timedelta
 
 from django.apps import apps
@@ -37,6 +38,11 @@ SCOPES = (
     ('attendance:read', 'Attendance days – read'),
     ('attendance:write', 'Attendance punches – add (time clocks)'),
     ('payroll:read', 'Payslip totals – read'),
+    # v1.73.17 API for AI tools (api_ai.py): proposals only – a company administrator approves each in Ask ZEO › Changes
+    ('modules:write', 'Custom modules and fields – propose (an administrator approves)'),
+    ('reports:write', 'Reports – propose (an administrator approves)'),
+    ('workflow:write', 'Scripts, reminders and automations – propose (an administrator approves)'),
+    ('settings:write', 'Setup and data fixes – propose (an administrator approves)'),
 )
 SCOPE_KEYS = [s for s, _ in SCOPES]
 SCOPE_APP = {'leave:read': 'hrms', 'attendance:read': 'hrms', 'attendance:write': 'hrms', 'payroll:read': 'payroll'}   # v1.67.19 (apps)
@@ -124,7 +130,9 @@ class IndexView(V1):
                              ('branches/', ['GET'], 'org:read'), ('departments/', ['GET'], 'org:read'), ('designations/', ['GET'], 'org:read'),
                              ('leave-requests/', ['GET'], 'leave:read'), ('leave-balances/', ['GET'], 'leave:read'),
                              ('attendance-days/', ['GET'], 'attendance:read'), ('attendance/punches/', ['POST'], 'attendance:write'),
-                             ('payslips/', ['GET'], 'payroll:read'))],
+                             ('payslips/', ['GET'], 'payroll:read'),
+                             ('ai/changes/', ['GET', 'POST'], 'modules:write | reports:write | workflow:write | settings:write'),   # v1.73.17
+                             ('ai/changes/<id>/', ['GET'], 'any AI scope'), ('ai/changes/<id>/withdraw/', ['POST'], 'any AI scope'))],
                          'paging': 'page, page_size (max 500)', 'company': 'add ?schema=<company> to every call'})
 
 
@@ -183,7 +191,7 @@ def _range(request, max_days=None):
     if (q.get('from') and f is None) or (q.get('to') and t is None):
         return None, None, 'from and to are dates YYYY-MM-DD.'
     if max_days:
-        t = t or timezone.localdate()
+        t = t or _zt_today()
         f = f or (t - timedelta(days=30))
         if (t - f).days > max_days or t < f:
             return None, None, f'from–to is at most {max_days} days.'

@@ -119,11 +119,23 @@ def foreign_ids():
             if others:
                 cur.execute(' union '.join(f'select group_id from "{o}"."ZeoApps_companygroup"' for o in others))
                 out = {r[0] for r in cur.fetchall()}
+        if out:
+            # v1.70.2: a shared standard role group ("HR Manager", "HSE – HSE manager" …, no " [<schema>]" suffix) belongs to no
+            # company, even when listed in another company's CompanyGroup: migration 0002 of a company made later lists every
+            # group nobody was in yet. Counted as foreign, the roles gave no rights in the other companies (a company that
+            # changes a standard group gets its own suffixed copy, which stays foreign below).
+            out -= {gid for gid, name in Group.objects.filter(pk__in=out).values_list('pk', 'name') if is_standard_name(name)}
         for gid, name in Group.objects.filter(name__regex=SUFFIX_SQL).values_list('pk', 'name'):
             m = SUFFIX.search(name)
             if m and m.group(1) != sch:
                 out.add(gid)
         out -= mine
+        # v1.67.31: the shared standard groups ("CRM – Sales agent", "Accounting – viewer" …) are never foreign. Every company
+        # made after 1.22 registered all unused groups of the server as its own (ZeoApps 0002), so in the older companies the
+        # standard groups counted as "another company's" and were taken away from their users: a group ticked in Assign
+        # permissions was saved but gave no rights and showed as "No group"
+        if out:
+            out -= {gid for gid, name in Group.objects.filter(pk__in=out).values_list('pk', 'name') if is_standard_name(name)}
     except Exception:
         out = set()
     _foreign[sch] = (now + TTL, out)

@@ -11,6 +11,7 @@ the start date and whose day count changes: old → new days and the balance dif
 A leave with a day in a processed / approved / paid payroll period (LeavePolicy/paid_period.closed_periods) never changes: it
 is shown as "Payroll paid – kept". A waiting leave is counted again (no balance has moved yet).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date, timedelta
 
 from django.apps import apps
@@ -274,7 +275,7 @@ def apply(data, user=None):
             note = tr('Weekend change from {0}: {1} counted again, {2} → {3} days', start.strftime('%d/%m/%Y'), r.document_number,
                       f'{old:g}', f'{new:g}')
             if diff:   # the ledger line first, with the balance (1.62.4 balance guard)
-                engine.post(r.employee_id, r.leave_type_id, date.today(), 'adjustment', diff, ref=r, note=note,
+                engine.post(r.employee_id, r.leave_type_id, _zt_today(), 'adjustment', diff, ref=r, note=note,
                             user_id=getattr(user, 'pk', None), move_balance=True)
             r._v1626_recount = True
             r.applied_days = new

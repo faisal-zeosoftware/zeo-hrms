@@ -732,18 +732,16 @@ class AssetRequestSerializer(serializers.ModelSerializer):
                 "asset_type": "Asset Type is required."
             })
 
-        if not requested_asset:
-            raise serializers.ValidationError({
-                "requested_asset": "Requested asset is required."
-            })
+        # v1.73.1 (ESS test B2) the self-service form asks for the asset type only – HR picks the asset when it allocates one.
+        # The field was required here (the model allows it empty), so every asset request from self-service failed.
 
         # ---------------- ASSET VALIDATION ---------------- #
-        if requested_asset.asset_type.id != asset_type.id:
+        if requested_asset and requested_asset.asset_type.id != asset_type.id:
             raise serializers.ValidationError({
                 "requested_asset": "Selected asset does not belong to this asset type."
             })
 
-        if requested_asset.status != 'available':
+        if requested_asset and requested_asset.status != 'available':
             raise serializers.ValidationError({
                 "requested_asset": f"Asset not available (current status: {requested_asset.status})."
             })

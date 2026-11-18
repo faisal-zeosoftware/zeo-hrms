@@ -16,6 +16,7 @@ Documents, attendance, payslips, history     stay with the employee (they are li
 Weekend / holiday calendar                   follows the new branch automatically (unless set for the employee personally)
 Leave policy                                 follows the new category (unless the employee has a policy of their own)
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from datetime import date
 from decimal import Decimal
@@ -107,7 +108,7 @@ def plan(t):
             moved = transfer_plan(t, emp, out) or moved
     except Exception:
         log.exception('org transfer plan failed')
-    if not moved and not t.salary_changes:
+    if not moved and not t.salary_changes and not (t.options or {}).get('template'):
         out['blockers'].append('Nothing changes – choose a new branch, department, designation, category, manager, organisation unit or salary.')
     if not emp.is_active:
         out['blockers'].append('The employee is not active.')
@@ -120,7 +121,12 @@ def plan(t):
     eff = t.effective_date
     done = PR.objects.filter(month=eff.month, year=eff.year, status__in=['processed', 'approved', 'paid']).filter(employees=emp).exists() or \
         PR.objects.filter(month=eff.month, year=eff.year, status__in=['processed', 'approved', 'paid'], branch=emp.emp_branch_id).exists()
-    if done and eff.day != 1:
+    try:   # v1.73.7: with the paid-days guard only days actually paid matter (payroll_plan blocks those)
+        from PayrollExtras import paid as _pg   # noqa: F401
+        guard = True
+    except ImportError:
+        guard = False
+    if done and eff.day != 1 and not guard:
         out['blockers'].append(f'Payroll for {eff:%m/%Y} is already processed for the old branch – use the 1st of next month as the effective date.')
     elif not done:
         out['warnings'].append(f'Payroll for {eff:%m/%Y} is not processed yet: the whole month is paid by the new branch.' if nb else '')
@@ -184,6 +190,10 @@ def plan(t):
             out['blockers'].append(f'Salary component {code} does not exist.')
         else:
             out['changes'].append({'area': 'Salary', 'what': f'{SCodes[code].name} amount', 'from': f'{s.amount}' if s else 'not in the salary', 'to': f'{Decimal(str(amt)):.2f}'})
+    try:
+        payroll_plan(t, emp, out)   # v1.73.7 payroll rule before / after and the salary template switch
+    except Exception:
+        log.exception('payroll plan failed')
     docs = M('EmpManagement', 'Emp_Documents').objects.filter(emp_id=emp).count()
     out['stays'] = out['stays'] + [f'{docs} document(s)', 'attendance, payslips, leave history, loans, assets, goals and training records',
                     'weekend / holiday calendar: follows the new branch unless set for the employee personally']
@@ -308,6 +318,14 @@ def apply(t, user=None):
         done.append(f'Salary: {code} {old} → {amt}')
         if old is not None and Decimal(str(old)) != amt:
             changed_from[comp.pk] = Decimal(str(old))
+    try:   # v1.73.7 the salary template switch
+        _td, _tc = apply_template(t, emp, user)
+        done += _td
+        for k, v in _tc.items():
+            changed_from.setdefault(k, v)
+    except Exception:
+        log.exception('template switch failed')
+        raise
     if changed_from:   # v1.62.2 (item 55): the new salary from the transfer date
         done += _salary_from_date(emp, t, changed_from, user)
     try:
@@ -374,10 +392,165 @@ def due(today=None):
     """Scheduled transfers whose date has come – carried out by the daily job."""
     from .models import EmployeeTransfer
     out = []
-    for t in EmployeeTransfer.objects.filter(status='scheduled', effective_date__lte=today or date.today()):
+    for t in EmployeeTransfer.objects.filter(status='scheduled', effective_date__lte=today or _zt_today()):
         try:
             apply(t)
             out.append((t.pk, 'done'))
         except Exception as e:
             out.append((t.pk, str(e)))
     return out
+
+
+# ================================================================== v1.73.7 payroll-rule change and salary template switch
+def _emp_after(emp, t):
+    E = M('EmpManagement', 'emp_master')
+    e2 = E.objects.get(pk=emp.pk)
+    for f, v in (('emp_branch_id_id', t.to_branch_id), ('emp_dept_id_id', t.to_department_id), ('emp_desgntn_id_id', t.to_designation_id),
+                 ('emp_ctgry_id_id', t.to_category_id)):
+        if v:
+            setattr(e2, f, v)
+    return e2
+
+
+def _window_of(rule, emp, day):
+    """the attendance window of the rule that contains the day"""
+    from datetime import timedelta
+    import calendar as _cal
+    PR = M('PayrollManagement', 'PayrollRun')
+    try:
+        from PayrollManagement.signals import get_payroll_dates_and_days
+        for m in (day.replace(day=1), (day.replace(day=1) + timedelta(days=32)).replace(day=1), (day.replace(day=1) - timedelta(days=1)).replace(day=1)):
+            fake = PR(month=m.month, year=m.year)
+            a, b, _n = get_payroll_dates_and_days(fake, branch=emp.emp_branch_id, structure=rule)
+            a = a.date() if type(a).__name__ == 'datetime' else a
+            b = b.date() if type(b).__name__ == 'datetime' else b
+            if a <= day <= b:
+                return a, b
+    except Exception:
+        log.exception('rule window')
+    return day.replace(day=1), day.replace(day=_cal.monthrange(day.year, day.month)[1])
+
+
+def _rule_name(r):
+    if r is None:
+        return 'no payroll rule'
+    bits = []
+    try:
+        bits = [x.ctgry_title for x in r.category.all()] + [x.dept_name for x in r.department.all()] + [x.branch_name for x in r.branch.all()]
+    except Exception:
+        pass
+    cyc = f'{r.cycle_start_day}–{r.cycle_end_day}' if r.attendance_cycle_type == 'CUSTOM' and r.cycle_start_day else 'calendar month'
+    return f'Payroll rule #{r.pk} ({", ".join(bits) or "every employee"}; {cyc}; payday {r.payday or "–"})'
+
+
+def payroll_plan(t, emp, out):
+    """the payroll rule before / after, which days each pays, and the salary template switch"""
+    from datetime import timedelta
+    try:
+        from PayrollManagement.signals import structure_for
+    except ImportError:
+        return
+    eff = t.effective_date
+    old_r, new_r = structure_for(emp), structure_for(_emp_after(emp, t))
+    opts = t.options or {}
+    info = {'old_rule': _rule_name(old_r), 'new_rule': _rule_name(new_r), 'changes_rule': getattr(old_r, 'pk', None) != getattr(new_r, 'pk', None)}
+    oa, ob = _window_of(old_r, emp, eff)
+    info['old_window'] = [oa, ob]
+    try:
+        from PayrollExtras.paid import _paid
+        paid_to = max([b for a, b in _paid(emp.pk, -1)] or [None], key=lambda x: x or eff.replace(year=1900))
+    except Exception:
+        paid_to = None
+    info['paid_to'] = paid_to
+    info['next_period'] = ob + timedelta(days=1)
+    if info['changes_rule']:
+        na, nb = _window_of(new_r, _emp_after(emp, t), eff)
+        info['new_window'] = [na, nb]
+        out['changes'].append({'area': 'Payroll', 'what': 'Payroll rule', 'from': info['old_rule'], 'to': info['new_rule']})
+        if paid_to and paid_to >= eff:
+            out['blockers'].append(f'Days up to {paid_to:%d/%m/%Y} are paid already – use {paid_to + timedelta(days=1):%d/%m/%Y} or later as the effective date.')
+        else:
+            out['changes'].append({'area': 'Payroll', 'what': 'Days paid by each rule',
+                                   'from': f'{_rule_name(old_r).split(" (")[0]}: up to {eff - timedelta(days=1):%d/%m/%Y}',
+                                   'to': f'{_rule_name(new_r).split(" (")[0]}: from {eff:%d/%m/%Y} (no day paid twice; a gap is paid by the new rule)'})
+    # the salary template
+    tid = opts.get('template')
+    if tid:
+        SS, ESS = M('PayrollManagement', 'SalaryStructure'), M('PayrollManagement', 'EmployeeSalaryStructure')
+        tpl = SS.objects.filter(pk=tid).first()
+        if tpl is None:
+            out['blockers'].append('The salary template does not exist.')
+        else:
+            new_ids = set(tpl.components.values_list('pk', flat=True))
+            rows = list(ESS.objects.filter(employee=emp, is_active=True).select_related('component'))
+            mine = {r.component_id: r for r in rows}
+            old_tpl_ids = set(SS.objects.filter(employees=emp).exclude(pk=tpl.pk).values_list('components__pk', flat=True)) - {None}
+            for r in rows:
+                if r.component_id in old_tpl_ids and r.component_id not in new_ids:
+                    out['changes'].append({'area': 'Salary', 'what': f'{r.component.name} ({r.component.code or "–"})', 'from': f'{r.amount}', 'to': f'ends on {eff - timedelta(days=1):%d/%m/%Y} (not in {tpl.name})'})
+            for c in tpl.components.all():
+                if c.pk in mine:
+                    continue
+                amt = template_amount(emp, t, c, rows)
+                out['changes'].append({'area': 'Salary', 'what': f'{c.name} ({c.code or "–"})', 'from': 'not in the salary', 'to': f'{amt:.2f} from {eff:%d/%m/%Y} ({tpl.name})'})
+            out['changes'].append({'area': 'Salary', 'what': 'Salary template', 'from': ', '.join(SS.objects.filter(employees=emp).values_list('name', flat=True)) or '–', 'to': tpl.name})
+    out['payroll'] = {k: (v.isoformat() if hasattr(v, 'isoformat') else [x.isoformat() for x in v] if isinstance(v, list) else v) for k, v in info.items()}
+
+
+def template_amount(emp, t, comp, rows):
+    """the amount of a new template item: the amount entered (salary changes, by code) – else, with "keep amounts", the amount of
+    an ending item of the same payroll category – else the template's default (PayrollExtras) – else 0"""
+    sc = t.salary_changes or {}
+    if comp.code and comp.code in sc:
+        return Decimal(str(sc[comp.code]))
+    if (t.options or {}).get('keep_amounts', True):
+        same = [r for r in rows if r.component.payroll_category == comp.payroll_category and r.component.component_type == comp.component_type
+                and r.component_id != comp.pk]
+        if same:
+            return Decimal(str(same[0].amount or 0))
+    try:
+        from PayrollExtras.templates import default_amount
+        v = default_amount((t.options or {}).get('template'), comp, rows, sc)
+        if v is not None:
+            return Decimal(str(v))
+    except ImportError:
+        pass
+    return Decimal('0.00')
+
+
+def apply_template(t, emp, user=None):
+    """the switch: items of the old template(s) not in the new one end (0 from the date, revision kept); the new template's items
+    are added with their amounts; the employee moves to the new template (without the template signals, which would switch
+    the old items off for past months too). Returns (done lines, {component id: old amount}) for the from-date correction."""
+    tid = (t.options or {}).get('template')
+    if not tid:
+        return [], {}
+    SS, ESS = M('PayrollManagement', 'SalaryStructure'), M('PayrollManagement', 'EmployeeSalaryStructure')
+    tpl = SS.objects.filter(pk=tid).first()
+    if tpl is None:
+        return [], {}
+    done, changed = [], {}
+    rows = list(ESS.objects.filter(employee=emp, is_active=True).select_related('component'))
+    new_ids = set(tpl.components.values_list('pk', flat=True))
+    old_tpls = list(SS.objects.filter(employees=emp).exclude(pk=tpl.pk))
+    old_ids = set()
+    for o in old_tpls:
+        old_ids |= set(o.components.values_list('pk', flat=True))
+    mine = {r.component_id for r in rows}
+    for c in tpl.components.all():   # amounts first – they may come from the items that end
+        if c.pk in mine:
+            continue
+        amt = template_amount(emp, t, c, rows)
+        ESS.objects.update_or_create(employee=emp, component=c, defaults={'amount': amt, 'is_active': True, 'valid_from': t.effective_date, 'valid_until': None})
+        changed[c.pk] = Decimal('0')
+        done.append(f'Salary: {c.code or c.name} added – {amt:.2f} ({tpl.name})')
+    for r in rows:
+        if r.component_id in old_ids and r.component_id not in new_ids:
+            changed[r.component_id] = Decimal(str(r.amount or 0))
+            ESS.objects.filter(pk=r.pk).update(amount=Decimal('0.00'), is_active=False)
+            done.append(f'Salary: {r.component.code or r.component.name} {r.amount} → ended (not in {tpl.name})')
+    Through = SS.employees.through
+    Through.objects.filter(salarystructure__in=old_tpls, emp_master_id=emp.pk).delete()
+    Through.objects.get_or_create(salarystructure_id=tpl.pk, emp_master_id=emp.pk)
+    done.append(f'Salary template: {", ".join(o.name for o in old_tpls) or "–"} → {tpl.name}')
+    return done, changed

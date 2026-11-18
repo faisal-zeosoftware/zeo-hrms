@@ -70,6 +70,11 @@ urlpatterns = [
     path("ess-reset-password/",ESSResetPassword.as_view(),name="ess-reset-password",),
     path("sign-in-link/", __import__('ZeoAdmin.views', fromlist=['SignInLinkView']).SignInLinkView.as_view(), name="sign-in-link"),   # v1.56.0
     path("media-cookie/", __import__('ZeoAdmin.views', fromlist=['MediaCookieView']).MediaCookieView.as_view(), name="media-cookie"),   # v1.56.1 files need a login
+    # v1.73.15 demo data (public: Choose a company and Create company work before a company is open) – DataTools/demo_views.py
+    path("api/demo-data/", __import__('DataTools.demo_views', fromlist=['DemoView']).DemoView.as_view(), name="demo-data"),
+    path("api/demo-data/refresh/", __import__('DataTools.demo_views', fromlist=['DemoRefreshView']).DemoRefreshView.as_view(), name="demo-data-refresh"),
+    path("api/demo-data/job/", __import__('DataTools.demo_views', fromlist=['DemoJobView']).DemoJobView.as_view(), name="demo-data-job"),
+    path("api/demo-data/job/<str:job>/", __import__('DataTools.demo_views', fromlist=['DemoJobView']).DemoJobView.as_view(), name="demo-data-job-one"),
 
 
 ]

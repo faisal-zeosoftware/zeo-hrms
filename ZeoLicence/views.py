@@ -7,6 +7,7 @@ Requests (any server, used on ZEO Cloud): POST /licence/api/enterprise-request/ 
 On Adept's server (platform admins):  GET|PATCH /licence/api/console/requests/[<id>/]
                                       GET|POST  /licence/api/console/licences/   ·   GET …/licences/<id>/download/
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime as dt
 import uuid
 
@@ -202,7 +203,7 @@ class ConsoleLicencesView(APIView):
         d = request.data
         client, inst = str(d.get('client') or '').strip(), str(d.get('installation_id') or '').strip().upper()
         try:
-            vf = dt.date.fromisoformat(str(d.get('valid_from') or timezone.localdate().isoformat())[:10])
+            vf = dt.date.fromisoformat(str(d.get('valid_from') or _zt_today().isoformat())[:10])
             vu = dt.date.fromisoformat(str(d.get('valid_until') or '')[:10])
         except ValueError:
             return Response({'detail': tr('Enter the dates as yyyy-mm-dd.')}, status=400)

@@ -48,11 +48,48 @@ def remember(request, endpoint, model, res, data):
         except Exception:
             log.exception('import mapping')
     if not res.get('ok'):
-        return None
+        return data.get('batch') or None
+    # v1.73.4: the next part of a large file is added to the import of its first part (one Undo for the whole file)
+    if data.get('batch'):
+        b = ImportBatch.objects.filter(pk=data.get('batch'), endpoint=endpoint).exclude(status='undone').first()
+        if b is not None:
+            b.created_ids = list(b.created_ids or []) + ids
+            b.rows = (b.rows or 0) + res.get('total', 0)
+            b.ok = (b.ok or 0) + res.get('ok', 0)
+            b.failed = (b.failed or 0) + res.get('failed', 0)
+            b.save(update_fields=['created_ids', 'rows', 'ok', 'failed'])
+            return b.pk
     b = ImportBatch.objects.create(endpoint=endpoint, label=str(data.get('label') or '')[:120], file_name=str(data.get('file_name') or '')[:200],
                                    model=key, created_ids=ids, rows=res.get('total', 0), ok=res.get('ok', 0), failed=res.get('failed', 0),
                                    user=request.user if getattr(request.user, 'pk', None) else None)
     return b.pk
+
+
+# v1.73.2 (test run): an employee's delete() only marks him inactive, so undoing an employee import left the employee codes
+# taken – the same employees could not be entered again. Employees made by the import and not used since (no payslip, leave,
+# attendance, loan, request …) are now really deleted; a used one is kept and listed with the reason.
+_EMP_USED = ('payslip', 'payrollrun', 'leave_request', 'leaverequest', 'leaveapproval', 'attendance', 'loanapplication', 'advancesalary',
+             'generalrequest', 'documentrequest', 'resignation', 'exitsettlement', 'overtime', 'expense', 'airticketrequest',
+             'employeesalarystructure', 'recovery', 'journal')
+
+
+def _delete_employee(obj):
+    from django.db import models as _m, router
+    from django.db.models.deletion import Collector
+    c = Collector(using=router.db_for_write(obj.__class__))
+    c.collect([obj])
+    used = sorted({str(m._meta.verbose_name) for m, objs in c.data.items()
+                   if m is not obj.__class__ and objs and any(k in m._meta.model_name.lower() for k in _EMP_USED)})
+    if used:
+        raise ValueError('used by other records: ' + ', '.join(used[:5]))
+    login = obj.users if getattr(obj, 'users_id', None) else None
+    _m.Model.delete(obj)
+    if login is not None:
+        try:
+            from ZeoCloud.sharedrows import deactivate_login_here
+            deactivate_login_here(login)
+        except Exception:
+            log.exception('import undo: login of a deleted employee')
 
 
 def undo(batch, user):
@@ -76,7 +113,10 @@ def undo(batch, user):
                 continue
             try:
                 with transaction.atomic():
-                    obj.delete()
+                    if M._meta.app_label.lower() == 'empmanagement' and M._meta.model_name == 'emp_master':
+                        _delete_employee(obj)
+                    else:
+                        obj.delete()
                 deleted += 1
             except ProtectedError as e:
                 kept.append({'id': pk, 'why': 'used by other records: ' + ', '.join(sorted({str(o._meta.verbose_name) for o in list(e.protected_objects)[:5]}))})

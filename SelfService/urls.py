@@ -17,10 +17,14 @@ urlpatterns = [
     path('api/change-requests/<int:pk>/attachments/<int:aid>/', v.ChangeRequestFileView.as_view()),
     path('api/change-requests/<int:pk>/<str:act>/', v.ChangeRequestActionView.as_view()),
     path('api/settings/policies/', v.PolicySettingsView.as_view()),
+    # v1.67.26 calendar sync (Google / Outlook / phone subscribe to the private link)
+    path('api/calendar-feed/', v.CalendarFeedSettingsView.as_view()),
+    path('api/calendar/<str:token>.ics', v.CalendarFeedView.as_view()),
     # HR letters
     path('api/letters/', v.LettersHRView.as_view()),
     path('api/letters/mine/', v.MyLettersView.as_view()),
     path('api/letters/issue/', v.LetterIssueView.as_view()),
+    path('api/letters/merge/', v.LetterMergeView.as_view()),   # v1.67.26 mail merge
     path('api/letters/verify/', v.LetterVerifyView.as_view()),
     path('api/letters/preview/', v.LetterPreviewView.as_view()),
     path('api/letters/<int:pk>/pdf/', v.LetterPdfView.as_view()),
@@ -49,4 +53,5 @@ urlpatterns = [
     path('api/payslips/<int:pk>/pdf/', v.MyPayslipPdfView.as_view()),
     path('api/documents/', v.MyDocumentsView.as_view()),
     path('api/documents/<int:pk>/file/', v.DocumentFileView.as_view()),
+    path('api/requests/withdraw/', v.RequestWithdrawView.as_view()),   # v1.73.1 (ESS test B7)
 ]

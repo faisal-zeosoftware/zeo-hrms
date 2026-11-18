@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """HSE business rules: numbering, history, notifications, risk scoring, approvals, permit control, incident workflow,
 inspections and the central action register."""
 import logging
@@ -38,7 +39,7 @@ def today():
         from zoneinfo import ZoneInfo
         return timezone.now().astimezone(ZoneInfo(tz)).date()
     except Exception:
-        return timezone.now().date()
+        return _zt_today()
 
 
 def settings():
@@ -46,7 +47,9 @@ def settings():
 
 
 DEFAULT_PREFIX = {'moc': 'MOC', 'health': 'OH', 'audit': 'AUD', 'nc': 'NC', 'review': 'MR', 'ergo': 'ERG', 'waste': 'WST', 'chemical': 'CHM',
-                  'claim': 'CLM', 'hygiene': 'IH', 'document': 'DOC'}
+                  'claim': 'CLM', 'hygiene': 'IH', 'document': 'DOC',
+                  # v1.67.27 (HSE scope)
+                  'ppe': 'PPE', 'emplan': 'ERP', 'emequip': 'EEQ', 'drill': 'DRL', 'equip': 'EQP', 'ceval': 'CEV'}
 PREFIX = {'incident': 'incident_prefix', 'permit': 'permit_prefix', 'risk': 'risk_prefix', 'action': 'action_prefix',
           'inspection': 'inspection_prefix', 'observation': 'observation_prefix', 'toolbox': 'toolbox_prefix'}
 

@@ -14,6 +14,7 @@ rules are applied here):
     acknowledge the policies that apply to them (my-policies);
   * country policies: read by everyone, changed / applied by company admin, change_countrypolicy or change_leavepolicy.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from collections import defaultdict
 from datetime import timedelta
@@ -1517,7 +1518,7 @@ def _clear_rules():
 
 def _policy_history(obj):
     from django.utils import timezone
-    today = timezone.localdate()
+    today = _zt_today()
     vs = list(obj.versions.order_by('effective_from'))
     cur = None
     for v in vs:

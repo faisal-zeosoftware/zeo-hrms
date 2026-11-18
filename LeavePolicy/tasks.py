@@ -1,4 +1,5 @@
 """Scheduled leave jobs (v1.11.0) – Celery beat entries are in zeo/settings.py; `manage.py run_leave_jobs` does the same by hand / cron."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
 import logging
 from datetime import date, timedelta
@@ -17,7 +18,7 @@ def daily_jobs(today=None, dry=False):
     """On the 1st: close leave years that end yesterday, then credit last month. Every day: compensatory off expiry."""
     from . import engine, compoff
     from .models import LeavePolicy
-    today = today or date.today()
+    today = today or _zt_today()
     out = {'year_end': 0, 'accrual': 0, 'comp_off_lapsed': 0}
     if today.day == 1:
         ids = list(LeavePolicy.objects.filter(active=True, leave_year_start=today.month).values_list('pk', flat=True))

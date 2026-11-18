@@ -9,6 +9,7 @@ moved). Dry run by default; --apply writes. --report <file.json> keeps what was 
   manage.py move_branch_leave_balances --schema gdis                 # dry run
   manage.py move_branch_leave_balances --schema gdis --apply
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import json
 from datetime import date
 
@@ -55,7 +56,7 @@ def plan(on=None):
 @transaction.atomic
 def apply(rows, on=None, user_id=None):
     from LeavePolicy import engine
-    on = on or date.today()
+    on = on or _zt_today()
     done = []
     for r in rows:
         if r['action'] != 'move':

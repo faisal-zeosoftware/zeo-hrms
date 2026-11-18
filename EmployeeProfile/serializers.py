@@ -1,4 +1,5 @@
 """v1.13.0 – serializers with the server-side checks (format, check digits, date ranges, duplicates)."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import os
 from datetime import date
 
@@ -135,7 +136,7 @@ class IdentitySerializer(BlankNotNull, serializers.ModelSerializer):
     def validate(self, attrs):
         inst = self.instance
         errors = {}
-        today = date.today()
+        today = _zt_today()
 
         def now(k):
             return attrs[k] if k in attrs else (getattr(inst, k, None) if inst is not None else None)
@@ -286,7 +287,7 @@ class QualificationExtraSerializer(BlankNotNull, serializers.ModelSerializer):
         return _country_ok(v)
 
     def validate_attestation_date(self, v):
-        if v and v > date.today():
+        if v and v > _zt_today():
             raise serializers.ValidationError(tr('The attestation date cannot be in the future.'))
         return v
 
@@ -336,7 +337,7 @@ class EmploymentSerializer(BlankNotNull, serializers.ModelSerializer):
         joined = self.context.get('joined')
         if dol and joined and dol < joined:
             errors['date_of_leaving'] = tr('The date of leaving cannot be before the joining date.')
-        if st == 'on_notice' and dol and dol < date.today():
+        if st == 'on_notice' and dol and dol < _zt_today():
             errors['status'] = tr('The last working day has passed – choose Left, Terminated, Retired or Absconded.')
         if errors:
             raise serializers.ValidationError(_cp(errors))

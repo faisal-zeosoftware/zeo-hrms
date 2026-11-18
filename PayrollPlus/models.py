@@ -144,7 +144,7 @@ class StatutoryScheme(models.Model):
     KINDS = [('percent', 'Percentage of a wage base'), ('fixed', 'Fixed amount per month'), ('slab', 'Monthly slab on the base'),
              ('annual_slab', 'Annual income-tax slabs (monthly = yearly tax ÷ 12)')]
     APPLIES = [('all', 'Every employee'), ('nationals', 'Nationals only'), ('expats', 'Expatriates only')]
-    BASES = [('basic', 'Basic salary'), ('basic_housing_transport', 'Basic + housing + transport'), ('basic_da', 'Basic + dearness allowance'),
+    BASES = [('basic', 'Basic salary'), ('basic_housing_transport', 'Basic + housing + transport'), ('basic_housing', 'Basic + housing'), ('basic_da', 'Basic + dearness allowance'),
              ('gross', 'Gross salary (all additions)')]
     code = models.CharField(max_length=20, help_text='Formula name: stat_<code>_emp / _er (letters, digits, _)')
     name = models.CharField(max_length=120)
@@ -627,6 +627,7 @@ class RecoveryEntry(models.Model):
     settlement_id = models.IntegerField(null=True, blank=True)
     status = models.CharField(max_length=10, default='taken', db_index=True, help_text='taken / given_back')
     note = models.CharField(max_length=255, blank=True, default='')
+    entry_date = models.DateField(null=True, blank=True, help_text='v1.70.5: the date it was settled / written off (its date in accounting)')
     created_by_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -749,7 +750,7 @@ class EmployeePension(models.Model):
     """v1.67.12 (effective, item 249): the day an employee was first insured with GPSSA (or the Abu Dhabi Pension Fund / another GCC
     scheme). It decides old law / new law (Federal Decree-Law 57/2023: those first insured from 31/10/2023); empty = the joining date
     decides, as before."""
-    SCHEMES = [('gpssa', 'GPSSA'), ('adpf', 'Abu Dhabi Pension Fund'), ('gcc', 'Another GCC pension scheme')]
+    SCHEMES = [('gpssa', 'GPSSA'), ('adpf', 'Abu Dhabi Pension Fund'), ('gcc', 'Another GCC pension scheme'), ('gosi', 'GOSI (Saudi Arabia)')]
     employee_id = models.IntegerField(unique=True)
     first_insured = models.DateField(null=True, blank=True)
     scheme = models.CharField(max_length=10, choices=SCHEMES, default='gpssa')

@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from dateutil.relativedelta import relativedelta
 from django.apps import apps
 from django.core.exceptions import ValidationError
@@ -70,7 +71,7 @@ def nominate(session, employee, nominated_by='manager', reason='', need=None, us
     if session.status not in ('published', 'draft'):
         raise ValidationError("Nominations are closed for this session.")
     # L&D / HR may add late or retroactive nominations (e.g. recording attendance after a session)
-    if session.nomination_deadline and timezone.localdate() > session.nomination_deadline and not is_ld:
+    if session.nomination_deadline and _zt_today() > session.nomination_deadline and not is_ld:
         raise ValidationError("The nomination deadline has passed.")
     if Nomination.objects.filter(session=session, employee=employee).exists():
         raise ValidationError(f"{employee} is already nominated for this session.")
@@ -203,7 +204,7 @@ def close_session(session, user=None):
 
 def expiry_scan(days=60):
     """Creates compliance needs for certificates expiring within `days` (run daily via celery beat or manually)."""
-    limit = timezone.localdate() + relativedelta(days=days)
+    limit = _zt_today() + relativedelta(days=days)
     created = 0
     for cert in Certificate.objects.filter(expiry_date__isnull=False, expiry_date__lte=limit, course__isnull=False).select_related('employee', 'course'):
         newer = Certificate.objects.filter(employee=cert.employee, course=cert.course, issued_on__gt=cert.issued_on).exists()
@@ -218,7 +219,7 @@ def expiry_scan(days=60):
 
 
 def summary():
-    today = timezone.localdate()
+    today = _zt_today()
     certs = Certificate.objects.all()
     # renewed (superseded) certificates are history, not compliance items
     renewed_ids = [c.id for c in certs.filter(course__isnull=False).select_related('course') if c.superseded]

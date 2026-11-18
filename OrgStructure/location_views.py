@@ -1,5 +1,6 @@
 """v1.30.0 – Location level API (mounted under /org-structure/api/): control settings, user location access, location
 numbering, the record's location and the switcher payload. Rights as in views.py (module docstring)."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import timedelta
 
 from django.apps import apps
@@ -343,7 +344,7 @@ class CompanyProfileView(Base, APIView):
         d = CompanyProfileSerializer(row, context={'request': request}).data
         d.update({'pack': pack, 'pack_name': pack_name, 'labels': regs, 'can_change': self._can(request),
                   'company_types': CompanyProfile.COMPANY_TYPES, 'jurisdictions': [j for j in CompanyProfile.JURISDICTIONS if j[0]],
-                  'expiring': [k for k in ('licence_expiry', 'establishment_expiry') if getattr(row, k) and (getattr(row, k) - timezone.now().date()).days <= 60]})
+                  'expiring': [k for k in ('licence_expiry', 'establishment_expiry') if getattr(row, k) and (getattr(row, k) - _zt_today()).days <= 60]})
         return d
 
     def get(self, request):
@@ -423,7 +424,7 @@ class ExpiryView(Base, APIView):
     """Company / branch / location registrations that expire within ?days= (default 90) – for the expiring-documents page."""
     def get(self, request):
         days = int(request.query_params.get('days') or 90)
-        today = timezone.now().date()
+        today = _zt_today()
         limit = today + timedelta(days=days)
         out = []
         pack, _, regs = _pack_regs()

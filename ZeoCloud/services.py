@@ -3,6 +3,7 @@
 Everything here is a no-op for companies that are not linked to an account (own installations, companies made before ZEO Cloud).
 Enforcement in requests only runs when settings.ZEO_CLOUD is on (see middleware.py).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 import threading
@@ -78,7 +79,7 @@ def event(account, kind, text, by=None, **data):
 # ------------------------------------------------------------------ status
 def status_of(acc, on=None):
     """{'status': trial|active|grace|suspended|cancelled, 'read_only', 'days_left', 'until', 'expired'}."""
-    d = on or timezone.localdate()
+    d = on or _zt_today()
     out = {'status': acc.state, 'read_only': False, 'days_left': None, 'until': None, 'expired': False, 'blocked': False}
     if acc.state == 'cancelled':
         out.update(read_only=True, blocked=True)
@@ -199,7 +200,7 @@ def licence(acc, app):
     lic = acc.apps.filter(app=app).first()
     if lic is None or not lic.licensed:
         return {'app': app, 'state': 'none', 'licensed': False}
-    d = timezone.localdate()
+    d = _zt_today()
     st = 'trial' if lic.trial else 'licensed'
     if lic.valid_until and d > lic.valid_until:
         st = 'expired'
@@ -296,7 +297,7 @@ def db_status(srv, on=None):
     {'status': included|trial|active|grace|expired, 'read_only', 'days_left', 'until'}
     The first database comes with Premium (included). An extra one: 14-day trial, then paid until a date; after the
     paid date the account's grace days, then read-only (view, export, print) until it is paid."""
-    d = on or timezone.localdate()
+    d = on or _zt_today()
     out = {'status': 'included', 'read_only': False, 'days_left': None, 'until': None}
     if not srv.extra:
         return out
@@ -597,7 +598,7 @@ def create_account(name, owner_email, plan, by=None, owner=None, trial_days=14, 
     with transaction.atomic():
         acc = Account(name=name[:150], owner=owner, owner_email=owner_email, plan=plan, trn=trn or '', country=country or '',
                       hosting=plan.hosting if plan.hosting != 'enterprise' else 'enterprise', created_by=by if getattr(by, 'pk', None) else None)
-        d = timezone.localdate()
+        d = _zt_today()
         if start:
             acc.state, acc.renews_on = 'active', start
         else:
@@ -615,7 +616,7 @@ def create_account(name, owner_email, plan, by=None, owner=None, trial_days=14, 
 
 
 def mark_paid(inv, by=None):
-    inv.state, inv.paid_on = 'paid', timezone.localdate()
+    inv.state, inv.paid_on = 'paid', _zt_today()
     inv.save(update_fields=['state', 'paid_on'])
     acc = inv.account
     changed = []
@@ -626,7 +627,7 @@ def mark_paid(inv, by=None):
         acc.renews_on = inv.period_to
         changed.append('renews_on')
     if acc.state == 'active' and not acc.renews_on:
-        acc.renews_on = timezone.localdate() + timedelta(days=365)
+        acc.renews_on = _zt_today() + timedelta(days=365)
         changed.append('renews_on')
     if changed:
         acc.save(update_fields=list(set(changed)))

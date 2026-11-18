@@ -9,6 +9,7 @@ urlpatterns = [
     path('api/api-keys/', V.ApiKeysView.as_view()),                      # API keys
     path('api/api-keys/<int:pk>/', V.ApiKeyView.as_view()),
     path('api/webhooks/', V.WebhooksView.as_view()),                     # webhooks
+    path('api/custom-domain/', V.CustomDomainView.as_view()),            # v1.67.26 the company's own address
     path('api/webhooks/<int:pk>/', V.WebhookView.as_view()),
     path('api/webhooks/<int:pk>/<str:action>/', V.WebhookView.as_view()),
     path('api/import-mapping/', V.ImportMappingView.as_view()),          # import memory and undo

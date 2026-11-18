@@ -214,14 +214,17 @@ def hook_json(h):
     from .webhooks import model_label
     return {'id': h.pk, 'name': h.name, 'url': h.url, 'models': [{'key': k, 'label': model_label(k)} for k in h.models_list or []],
             'models_list': h.models_list, 'events': h.events, 'active': h.active, 'has_secret': bool(h.secret), 'last_status': h.last_status,
-            'last_at': h.last_at, 'failures': h.failures}
+            'last_at': h.last_at, 'failures': h.failures, 'branches': [int(b) for b in (h.branches or []) if str(b).isdigit()]}   # v1.67.28
 
 
 class WebhooksView(Base):
     def get(self, request):
         from .webhooks import CHOICES, EVENTS
         self.need_admin()
-        return Response({'rows': [hook_json(h) for h in M.Webhook.objects.all()], 'choices': [{'key': k, 'label': l} for k, l in CHOICES if _app_shown(k)], 'events': EVENTS})   # v1.67.19 (apps)
+        from django.apps import apps as _apps   # v1.67.28: the branches a webhook can be limited to
+        brs = [{'id': b.pk, 'name': b.branch_name} for b in _apps.get_model('OrganisationManager', 'brnch_mstr').objects.order_by('branch_name')]
+        return Response({'rows': [hook_json(h) for h in M.Webhook.objects.all()], 'choices': [{'key': k, 'label': l} for k, l in CHOICES if _app_shown(k)], 'events': EVENTS,
+                         'branches': brs})   # v1.67.19 (apps)
 
     def post(self, request):
         import secrets
@@ -240,6 +243,13 @@ class WebhooksView(Base):
         if not ms or not evs:
             return bad('Choose at least one record type and one event.')
         h.models_list, h.events = ms, evs
+        if 'branches' in d:   # v1.67.28 (optional by-branch connections): empty = every branch
+            from django.apps import apps as _apps
+            want = {int(x) for x in (d.get('branches') or []) if str(x).isdigit()}
+            known = set(_apps.get_model('OrganisationManager', 'brnch_mstr').objects.filter(pk__in=want).values_list('pk', flat=True))
+            if want - known:
+                return bad('Choose branches of this company.')
+            h.branches = sorted(known)
         if 'active' in d:
             h.active = str(d['active']).lower() in ('1', 'true')
             if h.active:
@@ -420,6 +430,9 @@ class OutOfOfficeView(Base):
         a, b = parse_date(str(d.get('start_date') or '')), parse_date(str(d.get('end_date') or ''))
         rules = clean_rules(d.get('rules'))   # v1.62.11 (item 95) a different colleague per approval type / leave type
         p = check(user, delegate, a, b, rules=rules)
+        if not p and delegate is not None:   # v1.67.22 (pending C13): a colleague who cannot approve is refused (setting)
+            from .delegation import rights_problem
+            p = rights_problem(user, delegate.pk, rules)
         if p:
             from Translations.i18n import current_lang, for_lang
             return bad(for_lang(p, current_lang()))
@@ -448,7 +461,12 @@ class OooSettingsView(Base):
     """v1.62.11 (item 95) Settings › Out of office rules (CompanyOption 'ooo_auto')."""
     def get(self, request):
         from .delegation import settings_get
-        return Response({**settings_get(), 'leave_types': _leave_types(), 'can_edit': self._can()})
+        try:   # v1.67.24 (pending 291): without HR there is no leave – the page says so instead of leave-type choices
+            from ZeoApps.services import is_active as _ia
+            _hr = bool(_ia('hrms'))
+        except Exception:   # noqa: BLE001
+            _hr = True
+        return Response({**settings_get(), 'leave_types': _leave_types() if _hr else [], 'can_edit': self._can(), 'hr_active': _hr})
 
     def _can(self):
         return self.admin or bool(self.c and self.c.codes & {'change_leavepolicy', 'change_lvapprovalworkflow'})
@@ -465,12 +483,25 @@ class OooSettingsView(Base):
 
 class OooLeaveChoiceView(Base):
     """v1.62.11 (item 95) "Approvals go to" on a leave request of an approver (kept on a waiting out-of-office row)."""
+    def _hr(self, request):   # v1.67.22 (pending C13): HR who enter leave for employees choose for them too
+        return bool(self.admin or (self.c and ({'add_employee_leave_request', 'change_employee_leave_request'} & set(self.c.codes or ()))))
+
     def get(self, request):
         from .delegation import is_approver, my_standins, settings_get
         s = settings_get()
-        out = {'auto': s['on'], 'types': s['types'], 'type_ids': s['type_ids'], 'approver': is_approver(request.user), 'chosen': None,
-               'default_id': my_standins(request.user.pk)[0],
-               'users': _people(company_users().exclude(pk=request.user.pk).filter(is_active=True).order_by('username', 'email')[:1000])}
+        who = request.user
+        if request.query_params.get('employee'):   # v1.67.22 (pending C13): HR's leave screens – the employee's own choice
+            if not self._hr(request):
+                return bad(tr('Not found.'), 404)
+            from django.apps import apps as _apps
+            e = _apps.get_model('EmpManagement', 'emp_master').objects.filter(pk=request.query_params['employee']).select_related('users').first()
+            who = getattr(e, 'users', None) if e else None
+            if who is None:
+                return Response({'auto': s['on'], 'approver': False, 'users': [], 'chosen': None, 'default_id': None, 'types': s['types'], 'type_ids': s['type_ids']})
+        out = {'auto': s['on'], 'types': s['types'], 'type_ids': s['type_ids'], 'approver': is_approver(who), 'chosen': None,
+               'default_id': my_standins(who.pk)[0], 'rights': s.get('rights', 'refuse'),
+               'users': _people(company_users().exclude(pk=who.pk).filter(is_active=True).order_by('username', 'email')[:1000])}
+        out['results'] = out['users']   # v1.67.22 (C13): also a plain list for the pickers of HR's leave form
         lr = request.query_params.get('leave_request')
         if lr:
             o = M.OutOfOffice.objects.filter(leave_request_id=lr, cancelled=False).first()
@@ -485,12 +516,18 @@ class OooLeaveChoiceView(Base):
         if req is None:
             return bad(tr('Not found.'), 404)
         owner = getattr(req.employee, 'users', None)
-        if owner is None or (owner.pk != request.user.pk and not self.admin):
+        if owner is None or (owner.pk != request.user.pk and not self._hr(request)):   # v1.67.22 (C13): HR too
             return bad(tr('Not found.'), 404)
         delegate = company_users().filter(pk=request.data.get('delegate_id')).first()
         if delegate is None or delegate.pk == owner.pk:
             return Response({'delegate_id': [tr('Choose the colleague who approves for you.')]}, status=400)
-        o = choose_for_leave(req, owner, delegate.pk, clean_rules(request.data.get('rules')) if 'rules' in request.data else None)
+        from .delegation import Refused as _DR
+        try:
+            o = choose_for_leave(req, owner, delegate.pk, clean_rules(request.data.get('rules')) if 'rules' in request.data else None)
+        except _DR as ex:
+            from Translations.i18n import current_lang, for_lang
+            m = for_lang(ex.args[0], current_lang())
+            return Response({'detail': m, 'delegate_id': [m]}, status=400)
         return Response({'ok': True, 'ooo_id': o.pk if o else None})
 
 
@@ -560,6 +597,11 @@ class StandInMineView(Base):
             return bad(tr('Choose someone else.'))
         if any(not r['delegate_id'] for r in rules):
             return bad(tr('Choose the colleague for each approval type you added.'))
+        from .delegation import rights_problem   # v1.67.22 (pending C13)
+        _p = rights_problem(request.user, int(request.data['delegate_id']) if str(request.data.get('delegate_id') or '').isdigit() else None, rules)
+        if _p:
+            from Translations.i18n import current_lang, for_lang
+            return bad(for_lang(_p, current_lang()))
         save_my_standins(request.user, request.data.get('delegate_id') or None, rules, request.user)
         return Response({'ok': True})
 
@@ -1179,3 +1221,28 @@ class ExportCheckView(Base):
         u = request.user
         label = f'ZEO - {u.email or u.username} - {tz.localtime():%d/%m/%Y %H:%M} - {client_ip(request)}'
         return Response({'ok': True, 'watermark': bool(pol['export_watermark']), 'label': label})
+
+
+# ------------------------------------------------------------------ v1.67.26 (pending item 1.62.12, item 237) custom domain
+class CustomDomainView(Base):
+    """GET the company's own address and its DNS state; PUT {host} sets it ('' removes it); POST checks the DNS record."""
+    def get(self, request):
+        from . import customdomain as CD
+        self.need_admin()
+        return Response(CD.view())
+
+    def put(self, request):
+        from . import customdomain as CD
+        self.need_admin()
+        try:
+            return Response(CD.set_host(request.data.get('host', '')))
+        except ValueError as e:
+            return Response({'detail': str(e), 'field': 'host'}, status=400)
+
+    def post(self, request):
+        from . import customdomain as CD
+        self.need_admin()
+        try:
+            return Response(CD.check())
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)

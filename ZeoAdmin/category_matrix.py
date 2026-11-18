@@ -4,6 +4,7 @@ steps 6–9, category view). Most specific wins: employee › category › depar
 Columns: weekend calendar (Assign weekends, by category) · working hours (attendance rule of the category) · roster (shift
 schedule of the category) · leave policy (Leave policies, by category) · pay structure (by category).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime
 
 from django.apps import apps
@@ -163,7 +164,7 @@ def save(data, user):
                 p = P.objects.filter(pk=row['roster']).first()
                 if p is None:
                     raise MatrixError(tr('Choose a shift pattern.'))
-                today = timezone.localdate()
+                today = _zt_today()
                 s = Sch.objects.create(schedule_name=tr('{0} roster', c.ctgry_title)[:100], start_date=today, end_date=today.replace(year=today.year + 1),
                                        shift_pattern=p, employee_offsets={}, created_by=user)
                 s.categories.add(c)

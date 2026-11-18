@@ -396,3 +396,38 @@ class FunctionalReview(models.Model):
     class Meta:
         unique_together = ('sheet', 'reviewer')
         ordering = ['status', '-created_at']
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 236) HR knowledge base
+KB_AUDIENCE = (('all', 'Every employee'), ('managers', 'Managers (people with a team)'), ('hr', 'HR only'))
+KB_STATUS = (('draft', 'Draft'), ('published', 'Published'), ('archived', 'Archived'))
+
+
+class KBArticle(models.Model):
+    """An answer HR writes once: policies, how-tos, forms – employees search them in Self service › HR knowledge base, and the
+    articles matching a new helpdesk question are offered before the ticket is sent."""
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr', **BRANCH)
+    number = models.CharField(max_length=20, unique=True, blank=True)
+    title = models.CharField(max_length=200)
+    category = models.ForeignKey(HelpdeskCategory, null=True, blank=True, on_delete=models.SET_NULL, related_name='articles')
+    summary = models.CharField(max_length=300, blank=True, default='', help_text='One or two lines shown in the search results')
+    body = models.TextField(help_text='The answer. Plain text; a blank line starts a new paragraph, a line starting with - is a bullet.')
+    keywords = models.CharField(max_length=300, blank=True, default='', help_text='Other words people use (comma separated, any language)')
+    audience = models.CharField(max_length=10, choices=KB_AUDIENCE, default='all')
+    language = models.CharField(max_length=2, default='en', choices=(('en', 'English'), ('ar', 'Arabic')))
+    status = models.CharField(max_length=10, choices=KB_STATUS, default='draft')
+    pinned = models.BooleanField('show first', default=False)
+    views = models.PositiveIntegerField(default=0)
+    helpful_yes = models.PositiveIntegerField(default=0)
+    helpful_no = models.PositiveIntegerField(default=0)
+    review_on = models.DateField('review the article on', null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(USER, **BR)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-pinned', 'title']
+
+    def __str__(self):
+        return f'{self.number} {self.title}'

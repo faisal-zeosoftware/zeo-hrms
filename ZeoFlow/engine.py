@@ -1,4 +1,5 @@
 """The workflow engine: triggers (signals, dates, schedules, manual), conditions, actions, runs and the scheduler."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime
 import decimal
 import logging
@@ -28,7 +29,7 @@ def local_today():
         from ZeoProjects.services import local_today as lt
         return lt()
     except Exception:
-        return timezone.localdate()
+        return _zt_today()
 
 
 def plain(v):

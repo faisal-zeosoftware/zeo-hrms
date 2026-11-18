@@ -538,6 +538,38 @@ def scan_duplicates(p):
     return made
 
 
+_LEGAL = ('llc', 'l l c', 'fze', 'fzco', 'fzc', 'fz llc', 'co', 'company', 'trading', 'est', 'establishment', 'ltd', 'limited',
+          'general trading', 'gt', 'and', 'the', 'branch', 'dmcc', 'jlt', 'pjsc', 'psc', 'wll', 'spc', 'saoc', 'inc')
+
+
+def name_core(name):
+    """v1.67.24: a company name without its legal form and punctuation ("Falcon Trading L.L.C." → "falcon")."""
+    import re
+    t = re.sub(r'[^a-z0-9\u0600-\u06ff]+', ' ', str(name or '').lower()).strip()
+    words = [w for w in t.split() if w not in _LEGAL and not (len(w) == 1 and w.isalpha())]
+    return ' '.join(words)
+
+
+def scan_similar_names(p, score=50):
+    """v1.67.24 (link_partners): a partner made from a name only (no phone, e-mail or tax number to compare) – the partners whose
+    name is the same without the legal form are listed as possible duplicates ("similar name") for a person to merge or dismiss."""
+    P, D = Partner(), django_apps.get_model('ZeoMasters', 'DuplicatePair')
+    core = name_core(p.name)
+    if not core or p.merged_into_id or p.status == 'archived':
+        return 0
+    made = 0
+    first = core.split()[0]
+    for x in P.objects.filter(name__icontains=first, merged_into__isnull=True).exclude(pk=p.pk).exclude(status='archived')[:50]:
+        if name_core(x.name) != core:
+            continue
+        a, b = (x, p) if x.pk < p.pk else (p, x)
+        if not D.objects.filter(partner=a, other=b).exists() and not D.objects.filter(partner=b, other=a).exists():
+            from .app import app
+            D.objects.create(number=app.next_number('duplicate', 'DUP'), partner=a, other=b, reason='similar name', score=score)
+            made += 1
+    return made
+
+
 def merge(keep, drop, user=None):
     """Re-point every record of `drop` to `keep` (all apps), fill keep's empty fields, archive drop. Cannot be undone automatically."""
     P = Partner()

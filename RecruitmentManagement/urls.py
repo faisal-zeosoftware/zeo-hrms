@@ -1,6 +1,8 @@
 from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 
+from . import views as V
+
 from .views import (ApplicationViewSet, CandidateDocumentViewSet, CandidateViewSet, CareersApplyView, CareersFeedView, CareersJobView,
                     CareersLogoView, CareersPageView, CareersSettingsView, InterviewScoreViewSet, InterviewViewSet, JobOpeningViewSet,
                     ManpowerRequisitionViewSet, OfferViewSet, OnboardingTaskViewSet, RequisitionApprovalLevelViewSet, TalentCampaignViewSet,
@@ -31,5 +33,11 @@ urlpatterns = [
     re_path(r'^api/careers/feed\.(?P<fmt>xml|json)$', CareersFeedView.as_view()),
     path('api/careers/job/<str:code>/', CareersJobView.as_view()),
     path('api/careers-settings/', CareersSettingsView.as_view()),
+    # v1.67.26 (item 233) pre-onboarding portal: HR side under the offer, the candidate's page by its private link (no login)
+    path('api/offers/<int:pk>/preonboarding/', V.OfferPreOnboardingView.as_view()),
+    path('api/offers/<int:pk>/preonboarding/review/', V.OfferPreOnboardingReviewView.as_view()),
+    path('api/preonboarding-files/<int:pk>/', V.PreOnboardingFileView.as_view()),
+    path('api/welcome/<str:token>/', V.WelcomeView.as_view()),
+    path('api/welcome/<str:token>/upload/', V.WelcomeUploadView.as_view()),
     path('api/', include(router.urls)),
 ]

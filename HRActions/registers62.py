@@ -10,6 +10,7 @@ POST api/resignations/<id>/approve/ {note}      the current level (the approver,
 POST api/resignations/<id>/reject/  {note}
 Statuses, numbering, the approval chain and its e-mails stay in EmpManagement (EmployeeResignation / ResignationApproval).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from datetime import date, timedelta
 
@@ -84,7 +85,7 @@ def rows_for(request, view='all', status='', kind='', q=''):
     names = user_names(uids)
     sett = _settlement([r.pk for r in res if (r.status or '').lower() == 'approved'])
     levels_of = {}
-    today = date.today()
+    today = _zt_today()
     out = []
     for r in res:
         e = r.employee
@@ -175,9 +176,9 @@ class ResignationsView(APIView):
             return Response({'employee': [tr('Choose the employee.')]}, status=400)
         if own and M('EmpManagement', 'EmployeeResignation').objects.filter(employee=emp).exclude(status__in=('Rejected', 'Cancelled', 'rejected', 'cancelled')).exists():
             return Response({'detail': tr('You have already handed in your resignation – follow it in My requests.')}, status=400)
-        data.setdefault('document_date', date.today().isoformat())
+        data.setdefault('document_date', _zt_today().isoformat())
         if not data.get('document_date'):
-            data['document_date'] = date.today().isoformat()
+            data['document_date'] = _zt_today().isoformat()
         if not data.get('branch'):
             data['branch'] = emp.emp_branch_id_id
         if not data.get('location'):
@@ -204,7 +205,7 @@ class ResignationStatsView(APIView):
 
     def get(self, request):
         rows = rows_for(request)
-        today = date.today()
+        today = _zt_today()
         m0 = today.replace(day=1)
         m1 = (m0 + timedelta(days=32)).replace(day=1)
         return Response({
@@ -214,6 +215,33 @@ class ResignationStatsView(APIView):
             'leaving_month': sum(1 for r in rows if r['status'] == 'approved' and r['last_working_date'] and m0 <= r['last_working_date'] < m1),
             'settlement_open': sum(1 for r in rows if r['status'] == 'approved' and r['stage'] not in ('paid', 'cancelled')),
         })
+
+
+class ResignationOneView(APIView):
+    """v1.73.2 (same screen rules): Delete on the Resignations list – only a resignation no approver decided on yet and that
+    has no end-of-service record (a mistaken or duplicate entry). Otherwise 409 with what uses it – a decided
+    resignation is rejected / cancelled through its approval, not deleted."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        R = M('EmpManagement', 'EmployeeResignation')
+        r = R.objects.filter(pk=pk).select_related('employee').first()
+        if r is None:
+            return Response({'detail': tr('Not found.')}, status=404)
+        if not _can(request, 'delete_employeeresignation'):
+            return Response({'detail': tr('You may not delete resignations.')}, status=403)
+        from AccessControl.access import ctx
+        c = ctx(request)
+        if c is not None and c.branches is not None and getattr(r.employee, 'emp_branch_id_id', None) not in c.branches:
+            return Response({'detail': tr('Not found.')}, status=404)
+        from DataTools.usage import used_counts_answer
+        decided = r.resign_approvals.exclude(status__in=('Pending', 'pending')).count()
+        counts = {'approval decisions': decided, 'end of service': M('EmpManagement', 'EndOfService').objects.filter(resignation_id=r.pk).count()}   # one-to-one: counted, not r.eos
+        used = used_counts_answer(r.document_number or str(r.pk), {k: v for k, v in counts.items() if v}, active=False)
+        if used is not None:
+            return used
+        r.delete()   # its pending approval steps go with it
+        return Response(status=204)
 
 
 class ResignationActionView(APIView):

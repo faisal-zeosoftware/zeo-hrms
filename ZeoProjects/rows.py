@@ -138,6 +138,7 @@ def contract_row(c, usage=False):
          'start_date': d(c.start_date), 'end_date': d(c.end_date), 'days_left': (c.end_date - S.local_today()).days,
          'value': num(c.value), 'currency': c.currency, 'billing_frequency': c.billing_frequency,
          'billing_frequency_label': c.get_billing_frequency_display(), 'unlimited_hours': c.unlimited_hours,
+         'hours_period': c.hours_period, 'hours_period_label': c.get_hours_period_display(),   # v1.67.23 (270)
          'included_hours': num(c.included_hours), 'onsite_hours': num(c.onsite_hours), 'hourly_rate_outside': num(c.hourly_rate_outside),
          'sla_policy': c.sla_policy_id, 'sla_policy_name': c.sla_policy.name if c.sla_policy_id else '',
          'support_timing': c.support_timing, 'exclusions': c.exclusions, 'account_manager': emp_ref(c.account_manager),
@@ -276,7 +277,13 @@ def equipment_category_row(x):
     return {'id': x.pk, 'code': x.code, 'name': x.name, 'industry': x.industry, 'parent': x.parent_id,
             'parent_name': x.parent.name if x.parent_id else '', 'pm_months': x.pm_months, 'default_team': x.default_team_id,
             'default_team_name': x.default_team.name if x.default_team_id else '', 'extra_fields': x.extra_fields or [],
-            'to_review': x.to_review, 'is_active': x.is_active, 'in_use': x.equipment.exists() or x.contracts.exists()}
+            'to_review': x.to_review, 'is_active': x.is_active, 'in_use': x.equipment.exists() or x.contracts.exists(),
+            'checklist': list(x.checklist or []), 'pack_checklist': _pack_checklist(x.industry)}   # v1.67.23 (pending 271)
+
+
+def _pack_checklist(industry):
+    from .packs import pack_checklist
+    return pack_checklist(industry)
 
 
 def amc_type_row(x):

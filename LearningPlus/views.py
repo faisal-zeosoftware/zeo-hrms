@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -330,7 +331,7 @@ class CalendarView(LPView):
     """GET ?from=YYYY-MM-DD&to=YYYY-MM-DD[&course=] -> training sessions as calendar events."""
 
     def get(self, request):
-        today = timezone.localdate()
+        today = _zt_today()
         try:
             frm = date.fromisoformat(request.query_params.get('from') or today.replace(day=1).isoformat())
             to = date.fromisoformat(request.query_params.get('to') or (frm.replace(day=28)).isoformat())
@@ -436,7 +437,7 @@ class BudgetView(LPView):
     def get(self, request):
         if not is_hr(request):
             raise PermissionDenied(tr('Training budget is for L&D / HR.'))
-        year = int(request.query_params.get('year') or timezone.localdate().year)
+        year = int(request.query_params.get('year') or _zt_today().year)
         deps = request.query_params.get('department')
         deps = deps.split(',') if deps else None
         allowed = _allowed_depts(request)   # v1.22.0 branch rights: departments of the user's branches, actuals of their employees

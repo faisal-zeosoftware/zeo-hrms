@@ -1,4 +1,5 @@
 # v1.62.11 (item 18b): new module – monthly inputs grid (days / hours per employee for the payroll month)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.62.11 (item 18b) – Payroll › Monthly inputs.
 
 A monthly input is a salary component of value type "variable" without a formula (e.g. on-call days, shift days, overtime hours):
@@ -18,6 +19,14 @@ Which month can be entered
     * per employee: a month that already has the employee's payslip (shown read-only with the figures that payslip used – delete /
       recalculate the run to change them), a month before a later payslip, and a month after a payroll month that has not been
       run yet (that run would use the figures).
+
+v1.67.22 (pending C14) – figures stored per month
+  The grid / import also keep each figure under its month (CompanyOption 'v16722_mi:<employee id>' =
+  {"months": {"2026-11": {"<salary row component id>": "10.00"}}, "used": {"2026-11": <payslip id>}} – no new table). A month after a
+  payroll month that has not been run yet can now be entered ahead ("Kept for …"): it is not written to the salary row, so the earlier
+  run does not take it. When a payroll run makes the employee's payslip, apply_month() sets the salary rows of the stored inputs to the
+  figures of the run's month (0 for an input with figures only for other months, or when a payslip of that month already used them –
+  weekly / correction runs); mark_used() notes the payslip. An employee without stored figures is handled exactly as before.
 
 Preview: the amounts of the formula components that use the inputs, worked out with the payroll formula engine
 (get_formula_variables for the month + the typed figures), e.g. 10 on-call days → 98.50.
@@ -138,6 +147,19 @@ def component_flag(c, used=None, flags=None, system=None):
     return {'eligible': True, 'auto': auto, 'marked': marked, 'monthly_input': marked if marked is not None else auto}
 
 
+def quantity_input_ids():
+    """v1.67.24 (P-BUG-26) – ids of the "Others" monthly inputs that hold a quantity (days / hours used by another component's
+    formula, e.g. OT hours): their payslip figure is not money, so it is no employer cost and posts no journal line."""
+    SC = M('PayrollManagement', 'SalaryComponent')
+    used = None
+    out = set()
+    for c in SC.objects.filter(component_type='others', component_value_type='variable').filter(Q(formula__isnull=True) | Q(formula='')):
+        used = used if used is not None else _used_names()
+        if _aliases(c) & used:
+            out.add(c.pk)
+    return out
+
+
 def save_flag(c, on, user=None):
     """Mark the component (all branch copies – same code) as a monthly input (True), not one (False) or automatic (None)."""
     if not _is_plain_input(c) or not (c.code or '').strip():
@@ -254,10 +276,94 @@ def row_state(m, slips, done):
     if slips:
         x = next_month(date(*max(slips), 1))
         while x < m:
-            if (x.year, x.month) not in done:   # that payroll comes first and would use the figures
-                return 'earlier_open', tr('The {0} payroll comes first – it would use these figures. Enter them for {0}.', month_label(x)), None
+            if (x.year, x.month) not in done:   # that payroll comes first – v1.67.22 (C14): the figures are kept for their own month
+                return 'ahead', tr('Kept for the {0} payroll – the {1} payroll comes first and does not use them.', month_label(m), month_label(x)), None
             x = next_month(x)
     return 'open', '', None
+
+
+# ------------------------------------------------------------------ v1.67.22 (pending C14): figures stored per month
+def _mkey(m):
+    return m.isoformat()[:7]
+
+
+def _store_key(emp_id):
+    return f'v16722_mi:{emp_id}'
+
+
+def store_of(emp_id):
+    try:
+        o = M('ZeoApps', 'CompanyOption').objects.filter(key=_store_key(emp_id)).first()
+        v = dict(o.value or {}) if o else {}
+    except Exception:
+        v = {}
+    v.setdefault('months', {})
+    v.setdefault('used', {})
+    return v
+
+
+def _save_store(emp_id, v):
+    M('ZeoApps', 'CompanyOption').objects.update_or_create(key=_store_key(emp_id), defaults={'value': v})
+
+
+def keep(emp, comp_id, m, value):
+    """note the figure of month m (component id of the salary component)"""
+    v = store_of(emp.pk)
+    mm = v['months'].setdefault(_mkey(m), {})
+    if mm.get(str(comp_id)) == str(q2(value)):
+        return False
+    mm[str(comp_id)] = str(q2(value))
+    _save_store(emp.pk, v)
+    return True
+
+
+def stored(emp_id, m):
+    """{component id: Decimal} of month m (only what was entered for it)"""
+    return {int(k): q2(x) for k, x in (store_of(emp_id)['months'].get(_mkey(m)) or {}).items()}
+
+
+def _used_by(v, m):
+    """the payslip (not rejected, still there) that already took month m's figures"""
+    pid = v['used'].get(_mkey(m))
+    if not pid:
+        return None
+    P = M('PayrollManagement', 'Payslip')
+    return pid if P.objects.filter(pk=pid).exclude(status__iexact='rejected').exists() else None
+
+
+def apply_month(employee, run):
+    """Before a payslip of the run is worked out: the salary rows of the stored inputs get the figures of the run's month.
+    Returns the month applied ('YYYY-MM') or None (no stored figures – as before)."""
+    try:
+        v = store_of(employee.pk)
+        if not v['months']:
+            return None
+        m = date(int(run.year), int(run.month), 1)
+        comps = {int(c) for mm in v['months'].values() for c in mm}
+        mine = {} if _used_by(v, m) else {int(k): q2(x) for k, x in (v['months'].get(_mkey(m)) or {}).items()}
+        ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
+        for cid in comps:
+            val = mine.get(cid, ZERO)
+            n = ESS.objects.filter(employee_id=employee.pk, component_id=cid).update(amount=val, is_active=True) if val else \
+                ESS.objects.filter(employee_id=employee.pk, component_id=cid).update(amount=ZERO)
+            if not n and val:
+                ESS.objects.create(employee_id=employee.pk, component_id=cid, amount=val, is_active=True)
+        return _mkey(m) if mine else None
+    except Exception:
+        log.exception('monthly inputs of the month')
+        return None
+
+
+def mark_used(employee, run, payslip):
+    """After the payslip: month m's figures were taken by this payslip (a second run of the month gets none)."""
+    try:
+        v = store_of(employee.pk)
+        k = _mkey(date(int(run.year), int(run.month), 1))
+        if v['months'].get(k) and any(q2(x) for x in v['months'][k].values()) and not _used_by(v, date(int(run.year), int(run.month), 1)):
+            v['used'][k] = payslip.pk
+            _save_store(employee.pk, v)
+    except Exception:
+        log.exception('monthly inputs used')
 
 
 def _consumed(payslip_id):
@@ -299,6 +405,7 @@ def grid(m, branch_id, allowed=None):
     for e in emps:
         state, note, ps = row_state(m, slips.get(e.pk, {}), done)
         used = _consumed(ps) if ps else {}
+        kept = stored(e.pk, m)   # v1.67.22 (C14)
         vals, has = {}, {}
         for c in cols:
             cid = c['ids'].get(branch_id) or c['ids'].get(None)
@@ -308,10 +415,14 @@ def grid(m, branch_id, allowed=None):
             has[c['code']] = cid is not None
             if state == 'in_run':
                 vals[c['code']] = used.get(r.pk, '0.00') if r is not None else '0.00'
+            elif cid is not None and cid in kept:   # v1.67.22 (C14): the figure entered for this month
+                vals[c['code']] = str(kept[cid])
+            elif state == 'ahead':
+                vals[c['code']] = '0.00'
             else:
                 vals[c['code']] = str(q2(r.amount)) if r is not None and r.is_active and r.amount is not None else '0.00'
         rows.append({'employee_id': e.pk, 'emp_code': e.emp_code or '', 'employee': ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x),
-                     'state': state, 'note': note, 'editable': st['editable'] and state == 'open', 'values': vals, 'has': has})
+                     'state': state, 'note': note, 'editable': st['editable'] and state in ('open', 'ahead'), 'values': vals, 'has': has})
     return {'month': st, 'columns': [{'code': c['code'], 'name': c['name'], 'auto': c['auto'], 'marked': c['marked']} for c in cols], 'rows': rows}
 
 
@@ -348,6 +459,13 @@ def _write(emp, comp_id, value):
     return True
 
 
+def _put(m, it):
+    """v1.67.22 (C14): kept under its month; the salary row (read by the next payslip) only for the month that comes next"""
+    a = keep(it['employee'], it['component_id'], m, it['amount'])
+    b = _write(it['employee'], it['component_id'], it['amount']) if it.get('state', 'open') == 'open' else False
+    return a or b
+
+
 def _check_rows(m, items, allowed=None, branch_id=None):
     """items: [{'key', 'employee': emp|None, 'code', 'value'}] → per item errors; returns (out, cols_by_branch)."""
     states, cols_b, slips_cache, done_b = {}, {}, {}, {}
@@ -374,7 +492,8 @@ def _check_rows(m, items, allowed=None, branch_id=None):
                     errs.append(states[b]['reason'])
                 else:
                     state, note, _ps = row_state(m, slips.get(e.pk, {}), done_b[b])
-                    if state != 'open':
+                    it['state'] = state
+                    if state not in ('open', 'ahead'):   # v1.67.22 (C14): a later month is kept for its own payroll
                         errs.append(note)
                 code = str(it.get('code') or '').strip().upper()
                 c = cols_b[b].get(code)
@@ -419,7 +538,7 @@ def save_grid(m, branch_id, rows, allowed=None, user=None):
             problems.setdefault(k, {})[str(it.get('code'))] = ' '.join(it['errors'])
     if problems:
         raise Refused(tr('Some figures were not saved – check the marked cells.'), problems=problems)
-    changed = sum(1 for it in items if _write(it['employee'], it['component_id'], it['amount']))
+    changed = sum(1 for it in items if _put(m, it))
     return {'saved': len(items), 'changed': changed, 'month': st['month']}
 
 
@@ -571,7 +690,7 @@ def import_file(f, name, m, branch_id=None, apply=False, allowed=None, user=None
         if apply:
             for it in items:
                 if not it['errors']:
-                    _write(it['employee'], it['component_id'], it['amount'])
+                    _put(m, it)
                     applied += 1
     ok = sum(1 for x in out if x['ok'])
     return {'rows': out, 'ok': ok, 'errors': len(out) - ok, 'applied': applied, 'dry_run': not apply, 'month': m.isoformat()[:7]}
@@ -586,8 +705,10 @@ def months_offered(branch_id):
             m = date(int(r.year), int(r.month), 1)
             out.setdefault(m, tr('{0} – run {1} ({2})', month_label(m), r.name or f'{r.month:02d}/{r.year}', tr(r.get_status_display())))
     last = max((date(int(r.year), int(r.month), 1) for r in runs), default=None)
-    nxt = next_month(last) if last else first_of(date.today())
+    nxt = next_month(last) if last else first_of(_zt_today())
     out.setdefault(nxt, tr('{0} – next payroll', month_label(nxt)))
+    later = next_month(nxt)   # v1.67.22 (pending C14): figures can be entered ahead, kept for their own month
+    out.setdefault(later, tr('{0} – entered ahead', month_label(later)))
     pending = [date(int(r.year), int(r.month), 1) for r in runs if r.status == 'pending']
     default = min(pending) if pending else nxt   # a run not processed yet comes first
     return [{'value': m.isoformat()[:7], 'label': lbl} for m, lbl in sorted(out.items())], default.isoformat()[:7]

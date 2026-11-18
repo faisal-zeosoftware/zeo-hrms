@@ -286,8 +286,9 @@ class PunchViewSet(APViewSet):
                                      ip=S.client_ip(request), lat=lat or None, lng=lng or None,
                                      location=request.data.get('location') or '', photo=photo, verified_by=verified,
                                      user_id=request.user.id)
-            p.geofence_ok = geo
-            p.save(update_fields=['geofence_ok'])
+            if created:   # v1.69.0: a repeated punch (same minute) returns the first one – its geofence result is kept, not overwritten
+                p.geofence_ok = geo
+                p.save(update_fields=['geofence_ok'])
         except (S.Refused, E.PunchError) as exc:
             return refused(exc)
         day = M.AttendanceDay.objects.filter(employee_id=e.id, date=p.work_date).first()

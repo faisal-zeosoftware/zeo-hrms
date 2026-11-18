@@ -972,3 +972,7 @@ class RegisterPdfView(Base):
         resp['Content-Disposition'] = f'attachment; filename="{d["_title"]}.pdf"'
         return resp
 
+
+# v1.67.27 (HSE scope): PPE, emergency, safety equipment and contractor workforce registers
+from . import scope as _scope   # noqa: E402
+_scope.register_all()

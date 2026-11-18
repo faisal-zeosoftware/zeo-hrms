@@ -2,6 +2,7 @@
 from django.urls import path
 
 from . import api_v1 as A
+from . import api_ai as AI   # v1.73.17
 
 urlpatterns = [
     path('', A.IndexView.as_view()),
@@ -15,4 +16,7 @@ urlpatterns = [
     path('attendance-days/', A.AttendanceDaysView.as_view()),
     path('attendance/punches/', A.PunchesView.as_view()),
     path('payslips/', A.PayslipsView.as_view()),
+    path('ai/changes/', AI.AIChangesView.as_view()),                          # v1.73.17 API for AI tools
+    path('ai/changes/<int:pk>/', AI.AIChangeView.as_view()),
+    path('ai/changes/<int:pk>/<str:action>/', AI.AIChangeView.as_view()),
 ]

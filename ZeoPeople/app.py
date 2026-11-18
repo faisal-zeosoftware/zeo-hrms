@@ -9,7 +9,8 @@ from django.db.models import Count, Q, Sum
 
 from zeo.appkit.engine import Act, App, AppError, Reg, d, emp_name, in_branches, now, today, user_name
 
-from .models import (Award, BenefitClaim, BenefitPlan, ChatMessage, Competency, Conversation, DevelopmentPlan, Enrolment, FormSubmission, FormTemplate,
+from .models import (KeyResult, KRCheckIn, Objective,  # v1.67.26 OKR
+                     Award, BenefitClaim, BenefitPlan, ChatMessage, Competency, Conversation, DevelopmentPlan, Enrolment, FormSubmission, FormTemplate,
                      PeopleEvent, PeopleFile, PeopleSequence, PeopleSettings, ROLES, Recognition, Review360, Reviewer, Reward, SignRequest, Survey,
                      SurveyResponse)
 from .packs import PACKS
@@ -459,9 +460,20 @@ app.reg(Reg('form_submission', FormSubmission, 'Submission', 'Form submissions',
 
 
 # ================================================================== surveys
+ENPS_Q = 'How likely are you to recommend this company as a place to work to a friend? (0 = not at all, 10 = extremely likely)'
+ENPS_WHY = 'What is the main reason for your score?'
+
+
 def survey_defaults(o, request):
     if not o.start:
         o.start = today()
+    # v1.67.26 (item 235) eNPS: the standard question (0–10) and its follow-up when HR adds none; always anonymous
+    if o.kind == 'enps':
+        qs = list(o.questions or [])
+        if not any(isinstance(q, dict) and q.get('type') == 'nps' for q in qs):
+            qs = [{'text': ENPS_Q, 'type': 'nps', 'options': '', 'required': True}, {'text': ENPS_WHY, 'type': 'text', 'options': '', 'required': False}] + qs
+        o.questions = qs
+        o.anonymous = True
 
 
 def a_survey_open(o, request, f):
@@ -959,3 +971,156 @@ def h_points(employee_id):
 
 
 app.hooks.update({'sign_document': h_sign_document, 'sign_status': h_sign_status, 'points': h_points})
+
+
+
+# ================================================================== v1.67.26 (pending item 1.62.12, item 235) OKR – objectives and key results
+def okr_progress(o):
+    """The objective's progress: the weighted progress of its key results (0 when it has none)."""
+    krs = list(o.key_results.all())
+    w = sum(k.weight or 1 for k in krs)
+    p = (sum((k.progress or 0) * (k.weight or 1) for k in krs) / w) if w else 0
+    type(o).objects.filter(pk=o.pk).update(progress=round(Decimal(p), 1))
+    return p
+
+
+def okr_defaults(o, request):
+    if o.level == 'individual' and not o.owner_id:
+        o.owner = me(request)
+    if o.owner_id and not o.department_id:
+        o.department_id = getattr(o.owner, 'emp_dept_id_id', None)
+
+
+def okr_check(o, request, old):
+    if o.period_start and o.period_end and o.period_end < o.period_start:
+        raise AppError('The period ends before it starts.', 'period_end')
+    if o.level == 'individual' and not o.owner_id:
+        raise AppError('An individual objective needs its owner.', 'owner')
+    if o.level == 'department' and not o.department_id:
+        raise AppError('A department objective needs its department.', 'department')
+    if not app.any(request, *HR):
+        # v1.73.1 (ESS test B11) an employee created a company objective. Without the HR right: individual objectives of his own
+        # (or of his team as their manager) and team objectives as a manager; company and department objectives are set by HR.
+        if o.level in ('company', 'department') and getattr(old, 'level', None) != o.level:
+            raise AppError('Company and department objectives are set by HR or management. Create an individual objective.', 'level')
+        e = me(request)
+        if o.level == 'individual' and o.owner_id and not (e and (o.owner_id == e.pk or is_manager_of(o.owner, request))):
+            raise AppError('You can create objectives for yourself or your team only.', 'owner')
+    if o.parent_id:
+        if o.pk and o.parent_id == o.pk:
+            raise AppError('An objective cannot support itself.', 'parent')
+        p, seen = o.parent, set()
+        while p is not None and p.pk not in seen:   # no loop: A supports B supports A
+            if o.pk and p.pk == o.pk:
+                raise AppError('This would make a loop of objectives supporting each other.', 'parent')
+            seen.add(p.pk)
+            p = p.parent
+        order = {'company': 0, 'department': 1, 'team': 2, 'individual': 3}
+        if order.get(o.parent.level, 0) > order.get(o.level, 3):
+            raise AppError('An objective supports one of the same or a higher level (company › department › team › individual).', 'parent')
+
+
+def okr_own(o, request):
+    e = me(request)
+    return bool(e and (o.owner_id == e.pk or is_manager_of(o.owner, request) if o.owner_id else False))
+
+
+def a_okr_activate(o, request, f):
+    if not o.key_results.exists():
+        raise AppError('Add at least one key result first – how will you measure the objective?')
+    o.status = 'active'
+    o.save(update_fields=['status'])
+    app.event('okr', o.pk, 'Activated', request.user)
+
+
+def a_okr_close(o, request, f):
+    o.status = 'done' if f.s('outcome') != 'cancelled' else 'cancelled'
+    o.save(update_fields=['status'])
+    app.event('okr', o.pk, ('Completed' if o.status == 'done' else 'Cancelled') + f' at {o.progress}%' + (f' – {f.s("note")}' if f.s('note') else ''), request.user)
+
+
+def okr_extra(o, r):
+    return {'progress': float(o.progress or 0), 'key_results': [
+        {'id': k.pk, 'title': k.title, 'kind': k.kind, 'start': float(k.start_value), 'target': float(k.target_value), 'current': float(k.current_value),
+         'progress': float(k.progress), 'confidence': k.confidence, 'weight': k.weight, 'owner': emp_name(k.owner) if k.owner_id else '',
+         'note': k.last_note} for k in o.key_results.all()],
+        'supports': [{'id': c.pk, 'number': c.number, 'title': c.title, 'progress': float(c.progress), 'level': c.level} for c in o.children.all()],
+        'page': PAGE + 'okr-tree'}
+
+
+app.option('objectives', lambda: Objective.objects.exclude(status='cancelled'), lambda x: f'{x.number} {x.title} ({x.get_level_display()})', ('number', 'title'), Objective)
+
+app.reg(Reg('okr', Objective, 'Objective', 'Objectives (OKR)', 'Goals',
+            cols=('number', 'title', 'level', 'owner', 'department', 'period_end', 'progress', 'status'),
+            form=('title', 'description', 'level', 'owner', 'department', 'parent', 'period_start', 'period_end'),
+            number=('okr', 'OKR'), manage=HR, view=VIEW, create='all', own=(('owner', 'emp'),), own_edit=True,
+            public=lambda r: Q(level__in=('company', 'department')) | Q(owner__emp_reporting_manager=r.user),
+            search=('number', 'title', 'owner__emp_first_name', 'owner__emp_last_name'), filters=('status', 'level', 'owner', 'department'),
+            title='title', subtitle='level', defaults=okr_defaults, check=okr_check, edit_when=lambda o: o.status in ('draft', 'active'),
+            info=('status', 'progress'), extra=okr_extra, deletable=True, children=(('Key results', 'key_result', 'objective'),),
+            actions=[Act('activate', 'Activate', a_okr_activate, lambda o, r: o.status == 'draft' and (app.any(r, *HR) or okr_own(o, r)), style='primary'),
+                     Act('close', 'Close', a_okr_close, lambda o, r: o.status == 'active' and (app.any(r, *HR) or okr_own(o, r)),
+                         fields=(('outcome', 'Outcome', 'choice:done=Completed|cancelled=Cancelled', True), ('note', 'Note', 'text', False)))],
+            help='OKR: an objective says what to achieve, its key results say how it is measured (from a start value to a target). Company and '
+                 'department objectives are seen by everyone; an individual objective supports a team, department or company objective (alignment). '
+                 'Progress is the weighted progress of the key results, updated at every check-in.'))
+
+
+def kr_check(o, request, old):
+    if o.kind != 'milestone' and o.target_value == o.start_value:
+        raise AppError('The target must differ from the start value.', 'target_value')
+    if not 1 <= (o.weight or 0) <= 10:
+        raise AppError('Weight: 1 to 10.', 'weight')
+    if o.objective.status in ('done', 'cancelled'):
+        raise AppError('The objective is closed.', 'objective')
+
+
+def kr_saver(o, request, creating, old):
+    if creating and o.current_value in (None, 0) and o.start_value:
+        o.current_value = o.start_value
+    if o.kind == 'milestone':
+        o.start_value, o.target_value = 0, 1
+    o.calc()
+    o.save()
+    okr_progress(o.objective)
+    return o
+
+
+def a_kr_checkin(o, request, f):
+    try:
+        v = Decimal(str(f.s('value')).replace(',', ''))
+    except Exception:   # noqa: BLE001
+        raise AppError('Enter the current value (a number).', 'value')
+    if o.kind == 'milestone' and v not in (0, 1):
+        raise AppError('Done / not done: 1 = done, 0 = not done.', 'value')
+    if o.objective.status != 'active':
+        raise AppError('Check in on an active objective.')
+    conf = f.s('confidence') or o.confidence
+    if conf not in ('on_track', 'at_risk', 'off_track'):
+        raise AppError('Confidence: on track, at risk or off track.', 'confidence')
+    o.current_value, o.confidence, o.last_note = v, conf, (f.s('note') or '')[:500]
+    o.calc()
+    o.save()
+    KRCheckIn.objects.create(key_result=o, value=v, confidence=conf, note=o.last_note, by=request.user)
+    p = okr_progress(o.objective)
+    app.event('okr', o.objective_id, f'Check-in on "{o.title}": {v} ({o.progress}%) – objective {round(p, 1)}%', request.user)
+    return {'message': f'Saved – the key result is at {o.progress}%, the objective at {round(p, 1)}%.'}
+
+
+def kr_can_checkin(o, r):
+    e = me(r)
+    return app.any(r, *HR) or bool(e and (o.owner_id == e.pk or o.objective.owner_id == e.pk or (o.objective.owner_id and is_manager_of(o.objective.owner, r))))
+
+
+app.reg(Reg('key_result', KeyResult, 'Key result', 'Key results', 'Goals',
+            cols=('objective', 'title', 'kind', 'start_value', 'target_value', 'current_value', 'progress', 'confidence'),
+            form=('objective', 'title', 'kind', 'start_value', 'target_value', 'weight', 'owner'),
+            manage=HR, view=VIEW, create='all', own=(('owner', 'emp'),), own_edit=True,
+            public=lambda r: Q(objective__level__in=('company', 'department')) | Q(objective__owner=me(r)),
+            search=('title', 'objective__title'), filters=('confidence', 'kind'), title='title', subtitle='objective', child_of='objective',
+            check=kr_check, saver=kr_saver, deletable=True, files=False, info=('current_value', 'progress', 'confidence', 'last_note'),
+            actions=[Act('checkin', 'Check in', a_kr_checkin, kr_can_checkin, style='primary',
+                         fields=(('value', 'Current value', 'decimal', True),
+                                 ('confidence', 'Confidence', 'choice:on_track=On track|at_risk=At risk|off_track=Off track', True),
+                                 ('note', 'What changed', 'text', False)))],
+            help='A key result measures an objective: from a start value to a target (or done / not done). Check in to record the current value.'))

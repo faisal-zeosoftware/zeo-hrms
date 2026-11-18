@@ -564,8 +564,11 @@ class CustomerListView(Base):
         if q.get('q'):
             s = q['q']
             qs = qs.filter(Q(name__icontains=s) | Q(code__icontains=s) | Q(email__icontains=s) | Q(contacts__name__icontains=s)).distinct()
-        if q.get('active', '1') == '1':
+        act = q.get('active', '1')
+        if act == '1':
             qs = qs.filter(is_active=True)
+        elif act == 'inactive':   # v1.73.2: the standard Active filter (Active only / Inactive only / Active and inactive)
+            qs = qs.filter(is_active=False)
         return page(request, qs, lambda c: RW.customer_row(c, counts=True), 100)
 
     @guard
@@ -578,6 +581,31 @@ class CustomerListView(Base):
                 Contact.objects.create(customer=c, name=f.s('contact_name'), email=f.s('contact_email'), phone=f.s('contact_phone'),
                                        is_primary=True)
         return Response(RW.customer_row(c, True), status=status.HTTP_201_CREATED)
+
+
+def _used_answer(obj, rel, active, generic=True):
+    """v1.73.0 (same screen rules): a record already used is not deleted – 409 with what uses it (the shared lists offer
+    "Make inactive" for records with an active flag). rel: {accessor: kind}; the shared usage check (DataTools) is added."""
+    from DataTools.usage import usage
+    counts = {}
+    for acc, kind in rel.items():
+        try:
+            n = getattr(obj, acc).count()
+        except Exception:   # noqa: BLE001
+            n = 0
+        if n:
+            counts[kind] = counts.get(kind, 0) + n
+    try:
+        n0, kinds0 = usage(obj) if generic else (0, [])   # generic=False: a record whose own parts (messages, events) would count
+    except Exception:   # noqa: BLE001
+        n0, kinds0 = 0, []
+    if not counts:   # the shared check's kinds only when the app's own relations found nothing (no "billing lines, amc billings")
+        for k in kinds0:
+            counts.setdefault(k, 0)
+    return used_counts_answer(str(obj), counts, active, n0)
+
+
+from DataTools.usage import used_counts_answer  # noqa: E402 – v1.73.0 shared with the other apps
 
 
 class CustomerDetailView(Base):
@@ -603,6 +631,18 @@ class CustomerDetailView(Base):
         return Response(RW.customer_row(save_customer(get_or_404(Customer, pk, request), In(request), request.user, request), True))
 
     put = patch
+
+    @guard
+    def delete(self, request, pk):   # v1.73.0: Delete on the list and in bulk; a used customer is only made inactive
+        A.need(request, 'customer_delete')
+        c = get_or_404(Customer, pk, request)
+        used = _used_answer(c, {'contracts': 'AMC contracts', 'tickets': 'tickets', 'sites': 'sites', 'equipment': 'equipment',
+                                'projects': 'projects', 'bill_documents': 'billing documents', 'collection_lines': 'collection plan lines',
+                                'dev_requests': 'development requests'}, active=True)
+        if used is not None:
+            return used
+        c.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def save_contact(c, f):
@@ -797,6 +837,18 @@ class TicketDetailView(Base):
         S.update_ticket(t, In(request).d, request.user)
         return Response(RW.ticket_detail(Ticket.objects.get(pk=t.pk)))
 
+    @guard
+    def delete(self, request, pk):   # v1.73.0: Delete on the Tickets list – only a ticket with no work on it yet (else close it)
+        if not A.can(request, 'ticket_delete'):
+            raise A.Denied('You may not delete tickets.')
+        t = ticket_for(request, pk)
+        used = _used_answer(t, {'worklogs': 'work logs', 'visits': 'service visits', 'parts': 'parts used', 'dev_requests': 'development requests',
+                                'allocations': 'support planner bookings'}, active=False, generic=False)
+        if used is not None:
+            return used
+        t.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class TicketAssignView(Base):
     @guard
@@ -984,6 +1036,11 @@ def save_contract(c, f, user):
             setattr(c, k, f.n(k, Decimal(0)))
     if f.has('unlimited_hours'):
         c.unlimited_hours = f.b('unlimited_hours')
+    if f.has('hours_period'):   # v1.67.23 (pending 270)
+        v = f.s('hours_period') or 'term'
+        if v not in ('term', 'month'):
+            raise S.ProjectsError('Choose whether the included hours are for the whole term or for each month.', 'hours_period')
+        c.hours_period = v
     if f.has('sla_policy'):
         c.sla_policy = f.obj('sla_policy', SLAPolicy)
     if f.has('account_manager'):
@@ -1087,6 +1144,10 @@ class ContractDetailView(Base):
         r['history'] = chain
         r['tickets_by_product'] = {(w['product__name'] or 'Not set'): w['n']
                                    for w in c.tickets.values('product__name').annotate(n=Count('id'))}
+        if S.is_monthly(c):   # v1.67.23 (pending 270): the extra hours of each month
+            r['overage'] = [dict(o, included=RW.num(o['included']), used=RW.num(o['used']), over=RW.num(o['over']), rate=RW.num(o['rate']),
+                                 amount=RW.num(o['amount'])) for o in S.overage_months(c)]
+            r['can_bill_overage'] = A.can(request, 'billing_edit') or A.can(request, 'amc_change')
         return Response(r)
 
     @guard
@@ -1098,6 +1159,16 @@ class ContractDetailView(Base):
         return Response(RW.contract_row(save_contract(c, In(request), request.user), True))
 
     put = patch
+
+    @guard
+    def delete(self, request, pk):   # v1.73.0: Delete on the list and in bulk – only a contract not used yet (no tickets, billing, renewals)
+        A.need(request, 'amc_delete')
+        c = get_or_404(AMCContract, pk, request)
+        used = _used_answer(c, {'tickets': 'tickets', 'billing': 'billing lines', 'renewals': 'renewals'}, active=False)
+        if used is not None:
+            return used
+        c.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ContractActionView(Base):
@@ -1142,6 +1213,20 @@ class ContractActionView(Base):
         elif action == 'rebuild-billing':
             A.need(request, 'billing_edit')
             S.build_billing(c)
+        elif action == 'bill-overage':   # v1.67.23 (pending 270): bill the extra hours of a month (AMC billing line, Invoice to create)
+            if not (A.can(request, 'billing_edit') or A.can(request, 'amc_change')):
+                A.need(request, 'billing_edit')
+            m = f.s('month')
+            try:
+                y, mm = (int(x) for x in m.split('-')[:2])
+                import datetime as _dt
+                month = _dt.date(y, mm, 1)
+            except (ValueError, AttributeError):
+                raise S.ProjectsError('Choose the month (YYYY-MM).', 'month')
+            bl = S.bill_overage(c, month, request.user)
+            out = RW.contract_row(AMCContract.objects.get(pk=c.pk), True)
+            out['billed'] = RW.billing_row(bl)
+            return Response(out, status=status.HTTP_201_CREATED)
         else:
             raise Http404
         return Response(RW.contract_row(AMCContract.objects.get(pk=c.pk), True))

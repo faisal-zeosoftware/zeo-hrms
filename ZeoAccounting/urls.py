@@ -21,6 +21,8 @@ urlpatterns = [
     path('api/journals/<int:pk>/<str:action>/', V.JournalActionView.as_view()),
     path('api/clients/', V.ClientsView.as_view()),
     path('api/clients/<int:pk>/', V.ClientView.as_view()),
+    path('api/branch-connections/', V.BranchConnectionsView.as_view()),             # v1.67.28 optional by-branch connections
+    path('api/branch-connections/<int:pk>/', V.BranchConnectionView.as_view()),
     path('api/hooks/', V.HooksView.as_view()),
     path('api/hooks/<int:pk>/', V.HookView.as_view()),
     # ZEO API v1 – other applications

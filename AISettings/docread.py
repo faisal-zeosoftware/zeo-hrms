@@ -14,6 +14,7 @@ extracted TEXT (at most 6,000 characters, never the file) is sent; values verifi
 
 Nothing is saved here – the screen shows suggestions and the user decides what to fill.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import io
 import json
 import logging
@@ -67,7 +68,7 @@ def ocr_available():
     return bool(shutil.which('tesseract'))
 
 
-def _ocr_image(img_bytes, psm='3'):
+def _ocr_image(img_bytes, psm='3', lang=None):
     """Text of an image with the Tesseract program ('' when it is not installed or fails)."""
     exe = shutil.which('tesseract')
     if not exe:
@@ -87,7 +88,7 @@ def _ocr_image(img_bytes, psm='3'):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, 'page.png')
             im.save(p)
-            r = subprocess.run([exe, p, 'stdout', '--psm', str(psm)], capture_output=True, timeout=OCR_TIMEOUT)
+            r = subprocess.run([exe, p, 'stdout', '--psm', str(psm)] + (['-l', lang] if lang else []), capture_output=True, timeout=OCR_TIMEOUT)   # v1.73.10 lang
             return r.stdout.decode('utf-8', 'replace')
     except Exception as exc:
         log.warning('OCR failed: %s', exc)
@@ -104,7 +105,7 @@ def _pdf_text(data):
         return ''
 
 
-def _pdf_ocr(data):
+def _pdf_ocr(data, lang=None, max_pages=None):
     """OCR of a scanned PDF: pages rendered with pdftoppm (poppler) when present, else the images inside the PDF."""
     if not ocr_available():
         return ''
@@ -116,19 +117,19 @@ def _pdf_ocr(data):
                 src = os.path.join(d, 'in.pdf')
                 with open(src, 'wb') as fh:
                     fh.write(data)
-                subprocess.run([exe, '-r', '250', '-l', str(MAX_PAGES), '-png', src, os.path.join(d, 'p')], capture_output=True, timeout=OCR_TIMEOUT)
+                subprocess.run([exe, '-r', '250', '-l', str(max_pages or MAX_PAGES), '-png', src, os.path.join(d, 'p')], capture_output=True, timeout=OCR_TIMEOUT)
                 for name in sorted(os.listdir(d)):
                     if name.endswith('.png'):
                         with open(os.path.join(d, name), 'rb') as fh:
-                            out.append(_ocr_image(fh.read()))
+                            out.append(_ocr_image(fh.read(), lang=lang))
             return '\n'.join(out)
         except Exception as exc:
             log.info('pdftoppm failed: %s', exc)
     try:
         from pypdf import PdfReader
-        for p in PdfReader(io.BytesIO(data)).pages[:MAX_PAGES]:
+        for p in PdfReader(io.BytesIO(data)).pages[:max_pages or MAX_PAGES]:
             for img in p.images[:2]:
-                out.append(_ocr_image(img.data))
+                out.append(_ocr_image(img.data, lang=lang))
     except Exception as exc:
         log.info('PDF images not readable: %s', exc)
     return '\n'.join(out)
@@ -172,7 +173,7 @@ def _yymmdd(s, birth=False):
     if not re.fullmatch(r'\d{6}', s):
         return None
     yy, mm, dd = int(s[:2]), int(s[2:4]), int(s[4:])
-    cur = date.today().year % 100
+    cur = _zt_today().year % 100
     year = (1900 + yy if yy > cur else 2000 + yy) if birth else (2000 + yy if yy < 70 else 1900 + yy)
     try:
         return date(year, mm, dd)
@@ -431,7 +432,7 @@ def analyse(name, text, types, source=''):
         birth = birth or labelled_date(text, 'birth')
         if not expiry or not issue:   # unlabelled dates: earliest future = expiry, latest past (not the birth date) = issue
             ds = sorted(set(all_dates(text)) - {birth, issue, expiry})
-            today = date.today()
+            today = _zt_today()
             if not expiry:
                 fut = [d for d in ds if d > today]
                 if fut:

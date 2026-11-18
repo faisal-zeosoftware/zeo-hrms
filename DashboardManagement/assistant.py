@@ -23,6 +23,7 @@ Safety
   (AISettings.AICallLog); on any error the answer falls back to the built-in mode. ANTHROPIC_API_KEY,
   ZEO_AI_MODEL and ZEO_AI_URL in .env are no longer used.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import json
 import logging
 import os
@@ -417,7 +418,10 @@ TOOLS = [
         'and get up to 100 rows. Every report has the columns employee ("Full name (code)"), branch, department, designation, category unless it is about '
         'something else (assets, jobs, departments). Text matching is case-insensitive. Values are readable (e.g. status "Approved", "Pending", "Expired"). '
         'Dates are YYYY-MM-DD. Use limit 0 to only see the columns and totals. Reports with a period need date_from and date_to, else they use their default '
-        '(this month or this year). The result has report_link and, per row, open: links to show the user.'),
+        '(this month or this year). A list report of an app register filters its period on ONE date (its note "Period on: …" says which, usually the start or '
+        'created date): for questions about another date – leases or contracts ending, documents or warranties expiring, items due – give the wide period '
+        'date_from 1901-01-01, date_to 2998-12-31 and filter that date column with "where" (gte / lte). '   # v1.73.2: "leases expiring" missed a lease started last year
+        'The result has report_link and, per row, open: links to show the user.'),
      'input_schema': {'type': 'object', 'properties': {
          'key': {'type': 'string', 'description': 'Report key from list_reports'},
          'date_from': {'type': 'string', 'description': 'YYYY-MM-DD'},
@@ -467,7 +471,7 @@ KIT_SUITES = {'crm': 'CRM', 'property': 'Property', 'maintenance': 'Maintenance'
 def system_prompt(request, suite=''):
     from AccessControl.access import ctx
     c = ctx(request)
-    today = date.today()
+    today = _zt_today()
     who = getattr(request.user, 'username', 'user')
     emp = c.emp
     name = ' '.join(x for x in [getattr(emp, 'emp_first_name', ''), getattr(emp, 'emp_last_name', '')] if x) if emp else ''
@@ -534,6 +538,28 @@ PERIODS = [
     (r'\blast year\b', lambda t: (date(t.year - 1, 1, 1), date(t.year - 1, 12, 31))),
     (r'\bthis year\b', lambda t: (date(t.year, 1, 1), date(t.year, 12, 31))),
 ]
+_MON = {m: i for i, m in enumerate(('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'), start=1)}
+
+
+def named_month(q, t):
+    """v1.72.0 – (first day, last day) of a month named in the question: "february 2027", "feb 2027", "02/2027", "2027-02"; a month
+    without a year is the last such month up to now. (None, None) when no month is named."""
+    import calendar
+    m = re.search(r'\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)(?:uary|ruary|ch|il|e|y|ust|t|tember|ober|ember)?\b\.?\s*(\d{4})?\b', q)
+    y = mo = None
+    if m and (m.group(2) or not re.search(r'\bmay\b', q) or re.search(r'\bmay\s+\d{4}', q)):
+        mo = _MON[m.group(1)]
+        y = int(m.group(2)) if m.group(2) else (t.year if mo <= t.month else t.year - 1)
+    else:
+        m = re.search(r'\b(0?[1-9]|1[0-2])/(\d{4})\b', q) or re.search(r'\b(\d{4})-(0[1-9]|1[0-2])\b', q)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            y, mo = (b, a) if a <= 12 else (a, b)
+    if not y:
+        return None, None
+    return date(y, mo, 1), date(y, mo, calendar.monthrange(y, mo)[1])
+
+
 WORDS = {   # words → report key (checked in order)
     'wps': 'wps', 'sif': 'wps', 'gratuity': 'gratuity', 'liability': 'leave-liability', 'loan': 'loans', 'advance': 'advances',
     'air ticket': 'air-tickets', 'ticket': 'air-tickets', 'payslip': 'payroll-register', 'net pay': 'payroll-register', 'payroll': 'payroll-register',
@@ -561,8 +587,12 @@ PJ_WEAK = [(r'\btickets?\b', 'pj:tickets'), (r'\btasks?\b', 'pj:tasks-by-employe
 
 # v1.22.0: CRM / Property / Maintenance words – used in those apps (and anywhere for the unmistakable ones)
 KIT_WORDS = {
-    'crm': [(r'pipeline|stage', 'crm-pipeline'), (r'\bagents?\b|won|lost|win rate', 'crm-agents'), (r'source|campaign|channel', 'crm-sources'),
-            (r'listing', 'crm-listing'), (r'opportunit|deal|lead', 'crm-opportunity'), (r'contact|client|customer', 'crm-contact')],
+    # v1.73.2 (Ask ZEO test): lead scores, follow-ups, quotations, complaints, contracts and close dates have their own CRM reports
+    'crm': [(r'\blead.*\bscor|\bscor.*\blead|\b(hot|best|top|warm) leads?\b', 'crm-ai-lead-scores'), (r'follow-?ups?|overdue (calls?|activit|tasks?)', 'crm-followups'),
+            (r'\bclos(e|es|ing)\b.*\b(this|next) (month|quarter)|\bforecast', 'crm-forecast'), (r'quotations?\b|\bquotes?\b', 'crm-quotation'),
+            (r'complaints?', 'crm-complaints'), (r'contracts?.*expir|expir.*contracts?', 'crm-contracts-expiring'),
+            (r'pipeline|stage', 'crm-pipeline'), (r'\bagents?\b|won|lost|win rate', 'crm-agents'), (r'source|campaign|channel', 'crm-sources'),
+            (r'listing', 'crm-listing'), (r'\bleads?\b', 'crm-lead'), (r'opportunit|deal', 'crm-opportunity'), (r'contact|client|customer', 'crm-contact')],
     'property': [(r'occupan|vacan|empty unit', 'prop-occupancy'), (r'rent roll|\brent\b', 'prop-rent-roll'), (r'aged|overdue|outstanding|arrears|receivable', 'prop-aged'),
                  (r'cheque|bill|invoice|due', 'prop-bill'), (r'receipt|paid|collection', 'prop-receipt'), (r'commission', 'prop-commission'),
                  (r'reservation|booking', 'prop-reservation'), (r'sale', 'prop-sale'), (r'lease|tenancy|renewal|expir', 'prop-lease'),
@@ -581,7 +611,8 @@ KIT_WORDS = {
                (r'leader|top recognis|most recognis|points', 'ppl-recognition-leaders'), (r'award', 'ppl-award'), (r'recogni|thank', 'ppl-recognition'), (r'reward|redeem', 'ppl-reward'),
                (r'competenc', 'ppl-competency'), (r'360|summary', 'ppl-360-summary'), (r'review', 'ppl-review-360'), (r'development plan|pdp|plan', 'ppl-development-plan')],
 }
-KIT_STRONG = [(r'rent roll', 'prop-rent-roll'), (r'occupancy', 'prop-occupancy'), (r'work ?orders?', 'mnt-work-order'), (r'sales pipeline|opportunit', 'crm-pipeline')]
+KIT_STRONG = [(r'rent roll', 'prop-rent-roll'), (r'occupancy', 'prop-occupancy'), (r'work ?orders?', 'mnt-work-order'),
+              (r'\blead.*\bscor|\bscor.*\blead', 'crm-ai-lead-scores'), (r'sales pipeline', 'crm-pipeline')]   # v1.73.2: "opportunit" left to the CRM words
 
 
 def pick_report(q, suite):
@@ -665,7 +696,7 @@ def _settings_answer(request, q):
 def ask_basic(request, question, branch, suite=''):
     """Without an AI key: find the report by its words, the period and values named in the question; give the count and totals."""
     from .reports import REPORTS
-    t = date.today()
+    t = _zt_today()
     q = question.lower()
     if re.search(r'workflow|automation|approval flow|execution log|scheduled action|runs? failed|failed runs?', q) or \
             (suite == 'settings' and re.search(r'approval|rule|run|user|compan|apps?\b|licen', q)):   # v1.38.0 Settings suite: automation, approvals, users, apps
@@ -738,6 +769,8 @@ def ask_basic(request, question, branch, suite=''):
                 'Try for example: *How many leave requests are pending?*'), []
     tools = Tools(request, branch)
     period = next(((a, b) for pat, f in PERIODS if re.search(pat, q) for a, b in [f(t)]), (None, None))
+    if period == (None, None):   # v1.72.0 fix: a named month ("February 2027", "Feb 2027", "02/2027") was ignored – the current month was used
+        period = named_month(q, t)
     probe = tools.run_report(key, date_from=period[0], date_to=period[1], limit=0)
     if probe.get('error'):
         if 'may not' in probe['error']:
@@ -750,7 +783,10 @@ def ask_basic(request, question, branch, suite=''):
         vals = {str(r.get(col)).strip() for r in d['rows'] if r.get(col) not in (None, '')}
         if len(vals) > 400:
             continue
-        hits = [v for v in vals if len(v) > 2 and re.search(r'(?<![\w])' + re.escape(v.lower().split(' (')[0]) + r'(?![\w])', q)]
+        hits = [v for v in vals if len(v) > 2 and (re.search(r'(?<![\w])' + re.escape(v.lower().split(' (')[0]) + r'(?![\w])', q)
+                                                   # v1.73.0: or the code in brackets – "Grace Mendoza (DPT-005)" is found by "dpt-005"
+                                                   or any(len(x) > 3 and re.search(r'(?<![\w-])' + re.escape(x) + r'(?![\w-])', q)
+                                                          for x in re.findall(r'\(([^()]+)\)', v.lower())))]
         if hits:
             where.append({'column': col, 'op': 'in', 'value': sorted(hits, key=len, reverse=True)[:5]})
     if re.search(r'pending|waiting', q) and not any(w['column'] == 'status' for w in where) and 'status' in {c['key'] for c in d['columns']}:

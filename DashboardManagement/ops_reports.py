@@ -10,6 +10,7 @@ v1.17.0 (dash17) – two report-centre lists behind the HR operations dashboard 
 
 The dashboard counts its figures FROM these functions (overview.Calc), so a figure is always the number of rows its click shows.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.apps import apps
 from django.utils import timezone
 
@@ -32,7 +33,7 @@ def _type_label(key):
 
 def r_requests_pending(run):
     from .services import REQUESTS, _date_of
-    today = timezone.localdate()
+    today = _zt_today()
     rows = []
     for key, label, rm, am, fk, dfield, summ in REQUESTS:
         RM, AM = _m(rm), _m(am)
@@ -98,7 +99,7 @@ def r_expiry_all(run):
     """v1.17.0 (audit C1): the CURRENT document of each employee + type (renewed / superseded copies left out, the employee
     document or the identity file – whichever expires last), so a figure is never inflated by old copies or counted twice."""
     from .documents import current_documents
-    today = timezone.localdate()
+    today = _zt_today()
     emps = {e.pk: e for e in run.employees}
     rows = []
     for d in current_documents(emps.keys(), today):
@@ -157,7 +158,7 @@ def r_sessions(run):
     S = _m('LearningManagement.TrainingSession')
     if S is None:
         return [], [], {}
-    today = timezone.localdate()
+    today = _zt_today()
     rows = []
     for x in S.objects.select_related('course').order_by('start_date'):
         rows.append({'session': x.code, 'course': x.course.title if x.course_id else '', 'start': x.start_date, 'end': x.end_date,

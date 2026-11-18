@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from import_export import resources,fields,widgets
 import phonenumbers
 from phonenumbers import NumberParseException
@@ -420,7 +421,7 @@ class EmployeeResource(resources.ModelResource):
         try:
             _dob = CustomDateWidget().clean(row.get('Date of Birth(DD/MM/YYYY)*'))
             _join = CustomDateWidget().clean(row.get('Joining Date(DD/MM/YYYY)*'))
-            if _dob and _dob > date.today():
+            if _dob and _dob > _zt_today():
                 errors.append('Date of Birth cannot be in the future.')
             elif _dob and _join and (_join.year - _dob.year - ((_join.month, _join.day) < (_dob.month, _dob.day))) < 18:
                 errors.append('The employee must be at least 18 years old on the joining date (UAE minimum age for employment).')
@@ -664,7 +665,8 @@ class DocumentResource(resources.ModelResource):
 
     def after_import_instance(self, instance, new, **kwargs):
         """Check expiry after importing each document instance."""
-        today = timezone.now().date()
+        from .tasks import _company_today
+        today = _company_today()[0]   # v1.70.2: the company's date, not UTC
         expiry_date = instance.emp_doc_expiry_date
 
         try:

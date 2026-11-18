@@ -106,7 +106,8 @@ class emp_master(models.Model):
         # Confirmation date = joining date + the branch's probation period, unless a date was entered.
         # It is worked out again when the joining date changes and the old date was the worked-out one.
         if self.emp_joined_date and self.emp_branch_id and self.emp_branch_id.probation_period_days is not None:
-            auto = self.emp_joined_date + timedelta(days=self.emp_branch_id.probation_period_days)
+            from EmpManagement.probation import probation_end as _pe   # v1.67.24 (L-BUG-20)
+            auto = _pe(self.emp_joined_date, self.emp_branch_id.probation_period_days)
             if not self.emp_date_of_confirmation:
                 self.emp_date_of_confirmation = auto
             elif self.pk:
@@ -114,7 +115,7 @@ class emp_master(models.Model):
                 if old and old['emp_joined_date'] != self.emp_joined_date and old['emp_joined_date']:
                     old_branch = self.emp_branch_id if old['emp_branch_id'] == self.emp_branch_id_id else None
                     days = (old_branch or self.emp_branch_id).probation_period_days
-                    if old['emp_date_of_confirmation'] == old['emp_joined_date'] + timedelta(days=days) and self.emp_date_of_confirmation == old['emp_date_of_confirmation']:
+                    if old['emp_date_of_confirmation'] in (old['emp_joined_date'] + timedelta(days=days), _pe(old['emp_joined_date'], days)) and self.emp_date_of_confirmation == old['emp_date_of_confirmation']:
                         self.emp_date_of_confirmation = auto
         if self.person_id == '':
             self.person_id = None
@@ -780,8 +781,8 @@ class Emp_Documents(models.Model):
 
 
 def check_document_expiry_and_notify(document):
-    from .tasks import send_document_notification, send_template_email
-    today = timezone.now().date()
+    from .tasks import send_document_notification, send_template_email, _company_today
+    today = _company_today()[0]   # v1.70.2: the company's date (UTC is the day before until 04:00 in Dubai – "in 6 days" for 5)
     expiry_date = document.emp_doc_expiry_date
     employee = document.emp_id
     branch = employee.emp_branch_id
@@ -1564,8 +1565,15 @@ def create_initial_general_approval(sender, instance, created, **kwargs):   # v1
             approval_type = workflow.approval_type
             if approval_type == 'multi_approval' and not (first_level and first_level.approver):
                 approval_type = 'no_approval'
+                # v1.73.1 (ESS test B9) a multi-level workflow without levels: the reporting manager decides (it was approved at once)
+                if getattr(instance.employee, 'emp_reporting_manager_id', None):
+                    approval_type = 'reporting_manager'
         else:
             approval_type = 'multi_approval' if instance.request_type.use_common_workflow else 'no_approval'
+            # v1.73.1 (ESS test B9) a request type HR never gave an approval workflow went straight to "Approved" – nobody approved
+            # it. It now goes to the reporting manager; only a workflow set to "No approval" approves automatically.
+            if approval_type == 'no_approval' and getattr(instance.employee, 'emp_reporting_manager_id', None):
+                approval_type = 'reporting_manager'
 
         # ---------------- NO APPROVAL ----------------
         if approval_type == 'no_approval':
@@ -1892,10 +1900,18 @@ class DocumentRequest(models.Model):
             workflow = DocumentApprovalWorkflow.objects.filter(
                 request_type=self.request_type
                 ).first()
+        # v1.73.1 (ESS test B9) a document type without a workflow / levels goes to the reporting manager (below in
+        # create_initial_document_approval): the manager's approval finishes it
+        _rm_fallback = self.doc_approvals.filter(role="Reporting Manager").exists()
         if not workflow:
-            return
-        
-        approval_type = workflow.approval_type
+            if not _rm_fallback:
+                return
+            approval_type = "reporting_manager"
+        else:
+            approval_type = workflow.approval_type
+            if (approval_type == "multi_approval" and _rm_fallback
+                    and not workflow.document_levels.exclude(approver=None).exists()):
+                approval_type = "reporting_manager"
 
         # ---------------- MINIMUM APPROVAL ----------------
         approved_count = self.doc_approvals.filter(
@@ -2179,7 +2195,11 @@ def create_initial_document_approval(sender, instance, created, **kwargs):   # v
         # v1.37.1: no workflow / no level for this document type → approved automatically (it used to fail with a server error)
         approval_type = workflow.approval_type if workflow else 'no_approval'
         if approval_type == 'multi_approval' and not workflow.document_levels.exclude(approver=None).exists():
-            approval_type = 'no_approval'
+            approval_type = 'no_approval' if not getattr(instance.employee, 'emp_reporting_manager_id', None) else 'reporting_manager'
+        # v1.73.1 (ESS test B9) no workflow for this document type: the reporting manager approves (it was approved at once,
+        # by nobody); only a workflow set to "No approval" approves automatically
+        if not workflow and getattr(instance.employee, 'emp_reporting_manager_id', None):
+            approval_type = 'reporting_manager'
 
         # -------------------------------------------------
         # NO APPROVAL
@@ -2445,7 +2465,7 @@ class EmployeeResignation(models.Model):
                 notification_type="resignation",
                 message=(f"Your ResignationRequest {self.termination_type}"
                         f"(Document No: {self.document_number}) has been Approved."),
-                template_type="request_approved",
+                template_type="resignation_approved",   # v1.73.2: resignation templates are resignation_*; "request_approved" sent nothing
                 context={
                      **get_employee_context(self.employee),
                     'document_date': self.document_date,
@@ -2477,7 +2497,7 @@ class EmployeeResignation(models.Model):
                 notification_type="resignation",
                 message=(f"Your ResignationRequest {self.termination_type}"
                         f"(Document No: {self.document_number})has been AutoApproved."),
-                template_type="request_approved",
+                template_type="resignation_approved",   # v1.73.2: resignation templates are resignation_*; "request_approved" sent nothing
                 context={
                      **get_employee_context(self.employee),
                     'document_date': self.document_date,
@@ -2512,7 +2532,7 @@ class EmployeeResignation(models.Model):
                 notification_type="resignation",
                 message=(f"Your ResignationRequest {self.termination_type}"
                         f"(Document No: {self.document_number}) has been Approved by ReportingManager."),
-                template_type="request_approved",
+                template_type="resignation_approved",   # v1.73.2: resignation templates are resignation_*; "request_approved" sent nothing
                 context={
                      **get_employee_context(self.employee),
                     'document_date': self.document_date,

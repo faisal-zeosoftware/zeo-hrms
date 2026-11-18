@@ -7,6 +7,7 @@ A report of an app that is not active in the company is hidden (Settings → App
 
     REPORTS spec: key → (title, section, description, fn(run), period, permission codes)
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from collections import defaultdict
 from datetime import date, timedelta
@@ -362,7 +363,7 @@ def _property(a):
                 ('tenant', 'Tenant', 'text'), ('start', 'Start', 'date'), ('end', 'End', 'date'), ('annual_rent', 'Annual rent', 'number')], rows
 
     def aged(run):
-        t = date.today()
+        t = _zt_today()
         qs = _branch_pick(run, a.regs['bill'].scope(run.request), 'branch').filter(status__in=('issued', 'part_paid')).select_related('party')
         data = defaultdict(lambda: {'current': 0.0, 'd30': 0.0, 'd60': 0.0, 'd90': 0.0, 'over90': 0.0})
         for b in qs:
@@ -614,7 +615,7 @@ def _property(a):
         leases = scope(run, 'lease', Lease).filter(status__in=LIVE).select_related('unit')
         bills = live_bills(run)
         got = collected(run, bills)
-        today = date.today()
+        today = _zt_today()
         over = {x['unit_id']: float(x['v'] or 0) for x in bills.filter(status__in=('issued', 'part_paid'), due_date__lt=today).values('unit_id').annotate(v=Sum('total') - Sum('paid'))}
         bill_unit = {x['id']: x['unit_id'] for x in bills.filter(id__in=got).values('id', 'unit_id')}
         groups = defaultdict(lambda: {'units': [], 'let': 0, 'rent_roll': 0.0, 'collected': 0.0, 'overdue': 0.0, 'loss': 0.0, 'sqft': [], 'valuation': 0.0, '_url': ''})
@@ -666,7 +667,7 @@ def _property(a):
                  ('last_read', 'Last reading', 'date')], rows, {'filters': ['building', 'kind']})
 
     def listings(run):
-        today = date.today()
+        today = _zt_today()
         rows = []
         for l in scope(run, 'listing', Listing).exclude(status='draft').select_related('unit__building', 'agent'):
             days = None
@@ -802,7 +803,21 @@ def _people(a):
             'ppl-360-summary': ('360° review summary', 'People', 'Closed reviews with the overall score, strongest and weakest competencies.', reviews, None, codes)}
 
 
-KIT_EXTRA = {'crm': _crm, 'property': _property, 'maintenance': _maintenance, 'people': _people}
+def _crm_more(a):
+    """v1.67.28 CRM release 2: ageing, win / loss, conversion, acquisition, retention, churn, lifetime value, follow-ups, forecasts,
+    complaints, contracts, commissions, onboarding, enquiries, campaign ROI (ZeoCRM/general.py)."""
+    out = _crm(a)
+    try:
+        from ZeoCRM.app import AI, GENERAL, MARKETING
+        out.update(GENERAL['reports'](a))
+        out.update(MARKETING['reports'](a))   # v1.67.29
+        out.update(AI['reports'](a))          # v1.67.30
+    except Exception:
+        log.exception('CRM release 2 reports')
+    return out
+
+
+KIT_EXTRA = {'crm': _crm_more, 'property': _property, 'maintenance': _maintenance, 'people': _people}
 
 
 # ------------------------------------------------------------------ HSE

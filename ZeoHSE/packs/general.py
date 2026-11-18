@@ -14,6 +14,24 @@ RISK_MATRIX = {
     ],
 }
 
+
+def matrix_for(size):
+    """v1.67.27 (HSE scope): default labels and bands of a 3 × 3, 4 × 4 or 5 × 5 matrix. The band codes stay low / medium /
+    high / extreme so the risk approval matrix keeps working whatever the size."""
+    if size == 3:
+        return {'likelihood': ['Unlikely', 'Possible', 'Likely'], 'severity': ['Minor', 'Serious', 'Major'],
+                'bands': [{'code': 'low', 'label': 'Low', 'min': 1, 'max': 2, 'color': '#16a34a', 'block': False},
+                          {'code': 'medium', 'label': 'Medium', 'min': 3, 'max': 4, 'color': '#d97706', 'block': False},
+                          {'code': 'high', 'label': 'High', 'min': 5, 'max': 6, 'color': '#dc2626', 'block': False},
+                          {'code': 'extreme', 'label': 'Extreme', 'min': 7, 'max': 9, 'color': '#7f1d1d', 'block': True}]}
+    if size == 4:
+        return {'likelihood': ['Rare', 'Unlikely', 'Likely', 'Almost certain'], 'severity': ['Minor', 'Moderate', 'Major', 'Catastrophic'],
+                'bands': [{'code': 'low', 'label': 'Low', 'min': 1, 'max': 3, 'color': '#16a34a', 'block': False},
+                          {'code': 'medium', 'label': 'Medium', 'min': 4, 'max': 6, 'color': '#d97706', 'block': False},
+                          {'code': 'high', 'label': 'High', 'min': 7, 'max': 11, 'color': '#dc2626', 'block': False},
+                          {'code': 'extreme', 'label': 'Extreme', 'min': 12, 'max': 16, 'color': '#7f1d1d', 'block': True}]}
+    return {'likelihood': list(RISK_MATRIX['likelihood']), 'severity': list(RISK_MATRIX['severity']), 'bands': [dict(b) for b in RISK_MATRIX['bands']]}
+
 PACK = {
     'terms': {
         'incident': 'Incident', 'near_miss': 'Near miss', 'permit': 'Permit to work', 'risk_assessment': 'Risk assessment',

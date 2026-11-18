@@ -50,6 +50,8 @@ class AccountingSettings(models.Model):
     # default accounts
     payable_account = models.CharField('salaries payable', max_length=40, default='2110')
     rounding_account = models.CharField('rounding differences', max_length=40, default='6999')
+    lock_date = models.DateField('books closed up to', null=True, blank=True,   # v1.70.5
+                                 help_text='No journal may have a posting date on or before this date (the period is closed).')
     gratuity_expense_account = models.CharField('gratuity expense', max_length=40, default='6150')
     gratuity_provision_account = models.CharField('gratuity provision', max_length=40, default='2310')
     leave_expense_account = models.CharField('leave salary expense', max_length=40, default='6155')
@@ -139,7 +141,9 @@ SOURCES = (('payroll', 'Payroll run'), ('provision', 'Month-end provisions'), ('
            ('cost_allocation', 'Payroll cost allocation'),   # v1.50.0
            ('loan', 'Loans (payout, write-off)'), ('advance', 'Salary advances (payout)'),   # v1.67.11 (loans, item 117)
            ('prj_invoice', 'Projects tax invoices'), ('prj_payment', 'Projects payments'),   # v1.67.14 (billing connectors)
-           ('recovery', 'Recoveries (settled early, written off)'))   # v1.67.15 (C11)
+           ('recovery', 'Recoveries (settled early, written off)'),   # v1.67.15 (C11)
+           ('payroll_pay', 'Salary payments'),   # v1.67.22 (pending C3): Payroll run › Payments › Mark paid
+           ('air_ticket', 'Air tickets bought'))   # v1.67.22 (pending C12): agency invoice / company card
 STATUS = (('draft', 'Draft – check it'), ('ready', 'Ready to post'), ('posting', 'Posting'), ('posted', 'Posted'), ('failed', 'Failed'),
           ('exported', 'Exported'), ('reversed', 'Reversed'), ('cancelled', 'Cancelled'))
 
@@ -150,7 +154,9 @@ class JournalBatch(models.Model):
     source = models.CharField(max_length=16, choices=SOURCES)   # v1.40.0: 16 for prop_commission
     source_id = models.CharField(max_length=40, blank=True, db_index=True)
     source_label = models.CharField(max_length=200, blank=True)
-    date = models.DateField()
+    date = models.DateField('posting date')   # v1.70.5: the date of the entry in the books
+    document_date = models.DateField(null=True, blank=True, help_text='v1.70.5: the date of the source document (payslip month, invoice, receipt …)')
+    posting_date_set = models.BooleanField(default=False, help_text='v1.70.5: the posting date was changed by a user – a rebuild keeps it')
     reference = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=10, choices=STATUS, default='draft', db_index=True)
     connector = models.CharField(max_length=10, blank=True)
@@ -236,7 +242,36 @@ class ApiClientHook(models.Model):
     name = models.CharField(max_length=100)
     url = models.URLField()
     events = models.JSONField(default=list, blank=True, help_text='["journal.ready", "journal.posted"]')
+    branches = models.JSONField('only the journals of these branches', default=list, blank=True,
+                                help_text='v1.67.28: [branch id, …]; empty = every journal')
     secret = models.CharField(max_length=100, blank=True, help_text='HMAC-SHA256 signature key (X-ZEO-Signature)')
     is_active = models.BooleanField(default=True)
     last_status = models.CharField(max_length=120, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class BranchConnection(models.Model):
+    """v1.67.28 (optional by-branch connections): a branch posts to its own Odoo database / company or Zoho Books organisation.
+    Off by default – a branch without a row (or with the row switched off) uses the company connection of AccountingSettings.
+    The posting rules (accounts, dimensions, journals of the company settings) stay the same; only where the journal goes changes.
+    Journals are built per branch when at least one branch connection is on (Accounting › Settings › Branch connections)."""
+    branch_id = models.IntegerField(unique=True)
+    connector = models.CharField(max_length=10, choices=(('odoo', 'Odoo'), ('zoho', 'Zoho Books')), default='odoo')
+    active = models.BooleanField(default=True)
+    odoo_url = models.CharField(max_length=200, blank=True)
+    odoo_db = models.CharField(max_length=100, blank=True)
+    odoo_login = models.CharField('Odoo user (login)', max_length=150, blank=True)
+    odoo_api = models.CharField('Odoo API', max_length=8, choices=(('json2', 'JSON-2 (Odoo 19 and later)'), ('xmlrpc', 'XML-RPC (Odoo 18 and earlier)')),
+                                default='json2')
+    odoo_company_id = models.IntegerField('Odoo company id', null=True, blank=True)
+    journal_code = models.CharField('journal (Odoo code / Zoho notes) – empty: the company setting', max_length=20, blank=True)
+    zoho_api_domain = models.CharField('Zoho API domain', max_length=120, default='https://www.zohoapis.com', blank=True)
+    zoho_accounts_domain = models.CharField('Zoho accounts domain', max_length=120, default='https://accounts.zoho.com', blank=True)
+    zoho_org_id = models.CharField('Zoho organisation id', max_length=40, blank=True)
+    zoho_client_id = models.CharField(max_length=120, blank=True)
+    secrets = models.JSONField(default=dict, blank=True)   # encrypted like AccountingSettings.secrets, never sent to the browser
+    last_status = models.CharField(max_length=160, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['branch_id']

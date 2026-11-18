@@ -150,3 +150,41 @@ class PushTestView(APIView):
             p.last_test_at, p.last_test_result = timezone.now(), e.result[:255]
             p.save(update_fields=['last_test_at', 'last_test_result'])
         return Response({'result': e.result, 'sent': e.sent, 'devices': e.devices})
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 237) Teams and Slack
+class ChatWebhooksView(APIView):
+    """GET / PUT {slack, teams (webhook addresses; empty = remove), events: [...]} – Settings › Integrations › Teams and Slack."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from . import chatwebhooks as W
+        if not is_admin(request):
+            return bad('Administrators only.', 403)
+        return Response(W.settings_view())
+
+    def put(self, request):
+        from . import chatwebhooks as W
+        if not is_admin(request):
+            return bad('Administrators only.', 403)
+        try:
+            return Response(W.save(request.data))
+        except ValueError as e:
+            return bad(str(e))
+
+
+class ChatWebhooksTestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from . import chatwebhooks as W
+        if not is_admin(request):
+            return bad('Administrators only.', 403)
+        try:
+            b = (request.data or {}).get('branch')   # v1.67.28: test a branch's own channel
+            out = W.test(int(b) if str(b or '').isdigit() else None)
+        except ValueError as e:
+            return bad(str(e))
+        bad_ = {k: v for k, v in out.items() if not v.get('ok')}
+        return Response({'results': out, 'detail': ('Sent.' if not bad_ else 'Not delivered: ' + ', '.join(f'{k} ({v["status"]})' for k, v in bad_.items()))},
+                        status=200 if not bad_ else 502)

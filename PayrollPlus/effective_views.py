@@ -1,4 +1,5 @@
 # v1.67.12 (effective): new module
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.67.12 (effective) – API of the dated setup versions and of the GPSSA first-insured date.
 
 GET  api/rule-versions/?kind=leave_policy&id=3      the versions of a record (oldest first) with what changed in each
@@ -48,7 +49,7 @@ class RuleVersionsView(Base):
         rows = EFF.history(kind, oid)
         for r in rows:   # the field names and Yes / No / Added are translated in effective._diff
             r['note'] = tr(r['note']) if r['note'] else ''
-        return Response({'kind': kind, 'object_id': oid, 'versions': rows, 'today': date.today().isoformat()})
+        return Response({'kind': kind, 'object_id': oid, 'versions': rows, 'today': _zt_today().isoformat()})
 
 
 def _emp(pk):
@@ -66,10 +67,21 @@ def _pension_json(e):
     except Exception:
         nat = False
     law = LG.pension_law(e, row.scheme if row is not None and row.scheme == 'adpf' else 'gpssa')
-    return {'employee_id': e.pk, 'joined_date': e.emp_joined_date, 'is_national': nat,
-            'first_insured': row.first_insured if row else None, 'scheme': row.scheme if row else 'gpssa', 'note': row.note if row else '',
-            'law': law['law'], 'law_from': law['from'], 'law_basis': law['basis'], 'cut_off': law['cut_off'],
-            'settings': LG.pension_settings()}
+    out = {'employee_id': e.pk, 'joined_date': e.emp_joined_date, 'is_national': nat,
+           'first_insured': row.first_insured if row else None, 'scheme': row.scheme if row else 'gpssa', 'note': row.note if row else '',
+           'law': law['law'], 'law_from': law['from'], 'law_basis': law['basis'], 'cut_off': law['cut_off'],
+           'settings': LG.pension_settings(), 'authority': 'GPSSA'}
+    try:   # v1.70.0 (item 146): a Saudi branch – GOSI, "first insured" from 03/07/2024 = the new contribution schedule
+        from . import country170 as C170
+        if C170.country(e) == 'SA':
+            d, basis = LG.insured_from(e, 'gosi')
+            on = _zt_today()
+            emp_r, er_r, lw = C170.gosi_annuity_rate(e, on)
+            out.update(authority='GOSI', is_national=C170.is_national(e, 'SA'), scheme=row.scheme if row else 'gosi', law=lw, law_from=d,
+                       law_basis=basis, cut_off=C170.SA_GOSI_NEW_FROM, rate_now={'employee': float(emp_r), 'employer': float(er_r)})
+    except Exception:
+        pass
+    return out
 
 
 class PensionView(Base):
@@ -88,7 +100,7 @@ class PensionView(Base):
         day = parse_date(str(raw)[:10]) if raw else None
         if raw and day is None:
             return Response({'first_insured': tr('Enter a valid date.')}, status=400)
-        if day and day > date.today():
+        if day and day > _zt_today():
             return Response({'first_insured': tr('The date first insured cannot be in the future.')}, status=400)
         scheme = d.get('scheme') or 'gpssa'
         if scheme not in dict(M('PayrollPlus', 'EmployeePension').SCHEMES):

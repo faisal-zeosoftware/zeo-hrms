@@ -1,4 +1,5 @@
 # v1.62.11 (item 18b): new module – opening accrued balances in bulk (Excel import, grid of one component)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.62.11 (item 18b) – opening balances of "Accrue now – pay later" components for many employees at once.
 
 * Excel template (employee_code, component_code, amount, as_of_date) → dry run with the errors of each row → apply the rows without
@@ -93,7 +94,7 @@ def template_xlsx():
     E = M('EmpManagement', 'emp_master')
     ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
     comps = accrued_components()
-    asof = date(date.today().year - 1, 12, 31)
+    asof = date(_zt_today().year - 1, 12, 31)
     for key, c in sorted(comps.items()):
         ids = [x.pk for x in A.twins(c)]
         emps = E.objects.filter(is_active=True, salary_structures__component_id__in=ids, salary_structures__is_active=True).distinct().order_by('emp_code')
@@ -199,7 +200,7 @@ def grid(comp, allowed=None):
         rows.append({'employee_id': e.pk, 'emp_code': e.emp_code or '', 'employee': ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x),
                      'amount': str(op.amount) if op else '', 'as_of': op.month.isoformat() if op else '', 'active': bool(e.is_active)})
     return {'component': {'id': comp.pk, 'code': comp.code or '', 'name': comp.name}, 'rows': rows,
-            'default_as_of': date(date.today().year - 1, 12, 31).isoformat()}
+            'default_as_of': date(_zt_today().year - 1, 12, 31).isoformat()}
 
 
 @transaction.atomic

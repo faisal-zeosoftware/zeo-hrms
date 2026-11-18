@@ -14,6 +14,7 @@ Anonymise (Settings → Data retention and privacy; or the daily job when *autom
 Export (PDPL / GDPR access request): every record linked to the employee, as one CSV per record type and one JSON file, with
 the employee's own files, in a zip.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import csv
 import io
 import json
@@ -75,7 +76,7 @@ def due(p=None, today=None):
     """Employees who left at least N years ago and are not anonymised yet: [(emp, left_on)]."""
     from .models import AnonymisedEmployee
     p = p or policy()
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     if not p.anonymise_after_years:
         return []
     E = M('EmpManagement.emp_master')
@@ -291,10 +292,10 @@ def export(emp, by=None, self_service=False):
             z.writestr(f'csv/{m._meta.label}.csv', '﻿' + s.getvalue())
         z.writestr('all-data.json', json.dumps(allj, ensure_ascii=False, indent=1))
         z.writestr('README.txt', (
-            f'All the data ZEO HRMS keeps about employee {emp.emp_code}, exported on {timezone.localdate():%d/%m/%Y}.\n\n'
+            f'All the data ZEO HRMS keeps about employee {emp.emp_code}, exported on {_zt_today():%d/%m/%Y}.\n\n'
             f'all-data.json – every record, by record type ({nrec} records)\ncsv/ – the same records, one CSV file per record type\n'
             f'files/ – the documents and photos of the employee ({nfiles} files)\n\n'
             'Secret values (passwords, codes, face templates) are never exported. Records about other people that only name the '
             'employee (for example candidates the employee referred) are not included.\n'))
     PrivacyExport.objects.create(employee_id=emp.pk, emp_code=emp.emp_code or '', records=nrec, files=nfiles, by=by, self_service=self_service)
-    return buf.getvalue(), f'zeo-data-{emp.emp_code or emp.pk}-{timezone.localdate().isoformat()}.zip', nrec, nfiles
+    return buf.getvalue(), f'zeo-data-{emp.emp_code or emp.pk}-{_zt_today().isoformat()}.zip', nrec, nfiles

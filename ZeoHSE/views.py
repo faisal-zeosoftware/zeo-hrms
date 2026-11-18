@@ -293,7 +293,7 @@ class LookupsView(Base):
                            for c in IncidentCategory.objects.filter(is_active=True)],
             'employees': [{'id': e.pk, 'name': S.emp_name(e), 'code': e.emp_code} for e in A.in_branches(emp_master.objects.filter(is_active=True), request, 'emp_branch_id').order_by('emp_first_name')[:3000]]
             if hasattr(emp_master, 'is_active') else [{'id': e.pk, 'name': S.emp_name(e), 'code': e.emp_code} for e in emp_master.objects.all()[:3000]],
-            'matrix': {'likelihood': s.likelihood_labels, 'severity': s.severity_labels, 'bands': s.risk_bands},
+            'matrix': {'likelihood': s.likelihood_labels, 'severity': s.severity_labels, 'bands': s.risk_bands, 'size': s.matrix_size or 5},   # v1.67.27 size
             'roles': choices(ROLES), 'industries': choices(INDUSTRIES),
             'risk_kinds': choices(RiskAssessment.KINDS), 'permit_status': choices(Permit.STATUS), 'incident_status': choices(Incident.STATUS),
             'treatments': choices(Incident.TREATMENT), 'observation_kinds': choices(Observation.KINDS), 'action_status': choices(Action.STATUS),
@@ -330,7 +330,7 @@ class SettingsView(Base):
         r = {k: getattr(s, k) for k in SETTINGS_TEXT + ('rate_multiplier', 'hours_worked_month', 'require_review', 'action_reminder_days',
                                                       'block_expired_competency', 'significance_threshold', 'incompatible_groups',
                                                       'likelihood_labels', 'severity_labels', 'risk_bands', 'industry', 'packs_installed',
-                                                      'fatigue_max_hours', 'links_off')}
+                                                      'fatigue_max_hours', 'links_off', 'matrix_size')}
         return Response(r)
 
     @guard
@@ -352,22 +352,45 @@ class SettingsView(Base):
                 setattr(s, k, max(0, f.i(k) or 0))
         if f.has('require_review'):
             s.require_review = f.b('require_review')
+        # v1.67.27 (HSE scope): 3×3, 4×4 or 5×5 – changing the size resets labels and bands to that size's defaults unless they are sent
+        n = s.matrix_size or 5
+        if f.has('matrix_size') and (f.i('matrix_size') or 5) != n:
+            new = f.i('matrix_size') or 5
+            if new not in (3, 4, 5):
+                raise S.HSEError('The risk matrix is 3 × 3, 4 × 4 or 5 × 5.', 'matrix_size')
+            from .models import RiskLine
+            from django.db.models import Q as _Q
+            used = RiskLine.objects.filter(assessment__status__in=('draft', 'submitted', 'approved')).filter(
+                _Q(likelihood__gt=new) | _Q(severity__gt=new) | _Q(residual_likelihood__gt=new) | _Q(residual_severity__gt=new))
+            if used.exists():
+                nums = sorted({x.assessment.number for x in used.select_related('assessment')[:200]})
+                raise S.HSEError(f'{len(nums)} risk assessment(s) use ratings above {new} ({", ".join(nums[:8])}{"…" if len(nums) > 8 else ""}) – '
+                                 'revise or archive them before making the matrix smaller.', 'matrix_size')
+            from .packs.general import matrix_for
+            m = matrix_for(new)
+            s.matrix_size, n = new, new
+            if not f.has('likelihood_labels'):
+                s.likelihood_labels = m['likelihood']
+            if not f.has('severity_labels'):
+                s.severity_labels = m['severity']
+            if not f.has('risk_bands'):
+                s.risk_bands = m['bands']
         for k in ('likelihood_labels', 'severity_labels'):
             if f.has(k):
                 v = f.j(k)
-                if not isinstance(v, list) or len(v) != 5 or not all(str(x).strip() for x in v):
-                    raise S.HSEError('Give 5 labels.', k)
+                if not isinstance(v, list) or len(v) != n or not all(str(x).strip() for x in v):
+                    raise S.HSEError(f'Give {n} labels.', k)
                 setattr(s, k, [str(x).strip()[:40] for x in v])
         if f.has('risk_bands'):
             bands = f.j('risk_bands')
-            covered = set()
+            covered, top = set(), n * n
             for b in bands or []:
                 lo, hi = int(b['min']), int(b['max'])
-                if lo > hi or lo < 1 or hi > 25:
-                    raise S.HSEError('Band ranges must be within 1–25.', 'risk_bands')
+                if lo > hi or lo < 1 or hi > top:
+                    raise S.HSEError(f'Band ranges must be within 1–{top}.', 'risk_bands')
                 covered |= set(range(lo, hi + 1))
-            if covered != set(range(1, 26)):
-                raise S.HSEError('The bands must cover every score from 1 to 25 exactly once.', 'risk_bands')
+            if covered != set(range(1, top + 1)):
+                raise S.HSEError(f'The bands must cover every score from 1 to {top} exactly once.', 'risk_bands')
             s.risk_bands = bands
         s.save()
         return self.get(request)
@@ -437,7 +460,7 @@ class ReviewView(Base):
 
 # ------------------------------------------------------------------ masters (configuration)
 MASTER = {
-    'sites': (Site, RW.site, ('code', 'name', 'kind', 'address'), ()),
+    'sites': (Site, RW.site, ('code', 'name', 'kind', 'address', 'operating_hours', 'emergency_contact', 'emergency_phone'), ()),   # v1.67.27 + emergency
     'contractors': (Contractor, RW.contractor, ('code', 'name', 'trade', 'contact_name', 'phone', 'email', 'trade_licence_no', 'notes'), ()),
     'templates': (FormTemplate, RW.template, ('code', 'name', 'description', 'frequency', 'kind'), ()),
     'permit-types': (PermitType, RW.permit_type, ('code', 'name', 'description', 'color'), ()),
@@ -469,6 +492,11 @@ def save_master(kind, obj, f, request):
             obj.project_id = L.check_id('projects', f.i('project_id'), 'project_id')
         if f.has('cost_center_id'):
             obj.cost_center_id = L.check_id('cost-centers', f.i('cost_center_id'), 'cost_center_id')
+        if f.has('risk_class'):   # v1.67.27 (HSE scope)
+            v = f.s('risk_class')
+            if v not in dict(Site._meta.get_field('risk_class').choices):
+                raise S.HSEError(f'"{v}" is not a site risk class.', 'risk_class')
+            obj.risk_class = v
         if not obj.code or not obj.name:
             raise S.HSEError('Code and name are required.', 'name')
     if kind == 'contractors':
@@ -635,10 +663,11 @@ def save_risk_lines(ra, lines):
         if not str(l.get('hazard', '')).strip():
             raise S.HSEError(f'Line {i}: the hazard is required.', 'lines')
         vals = {}
+        size = HSESettings.get().matrix_size or 5   # v1.67.27 (HSE scope): the company's matrix size
         for k in ('likelihood', 'severity', 'residual_likelihood', 'residual_severity'):
             v = int(l.get(k) or 0)
-            if not 1 <= v <= 5:
-                raise S.HSEError(f'Line {i}: {k.replace("_", " ")} must be 1–5.', 'lines')
+            if not 1 <= v <= size:
+                raise S.HSEError(f'Line {i}: {k.replace("_", " ")} must be 1–{size}.', 'lines')
             vals[k] = v
         if vals['residual_likelihood'] * vals['residual_severity'] > vals['likelihood'] * vals['severity']:
             raise S.HSEError(f'Line {i}: the residual risk cannot be higher than the initial risk.', 'lines')
@@ -1017,6 +1046,25 @@ class IncidentListView(Base):
         return Response(RW.jsonable(RW.incident(Incident.objects.get(pk=i.pk), True, request)), status=status.HTTP_201_CREATED)
 
 
+def _hse_delete(request, model, obj, label, counts):
+    """v1.73.0 (same screen rules): Delete on the HSE registers – only a record nothing has happened on yet (e.g. a duplicate
+    report); otherwise 409 with what refers to it (safety records are closed / cancelled, not deleted). The history keeps a
+    "Deleted" line."""
+    from DataTools.usage import used_counts_answer
+    counts = {k: v for k, v in counts.items() if v}
+    n_files = HSEFile.objects.filter(model=model, object_id=obj.pk).count()
+    if n_files:
+        counts['files'] = n_files
+    used = used_counts_answer(label, counts, active=False)
+    if used is not None:
+        return used
+    with transaction.atomic():
+        S.close_todos(model, obj.pk)
+        S.event(model, obj.pk, f'Deleted: {label}', request.user)
+        obj.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class IncidentDetailView(Base):
     zeo_model = Incident   # v1.22.0: record panel (notes, activities, files, extra fields)
     @guard
@@ -1057,6 +1105,17 @@ class IncidentDetailView(Base):
         if changed:
             S.event('incident', i.pk, ('Correction: ' + f.s('correction_reason') + ' – ' if i.status == 'closed' else 'Updated: ') + ', '.join(changed), request.user)
         return Response(RW.jsonable(RW.incident(i, True, request)))
+
+    @guard
+    def delete(self, request, pk):   # v1.73.0: a report nothing was done on yet (a duplicate) – HSE manager
+        i = get_or_404(Incident, pk, incident_scope(request))
+        A.need(A.is_manager(request), 'Only the HSE manager can delete an incident report.')
+        return _hse_delete(request, 'incident', i, f'{i.number} {i.title}'.strip() if hasattr(i, 'title') else i.number, {
+            'investigation': 0 if i.status == 'reported' else 1,
+            'corrective actions': Action.objects.filter(source='incident', source_id=i.pk).count(),
+            'claims': i.claims.count(), 'leave requests': len(i.leave_ids or []),
+            'asset damage records': 1 if i.asset_damage_id else 0, 'safety alerts': 1 if i.alert_id else 0,
+            'observations': Observation.objects.filter(escalated_incident=i).count()})
 
 
 class IncidentActionView(Base):
@@ -1217,6 +1276,14 @@ class ObservationDetailView(Base):
         S.event('observation', o.pk, f'Status {o.get_status_display()}', request.user)
         return Response(RW.observation(o, request))
 
+    @guard
+    def delete(self, request, pk):   # v1.73.0: an open observation not escalated or actioned yet – HSE staff
+        A.need(A.is_staff(request), 'Only HSE can delete observations.')
+        o = get_or_404(Observation, pk)
+        return _hse_delete(request, 'observation', o, o.number or f'Observation {o.pk}', {
+            'follow-up': 0 if o.status == 'open' else 1, 'incidents': 1 if o.escalated_incident_id else 0,
+            'corrective actions': Action.objects.filter(source='observation', source_id=o.pk).count()})
+
 
 class ObservationEscalateView(Base):
     """Serious hazard → incident workflow (near miss)."""
@@ -1365,6 +1432,13 @@ class ActionDetailView(Base):
         if changes:
             S.event('action', a.pk, 'Changed: ' + '; '.join(changes), request.user)
         return Response(RW.action(a, True))
+
+    @guard
+    def delete(self, request, pk):   # v1.73.0: an open action nobody has worked on (else Cancel it) – HSE staff
+        a = get_or_404(Action, pk, action_scope(request))
+        A.need(A.is_staff(request), 'Only HSE can delete the action.')
+        return _hse_delete(request, 'action', a, f'{a.number} {a.title}'.strip() if hasattr(a, 'number') else str(a), {
+            'work done': 0 if a.status == 'open' else 1})
 
 
 class ActionStepView(Base):

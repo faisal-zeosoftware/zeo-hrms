@@ -71,13 +71,51 @@ def _suffix(schema=None):
     return schema[:3].upper()
 
 
+_SYN = {'hr': 'human resource', 'it': 'information technology', 'admin': 'administration', 'acct': 'account', 'accounts': 'account',
+        'mgr': 'manager', 'asst': 'assistant', 'sr': 'senior', 'jr': 'junior', 'dept': 'department', 'compensatory': 'comp off',
+        'compoff': 'comp off', 'comp': 'comp'}
+
+
+def name_key(x):
+    """v1.67.24 (P-BUG-06 / L-BUG-21): the key two names of a standard list share when they mean the same entry – case, spaces,
+    punctuation, '&' / 'and', plural -s and common short forms (HR, IT, Accounts …) ignored. "Human Resources", "HR" and
+    "Human resource" are one department; "Sick leave" and "Sick Leave" one leave type."""
+    import re
+    t = str(x or '').lower().replace('&', ' and ')
+    t = re.sub(r'[^a-z0-9]+', ' ', t)
+    words = []
+    for w in t.split():
+        w = _SYN.get(w, w)
+        for part in w.split():
+            if part in ('and', 'the', 'of', 'leave', 'dept', 'department') and len(t.split()) > 1:
+                continue
+            if len(part) > 3 and part.endswith('ies'):
+                part = part[:-3] + 'y'
+            elif len(part) > 3 and part.endswith('s') and not part.endswith('ss'):
+                part = part[:-1]
+            words.append(part)
+    return ' '.join(words) or t.strip()
+
+
+def find_same(model, name_f, name):
+    """The existing record of a list with the same name or a near-duplicate of it (name_key), else None."""
+    obj = model.objects.filter(**{f'{name_f}__iexact': name}).first()
+    if obj is not None:
+        return obj
+    k = name_key(name)
+    for o in model.objects.all().only('pk', name_f):
+        if name_key(getattr(o, name_f, '')) == k:
+            return model.objects.get(pk=o.pk)
+    return None
+
+
 def preview(kind, schema=None):
     """[{code, name, description, exists}] for one kind."""
     model_label, name_f, code_f, desc_f, rows = KINDS[kind]
     model = apps.get_model(model_label)
     out = []
     for code, name, desc in rows:
-        exists = model.objects.filter(**{f'{name_f}__iexact': name}).exists()
+        exists = find_same(model, name_f, name) is not None   # v1.67.24: near-duplicates count as existing
         out.append({'code': f'{code}-{_suffix(schema)}', 'name': name, 'description': desc, 'exists': exists})
     return out
 
@@ -100,7 +138,7 @@ def load(kind, branches, user=None, schema=None, create=True):
     prefix = {'department': 'dept', 'designation': 'desgntn', 'category': 'ctgry'}[kind]
     created, linked = [], 0
     for code, name, desc in rows:
-        obj = model.objects.filter(**{f'{name_f}__iexact': name}).first()
+        obj = find_same(model, name_f, name)   # v1.67.24 (P-BUG-06 / L-BUG-21): no near-duplicate is added next to it
         if obj is None and not create:
             continue
         if obj is None:

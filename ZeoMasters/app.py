@@ -240,13 +240,22 @@ def a_rescan(o, request, f):
     return o
 
 
+def _trl(text):
+    """v1.67.24: "Projects, CRM" / "Customer, Supplier" in the reader's language (the duplicate comparison too)"""
+    try:
+        from Translations.i18n import tr
+        return ', '.join(tr(x.strip()) for x in str(text or '').split(',') if x.strip())
+    except Exception:   # noqa: BLE001
+        return text
+
+
 def pair_extra(o, request):
     show_id = app.any(request, *EDIT)   # the ID number is restricted
 
     def side(p):
         return {'number': p.number, 'name': p.name, 'kind': p.get_kind_display(), 'mobile': p.mobile, 'email': p.email,
                 'id_number': p.id_number if show_id else ('(restricted)' if p.id_number else ''),
-                'tax_id': p.tax_id, 'roles': p.roles_text, 'used_in': p.apps_text, 'created': p.created_at.date().isoformat()}
+                'tax_id': p.tax_id, 'roles': _trl(p.roles_text), 'used_in': _trl(p.apps_text), 'created': p.created_at.date().isoformat()}
     return {'compare': [side(o.partner), side(o.other)]}
 
 

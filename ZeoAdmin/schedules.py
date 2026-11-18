@@ -4,6 +4,7 @@ The report runs with the rights of its owner (the user who made the schedule –
 chosen (last month, this month so far, last week, yesterday, as of the day). Beat 'zeoadmin-schedules' runs every 15 minutes
 and sends what is due; *Send now* sends at once.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 import csv
 import io
@@ -18,7 +19,7 @@ EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 def period_dates(period, today=None):
-    t = today or timezone.localdate()
+    t = today or _zt_today()
     if period == 'last_month':
         end = t.replace(day=1) - timedelta(days=1)
         return end.replace(day=1), end
@@ -110,7 +111,7 @@ def to_file(data, fmt):
     ws.append([data.get('title') or ''])
     ws['A1'].font = Font(bold=True, size=13)
     per = data.get('period')
-    ws.append([f"{per['from']} – {per['to']}" if per else f"As of {timezone.localdate():%d/%m/%Y}"])
+    ws.append([f"{per['from']} – {per['to']}" if per else f"As of {_zt_today():%d/%m/%Y}"])
     ws.append([])
     ws.append([c['label'] for c in cols])
     for i in range(1, len(cols) + 1):
@@ -170,13 +171,13 @@ def send(s, now=None):
         data = run_report(s)
         content, mime, ext = to_file(data, s.fmt)
         per = data.get('period')
-        subject = f"{data['title']}" + (f" ({per['from']} – {per['to']})" if per else f' ({timezone.localdate():%d/%m/%Y})')
+        subject = f"{data['title']}" + (f" ({per['from']} – {per['to']})" if per else f' ({_zt_today():%d/%m/%Y})')
         body = (f"{data['title']}\n{data.get('description') or ''}\n\n{data['count']} rows – the report is attached ({ext.upper()}).\n"
                 + ''.join(f"\n{c['label']}: {data['totals'][c['key']]:,}" for c in data['columns'] if c['key'] in (data.get('totals') or {}))
                 + f"\n\nScheduled report \"{s.name}\" from ZEO HRMS ({s.get_frequency_display().lower()}).")
         conn, sender = mail_connection()
         msg = EmailMessage(subject=subject, body=body, from_email=sender, to=list(s.recipients), connection=conn)
-        msg.attach(f"{s.report}-{timezone.localdate().isoformat()}.{ext}", content, mime)
+        msg.attach(f"{s.report}-{_zt_today().isoformat()}.{ext}", content, mime)
         msg.send()
         status = f"sent to {len(s.recipients)} – {data['count']} rows"
     except Exception as exc:

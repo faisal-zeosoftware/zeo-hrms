@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.core.exceptions import ValidationError as DjangoValidationError
 from datetime import timedelta
 
@@ -176,7 +177,7 @@ class CandidateViewSet(BaseViewSet):
         if self.request.query_params.get('pool'):
             qs = qs.filter(pool_memberships__pool_id=self.request.query_params['pool']).distinct()
         if self.request.query_params.get('contactable') in ('1', 'true'):
-            qs = qs.filter(consent_to_retain=True).filter(Q(consent_until__isnull=True) | Q(consent_until__gte=timezone.localdate()))
+            qs = qs.filter(consent_to_retain=True).filter(Q(consent_until__isnull=True) | Q(consent_until__gte=_zt_today()))
         return qs
 
     action_verbs = {'duplicates': 'view', 'merge': 'change', 'add_to_pool': 'change'}
@@ -398,7 +399,7 @@ class OfferViewSet(BaseViewSet):
         o = self.get_object()
         c = o.application.candidate
         return Response({
-            'document_number': o.document_number, 'date': timezone.localdate(), 'candidate': c.full_name,
+            'document_number': o.document_number, 'date': _zt_today(), 'candidate': c.full_name,
             'position': o.position_title, 'department': str(o.department) if o.department else None,
             'contract': f"{o.get_contract_type_display()} - {o.contract_years} year(s)" if o.contract_type == 'limited' else o.get_contract_type_display(),
             'basic': o.basic_salary, 'housing': o.housing_allowance, 'transport': o.transport_allowance,
@@ -623,3 +624,112 @@ class TalentCampaignViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.query_params.get('pool'):
             qs = qs.filter(pool_id=self.request.query_params['pool'])
         return qs
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 233) pre-onboarding portal
+from . import preonboarding as PO  # noqa: E402
+from .models import PreOnboarding, PreOnboardingFile  # noqa: E402
+
+
+def _offer_right(request, verb):
+    from AccessControl.access import ctx as zctx
+    c = zctx(request)
+    return bool(c.admin or f'{verb}_offer' in c.codes)
+
+
+class OfferPreOnboardingView(APIView):
+    """GET the pre-onboarding of an offer; POST {message, documents, days} sends (or sends again) the link."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        if not _offer_right(request, 'view'):
+            return Response({'detail': 'You do not have the right to see offers.'}, status=403)
+        o = Offer.objects.filter(pk=pk).first()
+        if o is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        return Response(PO.hr_view(getattr(o, 'preonboarding', None) if PreOnboarding.objects.filter(offer=o).exists() else None))
+
+    def post(self, request, pk):
+        if not _offer_right(request, 'change'):
+            return Response({'detail': 'You do not have the right to change offers.'}, status=403)
+        o = Offer.objects.select_related('application__candidate').filter(pk=pk).first()
+        if o is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        PO_req = request.data
+        try:
+            from .careers import use_request
+            use_request(request)
+            pre, mailed = PO.send(o, request.user, PO_req.get('message', ''), PO_req.get('documents'), PO_req.get('days', 21))
+        except PO.PreError as e:
+            from Translations.i18n import tr
+            return Response({'detail': tr(str(e)), **({'field': e.field} if e.field else {})}, status=e.status)
+        return Response({**PO.hr_view(pre), 'mailed': mailed}, status=201)
+
+
+class OfferPreOnboardingReviewView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        if not _offer_right(request, 'change'):
+            return Response({'detail': 'You do not have the right to change offers.'}, status=403)
+        pre = PreOnboarding.objects.filter(offer_id=pk).first()
+        if pre is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        try:
+            pre = PO.review(pre, request.data.get('decision'), request.data.get('note', ''), request.user)
+        except PO.PreError as e:
+            from Translations.i18n import tr
+            return Response({'detail': tr(str(e)), **({'field': e.field} if e.field else {})}, status=e.status)
+        return Response(PO.hr_view(pre))
+
+
+class PreOnboardingFileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        if not _offer_right(request, 'view'):
+            return Response({'detail': 'You do not have the right to see offers.'}, status=403)
+        f = PreOnboardingFile.objects.filter(pk=pk).first()
+        if f is None:
+            raise Http404
+        return FileResponse(f.file.open('rb'), as_attachment=True, filename=f.name or f'{f.key}.pdf')
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class WelcomeView(_Public):
+    """The candidate's page (no login): GET the page; POST {details, submit}."""
+    parser_classes = [JSONParser]
+
+    def get(self, request, token):
+        try:
+            return Response(PO.public_view(PO.by_token(token)))
+        except PO.PreError as e:
+            return self.fail(e)
+
+    def post(self, request, token):
+        try:
+            pre = PO.save_details(PO.by_token(token), request.data.get('details') or {}, bool(request.data.get('submit')))
+            return Response(PO.public_view(pre))
+        except PO.PreError as e:
+            return self.fail(e)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class WelcomeUploadView(_Public):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, token):
+        try:
+            pre = PO.by_token(token)
+            PO.upload(pre, request.data.get('key', ''), request.FILES.get('file'))
+            return Response(PO.public_view(pre), status=201)
+        except PO.PreError as e:
+            return self.fail(e)
+
+    def delete(self, request, token):
+        try:
+            pre = PO.by_token(token)
+            PO.remove_file(pre, request.query_params.get('file'))
+            return Response(PO.public_view(pre))
+        except PO.PreError as e:
+            return self.fail(e)

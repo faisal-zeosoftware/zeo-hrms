@@ -86,6 +86,41 @@ def module_of(model):
     return ''
 
 
+# v1.67.21 (item 1.62.8 – Notifications and Approval rules per app): the app of a record type key ("ZeoProjects.customer" → projects)
+NOTIFY_ACTIONS = {'send_email', 'notify'}
+
+
+def app_of_key(key):
+    label = (key or '').split('.')[0]
+    if not label:
+        return ''
+    for k, labels in MODULES.items():
+        if label in labels:
+            return k
+    return ''
+
+
+def app_q(field, app):
+    """Q matching record type keys ("app_label.model") of one app."""
+    from django.db.models import Q
+    q = Q(pk__in=[])
+    for label in MODULES.get(app, []):
+        q |= Q(**{f'{field}__istartswith': f'{label}.'})
+    return q
+
+
+def notifies(actions):
+    """Does a rule send an e-mail or an in-app notification (also inside a branch)?"""
+    for a in actions or []:
+        if not isinstance(a, dict):
+            continue
+        if a.get('type') in NOTIFY_ACTIONS:
+            return True
+        if a.get('type') == 'branch' and (notifies(a.get('then')) or notifies(a.get('else'))):
+            return True
+    return False
+
+
 # v1.67.6 (setup) item 7: only the apps active in the company (with Projects alone the Workflow app listed HR, Payroll, CRM …).
 # The company core is always there: branches, departments … (OrganisationManager) and business partners / items (ZeoMasters)
 # show under "Company & users" when their app is off.

@@ -515,3 +515,86 @@ class AssignmentsReportView(Base):
                                          'area': m.area, 'weight': MX.pct(m.review_weight)} for m in links],
                          'totals': {'assignments': live.filter(status='active').count(), 'planned': live.filter(status='planned').count(),
                                     'ending': len(ending), 'functional_managers': links.count()}})
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 236) knowledge base for employees
+import re as _re  # noqa: E402
+
+
+def _kb_qs(request):
+    """Published articles this user may read: every employee the "all" ones, people with a team the "managers" ones, HR all."""
+    from .models import KBArticle
+    from EmpManagement.models import emp_master
+    from django.db.models import Q
+    qs = KBArticle.objects.filter(status='published')
+    if hr(request):
+        return qs
+    aud = ['all']
+    if emp_master.objects.filter(emp_reporting_manager=request.user, is_active=True).exists():
+        aud.append('managers')
+    e = me(request)
+    b = getattr(e, 'emp_branch_id_id', None)
+    return qs.filter(audience__in=aud).filter(Q(branch__isnull=True) | Q(branch_id=b))
+
+
+def kb_search(request, q='', category=None, limit=30):
+    rows = list(_kb_qs(request).select_related('category'))
+    if category:
+        rows = [a for a in rows if str(a.category_id) == str(category)]
+    words = [w for w in _re.findall(r'\w+', (q or '').lower()) if len(w) > 1]
+    scored = []
+    for a in rows:
+        if words:
+            t, k, s, b = a.title.lower(), (a.keywords or '').lower(), (a.summary or '').lower(), (a.body or '').lower()
+            sc = sum(3 * (w in t) + 2 * (w in k) + (w in s) + (w in b) for w in words)
+            if not sc:
+                continue
+        else:
+            sc = 0
+        scored.append((-(sc + (5 if a.pinned else 0)), a.title.lower(), a))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return [{'id': a.pk, 'number': a.number, 'title': a.title, 'summary': a.summary or (a.body or '')[:180], 'category': a.category.name if a.category_id else '',
+             'pinned': a.pinned, 'updated': d(a.updated_at.date())} for _s, _t, a in scored[:limit]]
+
+
+class KBListView(Base):
+    """GET ?q=&category= – the articles this user may read (search: title, keywords, summary, text)."""
+    needs_activation = False
+
+    @guard
+    def get(self, request):
+        from .models import HelpdeskCategory
+        cats = HelpdeskCategory.objects.filter(active=True, articles__status='published').distinct()
+        return Response({'articles': kb_search(request, request.query_params.get('q', ''), request.query_params.get('category')),
+                         'categories': [{'id': c.pk, 'name': c.name} for c in cats]})
+
+
+class KBArticleView(Base):
+    """GET one article (counts a view); POST {helpful: true|false} – once per user."""
+    needs_activation = False
+
+    @guard
+    def get(self, request, pk):
+        a = _kb_qs(request).select_related('category').filter(pk=pk).first()
+        if a is None:
+            raise Http404
+        type(a).objects.filter(pk=a.pk).update(views=a.views + 1)
+        from django.core.cache import cache
+        voted = cache.get(f'kbv:{request.user.pk}:{a.pk}:{getattr(request, "tenant", None) and request.tenant.schema_name}')
+        return Response({'id': a.pk, 'number': a.number, 'title': a.title, 'summary': a.summary, 'body': a.body, 'category': a.category.name if a.category_id else '',
+                         'updated': d(a.updated_at.date()), 'voted': voted, 'related': [x for x in kb_search(request, a.title, None, 6) if x['id'] != a.pk][:4]})
+
+    @guard
+    def post(self, request, pk):
+        a = _kb_qs(request).filter(pk=pk).first()
+        if a is None:
+            raise Http404
+        from django.core.cache import cache
+        key = f'kbv:{request.user.pk}:{a.pk}:{getattr(request, "tenant", None) and request.tenant.schema_name}'
+        if cache.get(key):
+            raise AppError('You already said whether this article helped.')
+        yes = str(In(request).s('helpful')).lower() in ('1', 'true', 'yes')
+        f = 'helpful_yes' if yes else 'helpful_no'
+        type(a).objects.filter(pk=a.pk).update(**{f: getattr(a, f) + 1})
+        cache.set(key, 'yes' if yes else 'no', 3600 * 24 * 365)
+        return Response({'ok': True, 'message': 'Thank you.' if yes else 'Thank you – ask HR below if the article did not answer it.'})

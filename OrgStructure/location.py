@@ -388,6 +388,8 @@ def get_tag(model, pk):
 def _on_save(sender, instance, created, **kwargs):
     if not created or kwargs.get('raw') or connection.schema_name == 'public' or sender.__module__ == '__fake__':   # v1.62.0
         return
+    if sender._meta.app_label == 'migrations':   # v1.67.31: not for the rows that record migrations
+        return
     try:
         if not enabled() or model_key(sender) not in location_models() or model_key(sender) in ALWAYS:
             return

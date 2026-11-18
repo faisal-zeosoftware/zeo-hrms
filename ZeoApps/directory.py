@@ -14,6 +14,7 @@ Writes go through the HR employee serializer's own rules (code numbering per bra
 directory employee is a valid HR employee. Rights: company administrator, or view / add / change employee (view_emp_master …);
 users limited to some branches see and write those branches only.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import datetime
 
 from django.db.models import F, Q, Value as V
@@ -73,7 +74,7 @@ def _write(request, inst, c):
         if data.get(k) in ('', 0, '0'):
             data[k] = None
     if inst is None and not data.get('emp_joined_date'):
-        data['emp_joined_date'] = datetime.date.today().isoformat()   # the model needs it; HR can correct it later
+        data['emp_joined_date'] = _zt_today().isoformat()   # the model needs it; HR can correct it later
     if 'emp_code' in data and data['emp_code'] is None:
         data['emp_code'] = ''
     b = data.get('emp_branch_id', getattr(inst, 'emp_branch_id_id', None))

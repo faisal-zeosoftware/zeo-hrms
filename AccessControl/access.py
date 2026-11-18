@@ -42,6 +42,8 @@ PUBLIC_PATHS = (
     '/users/activate/', '/users/first-check/',   # v1.62.0 activation without e-mail, the default password's extra check
     '/cloud/api/signup/', '/cloud/api/jobs/',   # v1.23.0 ZEO Cloud sign-up (before a login exists)
     '/mobile/api/info/', '/mobile/api/unlock/',
+    '/zeo-apps/dms/s/',   # v1.70.1 Document Center: an external share link (its own token, expiry and revoke)
+    '/zeo-apps/dms/p/', '/zeo-apps/dms/sign/',   # v1.73.9 Document Center: the upload link and the signing link (their own token and expiry)
     '/licence/api/enterprise-request/',   # v1.28.0 Enterprise request (sign-up page, before a login exists)   # v1.25.0 mobile app: server check, fingerprint unlock
 )
 # APIViews without a model that show company-wide data: back-office users only
@@ -58,6 +60,9 @@ SELF_ADD_DENY = ('workflow', 'level', 'notif', 'escalation', 'rule', 'template',
                  'permission', 'overtime', 'monthlyattendance', 'balance', 'payslip', 'salary', 'transaction', 'opening', 'accrual', 'recheck')
 # v1.62.0 own requests whose model name contains one of the words above
 SELF_ADD_ALLOW = {'advancesalaryrequest'}
+# v1.73.1 (ESS test B1) attendance results are made by punches and approved corrections – a login without the HR right could
+# POST / PATCH / DELETE its own attendance row (calendars/api/attendance/) and turn an absent day into a present day with overtime
+SELF_RECORD_DENY = {'attendance', 'attendanceday', 'attendancelog', 'punch', 'sessionattendance', 'monthlyattendancesummary'}
 # employee-linked tables a reporting manager may read for their team
 TEAM_KEYWORDS = ('leave', 'attendance', 'shift', 'overtime', 'latein', 'lateinearly', 'timesheet', 'rejoin', 'task')
 EMP_FIELD_PRIORITY = ('employee', 'emp_id', 'emp', 'employee_id', 'emp_master', 'requested_employee')
@@ -325,6 +330,10 @@ class ZeoAccess(permissions.BasePermission):
             # v1.56.1 the employee master itself needs the HR right (a login without rights could add an employee, or change / delete
             # its own record); own details are changed through My profile, family / bank / documents through their own screens
             self.message = tr('Only HR users can add, change or delete employee records. Use My profile to ask for a change.')
+            return False
+        if name in SELF_RECORD_DENY and getattr(view, 'action', None) in ('create', 'update', 'partial_update', 'destroy'):
+            # v1.73.1 (ESS test B1) own clock-in / out stays (its own actions); the record itself only with the HR right
+            self.message = tr('Attendance comes from your punches. To change a day, use Request correction on My attendance.')
             return False
         ep = emp_path(model)
         if ep is not None or user_fields(model):

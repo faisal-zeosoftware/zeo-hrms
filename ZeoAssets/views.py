@@ -306,15 +306,16 @@ class JournalView(Base):
         ws = wb.active
         ws.title = 'Journal'
         cur = self.app.settings().currency
+        post_on = o.posting_date or o.period_to   # v1.70.5: posting date (default: the document date = the last day of the period)
         ws.append([f'Depreciation {o.number}', f'{o.period_from:%d/%m/%Y} – {o.period_to:%d/%m/%Y}', o.get_status_display()])
         ws.append([])
-        ws.append(['Date', 'Account', 'Description', f'Debit ({cur})', f'Credit ({cur})'])
+        ws.append(['Date', 'Account', 'Description', f'Debit ({cur})', f'Credit ({cur})', 'Document date'])
         for c in ws[3]:
             c.font = Font(bold=True)
         for j in journal(o):
             text = f'Depreciation {o.period_from:%b %Y}–{o.period_to:%b %Y} – {j["category"]}'
-            ws.append([o.period_to, j['debit'], text, j['amount'], None])
-            ws.append([o.period_to, j['credit'], text, None, j['amount']])
+            ws.append([post_on, j['debit'], text, j['amount'], None, o.period_to])
+            ws.append([post_on, j['credit'], text, None, j['amount'], o.period_to])
         ws.append(['', '', 'Total', float(o.total), float(o.total)])
         ws2 = wb.create_sheet('Assets')
         ws2.append(['Asset code', 'Asset', 'Category', 'Months', f'Opening ({cur})', f'Depreciation ({cur})', f'Closing ({cur})', 'Debit account', 'Credit account'])

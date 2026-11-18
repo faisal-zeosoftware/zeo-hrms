@@ -24,6 +24,7 @@ A row that already exists in the new company (a standard default with the same n
 Every table is copied in its own savepoint: one that fails is logged and skipped, the company is made anyway.
 The result {key: count} is shown on the "company is ready" card and stored as CompanyOption 'setup_copied_from'.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 
@@ -724,7 +725,7 @@ def c_numbering(ctx):
         row.total_length = r['f'].get('total_length') or row.total_length or 12
         row.automatic_numbering = r['f'].get('automatic_numbering', True)
         row.current_number = 0
-        row.start_date = row.start_date or timezone.localdate()
+        row.start_date = row.start_date or _zt_today()
         row.end_date = row.end_date or r['f'].get('end_date')
         row.user = None
         row.created_by = ctx.user
@@ -836,7 +837,7 @@ SINGLETONS = [
     ('ZeoHR.HRSettings', ('require_review', 'terms', 'renewal_days', 'renewal_auto', 'fine_max_days', 'suspension_max_days',
                           'show_cause_days', 'exit_auto', 'exit_days_before', 'handover_signature', 'ticket_ai', 'ticket_ai_min')),
     ('OrgStructure.CompanyProfile', ('fiscal_year_start_month', 'week_start')),      # identity fields stay empty
-    ('AISettings.AISettings', ('mode', 'use_ask', 'use_documents', 'use_tickets', 'monthly_limit')),   # never the key
+    ('AISettings.AISettings', ('mode', 'use_ask', 'use_documents', 'use_tickets', 'use_crm', 'monthly_limit')),   # never the key
 ]
 
 

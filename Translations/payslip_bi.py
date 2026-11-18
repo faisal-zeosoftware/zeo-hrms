@@ -144,7 +144,21 @@ def payslip_bilingual_bytes(request, payslip):
         ('FONTNAME', (0, 0), (-1, -1), bold), ('FONTSIZE', (0, 0), (-1, 0), 12), ('FONTSIZE', (0, 1), (-1, 1), 9.5),
         ('ALIGN', (1, 0), (2, -1), 'RIGHT'), ('TEXTCOLOR', (0, 0), (-1, -1), INK), ('LINEABOVE', (0, 0), (-1, 0), 1.2, INK),
         ('LINEBELOW', (0, 0), (-1, 0), 1.2, INK), ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 6)]))
-    els += [net, Spacer(1, 26)]
+    els += [net, Spacer(1, 10)]
+    try:   # v1.67.22 (pending C3): a salary split over two methods
+        from PayrollPlus.paysplit import payslip_parts as _v16722_parts
+        _parts = _v16722_parts(payslip, 'en')
+    except ImportError:
+        _parts = []
+    if _parts:
+        _pt = Table([['Paid in parts', 'Amount', S('مدفوع على جزأين / المبلغ')]] +
+                    [[f"{x['method']}{(' ' + x['account']) if x['account'] else ''}", f"{x['amount']:,.2f}", ''] for x in _parts],
+                    colWidths=[W * 0.40, W * 0.22, W * 0.38])
+        _pt.setStyle(TableStyle([('FONTNAME', (0, 0), (-1, -1), reg), ('FONTNAME', (0, 0), (-1, 0), bold), ('FONTSIZE', (0, 0), (-1, -1), 9.5),
+                                 ('BACKGROUND', (0, 0), (-1, 0), BAND), ('ALIGN', (1, 0), (2, -1), 'RIGHT'), ('TEXTCOLOR', (0, 0), (-1, -1), INK),
+                                 ('LINEBELOW', (0, 0), (-1, -1), 0.4, LINE), ('BOX', (0, 0), (-1, -1), 0.8, INK)]))
+        els += [_pt]
+    els += [Spacer(1, 26)]
     sig = Table([['Employee signature', '', 'Employer signature'],
                  [S(ar('Employee signature')), '', S(ar('Employer signature'))]], colWidths=[W * 0.38, W * 0.24, W * 0.38])
     sig.setStyle(TableStyle([('FONTNAME', (0, 0), (-1, -1), reg), ('FONTSIZE', (0, 0), (-1, -1), 9), ('LINEABOVE', (0, 0), (0, 0), 0.6, INK),

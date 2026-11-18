@@ -227,6 +227,15 @@ def shift_for(employee, day):
     emp = _emp(employee)
     if emp is None or day is None:
         return None
+    try:   # v1.73.15: inside a payroll run's memo (PayrollManagement.perf) one book per employee and month, not one per day
+        from PayrollManagement.perf import active, memo
+        if active():
+            from datetime import timedelta as _td
+            a = day.replace(day=1)
+            b = (a + _td(days=32)).replace(day=1) - _td(days=1)
+            return memo(('shift_book_month', emp.pk, a), lambda: Book(a, b, [emp.pk])).get(emp, day)
+    except ImportError:   # pragma: no cover
+        pass
     return Book(day, day, [emp.pk]).get(emp, day)
 
 

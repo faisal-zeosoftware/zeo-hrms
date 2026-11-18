@@ -1,5 +1,6 @@
 """v1.23.0 – daily ZEO Cloud reminders to account owners: 30, 14 and 7 days before the renewal (or the trial end), the first
 day of the grace period, and the day the account becomes read-only."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 
 from celery import shared_task
@@ -12,7 +13,7 @@ def run_daily(today=None):
     from django.utils import timezone
     from .models import Account
     from .services import cloud_on, event, status_of, tr
-    d = today or timezone.localdate()
+    d = today or _zt_today()
     try:   # v1.67.1 (companies) deleted companies past their 30 days are removed – on every server, ZEO Cloud or not
         from .lifecycle import purge_due
         res = purge_due(d)

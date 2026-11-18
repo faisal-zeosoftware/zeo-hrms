@@ -289,3 +289,69 @@ class PIPReview(models.Model):
 
     class Meta:
         ordering = ['-review_date']
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 234) compensation cycle
+class CompensationCycle(models.Model):
+    """A salary review round: the increments of many employees proposed together against a budget, approved by someone other than
+    the preparer, applied to the salaries from one effective date and announced with increment letters (mail merge)."""
+    STATUS = [('draft', 'Draft – proposals'), ('review', 'Sent for approval'), ('approved', 'Approved'), ('applied', 'Applied to salaries'),
+              ('cancelled', 'Cancelled')]
+    name = models.CharField(max_length=150, unique=True)
+    effective_date = models.DateField()
+    budget_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text='Budget: % of the basic salaries of the employees in the cycle')
+    appraisal_cycle = models.ForeignKey(AppraisalCycle, null=True, blank=True, on_delete=models.SET_NULL, related_name='compensation_cycles',
+                                        help_text='Proposals from its final ratings and increment bands')
+    branches = models.ManyToManyField('OrganisationManager.brnch_mstr', blank=True, related_name='+')
+    departments = models.ManyToManyField('OrganisationManager.dept_master', blank=True, related_name='+')
+    joined_before = models.DateField(null=True, blank=True, help_text='Only employees who joined before this date')
+    status = models.CharField(max_length=10, choices=STATUS, default='draft')
+    notes = models.TextField(blank=True, default='')
+    prepared_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    approved_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    letters_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-effective_date', '-id']
+
+    def __str__(self):
+        return self.name
+
+
+class CompensationLine(models.Model):
+    cycle = models.ForeignKey(CompensationCycle, on_delete=models.CASCADE, related_name='lines')
+    employee = models.ForeignKey('EmpManagement.emp_master', on_delete=models.CASCADE, related_name='+')
+    rating = models.PositiveSmallIntegerField(null=True, blank=True)
+    current_basic = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    current_gross = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    proposed_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    final_percent = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    new_basic = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    bonus_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    reason = models.CharField(max_length=255, blank=True, default='')
+    applied = models.BooleanField(default=False)
+    letter_id = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['employee__emp_code']
+        unique_together = [('cycle', 'employee')]
+
+
+class TalentPotential(models.Model):
+    """v1.67.27 (pending item 1.62.13, item 241) – the potential of an employee set by HR or the line manager for the nine-box grid
+    (performance = the final rating of the latest appraisal; potential = this). One current value per employee; the history keeps the
+    earlier ones."""
+    LEVELS = [(1, 'Low'), (2, 'Medium'), (3, 'High')]
+    employee = models.OneToOneField('EmpManagement.emp_master', on_delete=models.CASCADE, related_name='talent_potential')
+    potential = models.PositiveSmallIntegerField(choices=LEVELS)
+    note = models.CharField(max_length=255, blank=True, default='')
+    set_by = models.ForeignKey('UserManagement.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    set_on = models.DateField()
+    history = models.JSONField(default=list, blank=True, help_text='[{potential, note, by, on}] – the earlier values')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['employee__emp_code']

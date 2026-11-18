@@ -17,6 +17,7 @@ administrator only (`python manage.py restore_company <schema>` / `restore_datab
 * After 30 days the daily job (cloud_daily / ZeoCloud.tasks.run_daily) removes it: the schema, the company row, its
   domains, links and its files. The backup folder stays KEEP_BACKUP_DAYS (ZEO_DELETED_BACKUP_KEEP_DAYS, default 90).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import os
 import shutil
@@ -432,7 +433,7 @@ def _mark_deleted(comp, by, links, backup='', db_key=''):
     life = life_of(comp)
     now = timezone.now()
     life.state, life.changed_at, life.changed_by = 'deleted', now, _by(by)
-    life.deleted_at, life.purge_after = now, timezone.localdate() + timedelta(days=KEEP_DAYS)
+    life.deleted_at, life.purge_after = now, _zt_today() + timedelta(days=KEEP_DAYS)
     life.name, life.schema_name = comp.name[:150], comp.schema_name
     life.links, life.backup, life.db_key = links, backup, db_key or ''
     _hist(life, 'deleted', by, f'with the database {db_key}' if db_key else '', backup=os.path.basename(backup) if backup else '',
@@ -664,7 +665,7 @@ def purge_company(life, today=None):
 def purge_due(today=None):
     """Daily: deleted companies past their 30 days are removed; old deletion backups go after keep_backup_days()."""
     from .models import CompanyLife
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     out = []
     for life in CompanyLife.objects.filter(state='deleted', purge_after__lt=today).select_related('company'):
         try:
@@ -677,7 +678,7 @@ def purge_due(today=None):
 
 def drop_old_backups(today=None):
     from datetime import datetime
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     root = backup_root()
     removed = []
     if not os.path.isdir(root):
@@ -759,7 +760,7 @@ def delete_database(account, key, by, typed):
     for comp in comps:
         links = unlink_users(comp)
         _mark_deleted(comp, by, links, backup=folder, db_key=key)
-    srv.state, srv.retired_on, srv.retired_by, srv.backup = 'retired', timezone.localdate(), _by(by), folder
+    srv.state, srv.retired_on, srv.retired_by, srv.backup = 'retired', _zt_today(), _by(by), folder
     srv.save(update_fields=['state', 'retired_on', 'retired_by', 'backup'])
     dbrouting.forget()
     owndb.forget_db(key)

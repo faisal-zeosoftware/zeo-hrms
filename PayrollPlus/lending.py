@@ -1,4 +1,5 @@
 # v1.67.11 (loans): new module – loans, advances and deduction limits (items 51, 60, 110–117)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.67.11 (loans) – the rules of loans and salary advances, the monthly deduction limit and the recovery at exit.
 
 Law (UAE, confirmed in two or more sources – see the release notes, section 135):
@@ -88,10 +89,47 @@ def user_name(user):
 
 
 # ------------------------------------------------------------------ company settings
+def _pack():
+    try:
+        from CountryPack.services import pack_code
+        return (pack_code() or '').upper()
+    except Exception:
+        return ''
+
+
+def _deduction_defaults():
+    """v1.70.0 (item 150): the legal limit of the company's country – UAE 50 % (as before), Saudi Arabia 50 % (arts. 92 – 93),
+    Kuwait 25 % with loans 10 %; other countries: off until set."""
+    out = {'legal_cap': uae(), 'legal_cap_pct': '50', 'loan_share_pct': None, 'advance_share_pct': None}
+    try:
+        from .country170 import deduction_defaults
+        d = deduction_defaults(_pack())
+    except Exception:
+        d = None
+    if d:
+        out.update(legal_cap=True, legal_cap_pct=format(d['legal_pct'].normalize(), 'f'),
+                   loan_share_pct=format(d['loan_pct'].normalize(), 'f') if d.get('loan_pct') and _pack() == 'KW' else None)
+    return out
+
+
+def legal_max_pct():
+    """the highest legal limit a company may set (UAE and Saudi Arabia 50 %, Kuwait 25 %), None = no law in ZEO"""
+    if uae():
+        return Decimal('50')
+    try:
+        from .country170 import deduction_defaults
+        d = deduction_defaults(_pack())
+        return d['legal_pct'] if d else None
+    except Exception:
+        return None
+
+
 def _defaults():
     return {
-        'deduction': {'legal_cap': uae(), 'legal_cap_pct': '50', 'loan_share_pct': None, 'advance_share_pct': None},
-        'loans': {'deduct_after_payout': False},
+        'deduction': _deduction_defaults(),
+        # v1.67.22 (pending C11): on a pay calendar (weekly, every two weeks, twice a month) the monthly instalment is taken in the period
+        # that closes the month ('month_end', as before) or shared over every period ('every_period': instalment × 12 ÷ periods a year)
+        'loans': {'deduct_after_payout': False, 'calendar_instalments': 'month_end'},
         'advances': {'max_pct': None, 'once_a_month': True, 'max_instalments': 3, 'no_leavers': True},
         'settlement': {'order': ['loan', 'advance', 'recovery'], 'cap_pct': None},
         'accounts': {'loan_receivable': '1410', 'advance_receivable': '1420', 'bank': '1010', 'write_off': '6190', 'profit_income': '4910'},
@@ -141,12 +179,20 @@ def save_settings(data):
         if uae() and p is not None and Decimal(p) > 50:
             raise LendError(tr('The UAE Labour Law allows at most 50 % of the wage a month (Decree-Law 33/2021 Art. 25(2)).'),
                             problems={'legal_cap_pct': 'Above the law.'})
+        _mx = legal_max_pct()   # v1.70.0 (item 150): Saudi Arabia 50 %, Kuwait 25 %
+        if not uae() and _mx is not None and p is not None and Decimal(p) > _mx:
+            raise LendError(tr('The labour law of the company\'s country allows at most {0} % of the wage a month.', format(_mx.normalize(), 'f')),
+                            problems={'legal_cap_pct': 'Above the law.'})
         cur['deduction']['legal_cap_pct'] = p or '50'
     for f in ('loan_share_pct', 'advance_share_pct'):
         if f in dd:
             cur['deduction'][f] = _pct(dd[f], f)
     if 'deduct_after_payout' in ld:
         cur['loans']['deduct_after_payout'] = _flag(ld['deduct_after_payout'])
+    if 'calendar_instalments' in ld:   # v1.67.22 (pending C11)
+        if ld['calendar_instalments'] not in ('month_end', 'every_period'):
+            raise LendError(tr('Choose when a pay calendar takes the instalments.'), problems={'calendar_instalments': 'Invalid.'})
+        cur['loans']['calendar_instalments'] = ld['calendar_instalments']
     if 'max_pct' in ad:
         cur['advances']['max_pct'] = _pct(ad['max_pct'], 'max_pct')
     for f in ('once_a_month', 'no_leavers'):
@@ -306,7 +352,7 @@ def profit(rule, principal, months):
 
 def check_loan(employee, loan_type, principal, months, emi=None, exclude_pk=None, on=None, guarantor_id=None):
     """Items 110 / 111: what stops this loan – {field: text}; empty when it may be asked."""
-    on = on or timezone.localdate()
+    on = on or _zt_today()
     out = {}
 
     class _Out(dict):   # several reasons for one field are all given
@@ -461,7 +507,7 @@ def approve_lower_advance(adv, amount, user=None, note=''):
 
 # ------------------------------------------------------------------ advances (item 115)
 def check_advance(employee, amount, instalments=1, exclude_pk=None, on=None):
-    on = on or timezone.localdate()
+    on = on or _zt_today()
     st = settings()['advances']
     out = {}
     amount = q2(amount)
@@ -474,11 +520,14 @@ def check_advance(employee, amount, instalments=1, exclude_pk=None, on=None):
         why = leaving(employee)
         if why:
             out['employee'] = tr('No salary advance can be given: {0}.', why)
-    if st['max_pct'] not in (None, ''):
-        _b, wage = basic_wage(employee)
-        top = q2(wage * Decimal(str(st['max_pct'])) / 100)
+    # v1.73.1 (ESS test B3) with no % set an advance had no limit at all (AED 9,999,999 on a wage of 4,700 was sent) – the limit is
+    # then one month's wage; a company that wants more sets a higher % in the loan and advance settings
+    pct = st['max_pct'] if st['max_pct'] not in (None, '') else '100'
+    _b, wage = basic_wage(employee)
+    if wage > 0 or st['max_pct'] not in (None, ''):
+        top = q2(wage * Decimal(str(pct)) / 100)
         if amount > top:
-            out['requested_amount'] = tr('An advance is at most {0} % of the monthly wage ({1}) = {2}.', st['max_pct'], money(wage), money(top))
+            out['requested_amount'] = tr('An advance is at most {0} % of the monthly wage ({1}) = {2}.', pct, money(wage), money(top))
     if st['once_a_month']:
         AS = M('PayrollManagement', 'AdvanceSalaryRequest')
         start = on.replace(day=1)
@@ -576,6 +625,24 @@ def advance_due(adv, payslip):
         c.taken_by_payslip_id = payslip.pk
         c.save(update_fields=['taken_by_payslip_id'])
     return min(base + extra, advance_left(adv))
+
+
+def advance_period_due(adv, payslip, f):
+    """v1.67.22 (pending C11): the share of an advance's monthly instalment one pay-calendar period takes ('every period') –
+    (amount ÷ instalments) × the period factor, plus what the deduction limit cut before; a leftover of 1.00 or less is taken with it."""
+    t = adv_terms(adv.pk)
+    n = max(int(t.instalments or 1), 1)
+    left = advance_left(adv)
+    base = q2(d(adv.requested_amount) / n * d(f))
+    cuts = pending_cuts(adv.employee_id, 'advance', adv.pk, payslip.pk)
+    extra = sum((q2(c.amount) for c in cuts), ZERO)
+    for c in cuts:
+        c.taken_by_payslip_id = payslip.pk
+        c.save(update_fields=['taken_by_payslip_id'])
+    due = min(base + extra, left)
+    if ZERO < left - due <= Decimal('1.00'):
+        due = left
+    return due
 
 
 def take_advance(adv, payslip, run, amount):
@@ -727,7 +794,7 @@ def prepay(loan, amount, keep='months', user=None, note='', when=None):
     loan.save(update_fields=['emi_amount', 'repayment_period', 'remaining_balance'])
     ev = _event(loan, 'prepay', user, amount=amount, old_emi=old_emi, new_emi=emi, old_period=old_period, new_period=loan.repayment_period,
                 balance_after=new_bal, note=((note or '') + (' – ' if note else '') + (tr('instalment kept') if keep == 'instalment' else tr('months kept')))[:255],
-                date=when or timezone.localdate())
+                date=when or _zt_today())
     _auto_journal('loan', loan, 'prepay', ev.pk, user)
     return loan
 
@@ -742,7 +809,7 @@ def skip(loan, month, user=None, note=''):
         first = date(y, m, 1)
     except (TypeError, ValueError):
         raise LendError(tr('Choose the month to skip.'), problems={'month': 'Required.'})
-    if first < timezone.localdate().replace(day=1):
+    if first < _zt_today().replace(day=1):
         raise LendError(tr('A month that has passed cannot be skipped.'), problems={'month': 'In the past.'})
     LR = M('PayrollManagement', 'LoanRepayment')
     if LR.objects.filter(loan=loan, payslip__payroll_run__year=y, payslip__payroll_run__month=m).exists():
@@ -765,7 +832,7 @@ def unskip(loan, month, user=None):
     if k not in (t.skipped or []):
         raise LendError(tr('This month is not skipped.'))
     y, m = (int(x) for x in k.split('-'))
-    if date(y, m, 1) < timezone.localdate().replace(day=1):
+    if date(y, m, 1) < _zt_today().replace(day=1):
         raise LendError(tr('A month that has passed cannot be changed.'))
     t.skipped = [x for x in t.skipped if x != k]
     t.save()
@@ -849,7 +916,7 @@ def payout_loan(loan, when=None, ref='', user=None):
     t = terms_of(loan.pk)
     if (t.payout or {}).get('date'):
         raise LendError(tr('This loan is already paid out ({0}).', (t.payout or {}).get('date')), status=409)
-    when = when or timezone.localdate()
+    when = when or _zt_today()
     t.payout = {'date': when.isoformat(), 'ref': (ref or '')[:60], 'by': user_name(user), 'at': timezone.now().isoformat()}
     if t.principal is None:
         t.principal = q2(loan.amount_requested)
@@ -875,7 +942,7 @@ def payout_advance(adv, when=None, ref='', user=None):
     t = adv_terms(adv.pk)
     if (t.payout or {}).get('date'):
         raise LendError(tr('This advance is already paid out ({0}).', (t.payout or {}).get('date')), status=409)
-    when = when or timezone.localdate()
+    when = when or _zt_today()
     t.payout = {'date': when.isoformat(), 'ref': (ref or '')[:60], 'by': user_name(user), 'at': timezone.now().isoformat()}
     t.save()
     j = _auto_journal('advance', adv, 'payout', 0, user)
@@ -913,7 +980,7 @@ def build_journal(kind, obj, what, ev_id=0, user=None):
     LE = M('PayrollPlus', 'LoanEvent')
     if kind == 'loan':
         ev = LE.objects.filter(pk=ev_id, loan_id=obj.pk).first() if ev_id else None
-        jdate = (ev.date if ev else None) or timezone.localdate()
+        jdate = (ev.date if ev else None) or _zt_today()
         labels = {'payout': tr('Loan {0} paid out', ref), 'prepay': tr('Loan {0} – prepayment', ref), 'writeoff': tr('Loan {0} – written off', ref)}
         b = Builder('loan', f'{obj.pk}-{what}-{ev_id}', f"{labels[what]} – {' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x)}", jdate, ref)
         b.dims.emps[e.pk] = e
@@ -935,7 +1002,7 @@ def build_journal(kind, obj, what, ev_id=0, user=None):
             raise Refused(tr('Unknown journal.'))
     else:
         t = adv_terms(obj.pk)
-        jdate = date.fromisoformat((t.payout or {}).get('date')) if (t.payout or {}).get('date') else timezone.localdate()
+        jdate = date.fromisoformat((t.payout or {}).get('date')) if (t.payout or {}).get('date') else _zt_today()
         b = Builder('advance', f'{obj.pk}-payout', f"{tr('Salary advance {0} paid out', ref)} – {' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x)}",
                     jdate, ref)
         b.dims.emps[e.pk] = e
@@ -1010,7 +1077,7 @@ def settlement_closed(st, user=None):
             if loan is not None:
                 _event(loan, 'receivable', user, amount=rest, balance_after=balance(loan),
                        note=tr('Final settlement {0}: {1} not recovered – still owed by the employee', st.number or st.pk, money(rest))[:255],
-                       date=st.paid_on or timezone.localdate())
+                       date=st.paid_on or _zt_today())
 
 
 # ------------------------------------------------------------------ what the screens show

@@ -88,6 +88,36 @@ def active_field(model):
     return None
 
 
+# v1.67.24 (L-BUG-18): rows ZEO makes by itself for every new record that hold nothing yet – a new employee's zero leave balance
+# of each leave type, salary rows of 0 – are no "use": the employee can still be deleted (they go with it)
+def _empty_q(label):
+    from django.db.models import Q
+    q = {'calendars.emp_leave_balance': (Q(balance__isnull=True) | Q(balance=0)) & (Q(openings__isnull=True) | Q(openings=0)),
+         'PayrollManagement.EmployeeSalaryStructure': Q(amount__isnull=True) | Q(amount=0)}.get(label)
+    if q is not None:
+        return q
+    # v1.71.0 (found by the Ask ZEO tests): the approval steps of a request that nobody has decided yet are the request's own
+    # workflow – they go with it. Before, "Withdraw" of a waiting leave request (Self service › My leave) was refused with
+    # "is in use – it is used in leave approvals (1)" because its own pending approval step counted as a use.
+    try:
+        from django.apps import apps
+        m = apps.get_model(label)
+    except (LookupError, ValueError):
+        return None
+    n = m._meta.model_name.lower()
+    if 'approval' in n and 'level' not in n and 'workflow' not in n and any(f.name == 'status' for f in m._meta.fields):
+        return Q(status__in=('Pending', 'pending'))
+    return None
+
+
+def _not_empty(model, objs):
+    q = _empty_q(model._meta.label)
+    if q is None:
+        return len(objs)
+    pks = [o.pk for o in objs]
+    return model._base_manager.filter(pk__in=pks).exclude(q).count()
+
+
 def usage(obj):
     """(n, kinds): the transaction rows that refer to obj (deleted with it, blocking it or losing their link)."""
     counts = usage_counts(obj)
@@ -120,10 +150,11 @@ def usage_counts(obj):
         log.exception('usage collect')
         return {}
     for model, objs in c.data.items():
-        add(model, len(objs))
+        add(model, _not_empty(model, list(objs)))
     for qs in c.fast_deletes:
         try:
-            add(qs.model, qs.count())
+            _q = _empty_q(qs.model._meta.label)
+            add(qs.model, (qs.exclude(_q) if _q is not None else qs).count())
         except Exception:
             pass
     for key, objs in getattr(c, 'field_updates', {}).items():   # on_delete=SET_NULL / SET_DEFAULT: rows that would lose the link
@@ -170,7 +201,11 @@ def usage_many(model, objs):
             continue
         name = rel.field.name
         try:
-            for pk, n in rm._base_manager.filter(**{f'{name}__in': pks}).values_list(name).annotate(n=Count('pk')).values_list(name, 'n'):
+            _base = rm._base_manager.filter(**{f'{name}__in': pks})
+            _q = _empty_q(rm._meta.label)   # v1.67.24 (L-BUG-18)
+            if _q is not None:
+                _base = _base.exclude(_q)
+            for pk, n in _base.values_list(name).annotate(n=Count('pk')).values_list(name, 'n'):
                 if pk in counts and n:
                     counts[pk][_kind(rm)] = counts[pk].get(_kind(rm), 0) + n
         except Exception:
@@ -389,7 +424,9 @@ class ActiveView(APIView):
         if reg is not None:   # v1.67.9 (screens) item 17: an app-kit register – its own edit right, the flag set on the record
             return self._kit(request, reg, app, d)
         from AccessControl.access import view_model
-        model = view_model(cls())
+        # v1.73.0: the apps' own list views (Projects customers …) name their model as zeo_model – the change still goes
+        # through the screen's own detail API (PATCH below), with its rights and scope
+        model = view_model(cls()) or getattr(cls, 'zeo_model', None)
         af = active_field(model) if model is not None else None
         if not af:
             return Response({'detail': tr('These records have no active / inactive setting.'), 'no_active_field': True}, status=status.HTTP_400_BAD_REQUEST)
@@ -481,3 +518,26 @@ def _may_change(request, cls, path, pk):
     finally:
         req._request.method = orig
     return ''
+
+
+# v1.73.0 (same screen rules): the 409 "in use" answer of the apps' own delete views (Projects, HSE …) – the same
+# wording and shape as the shared check above, so the lists offer "Make inactive" / show why
+def used_counts_answer(name, counts, active, extra=0):
+    """The 409 "in use" answer from {kind: n} (None when nothing uses the record)."""
+    if not counts and not extra:
+        return None
+    total = sum(counts.values()) or extra
+    from Translations.i18n import tr
+    from DataTools.usage import _kind_text, _lang_ar
+    where = '، ' if _lang_ar() else ', '
+    what = where.join(tr('{0} ({1})', _kind_text(k), v) if v else _kind_text(k) for k, v in sorted(counts.items(), key=lambda x: -x[1])[:4])
+    nm = str(name)[:80]
+    if active:
+        msg = tr('"{0}" is in use – it is used in {1}. It cannot be deleted. Make it inactive instead: it is then no longer offered '
+                 'for new records, and the records that already use it keep working.', nm, what)
+    else:
+        msg = tr('"{0}" is in use – it is used in {1}. It cannot be deleted.', nm, what)
+    from rest_framework.response import Response
+    from rest_framework import status
+    return Response({'detail': msg, 'used': total, 'kinds': list(counts), 'active_field': 'is_active' if active else None, 'code': 'used'},
+                    status=status.HTTP_409_CONFLICT)

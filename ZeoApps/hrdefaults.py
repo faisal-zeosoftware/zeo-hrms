@@ -1,4 +1,5 @@
 # v1.67.8 (fixes)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.67.8 (fixes) – item 5: no HR defaults in a company without HR; they are loaded when HR is activated.
 
 A new company is a copy of the company template (or made by the migrations and the branch signal
@@ -184,7 +185,7 @@ def ensure(user=None):
     added = []
     branches = _branches()
     first = branches[0] if branches else None
-    year = date.today().year
+    year = _zt_today().year
     tag = (connection.schema_name or '')[:5]
     if not WC.objects.exists():
         w = WC.objects.create(description=f'Default Weekend Calendar {year}', calendar_code=f'WEND-{year}-{tag}', year=year,

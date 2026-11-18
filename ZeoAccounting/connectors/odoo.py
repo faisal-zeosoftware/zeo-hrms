@@ -282,8 +282,9 @@ class Odoo:
                 lines.append(self._x(v))
             mtype = {'invoice': 'out_invoice', 'credit_note': 'out_refund', 'bill': 'in_invoice'}[kind]
             ref = f'ZEO {batch.number} {doc.get("invoice_no") if kind == "bill" else batch.reference}'[:200]
-            vals = {'move_type': mtype, 'partner_id': partner, 'invoice_date': doc.get('date') or batch.date.isoformat(),
-                    'invoice_date_due': doc.get('due') or doc.get('date') or batch.date.isoformat(), 'ref': ref,
+            ddate = doc.get('date') or (batch.document_date or batch.date).isoformat()   # v1.70.5: invoice date = the document's date
+            vals = {'move_type': mtype, 'partner_id': partner, 'invoice_date': ddate, 'date': batch.date.isoformat(),   # 'date' = accounting (posting) date
+                    'invoice_date_due': doc.get('due') or ddate, 'ref': ref,
                     'journal_id': self._journal_of(self.st.purchase_journal_code if kind == 'bill' else self.st.sales_journal_code,
                                                    'purchase' if kind == 'bill' else 'sale'),
                     'invoice_line_ids': lines}
@@ -322,7 +323,7 @@ class Odoo:
             if self.st.odoo_company_id:
                 ctx['allowed_company_ids'] = [self.st.odoo_company_id]
             wiz = self._id(self.call('account.payment.register', 'create', context=ctx, vals_list=[{
-                'payment_date': doc.get('date') or batch.date.isoformat(), 'journal_id': journal, 'amount': amount,
+                'payment_date': batch.date.isoformat(), 'journal_id': journal, 'amount': amount,   # v1.70.5: the posting date
                 'communication': marker, 'group_payment': True}]))
             res = self.call('account.payment.register', 'action_create_payments', ids=[wiz], context=ctx)
             if isinstance(res, dict) and res.get('res_id'):
@@ -333,7 +334,7 @@ class Odoo:
         if not pid:   # an advance, or the invoices went as JVs: a payment on account
             pid = self._id(self.call('account.payment', 'create', vals_list=[{
                 'payment_type': 'inbound', 'partner_type': 'customer', 'partner_id': partner, 'amount': amount,
-                'date': doc.get('date') or batch.date.isoformat(), 'journal_id': journal, memo: marker}]))
+                'date': batch.date.isoformat(), 'journal_id': journal, memo: marker}]))   # v1.70.5: the posting date
             if self.st.post_as == 'posted':
                 self.call('account.payment', 'action_post', ids=[pid])
         rec = self.call('account.payment', 'read', ids=[pid], fields=['name'])

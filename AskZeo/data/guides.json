@@ -1,0 +1,753 @@
+{
+ "guides": [
+  {
+   "key": "first-payroll",
+   "suite": "hrms",
+   "app": "payroll",
+   "perms": [
+    "view_payrollrun",
+    "add_payrollrun"
+   ],
+   "words": "payroll month run first salary pay wps payslips monthly",
+   "title": {
+    "en": "Run the monthly payroll",
+    "ar": "تشغيل الرواتب الشهرية"
+   },
+   "steps": [
+    {
+     "en": "Enter the month's additions and deductions (overtime, bonus, fines) in Monthly inputs.",
+     "ar": "أدخل إضافات الشهر واستقطاعاته (العمل الإضافي، المكافأة، الغرامات) في المدخلات الشهرية.",
+     "link": "/main-sidebar/salary-options/monthly-inputs"
+    },
+    {
+     "en": "Create the payroll run for the month and branches – the payslips are calculated at once.",
+     "ar": "أنشئ مسير الرواتب للشهر والفروع – تُحسب القسائم فورًا.",
+     "link": "/main-sidebar/salary-options/pay-roll"
+    },
+    {
+     "en": "Run the AI payroll auditor and clear the critical findings.",
+     "ar": "شغّل مدقق الرواتب الآلي وعالج الملاحظات الحرجة.",
+     "link": "/main-sidebar/zeo-ai/payroll-auditor"
+    },
+    {
+     "en": "Send the payslips for approval; the approver approves them and then the run.",
+     "ar": "أرسل القسائم للاعتماد؛ يعتمدها المعتمِد ثم يعتمد المسير.",
+     "link": "/main-sidebar/salary-options/payslip-approval"
+    },
+    {
+     "en": "Make the WPS file of the approved run and upload it to the bank.",
+     "ar": "أنشئ ملف حماية الأجور للمسير المعتمد وارفعه إلى البنك.",
+     "link": "/main-sidebar/salary-options/wps"
+    },
+    {
+     "en": "Mark the run as paid – the employees then see their payslips.",
+     "ar": "علّم المسير كمدفوع – يرى الموظفون قسائمهم بعد ذلك.",
+     "link": "/main-sidebar/salary-options/pay-roll"
+    }
+   ]
+  },
+  {
+   "key": "new-employee",
+   "suite": "hrms",
+   "app": "hrms",
+   "perms": [
+    "add_emp_master",
+    "change_emp_master"
+   ],
+   "words": "new employee joiner hire onboard add employee create",
+   "title": {
+    "en": "Add a new employee",
+    "ar": "إضافة موظف جديد"
+   },
+   "steps": [
+    {
+     "en": "Employees › + New: name, code, branch, department, designation, joining date.",
+     "ar": "الموظفون › + جديد: الاسم والرمز والفرع والقسم والمسمى الوظيفي وتاريخ الانضمام.",
+     "link": "/main-sidebar/sub-sidebar/employee-master"
+    },
+    {
+     "en": "Add the passport, visa and Emirates ID with their expiry dates.",
+     "ar": "أضف جواز السفر والإقامة والهوية الإماراتية مع تواريخ انتهائها.",
+     "link": "/main-sidebar/sub-sidebar/employee-master"
+    },
+    {
+     "en": "Add the bank account with the IBAN (needed for the WPS file).",
+     "ar": "أضف الحساب البنكي مع رقم الآيبان (مطلوب لملف حماية الأجور).",
+     "link": "/main-sidebar/sub-sidebar/employee-master"
+    },
+    {
+     "en": "Give the salary: Employee salary › + New salary assignment.",
+     "ar": "حدّد الراتب: راتب الموظف › + تعيين راتب جديد.",
+     "link": "/main-sidebar/salary-options/employee-salary"
+    },
+    {
+     "en": "Give a login if the employee should use self service (Settings › Users).",
+     "ar": "أنشئ حساب دخول إذا كان الموظف سيستخدم الخدمة الذاتية (الإعدادات › المستخدمون).",
+     "link": "/main-sidebar/settings/user-master"
+    }
+   ]
+  },
+  {
+   "key": "leave-setup",
+   "suite": "hrms",
+   "app": "hrms",
+   "perms": [
+    "view_leave_type",
+    "add_leave_type",
+    "change_leave_type"
+   ],
+   "words": "leave types policy policies setup annual sick entitlement accrual",
+   "title": {
+    "en": "Set up leave types and policies",
+    "ar": "إعداد أنواع الإجازات وسياساتها"
+   },
+   "steps": [
+    {
+     "en": "Leave types: check the standard UAE types (annual, sick, maternity, Hajj …).",
+     "ar": "أنواع الإجازات: راجع الأنواع الإماراتية القياسية (سنوية، مرضية، أمومة، حج …).",
+     "link": "/main-sidebar/leave-options/leave-master"
+    },
+    {
+     "en": "Leave policies: days per year, accrual, carry forward and encashment per type.",
+     "ar": "سياسات الإجازات: الأيام في السنة والاستحقاق والترحيل والصرف النقدي لكل نوع.",
+     "link": "/main-sidebar/leave-options/leave-policies"
+    },
+    {
+     "en": "Approval levels: who approves leave requests.",
+     "ar": "مستويات الاعتماد: من يعتمد طلبات الإجازة.",
+     "link": "/main-sidebar/leave-options/leave-approval-level"
+    },
+    {
+     "en": "Import the opening leave balances (Settings › Data workbook).",
+     "ar": "استورد أرصدة الإجازات الافتتاحية (الإعدادات › مصنف البيانات).",
+     "link": "/main-sidebar/settings/data-workbook"
+    }
+   ]
+  },
+  {
+   "key": "final-settlement",
+   "suite": "hrms",
+   "app": "payroll",
+   "perms": [
+    "view_payrollrun",
+    "change_payrollrun",
+    "view_emp_master"
+   ],
+   "words": "final settlement end of service leaver resign resignation gratuity exit",
+   "title": {
+    "en": "Pay a final settlement",
+    "ar": "صرف التسوية النهائية"
+   },
+   "steps": [
+    {
+     "en": "Approve the resignation (or record the termination) with the last working day.",
+     "ar": "اعتمد الاستقالة (أو سجّل إنهاء الخدمة) مع آخر يوم عمل.",
+     "link": "/main-sidebar/sub-sidebar/resignation-approvals"
+    },
+    {
+     "en": "Leavers: open the employee and make the settlement – gratuity, leave salary, notice, loans.",
+     "ar": "المغادرون: افتح الموظف وأنشئ التسوية – المكافأة وبدل الإجازة والإشعار والقروض.",
+     "link": "/main-sidebar/sub-sidebar/leavers"
+    },
+    {
+     "en": "Check the explanation of each line, approve and print the settlement.",
+     "ar": "راجع شرح كل بند، ثم اعتمد التسوية واطبعها.",
+     "link": "/main-sidebar/sub-sidebar/leavers"
+    },
+    {
+     "en": "Pay it and close the employee.",
+     "ar": "اصرفها وأغلق ملف الموظف.",
+     "link": "/main-sidebar/sub-sidebar/leavers"
+    }
+   ]
+  },
+  {
+   "key": "wps",
+   "suite": "hrms",
+   "app": "payroll",
+   "perms": [
+    "view_wps",
+    "export_wps",
+    "add_wps"
+   ],
+   "words": "wps sif file bank salary transfer establishment mol",
+   "title": {
+    "en": "Make the WPS salary file",
+    "ar": "إنشاء ملف حماية الأجور"
+   },
+   "steps": [
+    {
+     "en": "Check the employer ID and bank routing code of the company and branches.",
+     "ar": "تحقق من رقم صاحب العمل ورمز توجيه البنك للشركة والفروع.",
+     "link": "/main-sidebar/settings/location-master"
+    },
+    {
+     "en": "Check every employee has a Person ID (MOL) and a valid IBAN.",
+     "ar": "تأكد أن لكل موظف رقمًا شخصيًا (وزارة الموارد البشرية) وآيبان صحيحًا.",
+     "link": "/main-sidebar/report-options/r/wps"
+    },
+    {
+     "en": "Approve the payroll run.",
+     "ar": "اعتمد مسير الرواتب.",
+     "link": "/main-sidebar/salary-options/pay-roll"
+    },
+    {
+     "en": "WPS file: choose the run (one file per establishment) and download the SIF.",
+     "ar": "ملف حماية الأجور: اختر المسير (ملف لكل منشأة) ونزّل ملف SIF.",
+     "link": "/main-sidebar/salary-options/wps"
+    }
+   ]
+  },
+  {
+   "key": "go-live",
+   "suite": "settings",
+   "app": "",
+   "perms": [],
+   "admin": true,
+   "words": "setup guide go live new company start implementation readiness",
+   "title": {
+    "en": "Set up a new company and go live",
+    "ar": "إعداد شركة جديدة والتشغيل الفعلي"
+   },
+   "steps": [
+    {
+     "en": "Settings › Setup guide: work through the 15 steps (country, branches, leave, payroll, approvals …).",
+     "ar": "الإعدادات › دليل الإعداد: أكمل الخطوات الخمس عشرة (الدولة، الفروع، الإجازات، الرواتب، الاعتمادات …).",
+     "link": "/main-sidebar/settings/setup-guide"
+    },
+    {
+     "en": "Load employees, salaries and opening balances with the Data workbook.",
+     "ar": "حمّل الموظفين والرواتب والأرصدة الافتتاحية من خلال مصنف البيانات.",
+     "link": "/main-sidebar/settings/data-workbook"
+    },
+    {
+     "en": "Ask Ask ZEO \"Am I ready to go live?\" for the setup check.",
+     "ar": "اسأل Ask ZEO \"هل أنا جاهز للتشغيل الفعلي؟\" لفحص الإعداد.",
+     "link": "/main-sidebar/ask-zeo"
+    },
+    {
+     "en": "Run a trial payroll, then press Go live in the setup guide.",
+     "ar": "شغّل رواتب تجريبية، ثم اضغط التشغيل الفعلي في دليل الإعداد.",
+     "link": "/main-sidebar/settings/setup-guide"
+    }
+   ]
+  },
+  {
+   "key": "letters",
+   "suite": "hrms",
+   "app": "hrms",
+   "perms": [],
+   "words": "letter certificate salary certificate noc experience embassy bank letter",
+   "title": {
+    "en": "Get an HR letter",
+    "ar": "الحصول على خطاب من الموارد البشرية"
+   },
+   "steps": [
+    {
+     "en": "Employees: My letters › + New – choose the letter and the language.",
+     "ar": "الموظفون: خطاباتي › + جديد – اختر الخطاب واللغة.",
+     "link": "/main-sidebar/self-service/letters"
+    },
+    {
+     "en": "HR approves the request in HR letters; the PDF gets a reference number and a check code.",
+     "ar": "تعتمد الموارد البشرية الطلب في خطابات الموارد البشرية؛ ويحصل ملف PDF على رقم مرجعي ورمز تحقق.",
+     "link": "/main-sidebar/self-service/hr-letters"
+    },
+    {
+     "en": "Download the letter from My letters.",
+     "ar": "نزّل الخطاب من خطاباتي.",
+     "link": "/main-sidebar/self-service/letters"
+    }
+   ]
+  },
+  {
+   "key": "documents",
+   "suite": "hrms",
+   "app": "hrms",
+   "perms": [
+    "view_emp_master",
+    "change_emp_master"
+   ],
+   "words": "documents expiry passport visa emirates id renew renewal expiring",
+   "title": {
+    "en": "Keep employee documents up to date",
+    "ar": "تحديث مستندات الموظفين"
+   },
+   "steps": [
+    {
+     "en": "Expiring documents: see what expires in the next 30 / 60 / 90 days.",
+     "ar": "المستندات المنتهية: اعرض ما ينتهي خلال 30 / 60 / 90 يومًا.",
+     "link": "/main-sidebar/sub-sidebar/document-expired"
+    },
+    {
+     "en": "Start a renewal in HR operations › Document renewals.",
+     "ar": "ابدأ التجديد من عمليات الموارد البشرية › تجديد المستندات.",
+     "link": "/main-sidebar/zeo-hr/r/renewal"
+    },
+    {
+     "en": "Upload the new document with its new expiry date on the employee.",
+     "ar": "ارفع المستند الجديد مع تاريخ انتهائه الجديد في ملف الموظف.",
+     "link": "/main-sidebar/sub-sidebar/employee-master"
+    }
+   ]
+  },
+  {
+   "key": "projects-ticket",
+   "suite": "projects",
+   "app": "projects",
+   "perms": [],
+   "words": "support ticket helpdesk sla customer engineer close resolve",
+   "title": {
+    "en": "Handle a support ticket",
+    "ar": "معالجة تذكرة دعم"
+   },
+   "steps": [
+    {
+     "en": "Projects › Support › Tickets › + New: customer, subject, priority (the SLA starts).",
+     "ar": "المشاريع › الدعم › التذاكر › + جديد: العميل والموضوع والأولوية (يبدأ اتفاق مستوى الخدمة).",
+     "link": "/main-sidebar/zeo-projects/tickets"
+    },
+    {
+     "en": "Assign the engineer; the AMC coverage is checked on the ticket.",
+     "ar": "عيّن المهندس؛ تُفحص تغطية عقد الصيانة في التذكرة.",
+     "link": "/main-sidebar/zeo-projects/tickets"
+    },
+    {
+     "en": "The engineer logs the work and resolves the ticket; the work log is approved.",
+     "ar": "يسجل المهندس العمل ويحل التذكرة؛ ثم يُعتمد سجل العمل.",
+     "link": "/main-sidebar/zeo-projects/worklogs"
+    },
+    {
+     "en": "Check SLA breaches in the reports.",
+     "ar": "راجع تجاوزات اتفاق مستوى الخدمة في التقارير.",
+     "link": "/main-sidebar/report-options/r/pj-sla-breaches"
+    }
+   ]
+  },
+  {
+   "key": "projects-amc",
+   "suite": "projects",
+   "app": "projects",
+   "perms": [],
+   "words": "amc contract maintenance contract billing invoice renew hours",
+   "title": {
+    "en": "Set up and bill an AMC contract",
+    "ar": "إعداد عقد صيانة سنوي وإصدار فواتيره"
+   },
+   "steps": [
+    {
+     "en": "Customers & AMC › AMC contracts › + New: customer, AMC type, dates, value, visits and hours.",
+     "ar": "العملاء وعقود الصيانة › عقود الصيانة › + جديد: العميل ونوع العقد والتواريخ والقيمة والزيارات والساعات.",
+     "link": "/main-sidebar/zeo-projects/contracts"
+    },
+    {
+     "en": "Add the covered sites and equipment.",
+     "ar": "أضف المواقع والمعدات المشمولة.",
+     "link": "/main-sidebar/zeo-projects/contracts"
+    },
+    {
+     "en": "Bill the AMC lines (and extra hours) from Billing and collections.",
+     "ar": "أصدر فواتير بنود العقد (والساعات الإضافية) من الفوترة والتحصيل.",
+     "link": "/main-sidebar/zeo-projects/contracts"
+    },
+    {
+     "en": "Check renewals and profit in the AMC report.",
+     "ar": "راجع التجديدات والربحية في تقرير عقود الصيانة.",
+     "link": "/main-sidebar/report-options/r/pj-amc-profit"
+    }
+   ]
+  },
+  {
+   "key": "crm-lead",
+   "suite": "crm",
+   "app": "crm",
+   "perms": [],
+   "words": "lead opportunity quotation sales order pipeline deal crm",
+   "title": {
+    "en": "From lead to sales order",
+    "ar": "من العميل المحتمل إلى أمر البيع"
+   },
+   "steps": [
+    {
+     "en": "CRM › Sales › Leads › + New and qualify the lead.",
+     "ar": "إدارة العملاء › المبيعات › العملاء المحتملون › + جديد ثم قيّم العميل المحتمل.",
+     "link": "/main-sidebar/zeo-crm/r/lead"
+    },
+    {
+     "en": "Convert it to an opportunity and move it through the stages.",
+     "ar": "حوّله إلى فرصة وانقله عبر المراحل.",
+     "link": "/main-sidebar/zeo-crm/r/opportunity"
+    },
+    {
+     "en": "Make the quotation and send it; once accepted it becomes a sales order.",
+     "ar": "أنشئ عرض السعر وأرسله؛ وعند قبوله يصبح أمر بيع.",
+     "link": "/main-sidebar/zeo-crm/r/quotation"
+    },
+    {
+     "en": "Follow the pipeline by stage in the reports.",
+     "ar": "تابع خط المبيعات حسب المرحلة في التقارير.",
+     "link": "/main-sidebar/report-options/r/crm-opportunity"
+    }
+   ]
+  },
+  {
+   "key": "property-lease",
+   "suite": "property",
+   "app": "property",
+   "perms": [],
+   "words": "lease tenancy tenant unit rent cheque renew renewal ejari",
+   "title": {
+    "en": "Make and renew a lease",
+    "ar": "إنشاء عقد إيجار وتجديده"
+   },
+   "steps": [
+    {
+     "en": "Portfolio › Units: check the unit is vacant.",
+     "ar": "المحفظة › الوحدات: تأكد أن الوحدة شاغرة.",
+     "link": "/main-sidebar/zeo-property/r/unit"
+    },
+    {
+     "en": "Leasing & sales › Leases › + New: tenant, unit, dates, rent and cheques.",
+     "ar": "التأجير والمبيعات › عقود الإيجار › + جديد: المستأجر والوحدة والتواريخ والإيجار والشيكات.",
+     "link": "/main-sidebar/zeo-property/r/lease"
+    },
+    {
+     "en": "Collect the cheques and deposit them with a bank deposit slip.",
+     "ar": "استلم الشيكات وأودعها بقسيمة إيداع بنكية.",
+     "link": "/main-sidebar/zeo-property/r/slip"
+    },
+    {
+     "en": "Before the end date, renew the lease from the lease record.",
+     "ar": "قبل تاريخ الانتهاء، جدّد العقد من سجل عقد الإيجار.",
+     "link": "/main-sidebar/zeo-property/r/lease"
+    }
+   ]
+  },
+  {
+   "key": "maintenance-wo",
+   "suite": "maintenance",
+   "app": "maintenance",
+   "perms": [],
+   "words": "work order maintenance repair request technician preventive plan",
+   "title": {
+    "en": "Handle a maintenance work order",
+    "ar": "معالجة أمر عمل صيانة"
+   },
+   "steps": [
+    {
+     "en": "Work › Work orders › + New: location or asset, category, priority.",
+     "ar": "العمل › أوامر العمل › + جديد: الموقع أو الأصل والفئة والأولوية.",
+     "link": "/main-sidebar/zeo-maintenance/r/work_order"
+    },
+    {
+     "en": "Assign the technician; the SLA of the category starts.",
+     "ar": "عيّن الفني؛ يبدأ اتفاق مستوى الخدمة الخاص بالفئة.",
+     "link": "/main-sidebar/zeo-maintenance/r/work_order"
+    },
+    {
+     "en": "Close it with the work done and the parts used.",
+     "ar": "أغلقه مع العمل المنجز وقطع الغيار المستخدمة.",
+     "link": "/main-sidebar/zeo-maintenance/r/work_order"
+    },
+    {
+     "en": "Preventive plans make the recurring work orders by themselves.",
+     "ar": "خطط الصيانة الوقائية تنشئ أوامر العمل الدورية تلقائيًا.",
+     "link": "/main-sidebar/zeo-maintenance/r/plan"
+    }
+   ]
+  },
+  {
+   "key": "assets-register",
+   "suite": "assets",
+   "app": "assets",
+   "perms": [],
+   "words": "asset register depreciation check out count label equipment",
+   "title": {
+    "en": "Register an asset and depreciate it",
+    "ar": "تسجيل أصل واحتساب إهلاكه"
+   },
+   "steps": [
+    {
+     "en": "Asset home › Register › + New: category, location, cost, purchase date, useful life.",
+     "ar": "الأصول › السجل › + جديد: الفئة والموقع والتكلفة وتاريخ الشراء والعمر الإنتاجي.",
+     "link": "/main-sidebar/zeo-assets/r/asset"
+    },
+    {
+     "en": "Print the label and check the asset out to a person or location.",
+     "ar": "اطبع الملصق وسلّم الأصل لشخص أو موقع.",
+     "link": "/main-sidebar/zeo-assets/r/asset"
+    },
+    {
+     "en": "Run the monthly depreciation in Finance › Depreciation runs.",
+     "ar": "شغّل الإهلاك الشهري من المالية › عمليات الإهلاك.",
+     "link": "/main-sidebar/zeo-assets/r/depreciation"
+    }
+   ]
+  },
+  {
+   "key": "hse-incident",
+   "suite": "hse",
+   "app": "hse",
+   "perms": [],
+   "words": "incident near miss accident injury report investigation capa corrective action",
+   "title": {
+    "en": "Report and close an incident",
+    "ar": "الإبلاغ عن حادث وإغلاقه"
+   },
+   "steps": [
+    {
+     "en": "My safety › Report an incident or near miss (anyone can report).",
+     "ar": "سلامتي › الإبلاغ عن حادث أو حادث وشيك (يمكن لأي شخص الإبلاغ).",
+     "link": "/main-sidebar/zeo-hse/report/incident"
+    },
+    {
+     "en": "The HSE officer investigates and records the root cause.",
+     "ar": "يحقق مسؤول الصحة والسلامة ويسجل السبب الجذري.",
+     "link": "/main-sidebar/zeo-hse/incidents"
+    },
+    {
+     "en": "Add corrective actions with owners and due dates; close when all are done.",
+     "ar": "أضف الإجراءات التصحيحية مع المسؤولين والمواعيد؛ وأغلق عند إنجازها جميعًا.",
+     "link": "/main-sidebar/zeo-hse/incidents"
+    }
+   ]
+  },
+  {
+   "key": "users-rights",
+   "suite": "settings",
+   "app": "",
+   "perms": [],
+   "admin": true,
+   "words": "user login rights permission group role access invite",
+   "title": {
+    "en": "Give a user a login and rights",
+    "ar": "منح مستخدم حساب دخول وصلاحيات"
+   },
+   "steps": [
+    {
+     "en": "Settings › Users › + New (or invite by e-mail) and link the employee.",
+     "ar": "الإعدادات › المستخدمون › + جديد (أو ادعُه بالبريد) واربط الموظف.",
+     "link": "/main-sidebar/settings/user-master"
+    },
+    {
+     "en": "Give permission groups (HR, Payroll, Manager …) and the branches.",
+     "ar": "امنح مجموعات الصلاحيات (الموارد البشرية، الرواتب، المدير …) والفروع.",
+     "link": "/main-sidebar/settings/user-master"
+    },
+    {
+     "en": "The user signs in with the e-mail address and the code sent by e-mail.",
+     "ar": "يسجّل المستخدم الدخول بعنوان البريد والرمز المرسل إليه.",
+     "link": "/main-sidebar/settings/user-master"
+    }
+   ]
+  },
+  {
+   "key": "property-billing",
+   "suite": "property",
+   "app": "property",
+   "perms": [],
+   "words": "rent billing bill invoice receipt cheque collect collection aged receivables tenant property",
+   "title": {
+    "en": "Bill the rent and collect it",
+    "ar": "إصدار فواتير الإيجار وتحصيلها"
+   },
+   "steps": [
+    {
+     "en": "Check the recurring charges of the leases (rent, service charge, parking).",
+     "ar": "راجع الرسوم المتكررة لعقود الإيجار (الإيجار، رسوم الخدمات، المواقف).",
+     "link": "/main-sidebar/zeo-property/r/recurring"
+    },
+    {
+     "en": "Make the billing records for the period – one per lease and charge.",
+     "ar": "أنشئ سجلات الفواتير للفترة – سجل لكل عقد ورسم.",
+     "link": "/main-sidebar/zeo-property/r/bill"
+    },
+    {
+     "en": "Record the cheques the tenant gave (dates, bank, amounts) and deposit them when due.",
+     "ar": "سجّل الشيكات التي قدمها المستأجر (التواريخ، البنك، المبالغ) وأودعها عند استحقاقها.",
+     "link": "/main-sidebar/zeo-property/r/cheque"
+    },
+    {
+     "en": "Record each payment as a receipt against its bills.",
+     "ar": "سجّل كل دفعة كإيصال مقابل فواتيرها.",
+     "link": "/main-sidebar/zeo-property/r/receipt"
+    },
+    {
+     "en": "Follow what is still owed in the aged receivables report.",
+     "ar": "تابع المبالغ المستحقة في تقرير أعمار الذمم.",
+     "link": "/main-sidebar/report-options/r/prop-aged"
+    }
+   ]
+  },
+  {
+   "key": "hse-permit",
+   "suite": "hse",
+   "app": "hse",
+   "perms": [],
+   "words": "permit to work ptw hot work confined space isolation gas test hse issue close",
+   "title": {
+    "en": "Issue a permit to work",
+    "ar": "إصدار تصريح عمل"
+   },
+   "steps": [
+    {
+     "en": "Make sure the site, the permit types and the contractors are set up.",
+     "ar": "تأكد من إعداد الموقع وأنواع التصاريح والمقاولين.",
+     "link": "/main-sidebar/zeo-hse/setup/sites"
+    },
+    {
+     "en": "Assess the risk of the job (risk assessment) and link it to the permit.",
+     "ar": "قيّم مخاطر العمل (تقييم المخاطر) واربطه بالتصريح.",
+     "link": "/main-sidebar/zeo-hse/risks"
+    },
+    {
+     "en": "Raise the permit, add the gas tests and isolations, and send it for approval.",
+     "ar": "أنشئ التصريح وأضف اختبارات الغاز وعمليات العزل وأرسله للموافقة.",
+     "link": "/main-sidebar/zeo-hse/permits"
+    },
+    {
+     "en": "Follow the open permits on the live permit board and close each when the job is done.",
+     "ar": "تابع التصاريح المفتوحة على لوحة التصاريح المباشرة وأغلق كل تصريح عند انتهاء العمل.",
+     "link": "/main-sidebar/zeo-hse/board"
+    },
+    {
+     "en": "See every permit in the permit register.",
+     "ar": "اطلع على جميع التصاريح في سجل التصاريح.",
+     "link": "/main-sidebar/report-options/r/hse-permits"
+    }
+   ]
+  },
+  {
+   "key": "asset-count",
+   "suite": "assets",
+   "app": "assets",
+   "perms": [],
+   "words": "asset count physical verification audit stock take scan qr missing found assets",
+   "title": {
+    "en": "Count the assets (physical verification)",
+    "ar": "جرد الأصول (التحقق الفعلي)"
+   },
+   "steps": [
+    {
+     "en": "Start an asset count for a location or category.",
+     "ar": "ابدأ جرد أصول لموقع أو فئة.",
+     "link": "/main-sidebar/zeo-assets/r/audit"
+    },
+    {
+     "en": "Scan or tick each asset found; mark missing ones and note the condition.",
+     "ar": "امسح أو أشّر على كل أصل موجود؛ وحدّد المفقود وسجّل الحالة.",
+     "link": "/main-sidebar/zeo-assets/r/audit_line"
+    },
+    {
+     "en": "Close the count; the differences are listed for follow-up.",
+     "ar": "أغلق الجرد؛ تُسرد الفروقات للمتابعة.",
+     "link": "/main-sidebar/zeo-assets/r/audit"
+    },
+    {
+     "en": "See the result in the asset counts report.",
+     "ar": "اطلع على النتيجة في تقرير جرد الأصول.",
+     "link": "/main-sidebar/report-options/r/ast-audit"
+    }
+   ]
+  },
+  {
+   "key": "maintenance-plan",
+   "suite": "maintenance",
+   "app": "maintenance",
+   "perms": [],
+   "words": "preventive maintenance plan ppm schedule recurring service work orders maintenance",
+   "title": {
+    "en": "Plan preventive maintenance",
+    "ar": "تخطيط الصيانة الوقائية"
+   },
+   "steps": [
+    {
+     "en": "Set the categories and their SLA (response and fix times).",
+     "ar": "اضبط الفئات واتفاقية مستوى الخدمة الخاصة بها (أوقات الاستجابة والإصلاح).",
+     "link": "/main-sidebar/zeo-maintenance/r/category"
+    },
+    {
+     "en": "Make a preventive plan: the asset or location, how often and the checklist.",
+     "ar": "أنشئ خطة وقائية: الأصل أو الموقع، والتكرار، وقائمة الفحص.",
+     "link": "/main-sidebar/zeo-maintenance/r/plan"
+    },
+    {
+     "en": "The work orders of the plan are made when due; assign them to technicians.",
+     "ar": "تُنشأ أوامر العمل الخاصة بالخطة عند استحقاقها؛ أسندها إلى الفنيين.",
+     "link": "/main-sidebar/zeo-maintenance/r/work_order"
+    },
+    {
+     "en": "Follow the plans and the SLA in the reports.",
+     "ar": "تابع الخطط واتفاقية مستوى الخدمة في التقارير.",
+     "link": "/main-sidebar/report-options/r/mnt-plan"
+    }
+   ]
+  },
+  {
+   "key": "crm-pipeline",
+   "suite": "crm",
+   "app": "crm",
+   "perms": [],
+   "words": "set up pipeline stages crm sales targets territories sources setup",
+   "title": {
+    "en": "Set up the sales pipeline",
+    "ar": "إعداد خط المبيعات"
+   },
+   "steps": [
+    {
+     "en": "Review the industry pack rows (stages, sources, reasons) in CRM setup.",
+     "ar": "راجع صفوف حزمة القطاع (المراحل، المصادر، الأسباب) في إعداد إدارة العملاء.",
+     "link": "/main-sidebar/zeo-crm/setup"
+    },
+    {
+     "en": "Adjust the pipelines and their stages (with the probability of each stage).",
+     "ar": "عدّل خطوط المبيعات ومراحلها (مع احتمالية كل مرحلة).",
+     "link": "/main-sidebar/zeo-crm/r/pipeline"
+    },
+    {
+     "en": "Set the sales targets of the agents and teams.",
+     "ar": "حدّد أهداف المبيعات للمندوبين والفرق.",
+     "link": "/main-sidebar/zeo-crm/r/target"
+    },
+    {
+     "en": "Compare targets with the actual sales.",
+     "ar": "قارن الأهداف بالمبيعات الفعلية.",
+     "link": "/main-sidebar/report-options/r/crm-targets"
+    }
+   ]
+  },
+  {
+   "key": "project-delivery",
+   "suite": "projects",
+   "app": "projects",
+   "perms": [],
+   "words": "project delivery milestones tasks timesheet hours cost budget margin plan template",
+   "title": {
+    "en": "Deliver a project",
+    "ar": "تنفيذ مشروع"
+   },
+   "steps": [
+    {
+     "en": "Create the project (from a plan template if you have one).",
+     "ar": "أنشئ المشروع (من قالب خطة إن وُجد).",
+     "link": "/main-sidebar/zeo-projects/projects"
+    },
+    {
+     "en": "Give the tasks to the team with their dates.",
+     "ar": "وزّع المهام على الفريق مع تواريخها.",
+     "link": "/main-sidebar/project-options/project-tasks"
+    },
+    {
+     "en": "The team logs hours in the timesheet; approve them.",
+     "ar": "يسجّل الفريق الساعات في الجدول الزمني؛ وافق عليها.",
+     "link": "/main-sidebar/project-options/timesheet-approvals"
+    },
+    {
+     "en": "Follow status, budget and margin, and the overdue milestones.",
+     "ar": "تابع الحالة والميزانية والهامش والمراحل المتأخرة.",
+     "link": "/main-sidebar/report-options/r/pj-project-status"
+    }
+   ]
+  }
+ ]
+}

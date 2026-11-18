@@ -8,6 +8,7 @@ employee_left(e, day)  the employee has left / is leaving (inactive, approved re
 policy_countries(e)    countries an employee matches a policy on (employee country, nationality, else the branch country)
 allocation_due(...)    the policy frequency: may the job allocate the next ticket of the policy on this day?
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 from decimal import Decimal
 
@@ -51,7 +52,7 @@ def request_problem(employee_id, allocation, on_date=None, exclude_pk=None, requ
         return tr('This air ticket allocation is not approved yet.')
     if not allocation.is_active:
         return tr('This air ticket allocation is inactive.')
-    on = _day(on_date) or date.today()
+    on = _day(on_date) or _zt_today()
     if allocation.expiry_date and allocation.expiry_date < on:   # item 103
         return tr('This air ticket allocation expired on {0}.', allocation.expiry_date.strftime('%d/%m/%Y'))
     left = allocation.remaining_amount if allocation.remaining_amount is not None else allocation.amount

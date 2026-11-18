@@ -7,6 +7,7 @@ Existing tables (employees, branches, departments, designations, categories, com
 integer id only – those apps have no committed migrations, so nothing here may depend on them.
 Branch scoping of a master: `branch_ids` = [] means every branch, else the listed branch ids (like department ↔ branch).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.db import models
 
 FIELDS = ('locations', 'divisions', 'sections', 'cost_centers', 'grades', 'job_positions', 'employment_types', 'employee_categories')
@@ -331,7 +332,7 @@ class LocationNumbering(models.Model):
         from django.core.exceptions import ValidationError
         from django.db import transaction
         from django.utils import timezone
-        today = timezone.now().date()
+        today = _zt_today()
         if self.start_date and self.end_date and not (self.start_date <= today <= self.end_date):
             raise ValidationError('Document number cannot be generated outside the valid date range.')
         with transaction.atomic():

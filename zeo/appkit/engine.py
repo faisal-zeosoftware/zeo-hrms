@@ -1,5 +1,6 @@
 """The kit engine: App definition, rights, errors, request parsing, numbering, history, notifications and the
 generic register API. An app module builds one App(...) and calls app.urls() in its urls.py."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import json
 import logging
 import time
@@ -73,8 +74,10 @@ def branch_ids(request):
     if request is None:
         return None
     c = ctx(request)
-    if c is None or c.admin:
+    if c is None:
         return None
+    if c.admin:   # v1.73.0 (one branch filter): an administrator who narrowed the top-bar branches sees those branches
+        return list(c.pick) if getattr(c, 'pick', None) else None
     return list(c.branches or [])
 
 
@@ -206,7 +209,7 @@ def today():
         from zoneinfo import ZoneInfo
         return timezone.now().astimezone(ZoneInfo(company_tz())).date()
     except Exception:
-        return timezone.now().date()
+        return _zt_today()
 
 
 def local(dt):
@@ -589,10 +592,24 @@ class App:
                   'any_role': any(r.values()), 'user_id': request.user.pk, 'employee_id': getattr(self.my_emp(request), 'pk', None)})
         return r
 
-    def users_with_role(self, role):
+    def users_with_role(self, role, strict=True, fallback=True):
+        """v1.73.2 strict (now the default – tasks, reminders and escalations by role too): only the users of the app's own role groups (groups whose rights are all of this app, e.g. "CRM – Sales agent").
+        The catch-all groups ("Company administrators", the standard "HR Manager") hold every right of every app – work that is handed
+        out by role (the CRM round robin of new leads and deals) must not go to HR or finance staff. When the company has no such
+        group, the old answer is kept."""
         from django.contrib.auth.models import Group
         from tenant_users.tenants.models import UserTenantPermissions
         groups = Group.objects.filter(permissions__codename=self.code(role), permissions__content_type__app_label=self.label)
+        if strict:
+            # catch-all groups: rights in more than 3 other apps ("Company administrators", "HR Manager" with every right) – a role group
+            # that also has a few rights elsewhere (view employees, the calendar) still counts as the app's own.
+            from django.db.models import Count, Q as _Q
+            other = Group.objects.annotate(n=Count('permissions__content_type__app_label', distinct=True,
+                                                   filter=~_Q(permissions__content_type__app_label=self.label))).filter(n__gt=3).values('pk')
+            own = groups.exclude(pk__in=other).distinct()
+            got = [u.profile for u in _company_perms().filter(groups__in=own).select_related('profile').distinct() if u.profile and u.profile.is_active]
+            if got or not fallback:   # fallback=False: [] when the company has no group of its own for the role
+                return got
         out = [u.profile for u in _company_perms().filter(groups__in=groups).select_related('profile').distinct()
                if u.profile and u.profile.is_active]
         if not out:
@@ -800,6 +817,12 @@ class Reg:
         self.deletable, self.export_extra, self.own_edit = deletable, export_extra, own_edit
         self.info = info                         # read-only fields shown on the record (set by workflow)
         self.app = None
+        # v1.67.27 dynamic fields (CRM industry fields): defined by the company, stored in one JSON field of the record
+        self.dyn = None                          # fn(request) → [field definition dicts] (see dyn_meta)
+        self.dyn_store = 'extra'                 # JSON field that holds the values {code: value}
+        self.dyn_prepare = None                  # fn(obj, request, creating): set what the fields depend on (industry) before the check
+        self.dyn_required = None                 # fn(obj, df) → True when the field must be filled on this record
+        self.choices_fn = {}                     # {field: fn() → [(value, label)]} text fields offered as a pick list
 
     def manages(self, request):
         return self.app.is_admin(request) or self.app.any(request, *self.manage)
@@ -858,6 +881,201 @@ class Reg:
 
 def field_of(model, name):
     return model._meta.get_field(name)
+
+
+# ------------------------------------------------------------------ v1.67.27 dynamic fields
+# A definition: {'code', 'label', 'type' (text | textarea | number | money | date | choice | yesno), 'choices': [..], 'required',
+# 'section', 'list' (list column), 'filter' (list filter), 'help', 'unit', 'when': [{'field': 'industry', 'in': ['it']}, ...]}.
+# "when": the field belongs to the records where one of the conditions holds (empty = every record). Form name: x_<code>.
+DYN_TYPES = {'text': 'text', 'textarea': 'textarea', 'number': 'decimal', 'money': 'decimal', 'date': 'date', 'choice': 'choice', 'yesno': 'bool3'}
+DYN = 'x_'
+
+
+def dyn_defs(r, request=None):
+    """The dynamic fields of a register (once per request)."""
+    if not getattr(r, 'dyn', None):
+        return []
+    cache = getattr(request, '_zeo_dyn', None) if request is not None else None
+    if cache is not None and r.kind in cache:
+        return cache[r.kind]
+    try:
+        out = [x for x in (r.dyn(request) or []) if x.get('code')]
+    except Exception:   # noqa: BLE001 – a broken definition never stops the screen
+        log.exception('dynamic fields of %s', r.kind)
+        out = []
+    if request is not None:
+        try:
+            if cache is None:
+                cache = {}
+                setattr(request, '_zeo_dyn', cache)
+            cache[r.kind] = out
+        except Exception:   # noqa: BLE001
+            pass
+    return out
+
+
+def dyn_map(r, request=None):
+    return {DYN + x['code']: x for x in dyn_defs(r, request)}
+
+
+def dyn_meta(df):
+    t = DYN_TYPES.get(df.get('type') or 'text', 'text')
+    label = df.get('label') or df['code']
+    if df.get('unit'):
+        label = f'{label} ({df["unit"]})'
+    m = {'name': DYN + df['code'], 'label': label, 'type': t, 'help': df.get('help') or '', 'restricted': False,
+         'required': bool(df.get('required')), 'readonly': False, 'dyn': True, 'section': df.get('section') or '', 'when': df.get('when') or []}
+    if t == 'choice':
+        m['choices'] = [{'value': c, 'label': c} for c in (df.get('choices') or [])]
+    if df.get('type') == 'money':
+        m['money'] = True
+    if t == 'text':
+        m['max'] = 300
+    return m
+
+
+def dyn_raw(r, obj):
+    v = getattr(obj, r.dyn_store, None)
+    return v if isinstance(v, dict) else {}
+
+
+def dyn_value(df, raw, name):
+    """The value to store for what the form sent (None = empty)."""
+    t = df.get('type') or 'text'
+    label = df.get('label') or df['code']
+    if t == 'yesno':
+        if raw in (None, ''):
+            return None
+        return raw is True or str(raw).lower() in ('1', 'true', 'yes', 'on')
+    if raw is None or (isinstance(raw, str) and raw.strip() == ''):
+        return None
+    if t in ('number', 'money'):
+        try:
+            n = Decimal(str(raw).replace(',', ''))
+        except (InvalidOperation, ValueError):
+            raise AppError(f'{label}: enter a number.', name)
+        return int(n) if n == n.to_integral_value() and abs(n) < 10 ** 15 else float(n)
+    if t == 'date':
+        dd = parse_date(str(raw)[:10])
+        if dd is None:
+            raise AppError(f'{label}: enter a date.', name)
+        return dd.isoformat()
+    s = str(raw).strip()
+    if t == 'choice':
+        ch = [str(c) for c in (df.get('choices') or [])]
+        if ch and s not in ch:
+            raise AppError(f'"{s}" is not a valid {label.lower()}.', name)
+        return s
+    return s[:4000 if t == 'textarea' else 300]
+
+
+def dyn_applies(obj, df):
+    """True when the field belongs to this record (its "when" conditions; none = every record)."""
+    conds = df.get('when') or []
+    if not conds:
+        return True
+    for c in conds:
+        f = c.get('field')
+        v = getattr(obj, f + '_id', None) if hasattr(obj, f + '_id') else getattr(obj, f, None)
+        if v not in (None, '') and str(v) in {str(x) for x in (c.get('in') or [])}:
+            return True
+    return False
+
+
+def dyn_is_required(r, obj, df):
+    if r.dyn_required is not None:
+        return bool(r.dyn_required(obj, df))
+    return bool(df.get('required')) and dyn_applies(obj, df)
+
+
+def dyn_prune(r, obj, request):
+    """Values of fields that do not belong to the record (another industry) are not kept."""
+    vals = dyn_raw(r, obj)
+    if not vals:
+        return
+    by = {x['code']: x for x in dyn_defs(r, request)}
+    keep = {k: v for k, v in vals.items() if k not in by or dyn_applies(obj, by[k])}
+    # v1.67.31 (screen test): values the user typed in THIS save are never dropped without a word. The form shows a field when the
+    # chosen industry OR pipeline matches; the record then takes the pipeline's industry (e.g. industry "Construction" with the
+    # "Bids" pipeline of Oil and gas) and the construction values were silently not kept.
+    data = getattr(request, 'data', None) or {}
+
+    def shown(df):   # the form showed the field for what the user chose (same test as the form's zaWhen)
+        conds = df.get('when') or []
+        return not conds or any(str(data.get(c.get('field'), '') or '') in {str(x) for x in (c.get('in') or [])} for c in conds)
+    lost = [k for k in vals if k not in keep and vals[k] not in (None, '', [], False) and data.get(DYN + k) not in (None, '', [], False)
+            and k in by and shown(by[k])]
+    if lost:
+        names = ', '.join((by[k].get('label') or k) for k in lost[:6]) + ('…' if len(lost) > 6 else '')
+        ind = getattr(obj, 'industry', '') or ''
+        try:
+            ind = dict((r.choices_fn or {}).get('industry', lambda: [])()).get(ind, ind) if ind else ''
+        except Exception:   # noqa: BLE001
+            pass
+        raise AppError(f'These fields do not belong to this record and would not be kept: {names}. '
+                       + ((f'With this pipeline the record is for {ind}. ' if getattr(obj, 'pipeline_id', None) else f'The record is for {ind}. ') if ind else '')
+                       + 'Choose the pipeline / industry they belong to, or clear them.', DYN + lost[0])
+    if keep != vals:
+        setattr(obj, r.dyn_store, keep)
+
+
+def dyn_validate(r, obj, request):
+    if not getattr(r, 'dyn', None):
+        return
+    vals = dyn_raw(r, obj)
+    for df in dyn_defs(r, request):
+        if dyn_is_required(r, obj, df) and vals.get(df['code']) in (None, ''):
+            raise AppError(f'{df.get("label") or df["code"]} is required.', DYN + df['code'])
+
+
+def dyn_missing(r, obj, request, test):
+    """Labels of the fields `test(df)` asks for that are still empty (stage rules)."""
+    vals = dyn_raw(r, obj)
+    return [df.get('label') or df['code'] for df in dyn_defs(r, request) if test(df) and vals.get(df['code']) in (None, '')]
+
+
+def dyn_show(df, v):
+    if v in (None, ''):
+        return ''
+    t = df.get('type')
+    if t == 'yesno':
+        return 'Yes' if v else 'No'
+    if t in ('number', 'money'):
+        try:
+            return f'{float(v):,.2f}' if t == 'money' else (f'{v:,}' if isinstance(v, int) else f'{float(v):,.2f}'.rstrip('0').rstrip('.'))
+        except Exception:   # noqa: BLE001
+            return str(v)
+    if t == 'date':
+        try:
+            dd = parse_date(str(v))
+            return dd.strftime('%d/%m/%Y') if dd else str(v)
+        except Exception:   # noqa: BLE001
+            return str(v)
+    return str(v)
+
+
+def choices_of(r, name, request=None):
+    fn = (getattr(r, 'choices_fn', None) or {}).get(name)
+    if fn is None:
+        return None
+    cache = getattr(request, '_zeo_ch', None) if request is not None else None
+    key = f'{r.kind}.{name}'
+    if cache is not None and key in cache:
+        return cache[key]
+    try:
+        out = [(str(a), str(b)) for a, b in (fn() or [])]
+    except Exception:   # noqa: BLE001
+        log.exception('choices of %s', key)
+        out = []
+    if request is not None:
+        try:
+            if cache is None:
+                cache = {}
+                setattr(request, '_zeo_ch', cache)
+            cache[key] = out
+        except Exception:   # noqa: BLE001
+            pass
+    return out
 
 
 def ftype(f):
@@ -932,6 +1150,11 @@ def fmeta(r, name):
         # item is every option, so a stored value outside the list keeps its label (the screen offers it on that row)
         m['columns'] = [{'key': c[0], 'label': c[1], 'type': c[2], 'options': (c[3]() if callable(c[3]) else c[3]) if len(c) > 3 else None,
                          **({'all_options': c[4]} if len(c) > 4 else {})} for c in r.tables[name]]
+    ch = choices_of(r, name)   # v1.67.27: a text field offered as a pick list worked out per company (CRM industry)
+    if ch is not None:
+        m['type'] = 'choice'
+        m['choices'] = [{'value': a, 'label': b} for a, b in ch]
+        m.pop('max', None)
     return m
 
 
@@ -989,10 +1212,21 @@ def tr_cell(value):
 def ser(r, obj, request, cols=None):
     hide = not r.show_restricted(request, obj)
     out = {'id': obj.pk, 'kind': r.kind}
+    dm = dyn_map(r, request) if getattr(r, 'dyn', None) else {}
+    if cols is None and dm:   # v1.67.27: the dynamic fields shown as list columns
+        cols = tuple(r.cols) + tuple(n for n, x in dm.items() if x.get('list'))
     for n in cols or r.cols:
+        if n.startswith(DYN):   # v1.67.27 dynamic field
+            df = dm.get(n)
+            if df is not None:   # the screen formats the value by its type (number, date, yes / no)
+                out[n] = dyn_raw(r, obj).get(df['code'])
+            continue
         if r.link_off(n):
             continue
         v, lbl = value(r, obj, n, hide)
+        ch = choices_of(r, n, request) if getattr(r, 'choices_fn', None) else None
+        if ch is not None:
+            lbl = dict(ch).get(str(v or ''), v or '')
         if n in getattr(r, 'translate_cols', ()):   # v1.67.8 (fixes) item 14: stored English app names / roles in the reader's language
             v = tr_cell(v)
         out[n] = v
@@ -1016,7 +1250,7 @@ def ser(r, obj, request, cols=None):
 
 
 def detail(r, obj, request):
-    out = ser(r, obj, request, tuple(dict.fromkeys(r.cols + r.form + r.info)))
+    out = ser(r, obj, request, tuple(dict.fromkeys(r.cols + r.form + r.info)) + tuple(dyn_map(r, request)))
     out['info'] = [fmeta(r, n) for n in r.info if not r.link_off(n)]
     out['can_edit'] = r.can_edit(obj, request)
     if r.pdf:   # v1.40.0 printed document
@@ -1073,12 +1307,21 @@ def detail(r, obj, request):
     return jsonable(out)
 
 
-def _num_ok(fld, n, v):
+import re as _re
+_NONNEG = _re.compile(r'(cost|rate|charge|price|fee|deposit|rent|budget|estimate|hours|qty|quantity|area|capacity|duration|salary|wage|discount|target|number of|users|companies|branches|weeks|percent|limit|stock|reorder|bedroom|bathroom|parking|valuation|commission|tariff|amount|paid|residual|score|minimum|action level|based on|share|%)', _re.I)
+_SIGNED = _re.compile(r'(adjust|stock_move|journal|credit_note|credit note|reversal|variance|difference|balance|change|delta|correction|offset|temperature|latitude|longitude|growth|margin|profit)', _re.I)
+
+
+def _num_ok(fld, n, v, kind=''):
     """v1.67.19 (field check): a number below 0 in a 0-or-more field (or outside the field's own limits) is said in words –
     it reached the database and came back as "A record with the same code / number already exists"."""
     if v is None:
         return
     if v < 0 and isinstance(fld, (M.PositiveIntegerField, M.PositiveSmallIntegerField, M.PositiveBigIntegerField)):
+        raise AppError(f'{label_of(fld)}: enter 0 or more.', n)
+    if v < 0 and _NONNEG.search(f'{n} {label_of(fld)}') and not _SIGNED.search(f'{n} {label_of(fld)} {kind}'):
+        # v1.73.19 (item 289): a cost, rate, charge, price, fee, deposit, budget, hours or quantity below 0 (e.g. Work order › Estimated cost
+        # -5, Handover › Charge for damage -5) was saved; adjustments, variances, balances and differences may still be negative
         raise AppError(f'{label_of(fld)}: enter 0 or more.', n)
     from django.core.exceptions import ValidationError as _VE
     for val in fld.validators:
@@ -1122,11 +1365,11 @@ def assign(r, obj, f, request, creating):
             setattr(obj, n, None if f.d.get(n) in (None, '') else f.b(n))
         elif t == 'int':
             v = f.i(n)
-            _num_ok(fld, n, v)
+            _num_ok(fld, n, v, r.kind)
             setattr(obj, n, v if v is not None else (fld.default if fld.default is not M.NOT_PROVIDED else None))
         elif t == 'decimal':
             v = f.n(n)
-            _num_ok(fld, n, v)
+            _num_ok(fld, n, v, r.kind)
             setattr(obj, n, v if v is not None else (fld.default if fld.default is not M.NOT_PROVIDED else None))
         elif t == 'date':
             setattr(obj, n, f.dt(n))
@@ -1137,11 +1380,22 @@ def assign(r, obj, f, request, creating):
             setattr(obj, n, v if v is not None else (fld.default() if callable(fld.default) else {}))
         else:
             setattr(obj, n, f.s(n)[:fld.max_length] if getattr(fld, 'max_length', None) else f.s(n))
+    if getattr(r, 'dyn', None):   # v1.67.27 dynamic fields: only those the form sent change
+        vals = dict(dyn_raw(r, obj))
+        for name, df in dyn_map(r, request).items():
+            if name in f.d:
+                v = dyn_value(df, f.d.get(name), name)
+                if v is None:
+                    vals.pop(df['code'], None)
+                else:
+                    vals[df['code']] = v
+        setattr(obj, r.dyn_store, vals)
     return m2m
 
 
 DATE_PAIRS = (('start', 'end'), ('start_date', 'end_date'), ('date_from', 'date_to'), ('period_from', 'period_to'),
-              ('valid_from', 'valid_to'), ('from_date', 'to_date'), ('starts_on', 'ends_on'), ('start_on', 'end_on'))
+              ('valid_from', 'valid_to'), ('from_date', 'to_date'), ('starts_on', 'ends_on'), ('start_on', 'end_on'),
+              ('period_start', 'period_end'), ('date_start', 'date_end'), ('start_at', 'end_at'), ('publish_from', 'publish_to'), ('listed_from', 'listed_to'), ('show_from', 'show_to'))   # v1.73.19 (item 289): CRM › Sales targets saved "To" before "From"
 
 
 def validate(r, obj):
@@ -1169,7 +1423,7 @@ def save(r, obj, f, request, creating):
     with transaction.atomic():
         m2m = assign(r, obj, f, request, creating)
         if creating:
-            if r.number:
+            if r.number and not (getattr(obj, 'number', '') and 'number' in r.form):   # v1.73.2: a code the user typed is kept
                 obj.number = r.app.next_number(r.number[0], r.number[1])
             if r.defaults:
                 try:
@@ -1186,6 +1440,11 @@ def save(r, obj, f, request, creating):
             if b is not None and obj.branch_id and obj.branch_id not in b and (creating or obj.branch_id != getattr(old, 'branch_id', None)):
                 raise AppError('Choose one of your branches.', 'branch', status=403)
         validate(r, obj)
+        if getattr(r, 'dyn', None):   # v1.67.27
+            if r.dyn_prepare:
+                r.dyn_prepare(obj, request, creating)
+            dyn_prune(r, obj, request)
+            dyn_validate(r, obj, request)
         if r.check:
             r.check(obj, request, old)
         if r.saver:
@@ -1208,6 +1467,12 @@ def save(r, obj, f, request, creating):
                     continue
                 if getattr(old, fld.attname) != getattr(obj, fld.attname):
                     changed.append(label_of(fld) + (' (restricted)' if n in r.restricted else ''))
+            if getattr(r, 'dyn', None):   # v1.67.27 dynamic fields in the history, with the old and new value
+                ov, nv = dyn_raw(r, old), dyn_raw(r, obj)
+                for name, df in dyn_map(r, request).items():
+                    a_, b_ = ov.get(df['code']), nv.get(df['code'])
+                    if a_ != b_:
+                        changed.append(f'{df.get("label") or df["code"]} ({dyn_show(df, a_) or "–"} → {dyn_show(df, b_) or "–"})')
             if changed:
                 r.app.event(r.kind, obj.pk, 'Changed: ' + ', '.join(changed), request.user)
     return obj

@@ -13,6 +13,7 @@ label(key) / feature(key) / pack_code()    one caption / one switch / the pack c
 is_national(nationality_name) -> bool      a national of the pack's country (Emirati for AE)
 gratuity_amount(years, basic, termination, branch_id) -> Decimal   by the branch's country rule set
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import contextvars
 import logging
 import re
@@ -121,7 +122,7 @@ def rule_date():
     d = _RULE_DATE.get()
     if d is None:
         from django.utils import timezone
-        return timezone.localdate()
+        return _zt_today()
     return d
 
 
@@ -633,6 +634,15 @@ UAE_COMPONENTS = [   # v1.26.0 – name, code, payroll category
     ('Food Allowance', 'FOOD', 'food_allowance'),
     ('Other Allowance', 'OTHER', 'other_allowance'),
 ]
+DEFAULT_FORMULA_COMPONENTS = [   # v1.67.22 – name, code, payroll category, formula, description
+    ('Overtime', 'OT', 'overtime', 'basic_salary / standard_hours * ot_weighted_hours',
+     'Approved overtime: basic wage per planned hour × hours × rate of the overtime policy'),
+    ('Expense reimbursement', 'EXPREIMB', 'variable', 'expense_reimbursement_amount',
+     'Approved expense reports set to be paid with the payroll'),
+    ('Leave encashment', 'LVENC', 'leave_encashment', 'leave_encashment_amount', 'Approved leave encashment'),
+]
+
+
 def _weekday_fields():
     return ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 
@@ -714,7 +724,17 @@ def apply_defaults(user=None, schema_name=None):
                         wf.branch.set(branches)
                     added.append({'kind': 'Leave type', 'name': name, 'detail': desc})
             # 4. v1.18.0 – UAE: the GPSSA pension deduction of Emirati employees (0 for everybody else)
-            if p['pack'] == 'AE':
+            # v1.73.2 (test run): since v1.31 the statutory schemes below make the GPSSA components (ST_GPSSA employee / STE_GPSSA
+            # employer), so a new company showed two "GPSSA (employee)" deductions. The old component is made only when the
+            # statutory schemes are not available.
+            try:
+                from PayrollPlus import statutory as _st_chk   # noqa: F401
+                _statutory_ok = True
+            except Exception:
+                _statutory_ok = False
+            if p['pack'] == 'AE' and _statutory_ok:
+                kept.append({'kind': 'Salary component', 'name': 'Pension – GPSSA (employee)', 'detail': 'made by the statutory scheme GPSSA (ST_GPSSA)'})
+            elif p['pack'] == 'AE':
                 SC = M('PayrollManagement', 'SalaryComponent')
                 if SC.objects.filter(code='GPSSA').exists():
                     kept.append({'kind': 'Salary component', 'name': 'Pension – GPSSA (employee)', 'detail': 'already there'})
@@ -751,6 +771,31 @@ def apply_defaults(user=None, schema_name=None):
                                       deduct_leave=True, show_in_payslip=True, branch=None,
                                       description=f'{name} – fixed monthly amount (UAE default)')
                     added.append({'kind': 'Salary component', 'name': name, 'detail': 'fixed monthly allowance'})
+            # 4b2. v1.67.22 (integration test of a new company): the components that pay what other screens approve – approved
+            #      overtime, expense reports "with the payroll" and approved leave encashments. Without them these were approved but
+            #      never paid (1.67.15 open point 139.5). Added only when no component pays it yet (any code / name); amounts are
+            #      worked out each run and are 0 when there is nothing approved. Overtime: basic wage per planned hour × the approved
+            #      hours × their rate (UAE Decree-Law 33/2021 Art. 19: overtime on the basic wage with 25 % / 50 % – the rates come
+            #      from the overtime policy); HR can change the formula.
+            try:
+              with transaction.atomic():   # own savepoint: a failure here never breaks the other defaults
+                SC = M('PayrollManagement', 'SalaryComponent')
+                for name, code, cat, formula, what in DEFAULT_FORMULA_COMPONENTS:
+                    var = formula.split()[-1]
+                    if SC.objects.filter(formula__icontains=var).exists() or SC.objects.filter(code=code).exists() \
+                            or SC.objects.filter(name__iexact=name).exists() \
+                            or (cat != 'variable' and SC.objects.filter(payroll_category=cat).exists()):
+                        kept.append({'kind': 'Salary component', 'name': name, 'detail': 'already there'})
+                        continue
+                    comp = SC.objects.create(name=name, code=code, component_type='addition', payroll_category=cat, component_value_type='variable',
+                                             formula=formula, deduct_leave=False, show_in_payslip=True, branch=None, description=what)
+                    # every employee who already has a salary gets it (0 – worked out each run), as when a salary is entered later
+                    ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
+                    emp_ids = set(ESS.objects.filter(is_active=True).values_list('employee_id', flat=True))
+                    ESS.objects.bulk_create([ESS(employee_id=e, component=comp, amount=0, is_active=True) for e in emp_ids], ignore_conflicts=True)   # (the component's own signal gives most of them)
+                    added.append({'kind': 'Salary component', 'name': name, 'detail': what})
+            except Exception as e:   # noqa: BLE001 – never block the other defaults
+                kept.append({'kind': 'Salary component', 'name': 'Overtime / expense reimbursement / leave encashment', 'detail': f'not set: {e}'})
             # 4c. v1.26.0 – a payslip approval set-up for every branch that has none (no approval), so confirmed payslips
             #     reach the final pay sheet instead of disappearing; HR can change it in Payroll → Setup → Approval levels
             try:
@@ -772,7 +817,7 @@ def apply_defaults(user=None, schema_name=None):
                 for cal in HC.objects.all():
                     if H.objects.filter(calendar=cal).exists():
                         continue
-                    a, _s = seed_calendar(cal, p['pack'], max(cal.year or _d.today().year, _d.today().year), user)
+                    a, _s = seed_calendar(cal, p['pack'], max(cal.year or _zt_today().year, _zt_today().year), user)
                     if a:
                         added.append({'kind': 'Public holidays', 'name': cal.calendar_title, 'detail': f'{len(a)} holidays'})
             except Exception as e:   # noqa: BLE001

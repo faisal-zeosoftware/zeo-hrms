@@ -12,6 +12,7 @@ POST api/settlements/<id>/<action>/        submit (HR) → validate (Finance) �
                                            | return (back to HR, note) | cancel
 GET  api/settlements/eligible/             ends of service without a settlement yet
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -791,7 +792,7 @@ class ProvisionsView(Base):
         if not self.can(PROV_EDIT):
             raise S.Refused(tr('Only payroll makes the provisions.'), status=403)
         d = parse_date(str(request.data.get('month') or '')) or last_month_end()
-        if d > date.today():
+        if d > _zt_today():
             raise S.Refused(tr('Choose a month that has ended.'))
         run = make_run(d, request.user.pk)
         return Response(run_json(run, lines=True, emp_ok=self.emp_ok), status=201)
@@ -1015,7 +1016,7 @@ class WhatIfsView(_V150):
         rules = check_rules(d.get('rules'))
         if not rules:
             raise S.Refused(tr('Add at least one change.'))
-        t = date.today()
+        t = _zt_today()
         sc = WhatIfScenario.objects.create(name=name, month=_month(d.get('month'), t.replace(day=1)), rules=rules,
                                            employee_ids=[int(x) for x in (d.get('employee_ids') or []) if str(x).isdigit()],
                                            effective_from=_month(d.get('effective_from')), created_by_id=request.user.pk)
@@ -1150,7 +1151,7 @@ class CostAllocMonthView(_V150):
         from .costalloc import compute
         if not self.can(ALLOC_READ):
             raise S.Refused(tr('Only payroll sees the cost allocation.'), status=403)
-        t = date.today()
+        t = _zt_today()
         m = _month(request.query_params.get('month'), (t.replace(day=1) - __import__('datetime').timedelta(days=1)).replace(day=1))
         res = compute(m, self.emp_ok)
         if request.query_params.get('export') == 'csv':
@@ -1264,7 +1265,7 @@ class CalendarsView(_V155):
         if freq not in S.settings().pay_frequencies():   # v1.55.0
             raise S.Refused(tr('Switch this pay frequency on first: Settings → Payroll controls.'), problems={'frequency': 'Not switched on.'})
         try:
-            first = _d.fromisoformat(str(d.get('first_start') or cal.first_start or _d.today())[:10])
+            first = _d.fromisoformat(str(d.get('first_start') or cal.first_start or _zt_today())[:10])
         except ValueError:
             raise S.Refused(tr('Enter a valid date (YYYY-MM-DD).'))
         emp_ids = [int(x) for x in (d.get('employee_ids') if isinstance(d.get('employee_ids'), list) else cal.employee_ids or []) if str(x).isdigit()]
@@ -1351,7 +1352,7 @@ class OffCycleView(_V155):
         if kind not in dict(OffCycleRun.KINDS):
             raise S.Refused(tr('Choose the kind of run.'))
         try:
-            pay = _d.fromisoformat(str(d.get('pay_date') or _d.today())[:10])
+            pay = _d.fromisoformat(str(d.get('pay_date') or _zt_today())[:10])
         except ValueError:
             raise S.Refused(tr('Enter a valid date (YYYY-MM-DD).'))
         lines = d.get('lines') if isinstance(d.get('lines'), list) else []

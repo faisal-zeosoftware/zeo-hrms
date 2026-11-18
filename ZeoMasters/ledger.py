@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.44.0 – partner balances, statements and credit control (Odoo: partner ledger, follow-up, credit limit).
 
 ZEO does not keep a general ledger of its own: the invoices, receipts and bills are the apps' records. This module reads them
@@ -107,7 +108,7 @@ def property_rows(ids):
     CM = M('ZeoProperty', 'Commission')
     if CM is not None:
         for c in CM.objects.filter(status__in=('approved', 'paid'), broker__partner_id__in=ids).select_related('broker'):
-            dt = c.created_at.date() if c.created_at else date.today()
+            dt = c.created_at.date() if c.created_at else _zt_today()
             out.append(_row(dt, 'Property', c.number, 'Broker commission', credit=c.amount, side='payable', partner_id=c.broker.partner_id, kind='bill', url=P + f'commission/{c.pk}',
                             open_amt=c.amount if c.status == 'approved' else ZERO, due=dt))
             if c.status == 'paid':
@@ -155,7 +156,7 @@ def open_orders(ids):
 
 # ------------------------------------------------------------------ balances and statement
 def ageing(rows, as_of=None):
-    as_of = as_of or date.today()
+    as_of = as_of or _zt_today()
     b = {'current': ZERO, '1_30': ZERO, '31_60': ZERO, '61_90': ZERO, 'over_90': ZERO}
     oldest = None
     for r in rows:
@@ -238,7 +239,7 @@ def refresh_all():
 
 def _overdue_by(rows, parents):
     out = defaultdict(lambda: ZERO)
-    today = date.today()
+    today = _zt_today()
     for r in rows:
         if r['side'] == 'receivable' and r['open'] > 0 and r['due'] and r['due'] < today:
             out[parents.get(r['partner_id'], r['partner_id'])] += r['open']

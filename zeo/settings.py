@@ -135,6 +135,7 @@ TENANT_APPS = [
     'ZeoAdmin',          # v1.52.0 administration: scheduled reports, API keys and webhooks, import memory and undo, out of office, health checks
     'ZeoHR',             # v1.48.0 HR operations: disciplinary cases, exit interviews, document renewals, PRO services, asset handovers
     'ZeoAI',             # v1.37.0 AI assistants: payroll auditor, attendance & shifts, recruitment, performance, workforce analytics
+    'PayrollExtras',     # v1.68.0 UAE payroll extras: commission, retention bonus, service charge, ILOE, Emiratisation, bulk advances, cost to company
     'ZeoAccounting',     # v1.35.0 accounting integration: Odoo, Zoho Books, Excel / CSV, ZEO API – department / employee posting
     'ZeoAssets',         # v1.33.0 Asset Management app: one register with HR assets, labels, counts, depreciation
     'CountryPack',       # v1.14.0 country packs (captions, features, rules and defaults per company country)
@@ -143,7 +144,10 @@ TENANT_APPS = [
     'SavedViews',        # v1.16.0 saved list views
     'PayrollPlus',       # v1.18.0 payroll controls, leave-encashment approval steps, final settlement
     'ZeoFlow',           # v1.29.0 workflow automation: rules, triggers, conditions, actions, approvals, scheduled actions
+    'ZeoDeveloper',      # v1.74.0 ZEO Developer: formulas, safe Python scripts, safe actions, module packages (Settings › Developer)
+    'ZeoDocs',           # v1.70.1 Document Center: central folder tree, folder rights, versions, approval workflow, distribution, share links
     'PrintTemplates',    # v1.62.0 print – print templates (payslip and every printed document: samples, copies, defaults, branding)
+    'AskZeo',          # v1.71.0 Ask ZEO: chat assistant (rules without a key, the company's AI with a key), changes via Ask ZEO with undo
     'django.contrib.admin',
 
 ]
@@ -320,24 +324,14 @@ WSGI_APPLICATION = 'zeo.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django_tenants.postgresql_backend',
-#         'NAME': env('ZEO_DB_NAME', 'zeo'),
-#         'USER': env('ZEO_DB_USER', 'zeo_user'),
-#         'PASSWORD': env('ZEO_DB_PASSWORD'),
-#         'HOST': env('ZEO_DB_HOST', '127.0.0.1'),
-#         'PORT': env('ZEO_DB_PORT', '5432'),
-#     }
-# }
 DATABASES = {
     'default': {
         'ENGINE': 'django_tenants.postgresql_backend',
-        'NAME': 'zeo', 
-        'USER': 'zeo_user', 
-        'PASSWORD': '1234',
-        'HOST': '127.0.0.1', 
-        'PORT': '5432',
+        'NAME': env('ZEO_DB_NAME', 'zeo'),
+        'USER': env('ZEO_DB_USER', 'zeo_user'),
+        'PASSWORD': env('ZEO_DB_PASSWORD'),
+        'HOST': env('ZEO_DB_HOST', '127.0.0.1'),
+        'PORT': env('ZEO_DB_PORT', '5432'),
     }
 }
 # v1.24.0 ZEO Cloud: a company can live in the own database of its account ('control' = this main database)
@@ -465,6 +459,7 @@ CELERY_BEAT_SCHEDULE = {
     'zeoprojects-daily': {'task': 'ZeoProjects.tasks.daily', 'schedule': crontab(hour=7, minute=35)},
     'zeohse-sweep': {'task': 'ZeoHSE.tasks.sweep', 'schedule': crontab(minute='*/15')},          # v1.21.0 HSE permits
     'zeoflow-run-due': {'task': 'ZeoFlow.tasks.run_due', 'schedule': crontab(minute='*/15')},   # v1.29.0 workflow automation scheduler
+    'zeodeveloper-run-due': {'task': 'ZeoDeveloper.tasks.run_due', 'schedule': crontab(minute=10)},   # v1.74.0 ZEO Developer daily / monthly scripts
     'zeohse-daily': {'task': 'ZeoHSE.tasks.daily', 'schedule': crontab(hour=7, minute=40)},        # v1.21.0 HSE daily jobs
     'zeoapps-daily': {'task': 'ZeoApps.tasks.daily', 'schedule': crontab(hour=7, minute=45)},      # v1.21.0 CRM / Property / Maintenance daily jobs
     'zeoaccounting-hourly': {'task': 'ZeoAccounting.tasks.hourly', 'schedule': crontab(minute=20)},   # v1.35.0 retry failed postings
@@ -472,9 +467,10 @@ CELERY_BEAT_SCHEDULE = {
     'zeoassets-frequent': {'task': 'ZeoAssets.tasks.frequent', 'schedule': crontab(minute='*/15')},   # v1.34.0 Asset Management helpdesk SLA, e-mail, Maintenance status
     'zeocloud-daily': {'task': 'ZeoCloud.tasks.daily', 'schedule': crontab(hour=6, minute=50)},   # v1.23.0 ZEO Cloud reminders
     'zeocloud-odoo-sync': {'task': 'ZeoCloud.tasks.odoo_sync', 'schedule': crontab(minute=17)},   # v1.28.0 invoices paid in Odoo
+    'zeodocs-daily': {'task': 'ZeoDocs.tasks.dms_daily', 'schedule': crontab(hour=2, minute=40)},   # v1.70.1 Document Center: expired, reminders, trash
     'schedule-document-expiry-notifications-for-all-tenants': {
         'task': 'EmpManagement.tasks.send_document_expiry_notifications_for_all_tenants',
-        'schedule': crontab(hour=12, minute=00) 
+        'schedule': crontab(minute=5)   # v1.70.1: every hour – each company runs once a day from 09:00 of its own time zone
         # 'schedule': timedelta(days=1)1744,
 
     },
@@ -526,6 +522,7 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'aparnaudhayan03@gmail.com'
 EMAIL_HOST_PASSWORD = 'ruuh gtwd yzaz yeaw'
+
 DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
@@ -572,3 +569,4 @@ STORAGES = {
     'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
 }
 CELERY_BEAT_SCHEDULE['zeoadmin-history-nightly'] = {'task': 'ZeoAdmin.tasks.history_nightly', 'schedule': crontab(hour=3, minute=35)}   # v1.62.0 02:05 Gulf time
+CELERY_BEAT_SCHEDULE['askzeo-monthly-summary'] = {'task': 'AskZeo.tasks.monthly_summary', 'schedule': crontab(day_of_month=1, hour=7, minute=10)}   # v1.72.0 Ask ZEO monthly summary e-mail

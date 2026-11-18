@@ -4,6 +4,7 @@ advances, reimbursement (direct or payroll), accounting entries and analytics.
 
 Every function raises ExpenseError with a readable message when something is not allowed.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from collections import defaultdict
 from datetime import date
@@ -504,7 +505,7 @@ def reimburse(report, via, reference='', on=None, user=None):
     if via == 'direct' or report.amount_to_reimburse <= 0:
         if via == 'direct' and report.amount_to_reimburse > 0 and not (reference or '').strip():
             raise ExpenseError(tr('Give the payment reference (bank transfer / cheque / cash voucher).'))
-        _mark_reimbursed(report, on or date.today(), reference or ('Covered by advance' if report.amount_to_reimburse <= 0 else ''))
+        _mark_reimbursed(report, on or _zt_today(), reference or ('Covered by advance' if report.amount_to_reimburse <= 0 else ''))
     else:
         report.reimbursement_reference = (reference or 'With the next payroll')[:100]
         report.save(update_fields=['reimburse_via', 'reimbursement_reference', 'updated_at'])
@@ -558,7 +559,7 @@ def give_back_payslip(payslip):
 def retake_payslip(payslip, ids):
     """A rejected payslip approved again pays its reports again (when they are still waiting); → number taken."""
     run = payslip.payroll_run
-    on = getattr(run, 'payment_date', None) or date.today()
+    on = getattr(run, 'payment_date', None) or _zt_today()
     n = 0
     for r in ExpenseReport.objects.filter(pk__in=ids or [], status='approved', reimburse_via='payroll', payroll_run_id__isnull=True):
         _mark_reimbursed(r, on, f'Payroll {run.month:02d}/{run.year}', run_id=payslip.payroll_run_id)
@@ -595,7 +596,7 @@ def mark_paid_by_payslip(payslip):
     """A payslip was created: the reports its payroll paid are reimbursed with that run."""
     run = payslip.payroll_run
     end = _period_end(payslip)
-    on = getattr(run, 'payment_date', None) or date.today()
+    on = getattr(run, 'payment_date', None) or _zt_today()
     n = 0
     for r in payroll_reports(payslip.employee_id, end):
         _mark_reimbursed(r, on, f'Payroll {run.month:02d}/{run.year}', run_id=payslip.payroll_run_id)
@@ -636,7 +637,7 @@ def act_trip(trip, user, action, note='', is_admin=False):
             trip.save(update_fields=['status'])
             if trip.advance_requested and trip.advance_requested > 0 and not trip.advances.exists():
                 ExpenseAdvance.objects.create(number=next_number(ExpenseAdvance, 'ADV'), employee_id=trip.employee_id, branch_id=trip.branch_id,
-                                              trip=trip, amount=trip.advance_requested, date=date.today(), purpose=f'Trip {trip.number}: {trip.purpose}'[:200],
+                                              trip=trip, amount=trip.advance_requested, date=_zt_today(), purpose=f'Trip {trip.number}: {trip.purpose}'[:200],
                                               status='approved', approved_by_id=user.pk, created_by_id=user.pk)
             trip_approved(trip, user)
     elif action == 'reject':
@@ -667,7 +668,7 @@ def pay_advance(adv, user, reference, on=None):
         raise ExpenseError(tr('Only an approved advance can be paid.'))
     if not (reference or '').strip():
         raise ExpenseError(tr('Give the payment reference.'))
-    adv.status, adv.reference, adv.paid_on = 'paid', reference[:100], on or date.today()
+    adv.status, adv.reference, adv.paid_on = 'paid', reference[:100], on or _zt_today()
     adv.save(update_fields=['status', 'reference', 'paid_on'])
     return adv
 
@@ -780,10 +781,10 @@ def trip_approved(trip, user):
         # v1.62.3 (items 101, 103): only an allocation a ticket may use (approved, active, not expired, no other request on it)
         from PayrollPlus.air_rules import request_problem
         al = next((x for x in Alloc.objects.filter(employee_id=trip.employee_id, remaining_amount__gt=0).exclude(status='REJECTED')
-                   .order_by('expiry_date', 'pk') if request_problem(trip.employee_id, x, date.today()) is None), None)
+                   .order_by('expiry_date', 'pk') if request_problem(trip.employee_id, x, _zt_today()) is None), None)
         if al is not None and emp is not None:
             r = Req.objects.create(document_number=f'{trip.number}-TKT', branch_id=emp.emp_branch_id_id, employee=emp, allocation=al,
-                                   request_type='TICKET', request_date=date.today(), departure_date=trip.start_date, return_date=trip.end_date,
+                                   request_type='TICKET', request_date=_zt_today(), departure_date=trip.start_date, return_date=trip.end_date,
                                    origin=trip.from_place[:100], destination=trip.to_place[:100], notes=f'Trip {trip.number}: {trip.purpose}'[:500],
                                    created_by=user if getattr(user, 'pk', None) else None)
             trip.ticket_request_id = r.pk

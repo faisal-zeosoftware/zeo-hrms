@@ -7,6 +7,7 @@ licence, insurance) and the employee (date of birth, nationality, gender, name).
 the same or different; HR ticks the lines to save. The change history (Chatter RecordLog) records every changed field and
 a note on the employee says which document the values came from.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from datetime import date
 
@@ -226,7 +227,7 @@ def apply(emp, rec, keys, user=None, file_name='', sync=True, values=None):
             emp_fields['emp_nationality'] = n
         elif field == 'emp_date_of_birth':
             d = _iso(v)
-            if not d or d >= date.today().isoformat():
+            if not d or d >= _zt_today().isoformat():
                 raise ValidationError({'emp_date_of_birth': tr('Enter a valid date (YYYY-MM-DD).')})
             emp_fields['emp_date_of_birth'] = date.fromisoformat(d)
         elif field == 'emp_gender':

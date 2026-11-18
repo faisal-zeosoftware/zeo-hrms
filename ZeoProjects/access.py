@@ -22,6 +22,7 @@ R = {
     'ticket_manage': ('assign_ticket',),
     'ticket_work': ('work_ticket', 'change_ticket', 'assign_ticket'),
     'ticket_add': ('add_ticket', 'work_ticket', 'assign_ticket'),
+    'ticket_delete': ('delete_ticket',),   # v1.73.0: Delete on the Tickets list (only tickets with no work on them yet)
     'worklog_approve': ('approve_worklog', 'assign_ticket'),
     'customer_view': ('view_customer', 'view_amccontract', 'view_ticket', 'work_ticket', 'assign_ticket', 'view_projectprofile'),
     'customer_edit': ('add_customer', 'change_customer'),
@@ -29,11 +30,13 @@ R = {
     # projects but does not change them (the *_edit keys stay for "may do either", e.g. which menu to show)
     'customer_add': ('add_customer',),
     'customer_change': ('change_customer',),
+    'customer_delete': ('delete_customer',),   # v1.73.0: Delete on the Customers list (used customers are only made inactive)
     'contact_portal': ('change_contact',),
     'amc_view': ('view_amccontract',),
     'amc_edit': ('add_amccontract', 'change_amccontract'),
     'amc_add': ('add_amccontract',),
     'amc_change': ('change_amccontract',),
+    'amc_delete': ('delete_amccontract',),   # v1.73.0: Delete on the AMC contracts list (only contracts not used yet)
     'amc_renew': ('renew_amccontract', 'change_amccontract'),
     'billing_view': ('view_amcbilling', 'view_projectfinance'),
     'billing_edit': ('change_amcbilling',),
@@ -43,6 +46,8 @@ R = {
     'project_view': ('view_project', 'view_projectprofile'),
     'project_edit': ('change_project', 'change_projectprofile'),
     'project_add': ('add_project',),
+    'project_delete': ('delete_project',),   # v1.73.0: Delete on the Projects list (only projects not used yet)
+    'project_all': ('change_all_projects',),   # v1.67.24 (pending 288): change every project, not only the managed ones
     'cr_approve': ('approve_changerequest',),
     'finance': ('view_projectfinance', 'view_amcbilling'),
     'dashboard': ('view_ticket', 'assign_ticket', 'view_amccontract', 'view_projectprofile', 'view_projectfinance'),
@@ -198,7 +203,9 @@ def visible_project_ids(request):
 
 
 def manages_project(request, project_id):
-    if is_admin(request) or can(request, 'project_edit'):
+    """v1.67.24 (pending 288, decision 14 Nov): "Can change project" lets a user change the projects they manage; every project
+    needs "Can change every project" (or a company administrator). Before, "change project" changed every project of the company."""
+    if is_admin(request) or can(request, 'project_all'):
         return True
     e = my_emp(request)
     if e is None:

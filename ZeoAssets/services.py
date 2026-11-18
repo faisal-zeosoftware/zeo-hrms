@@ -1,5 +1,6 @@
 """Asset Management rules. Custody, transfers, disposal and verification go through the HR asset services (AssetPlus),
 so HR → Assets, payroll recovery, exit clearance and HSE keep seeing one register."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 import contextvars
 import logging
@@ -42,7 +43,7 @@ def Profile():
 
 
 def today():
-    return timezone.localdate()
+    return _zt_today()
 
 
 @contextmanager

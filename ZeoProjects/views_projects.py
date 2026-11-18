@@ -314,6 +314,59 @@ class ProjectDetailView(Base):
                     prof.save(update_fields=['invoiced_amount'])
         return self.get(request, pk)
 
+    # v1.73.0 (same screen rules): Delete on the Projects list – only a project nothing refers to yet (no tasks, time, tickets,
+    # milestones, expenses, documents …); its own set-up rows (profile, finance, stages, control settings) go with it
+    OWN_PARTS = {'ProjectProfile', 'ProjectFinance', 'ProjectStage', 'MemberRate', 'NotificationSetting'}   # set-up rows of the project itself
+
+    @guard
+    def delete(self, request, pk):
+        if not A.can(request, 'project_delete'):
+            raise A.Denied('You may not delete projects.')
+        p = project_for(request, pk)
+        from django.apps import apps
+        counts = {}
+        for M in apps.get_models():
+            if M.__name__ in self.OWN_PARTS or M._meta.proxy:
+                continue
+            for fld in M._meta.fields:
+                fk = getattr(fld, 'related_model', None)
+                hit = (fk is not None and fk is type(p)) or (fld.name == 'project_id' and fk is None and fld.get_internal_type() in ('IntegerField', 'BigIntegerField', 'PositiveIntegerField'))
+                if not hit:
+                    continue
+                try:
+                    n = M._base_manager.filter(**{fld.attname: p.pk}).count()
+                except Exception:   # noqa: BLE001 – a table of an app not in this company
+                    n = 0
+                if n:
+                    k = str(M._meta.verbose_name_plural)
+                    counts[k] = counts.get(k, 0) + n
+        try:   # the documents filed in the project's Document Center folder (and its sub-folders)
+            from ZeoDocs.models import DocFolder, Document
+            fids = list(DocFolder.objects.filter(provider='project', record_id=p.pk).values_list('pk', flat=True))
+            seen = set()
+            while fids:
+                seen.update(fids)
+                fids = [x for x in DocFolder.objects.filter(parent_id__in=fids).values_list('pk', flat=True) if x not in seen]
+            nd = Document.objects.filter(folder_id__in=seen).count() if seen else 0
+            if nd:
+                counts['documents'] = counts.get('documents', 0) + nd
+        except Exception:   # noqa: BLE001 – Document Center not in this install
+            seen = set()
+        if counts:
+            from .views import used_counts_answer
+            return used_counts_answer(p.title, counts, active=False)
+        with transaction.atomic():
+            from django.apps import apps as _apps
+            for name in self.OWN_PARTS:
+                for M in _apps.get_models():
+                    if M.__name__ == name and 'project_id' in {f.attname for f in M._meta.fields}:
+                        M._base_manager.filter(project_id=p.pk).delete()
+            if seen:   # the project's empty record folders
+                from ZeoDocs.models import DocFolder
+                DocFolder.objects.filter(pk__in=seen).delete()
+            p.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 # ------------------------------------------------------------------ tasks
 class ProjectTaskView(Base):

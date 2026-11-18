@@ -8,6 +8,7 @@ v1.13.0 – Employee master services.
 * history timeline and data completeness;
 * contract helpers for the SelfService app: profile_groups(), apply_change(), validate_change().
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 from datetime import date, timedelta
@@ -182,6 +183,15 @@ def sync_documents(ident, emp, user=None):
             continue
         if not iss or not exp:
             msg = f'{tname}: enter the issue and expiry dates so the document list (and its expiry alert) can be updated.'
+            # v1.73.1 (ESS test B12) say which number the document list still shows – the employee saw another Emirates ID on
+            # My profile › Documents than the one HR saved (and the first sign-in check asks for)
+            try:
+                other = (Doc.objects.filter(emp_id_id=emp.pk, is_active=True, document_type__in=doc_types_for(kind))
+                         .exclude(emp_doc_number__iexact=num).order_by('-emp_doc_expiry_date').first())
+                if other is not None:
+                    msg += f' Until then the document list shows {tname} {other.emp_doc_number}, not {num}.'
+            except Exception:
+                pass
             problems[kind] = msg
             results[kind] = {'status': 'problem', 'message': msg}
             continue
@@ -405,7 +415,8 @@ def probation_plan(emp):
             pass
     if days is None and emp.emp_branch_id_id and (emp.emp_branch_id.probation_period_days or 0) > 0:
         days, source = int(emp.emp_branch_id.probation_period_days), 'branch'
-    end = emp.emp_joined_date + timedelta(days=days) if days and emp.emp_joined_date else None
+    from EmpManagement.probation import probation_end as _pe   # v1.67.24 (L-BUG-20): months in calendar months
+    end = _pe(emp.emp_joined_date, days) if days and emp.emp_joined_date else None
     if end and emp.emp_joined_date:
         cap = emp.emp_joined_date + relativedelta(months=UAE_MAX_PROBATION_MONTHS)
         end = min(end, cap)
@@ -430,14 +441,14 @@ def _final_status(info):
 
 def ensure_info(emp, today=None):
     """EmploymentInfo of the employee (created from what is known on first use)."""
-    today = today or date.today()
+    today = today or _zt_today()
     info = EmploymentInfo.objects.filter(employee_id=emp.pk).first()
     if info is not None:
         return refresh_probation(emp, info, today)
     days, source, end = probation_plan(emp)
     info = EmploymentInfo(employee_id=emp.pk, probation_days=days, probation_source=source, probation_end_date=end)
     conf = emp.emp_date_of_confirmation
-    if conf and end and source == 'employment_type' and conf < end and conf == _branch_auto(emp):
+    if conf and end and source == 'employment_type' and conf < end and conf in _branch_auto_dates(emp):
         conf = None   # v1.67.12 (effective, item 62): the date the form worked out from the branch, not a decision – the type's probation runs
     if end and end > today and not (conf and conf <= today and conf != end):
         info.probation_status, info.status = 'on_probation', 'probation'
@@ -471,7 +482,7 @@ def ensure_info_bulk(emps, today=None):
     """v1.26.0 – EmploymentInfo for many employees at once (the employee list called ensure_info one by one: after a bulk
     upload of 1,280 employees the first open of the list ran thousands of queries, ~15 s). Same rules as ensure_info;
     employees with an approved resignation / end of service still go through ensure_info."""
-    today = today or date.today()
+    today = today or _zt_today()
     ids = [e.pk for e in emps]
     if not ids:
         return
@@ -501,12 +512,13 @@ def ensure_info_bulk(emps, today=None):
         days, source = etype.get(emp.pk), 'employment_type' if emp.pk in etype else ''
         if days is None and emp.emp_branch_id_id and (getattr(emp.emp_branch_id, 'probation_period_days', 0) or 0) > 0:
             days, source = int(emp.emp_branch_id.probation_period_days), 'branch'
-        end = emp.emp_joined_date + timedelta(days=days) if days and emp.emp_joined_date else None
+        from EmpManagement.probation import probation_end as _pe   # v1.67.24 (L-BUG-20)
+        end = _pe(emp.emp_joined_date, days) if days and emp.emp_joined_date else None
         if end:
             end = min(end, emp.emp_joined_date + relativedelta(months=UAE_MAX_PROBATION_MONTHS))
         info = EmploymentInfo(employee_id=emp.pk, probation_days=days, probation_source=source, probation_end_date=end)
         conf = emp.emp_date_of_confirmation
-        if conf and end and source == 'employment_type' and conf < end and conf == _branch_auto(emp):
+        if conf and end and source == 'employment_type' and conf < end and conf in _branch_auto_dates(emp):
             conf = None   # v1.67.12 (effective, item 62)
         if end and end > today and not (conf and conf <= today and conf != end):
             info.probation_status, info.status = 'on_probation', 'probation'
@@ -525,7 +537,7 @@ def ensure_info_bulk(emps, today=None):
 def refresh_probation(emp, info, today=None):
     """Undecided probation that was never extended follows the joining date / employment type; on-notice
     employees whose last day has passed get their final status."""
-    today = today or date.today()
+    today = today or _zt_today()
     changed = []
     if info.probation_status == 'on_probation' and info.probation_source in ('employment_type', 'branch', '') \
             and not ProbationExtension.objects.filter(employee_id=emp.pk).exists():
@@ -563,7 +575,20 @@ def _branch_auto(emp):
     if not emp.emp_joined_date or not emp.emp_branch_id_id:
         return None
     days = getattr(emp.emp_branch_id, 'probation_period_days', None)
-    return emp.emp_joined_date + timedelta(days=days) if days is not None else None
+    from EmpManagement.probation import probation_end as _pe   # v1.67.24 (L-BUG-20)
+    return _pe(emp.emp_joined_date, days) if days is not None else None
+
+
+def _branch_auto_dates(emp):
+    """v1.67.24: the dates the employee form may have worked out from the branch – in calendar months since 1.67.24 (L-BUG-20),
+    in days before (an employee saved before the update keeps the day-counted date; it is still the form's own date, not HR's)."""
+    out = {_branch_auto(emp)}
+    days = getattr(emp.emp_branch_id, 'probation_period_days', None) if emp.emp_joined_date and emp.emp_branch_id_id else None
+    if days is not None:
+        from datetime import timedelta
+        out.add(emp.emp_joined_date + timedelta(days=int(days)))
+    out.discard(None)
+    return out
 
 
 def fill_confirmation(emp, info):
@@ -581,7 +606,7 @@ def fill_confirmation(emp, info):
     conf = emp.emp_date_of_confirmation
     if conf == d:
         return None
-    if conf and not (info.probation_status in ('on_probation', 'extended') and conf < d and conf == _branch_auto(emp)):
+    if conf and not (info.probation_status in ('on_probation', 'extended') and conf < d and conf in _branch_auto_dates(emp)):
         return None
     _set_confirmation(emp, d)
     return d
@@ -612,7 +637,7 @@ def confirmation_missing(emp, info):
         return False
     if not emp.emp_date_of_confirmation and info.probation_status != 'confirmed':
         return True
-    return info.probation_status in ('on_probation', 'extended') and bool(info.probation_end_date) and info.probation_end_date < date.today()
+    return info.probation_status in ('on_probation', 'extended') and bool(info.probation_end_date) and info.probation_end_date < _zt_today()
 
 
 def _set_confirmation(emp, d):
@@ -633,10 +658,10 @@ def confirm_probation(emp, user, on=None, note_text=''):
         _problem('detail', 'The probation was marked as not passed – it cannot be confirmed now.')
     if info.status in LEAVING_STATUSES:
         _problem('detail', 'This employee is leaving or has left – the probation cannot be confirmed.')
-    on = on or date.today()
+    on = on or _zt_today()
     if emp.emp_joined_date and on < emp.emp_joined_date:
         _problem('date', 'The confirmation date cannot be before the joining date.')
-    if on > date.today() + timedelta(days=31):
+    if on > _zt_today() + timedelta(days=31):
         _problem('date', 'Confirm the probation at most a month ahead.')
     info.probation_status, info.confirmed_on, info.decided_by_id = 'confirmed', on, getattr(user, 'pk', None)
     info.decision_note = (note_text or '')[:255]
@@ -658,7 +683,7 @@ def extend_probation(emp, user, to_date, reason):
         _problem('reason', 'Enter the reason for the extension.')
     if not to_date:
         _problem('to_date', 'Enter the new probation end date.')
-    current = info.probation_end_date or date.today()
+    current = info.probation_end_date or _zt_today()
     if to_date <= current:
         _problem('to_date', f'The new end date must be after the current end date ({current:%d/%m/%Y}).')
     if emp.emp_joined_date:
@@ -684,7 +709,7 @@ def fail_probation(emp, user, last_day=None, reason=''):
         _problem('detail', 'Only an open probation can be marked as not passed.')
     if not (reason or '').strip():
         _problem('reason', 'Enter the reason.')
-    today = date.today()
+    today = _zt_today()
     last_day = last_day or today + timedelta(days=PROBATION_NOTICE_DAYS)
     if emp.emp_joined_date and last_day < emp.emp_joined_date:
         _problem('last_day', 'The last working day cannot be before the joining date.')
@@ -708,7 +733,7 @@ def sync_from_resignation(res, info=None):
     info = info or ensure_info(emp)
     st = (res.status or '').strip().lower()
     src = f'resignation:{res.pk}'
-    today = date.today()
+    today = _zt_today()
     if st == 'approved':
         if info.leaving_source.startswith('eos:'):
             return info
@@ -744,7 +769,7 @@ def sync_from_eos(eos, info=None):
 
 def employment_json(emp, info=None):
     info = info or ensure_info(emp)
-    today = date.today()
+    today = _zt_today()
     ext = list(ProbationExtension.objects.filter(employee_id=emp.pk).values('id', 'from_date', 'to_date', 'reason', 'decided_by', 'created_at'))
     users = dict(M('UserManagement', 'CustomUser').objects.filter(pk__in=[e['decided_by'] for e in ext if e['decided_by']] + ([info.decided_by_id] if info.decided_by_id else [])).values_list('id', 'username'))
     for e in ext:
@@ -772,7 +797,7 @@ def employment_json(emp, info=None):
 
 
 def probation_due(qs, days=30, today=None):
-    today = today or date.today()
+    today = today or _zt_today()
     ids = list(qs.values_list('id', flat=True))
     ensure_info_bulk(list(qs.filter(id__in=ids).exclude(id__in=EmploymentInfo.objects.values('employee_id')).select_related('emp_branch_id')))   # v1.26.0
     infos = EmploymentInfo.objects.filter(employee_id__in=ids, probation_status__in=('on_probation', 'extended'),
@@ -1200,7 +1225,7 @@ class _FamilyCore(serializers.ModelSerializer):
         fields = ['ef_member_name', 'emp_relation', 'ef_company_expence', 'ef_date_of_birth']
 
     def validate_ef_date_of_birth(self, v):
-        if v and v > date.today():
+        if v and v > _zt_today():
             raise serializers.ValidationError(tr('The date of birth cannot be in the future.'))
         return v
 
@@ -1230,7 +1255,7 @@ class _QualCore(serializers.ModelSerializer):
         fields = ['emp_qualification', 'emp_qf_instituition', 'emp_qf_year', 'emp_qf_subject']
 
     def validate_emp_qf_year(self, v):
-        if v and v > date.today():
+        if v and v > _zt_today():
             raise serializers.ValidationError(tr('The completion date cannot be in the future.'))
         return v
 
@@ -1247,7 +1272,7 @@ class _JobCore(serializers.ModelSerializer):
         t = attrs.get('emp_jh_end_date', getattr(inst, 'emp_jh_end_date', None))
         if f and t and t < f:
             raise serializers.ValidationError({'emp_jh_end_date': tr('The end date must be after the start date.')})
-        if t and t > date.today():
+        if t and t > _zt_today():
             raise serializers.ValidationError({'emp_jh_end_date': tr('Previous employment cannot end in the future.')})
         return attrs
 
@@ -1404,7 +1429,7 @@ def _prepare(employee, group, record_id, data, action=None, user=None):
             raise ValidationError({'skill': tr('This skill is already on the profile – change its level instead.')})
 
         def run():
-            obj = ser.save(employee_id=employee.pk, **({} if inst else {'source': 'manual', 'date': date.today()}))
+            obj = ser.save(employee_id=employee.pk, **({} if inst else {'source': 'manual', 'date': _zt_today()}))
             return {'id': obj.pk, 'skill': obj.skill_id, 'skill_name': obj.skill.name, 'level': obj.level}
         return run
 

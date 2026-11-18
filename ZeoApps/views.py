@@ -44,6 +44,11 @@ class AppsView(Base):
                 out['pay_cycles'] = PayrollPlusSettings.get().pay_frequencies()
             except Exception:
                 out['pay_cycles'] = []
+            try:   # v1.74.0 ZEO Developer: the menu Settings › Developer shows only when the company switched Developer mode on
+                from ZeoDeveloper.models import DeveloperSettings
+                out['developer_mode'] = DeveloperSettings.get().developer_mode
+            except Exception:
+                out['developer_mode'] = False
             try:   # v1.56.1: a login with no rights and no employee record sees only Home and its own profile in the menu
                 from AccessControl.access import ctx
                 c = ctx(request)

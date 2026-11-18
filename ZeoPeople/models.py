@@ -224,9 +224,10 @@ class Survey(PackItem):
     title = models.CharField(max_length=150)
     description = models.TextField(blank=True)
     kind = models.CharField(max_length=12, default='engagement', choices=(('engagement', 'Engagement'), ('pulse', 'Pulse (short)'), ('onboarding', 'Onboarding'),
-                                                                           ('exit', 'Exit'), ('training', 'Training feedback'), ('other', 'Other')))
+                                                                           ('exit', 'Exit'), ('training', 'Training feedback'), ('enps', 'eNPS (would you recommend us)'),
+                                                                           ('other', 'Other')))   # v1.67.26 (item 235) eNPS
     anonymous = models.BooleanField('answers are anonymous', default=True)
-    questions = models.JSONField(default=list, blank=True, help_text='[{"text": "…", "type": "rating|yesno|choice|text", "options": "A|B|C", "required": true}]')
+    questions = models.JSONField(default=list, blank=True, help_text='[{"text": "…", "type": "rating|nps|yesno|choice|text", "options": "A|B|C", "required": true}]')
     audience = models.CharField(max_length=10, default='all', choices=(('all', 'Every employee'), ('branch', 'My branches'), ('managers', 'Managers only')))
     departments = models.CharField('departments (codes, comma separated; empty = all)', max_length=200, blank=True)
     start = models.DateField(null=True, blank=True)
@@ -410,3 +411,79 @@ class DevelopmentPlan(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 235) OKR
+OKR_LEVELS = (('company', 'Company'), ('department', 'Department'), ('team', 'Team'), ('individual', 'Individual'))
+OKR_STATUS = (('draft', 'Draft'), ('active', 'Active'), ('done', 'Completed'), ('cancelled', 'Cancelled'))
+
+
+class Objective(models.Model):
+    """An objective (what we want to achieve) with its key results (how we measure it). Objectives align: a team or individual
+    objective names the company / department objective it supports; progress = the weighted progress of its key results."""
+    branch = models.ForeignKey('OrganisationManager.brnch_mstr', **BRANCH)
+    number = models.CharField(max_length=20, unique=True, blank=True)
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    level = models.CharField(max_length=12, choices=OKR_LEVELS, default='individual')
+    owner = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='objectives',
+                              help_text='The employee who owns the objective (empty for a company objective)')
+    department = models.ForeignKey('OrganisationManager.dept_master', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='children',
+                               help_text='The objective this one supports (alignment)')
+    period_start = models.DateField()
+    period_end = models.DateField()
+    status = models.CharField(max_length=10, choices=OKR_STATUS, default='draft')
+    progress = models.DecimalField(max_digits=5, decimal_places=1, default=0, help_text='% – from the key results')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-period_end', 'number']
+
+    def __str__(self):
+        return f'{self.number} {self.title}'
+
+
+KR_KINDS = (('number', 'Number'), ('percent', 'Percent'), ('money', 'Amount'), ('milestone', 'Done / not done'))
+
+
+class KeyResult(models.Model):
+    objective = models.ForeignKey(Objective, on_delete=models.CASCADE, related_name='key_results')
+    title = models.CharField(max_length=200)
+    kind = models.CharField(max_length=10, choices=KR_KINDS, default='number')
+    start_value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    target_value = models.DecimalField(max_digits=14, decimal_places=2, default=1)
+    current_value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    weight = models.PositiveSmallIntegerField(default=1)
+    owner = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='key_results')
+    confidence = models.CharField(max_length=10, default='on_track', choices=(('on_track', 'On track'), ('at_risk', 'At risk'), ('off_track', 'Off track')))
+    progress = models.DecimalField(max_digits=5, decimal_places=1, default=0)
+    last_note = models.CharField(max_length=500, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['objective', 'id']
+
+    def calc(self):
+        from decimal import Decimal
+        span = (self.target_value or 0) - (self.start_value or 0)
+        if self.kind == 'milestone':
+            p = Decimal(100) if (self.current_value or 0) >= (self.target_value or 1) else Decimal(0)
+        elif span == 0:
+            p = Decimal(100) if (self.current_value or 0) >= (self.target_value or 0) else Decimal(0)
+        else:
+            p = ((self.current_value or 0) - (self.start_value or 0)) * 100 / span
+        self.progress = max(Decimal(0), min(Decimal(100), Decimal(p))).quantize(Decimal('0.1'))
+        return self.progress
+
+
+class KRCheckIn(models.Model):
+    key_result = models.ForeignKey(KeyResult, on_delete=models.CASCADE, related_name='checkins')
+    value = models.DecimalField(max_digits=14, decimal_places=2)
+    confidence = models.CharField(max_length=10, default='on_track')
+    note = models.CharField(max_length=500, blank=True, default='')
+    by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-at']

@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """AssetPlus business rules (v1.12.0). Views call these; every change writes one AssetEvent."""
 import contextvars
 import logging
@@ -47,7 +48,7 @@ def money(v):
 
 
 def today():
-    return timezone.localdate()
+    return _zt_today()
 
 
 def person(e):

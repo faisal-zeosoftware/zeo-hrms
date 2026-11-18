@@ -73,6 +73,31 @@ class ProjectPermission(permissions.BasePermission):
                 return True
 
         return False
+
+    def has_object_permission(self, request, view, obj):
+        """v1.67.24 (pending 288): changing a project – the projects the user manages, or every project with "Can change every
+        project" (ZeoProjects change_all_projects); a company administrator always."""
+        if getattr(view, 'action', '') not in ('update', 'partial_update', 'destroy'):
+            return True
+        u = request.user
+        if u.is_superuser:
+            return True
+        try:
+            from AccessControl.access import ctx
+            c = ctx(request)
+            if c.admin or 'change_all_projects' in c.codes:
+                return True
+            e = c.emp
+        except Exception:   # noqa: BLE001
+            return True   # never lock out on an error of the check itself
+        if e is None:
+            return False
+        try:
+            return obj.managers.filter(pk=e.pk).exists()
+        except Exception:   # noqa: BLE001
+            return True
+
+
 class TaskPermission(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user.is_authenticated:

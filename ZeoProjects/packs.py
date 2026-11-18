@@ -115,11 +115,45 @@ GENERAL_CHECKLIST = ['Visual inspection', 'Clean the unit', 'Check fixings and c
                      'Check for leaks / noise', 'Customer informed of findings']
 
 
+EDITED_KEY = 'v16723_checklist_edited'   # v1.67.23 (pending 271): categories whose checklist the company set on screen
+
+
+def edited_checklists():
+    try:
+        from django.apps import apps
+        o = apps.get_model('ZeoApps', 'CompanyOption').objects.filter(key=EDITED_KEY).first()
+        return {int(x) for x in ((o.value or {}).get('ids') or [])} if o else set()
+    except Exception:
+        return set()
+
+
+def mark_checklist_edited(cat_id):
+    from django.apps import apps
+    CO = apps.get_model('ZeoApps', 'CompanyOption')
+    ids = sorted(edited_checklists() | {int(cat_id)})
+    CO.objects.update_or_create(key=EDITED_KEY, defaults={'value': {'ids': ids}})
+
+
+def pack_checklist(industry):
+    """v1.67.23 (pending 271): the checklist the industry pack gives its equipment categories (General for a company's own)"""
+    if industry and industry != 'general':
+        try:
+            from zeo.service_industries import INDUSTRIES as SI
+            d = SI.get(industry) or {}
+            items = [it for _c, _n, its in (d.get('checklists') or [])[:1] for it in its]
+            if items:
+                return items
+        except Exception:
+            pass
+    return list(GENERAL_CHECKLIST)
+
+
 def _checklists(industry, items):
-    """v1.67.14: the service checklist of the industry's equipment categories (only where none was set)."""
+    """v1.67.14: the service checklist of the industry's equipment categories (only where none was set).
+    v1.67.23 (pending 271): never over a checklist the company set on screen (even an empty one)."""
     from .models import EquipmentCategory
     if items:
-        EquipmentCategory.objects.filter(industry=industry, checklist=[]).update(checklist=items)
+        EquipmentCategory.objects.filter(industry=industry, checklist=[]).exclude(pk__in=edited_checklists()).update(checklist=items)
 
 
 def install_general():

@@ -1,4 +1,5 @@
 """v1.53.0 – insights API (/insights/api/…): the report builder and the dashboard builder."""
+import re
 import uuid
 
 from rest_framework.permissions import IsAuthenticated
@@ -162,10 +163,27 @@ def _suite(cards):
 def dash_json(db, user, c=None, full=False):
     out = {'id': db.pk, 'name': db.name, 'description': db.description, 'shared': db.shared, 'groups': db.groups, 'owner': _owner(db.owner),
            'owner_id': db.owner_id, 'can_edit': db.owner_id == user.pk or bool(c and c.admin), 'cards_count': len(db.cards or []), 'updated_at': db.updated_at,
-           'suite': _suite(db.cards or [])}   # v1.62.0 reports: the HRMS report centre opens an HR dashboard first
+           'suite': _suite(db.cards or []), 'options': db.options or {}}   # v1.62.0 reports: the HRMS report centre opens an HR dashboard first
     if full:
         out['cards'] = db.cards or []
+        if c is not None:   # v1.73.6: the cards this person may run – the others are hidden (kept when the owner saves)
+            out['cards'] = [dict(x, allowed=may_run(c, x.get('report'))) for x in out['cards']]
     return out
+
+
+def may_run(c, key):
+    """v1.73.6: may the person (AccessControl ctx) run the report of a card? Report-builder reports (c-<id>) check themselves."""
+    key = str(key or '')
+    if key.startswith('c-'):
+        return True
+    from DashboardManagement.reports import REPORTS, _allowed
+    spec = REPORTS.get(key)
+    return bool(spec) and _allowed(c, spec[5])
+
+
+def usable(db, user, c):
+    """v1.73.6: a dashboard is listed when the person owns it or may run at least one of its cards."""
+    return db.owner_id == user.pk or bool(c and c.admin) or not db.cards or any(may_run(c, x.get('report')) for x in db.cards or [])
 
 
 def clean_card(x):
@@ -176,13 +194,23 @@ def clean_card(x):
     return {'id': str(x.get('id') or uuid.uuid4().hex[:8])[:12], 'title': (x.get('title') or '')[:80], 'report': x['report'],
             'period': x.get('period') if x.get('period') in dict(D.PERIODS) else 'report', 'view': view,
             'value': x.get('value') if str(x.get('value') or '').startswith(('count', 'sum:')) else 'count', 'group': (x.get('group') or '')[:80],
-            'size': x.get('size') if x.get('size') in D.SIZES else ('w' if view in ('bar', 'line', 'table') else 's'),
-            'limit': min(max(int(x.get('limit') or 8), 1), 50), 'columns': [str(k)[:80] for k in (x.get('columns') or [])][:8]}
+            'size': x.get('size') if x.get('size') in D.SIZES else ('w' if view in ('bar', 'line', 'table', 'column', 'area', 'progress') else 's'),
+            'limit': min(max(int(x.get('limit') or 8), 1), 50), 'columns': [str(k)[:80] for k in (x.get('columns') or [])][:8],
+            'color': x.get('color') if x.get('color') in D.PALETTE else '',   # v1.73.4
+            'icon': x.get('icon') if re.fullmatch(r'[a-z0-9_]{2,40}', str(x.get('icon') or '')) else ''}
 
 
 class DashboardsView(Base):
     def get(self, request):
-        return Response([dash_json(db, request.user, self.c) for db in CustomDashboard.objects.select_related('owner') if B.visible(db, request.user, self.c)])
+        if self.c.admin:   # v1.73.6: the company's default dashboards (once, for the active apps)
+            try:
+                from . import defaults
+                defaults.ensure(request.user)
+            except Exception:   # noqa: BLE001 – never block the list
+                import logging
+                logging.getLogger(__name__).exception('default dashboards')
+        return Response([dash_json(db, request.user, self.c) for db in CustomDashboard.objects.select_related('owner')
+                         if B.visible(db, request.user, self.c) and usable(db, request.user, self.c)])
 
     def post(self, request):
         d = request.data
@@ -193,6 +221,11 @@ class DashboardsView(Base):
         if not name:
             return bad('Give the dashboard a name.')
         db.name, db.description = name, str((d.get('description') if 'description' in d else db.description) or '')[:255]
+        if isinstance(d.get('options'), dict):   # v1.73.5: theme and the default date filter
+            o = d['options']
+            f = o.get('filter') if isinstance(o.get('filter'), dict) else {}
+            db.options = {'theme': o.get('theme') if o.get('theme') in D.THEMES else 'aurora',
+                          'filter': {'preset': str(f.get('preset') or '')[:20], 'from': str(f.get('from') or '')[:10], 'to': str(f.get('to') or '')[:10]}}
         if isinstance(d.get('cards'), list):
             try:
                 db.cards = [clean_card(x) for x in d['cards']][:40]
@@ -248,7 +281,29 @@ class CardView(Base):
         card = next((x for x in db.cards or [] if str(x.get('id')) == str(cid)), None)
         if card is None:
             return bad('Not found.', 404)
-        return Response(D.card_data(request, card))
+        return Response(D.card_data(request, card, _rng(request)))
+
+
+def _rng(request):
+    """v1.73.5: ?from=YYYY-MM-DD&to=YYYY-MM-DD – the dashboard's date filter."""
+    from datetime import date
+    try:
+        a, b = date.fromisoformat(request.GET.get('from', '')[:10]), date.fromisoformat(request.GET.get('to', '')[:10])
+    except ValueError:
+        return None
+    return (a, b) if a <= b and (b - a).days <= 3700 else None
+
+
+class CardRowsView(Base):
+    """v1.73.5 drill-down: GET …/cards/<cid>/rows/?label=<bar, slice or row label | *>&from=&to= – the rows behind it."""
+    def get(self, request, pk, cid):
+        db = CustomDashboard.objects.filter(pk=pk).first()
+        if db is None or not B.visible(db, request.user, self.c):
+            return bad('Not found.', 404)
+        card = next((x for x in db.cards or [] if str(x.get('id')) == str(cid)), None)
+        if card is None:
+            return bad('Not found.', 404)
+        return Response(D.card_data(request, card, _rng(request), drill=request.GET.get('label') or '*'))
 
 
 class CardPreviewView(Base):
@@ -258,3 +313,13 @@ class CardPreviewView(Base):
         except (ValueError, TypeError) as e:
             return bad(str(e))
         return Response(D.card_data(request, card))
+
+
+class AppDashboardView(Base):
+    """v1.73.6: GET /insights/api/dashboards/for-app/<app>/ – the default dashboard of an app (for "View dashboard" on its home)."""
+    def get(self, request, app):
+        from . import defaults
+        db = defaults.for_app(app)
+        if db is None or not B.visible(db, request.user, self.c) or not usable(db, request.user, self.c):
+            return Response({'id': None})
+        return Response({'id': db.pk, 'name': db.name})

@@ -27,6 +27,7 @@ Stable API:
     Plan(a, b, emp_ids=None)    -> the same answers for many employees / days with a handful of queries
     explain(emp, d=None)        -> what decides the working days (employee record, My schedule)
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from collections import namedtuple
 from datetime import date, datetime, timedelta
 
@@ -55,7 +56,7 @@ def _today():
         return today()
     except Exception:
         from django.utils import timezone
-        return timezone.localdate()
+        return _zt_today()
 
 
 def _attr(emp, level):
@@ -260,6 +261,15 @@ def _emp(e):
 
 def day(emp, d, plan=None):
     emp, d = _emp(emp), _d(d)
+    if plan is None:
+        try:   # v1.73.15: inside a payroll run's memo (PayrollManagement.perf) one plan per employee and month, not one per day
+            from PayrollManagement.perf import active, memo
+            if active() and emp is not None:
+                a = d.replace(day=1)
+                b = (a + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                plan = memo(('wd_plan', emp.pk, a), lambda: Plan(a, b, [emp.pk]))
+        except ImportError:   # pragma: no cover
+            plan = None
     return (plan or Plan(d, d, [emp.pk])).day(emp, d)
 
 
@@ -275,6 +285,12 @@ def weekend_of(emp, d=None, rules=None):
     emp = _emp(emp)
     if emp is None:
         return None, None, None
+    if rules is None:
+        try:   # v1.73.15: the weekend assignments once per payroll run's memo
+            from PayrollManagement.perf import active, memo
+            rules = memo(('wd_weekend_rules',), WeekendRules) if active() else None
+        except ImportError:   # pragma: no cover
+            rules = None
     return (rules or WeekendRules()).pick(emp, _d(d) if d else None)
 
 
@@ -284,7 +300,12 @@ def weekend_names(emp, d=None, rules=None):
 
 
 def holiday_dates(emp, a=None, b=None):
-    out = HolidayRules().dates(_emp(emp))
+    try:   # v1.73.15: the holiday rules once per payroll run's memo (they do not change during a run)
+        from PayrollManagement.perf import active, memo
+        rules = memo(('wd_holiday_rules',), HolidayRules) if active() else HolidayRules()
+    except ImportError:   # pragma: no cover
+        rules = HolidayRules()
+    out = rules.dates(_emp(emp))
     if a is not None and b is not None:
         return {x for x in out if a <= x <= b}
     return set(out)

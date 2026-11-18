@@ -161,7 +161,10 @@ PAYSLIP = {
                                    '<th class="num">[[Balance (days)|الرصيد (أيام)]]</th></tr></thead><tbody>{% for l in leave %}<tr><td>{{ l.type }}</td>'
                                    '<td class="num">{{ l.balance }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="muted">–</p>{% endif %}', 'half')),
     'bank': ('Bank / IBAN', '<div class="blk bank">[[Paid by|طريقة الدفع]] <b>{{ bank.mode }}</b>{% if bank.name %} · [[Bank|البنك]] <b>{{ bank.name }}</b>{% endif %}'
-             '{% if bank.iban_masked %} · IBAN <b>{{ bank.iban_masked }}</b>{% endif %}</div>'),
+             '{% if bank.iban_masked %} · IBAN <b>{{ bank.iban_masked }}</b>{% endif %}'
+             # v1.67.22 (pending C3): a salary split over two methods – each part and its amount
+             '{% if payslip.paid_parts %}<div class="split">[[Paid in parts|مدفوع على جزأين]]: {% for x in payslip.paid_parts %}{{ x.method }} '
+             '<b>{{ x.amount }}</b>{% if x.account %} ({{ x.account }}){% endif %}{% if not forloop.last %} · {% endif %}{% endfor %}</div>{% endif %}</div>'),
 }
 
 SETTLEMENT = {

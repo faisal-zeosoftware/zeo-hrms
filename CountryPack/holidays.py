@@ -15,6 +15,7 @@ Left out on purpose (not sure enough – add them by hand when announced):
   * KW / OM: Isra and Mi'raj. BH: Ashura (2 days).
   * Every year after 2027 (Islamic dates not listed yet).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date, timedelta
 
 EXPECTED_NOTE = 'Expected - confirm on moon-sighting announcement'   # holiday.note is 50 characters max
@@ -129,7 +130,7 @@ def fix_plan(pack, apply=False, today=None, user=None):
     H = apps.get_model('calendars', 'holiday')
     HC = apps.get_model('calendars', 'holiday_calendar')
     AH = apps.get_model('calendars', 'assign_holiday')
-    today = today or date.today()
+    today = today or _zt_today()
     names = pack_holiday_names(pack)
     used = set(AH.objects.values_list('holiday_model_id', flat=True))
     cals = HC.objects.filter(id__in=used) if used else HC.objects.all()

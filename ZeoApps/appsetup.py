@@ -43,7 +43,9 @@ STEPS = [
     ('people', 'Who uses the app', True),
 ]
 MASTERS = {
-    'projects': (['ZeoProjects.SLAPolicy', 'ZeoProjects.IssueCategory'], 'SLA policy and issue categories', '/main-sidebar/zeo-projects/settings'),
+    # v1.67.24 (pending 225, decision 14 Nov): what a transaction cannot work without – Projects also a customer (contracts,
+    # billing and projects are made for one)
+    'projects': (['ZeoProjects.SLAPolicy', 'ZeoProjects.IssueCategory', 'ZeoProjects.Customer'], 'SLA policy, issue categories and a customer', '/main-sidebar/zeo-projects/settings'),
     'crm': (['ZeoCRM.Pipeline'], 'a sales pipeline', '/main-sidebar/zeo-crm/r/pipeline'),
     'property': (['ZeoProperty.Building'], 'a building or project with its units', '/main-sidebar/zeo-property/r/building'),
     'maintenance': (['ZeoMaintenance.Category'], 'work-order categories', '/main-sidebar/zeo-maintenance/r/category'),
@@ -200,6 +202,10 @@ def steps(app):
         status = 'done' if auto else (mark if mark in ('done', 'skipped') else 'open')
         if mark == 'done' and auto is False and key in ('industry', 'numbering', 'masters', 'accounts'):   # v1.67.8 (fixes) + accounts
             status = 'open'   # the data is missing – confirming does not help
+        if key == 'accounts' and app == 'property' and has_accounting():   # v1.67.24 (225): rent is posted – its accounts first
+            can_skip = False
+            if status == 'skipped':
+                status = 'open'
         row = {'key': key, 'title': title, 'can_skip': can_skip, 'auto': auto is not None, 'status': status, 'hint': hints[key],
                'link': links[key]}
         if key == 'accounts':   # v1.67.8 (fixes) item 8: what is missing, or why the step is skipped

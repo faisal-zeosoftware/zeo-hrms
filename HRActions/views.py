@@ -1,4 +1,5 @@
 """v1.11.0 – employee transfer and rejoining settlement APIs."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 
 from django.apps import apps
@@ -58,7 +59,7 @@ class _UserNames(dict):
 
 
 def _build(data, user):
-    t = EmployeeTransfer(employee_id=int(data.get('employee') or 0), effective_date=parse_date(str(data.get('effective_date') or '')) or date.today(),
+    t = EmployeeTransfer(employee_id=int(data.get('employee') or 0), effective_date=parse_date(str(data.get('effective_date') or '')) or _zt_today(),
                          to_branch_id=data.get('to_branch') or None, to_department_id=data.get('to_department') or None,
                          to_designation_id=data.get('to_designation') or None, to_category_id=data.get('to_category') or None,
                          to_manager_id=data.get('to_manager') or None, salary_changes={k: v for k, v in (data.get('salary_changes') or {}).items() if v not in ('', None)},
@@ -69,6 +70,13 @@ def _build(data, user):
             t.options = {**(t.options or {}), **transfer_options(data)}
     except Exception:
         pass
+    # v1.73.7 the salary template switch: the new template and whether the amounts of matching items are kept
+    if data.get('template'):
+        try:
+            t.options = {**(t.options or {}), 'template': int(data.get('template')),
+                         'keep_amounts': str(data.get('keep_amounts', True)).lower() not in ('0', 'false')}
+        except (TypeError, ValueError):
+            pass
     return t
 
 
@@ -113,7 +121,7 @@ class TransfersView(APIView):
             return Response({'detail': ' '.join(p['blockers']), 'plan': p}, status=400)
         t.from_branch_id, t.from_department_id = emp.emp_branch_id_id, emp.emp_dept_id_id
         t.save()
-        if t.effective_date <= date.today():
+        if t.effective_date <= _zt_today():
             try:
                 done = tr_svc.apply(t, request.user)
             except ValueError as e:
@@ -225,7 +233,7 @@ def _decide_request(request, t, emp, action):
     p = tr_svc.plan(t)
     if p['blockers']:
         return Response({'detail': ' '.join(p['blockers']), 'plan': p}, status=400)
-    if t.effective_date <= date.today():
+    if t.effective_date <= _zt_today():
         t.status = 'scheduled'
         t.save(update_fields=['status'])
         try:
@@ -276,7 +284,7 @@ class WarningsView(APIView):
         subject = str(d.get('subject') or '').strip()
         if not subject:
             return Response({'detail': _tr('Write the subject.'), 'subject': ['required']}, status=400)
-        w = EmployeeWarning.objects.create(employee_id=emp.pk, date=parse_date(str(d.get('date') or '')) or date.today(),
+        w = EmployeeWarning.objects.create(employee_id=emp.pk, date=parse_date(str(d.get('date') or '')) or _zt_today(),
                                            level=d.get('level') if d.get('level') in dict(EmployeeWarning.LEVELS) else 'written',
                                            subject=subject[:150], details=str(d.get('details') or ''), issued_by_id=request.user.pk,
                                            issued_by_name=uname(request.user)[:150])
@@ -297,7 +305,7 @@ class WarningActionView(APIView):
         if action == 'withdraw':
             w.status = 'withdrawn'
         elif action == 'acknowledge':
-            w.acknowledged_on = date.today()
+            w.acknowledged_on = _zt_today()
         else:
             return Response({'detail': _tr('Unknown action.')}, status=400)
         w.save()

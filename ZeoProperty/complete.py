@@ -1614,6 +1614,9 @@ def a_po_invoice(o, request, f):
     o.invoice_no, o.invoice_amount = f.s('invoice_no'), f.n('invoice_amount')
     if o.invoice_amount is None:
         raise AppError('Enter the invoice amount.', 'invoice_amount')
+    o.invoice_date = f.dt('invoice_date', True, "The vendor's invoice date")   # v1.70.5: the bill's date in accounting
+    if o.invoice_date > today():
+        raise AppError("The vendor's invoice date cannot be in the future.", 'invoice_date')
     diff = abs(o.invoice_amount - o.total)
     if diff > max(Decimal('1'), o.total * Decimal('0.01')) and not f.b('force'):
         raise AppError(f'The invoice ({o.invoice_amount}) does not match the order ({o.total}). Tick "Accept the difference" to match anyway.', 'force')
@@ -1639,7 +1642,7 @@ R(Reg('purchase_order', PurchaseOrder, 'Purchase order', 'Purchase orders', 'Fin
                Act('approve', 'Approve', lambda o, r, f: (setattr(o, 'status', 'approved'), setattr(o, 'ordered_on', o.ordered_on or today()), o.save(), app.close_todos('purchase_order', o.pk), app.event('purchase_order', o.pk, 'Approved', r.user), o)[-1],
                    when(('approval', 'draft'), *MGR), style='primary'),
                Act('receive', 'Received', a_po_receive, when(('approved',), *MGR + FIN + ('prop_leasing',)), style='primary'),
-               Act('invoice', 'Match the vendor invoice', a_po_invoice, when(('received',), *FIN), fields=(('invoice_no', 'Vendor invoice no.', 'text', True), ('invoice_amount', 'Invoice amount', 'decimal', True), ('force', 'Accept the difference', 'bool', False))),
+               Act('invoice', 'Match the vendor invoice', a_po_invoice, when(('received',), *FIN), fields=(('invoice_no', 'Vendor invoice no.', 'text', True), ('invoice_date', "Vendor's invoice date", 'date', True), ('invoice_amount', 'Invoice amount', 'decimal', True), ('force', 'Accept the difference', 'bool', False))),
                Act('paid', 'Paid', lambda o, r, f: (setattr(o, 'status', 'paid'), setattr(o, 'external_ref', f.s('external_ref')), o.save(), app.event('purchase_order', o.pk, f'Paid – {o.external_ref}', r.user), o)[-1],
                    when(('invoiced',), *FIN), fields=(('external_ref', 'Payment / bill ref.', 'text', True),)),
                Act('cancel', 'Cancel', lambda o, r, f: (setattr(o, 'status', 'cancelled'), o.save(update_fields=['status']), o)[-1], when(('draft', 'approval', 'approved'), *MGR), style='danger')],
@@ -1707,9 +1710,16 @@ def a_req_decide(ok):
     return run
 
 
+def pr_check(o, request, old):   # v1.73.19 (item 289): a portal request for nobody and about nothing was saved from an empty form
+    if not o.party_id and not o.owner_id:
+        raise AppError('Choose the tenant / buyer or the owner who asks.', 'party')
+    if not (o.text or '').strip():
+        raise AppError('Say what is asked.', 'text')
+
+
 R(Reg('portal_request', PortalRequest, 'Portal request', 'Portal requests', 'Customers', cols=('number', 'kind', 'party', 'owner', 'unit', 'wanted_on', 'status', 'created_at'),
       form=('kind', 'party', 'owner', 'lease', 'unit', 'wanted_on', 'text'), number=('portal_request', 'REQ'), manage=LEASING, view=ALL_STAFF, search=('number', 'party__name', 'text'),
-      filters=('status', 'kind'), subtitle='party', edit_when=lambda o: o.status == 'open', info=('data', 'answer'),
+      filters=('status', 'kind'), subtitle='party', edit_when=lambda o: o.status == 'open', info=('data', 'answer'), check=pr_check,
       actions=[Act('approve', 'Approve', a_req_decide(True), when(('open',), *LEASING), style='primary', fields=(('answer', 'Answer to the person', 'text', False),)),
                Act('reject', 'Reject', a_req_decide(False), when(('open',), *LEASING), style='danger', fields=(('answer', 'Reason', 'text', True),)),
                Act('done', 'Done', lambda o, r, f: (setattr(o, 'status', 'done'), o.save(update_fields=['status']), o)[-1], when(('approved',), *LEASING))],
@@ -1983,7 +1993,7 @@ def h_accounting_items(kind, since=None):
     """Lists for the Accounting connector: billing records / credit notes to invoice, receipts, refunds, owner payouts, commissions, vendor bills."""
     t = since or (today() - timedelta(days=90))
     if kind == 'bills':
-        return [{'id': b.pk, 'number': b.number, 'date': b.due_date, 'party': b.party.name if b.party_id else (b.owner.name if b.owner_id else ''), 'party_kind': 'party' if b.party_id else 'owner',
+        return [{'id': b.pk, 'number': b.number, 'date': b.invoice_date or (b.created_at.date() if b.created_at else b.due_date), 'due': b.due_date, 'party': b.party.name if b.party_id else (b.owner.name if b.owner_id else ''), 'party_kind': 'party' if b.party_id else 'owner',
                  'amount': float(b.amount), 'vat': float(b.vat), 'total': float(b.total), 'credit': b.is_credit, 'charge': b.charge.name, 'charge_kind': b.charge.kind, 'unit': b.unit.label if b.unit_id else '',
                  'building': b.unit.building.name if b.unit_id else '', 'branch': b.branch_id, 'external_ref': b.external_ref, 'status': b.external_status, 'description': b.description,
                  'partner_id': (b.party.partner_id if b.party_id else (b.owner.partner_id if b.owner_id else None))}
@@ -1999,12 +2009,12 @@ def h_accounting_items(kind, since=None):
         return [{'id': s.pk, 'number': s.number, 'date': s.paid_on or s.period_to, 'owner': s.owner.name, 'net': float(s.net), 'collected': float(s.collected), 'fees': float(s.fees + s.other_fees),
                  'expenses': float(s.expenses), 'external_ref': s.external_ref, 'partner_id': s.owner.partner_id} for s in OwnerStatement.objects.filter(status__in=('issued', 'paid'), period_to__gte=t).select_related('owner')]
     if kind == 'commissions':
-        return [{'id': c.pk, 'number': c.number, 'date': c.created_at.date() if c.created_at else today(), 'agent': emp_name(c.agent) if c.agent_id else (c.broker.name if c.broker_id else ''),
+        return [{'id': c.pk, 'number': c.number, 'date': c.approved_on or (c.created_at.date() if c.created_at else None), 'agent': emp_name(c.agent) if c.agent_id else (c.broker.name if c.broker_id else ''),
                  'employee_id': c.agent_id, 'broker': c.broker_id is not None, 'amount': float(c.amount), 'external_ref': c.external_ref,
                  'partner_id': c.broker.partner_id if c.broker_id else None}
                 for c in Commission.objects.filter(status__in=('approved', 'paid')).select_related('agent', 'broker')]
     if kind == 'vendor_bills':
-        return [{'id': p.pk, 'number': p.number, 'date': p.ordered_on, 'vendor': p.vendor.name, 'invoice_no': p.invoice_no, 'amount': float(p.invoice_amount or p.total), 'external_ref': p.external_ref,
+        return [{'id': p.pk, 'number': p.number, 'date': p.invoice_date or p.ordered_on, 'vendor': p.vendor.name, 'invoice_no': p.invoice_no, 'amount': float(p.invoice_amount or p.total), 'external_ref': p.external_ref,
                  'description': p.description, 'partner_id': p.vendor.partner_id} for p in PurchaseOrder.objects.filter(status__in=('invoiced', 'paid')).select_related('vendor')]
     return []
 

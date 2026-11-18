@@ -353,6 +353,8 @@ def ins_defaults(o, request):
 
 
 def ins_saver(o, request, creating, old):
+    if not o.property_unit_id and not o.location_id:   # v1.73.19 (item 289): an inspection of nothing was saved from an empty form
+        raise AppError('Choose the unit or the location to inspect.', 'location')
     if old and old.checklist_id != o.checklist_id and o.checklist_id:
         o.results = [{'item': x, 'ok': None, 'note': '', 'cost': 0} for x in (o.checklist.items or [])]
     o.save()

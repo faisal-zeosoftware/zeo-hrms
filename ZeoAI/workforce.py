@@ -1,5 +1,6 @@
 """AI Workforce Analytics – headcount forecast, salary budget and overtime forecast, turnover/absenteeism hot-spots, recruitment
 needs from planned growth, cost comparison across branches/departments/companies, natural-language questions."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from collections import defaultdict
 from datetime import date, timedelta
@@ -17,7 +18,7 @@ def _month_add(d, n):
 
 
 def _months(n, end=None):
-    end = end or date.today().replace(day=1)
+    end = end or _zt_today().replace(day=1)
     return [_month_add(end, -i) for i in range(n - 1, -1, -1)]
 
 
@@ -63,10 +64,10 @@ def headcount(branch_id=None, department_id=None, months=None):
     avg_j = sum(h['joiners'] for h in hist[-6:]) / 6
     avg_l = sum(h['leavers'] for h in hist[-6:]) / 6
     cur = hist[-1]['headcount']
-    known_leaving = sum(1 for d in left.values() if d > date.today())
+    known_leaving = sum(1 for d in left.values() if d > _zt_today())
     fc = []
     n = cur
-    for i, m in enumerate(_month_add(date.today().replace(day=1), k) for k in range(1, months + 1)):
+    for i, m in enumerate(_month_add(_zt_today().replace(day=1), k) for k in range(1, months + 1)):
         n = max(0, n + slope)
         fc.append({'month': m.strftime('%Y-%m'), 'headcount': round(n), 'joiners': round(avg_j, 1), 'leavers': round(avg_l, 1)})
     notes = [f'Current headcount {cur}; average {avg_j:.1f} joiners and {avg_l:.1f} leavers per month over the last 6 months, net {slope:+.1f}/month.']
@@ -141,7 +142,7 @@ def hotspots(months=12):
     Emp = M('EmpManagement', 'emp_master')
     AD = M('AttendancePlus', 'AttendanceDay')
     left = _leavers()
-    since = _month_add(date.today().replace(day=1), -months)
+    since = _month_add(_zt_today().replace(day=1), -months)
     depts = {}
     for e in Emp.objects.select_related('emp_dept_id', 'emp_branch_id').values('id', 'emp_dept_id', 'emp_dept_id__dept_name', 'emp_branch_id__branch_name', 'is_active'):
         d = depts.setdefault(e['emp_dept_id'] or 0, {'department': e['emp_dept_id__dept_name'] or '—', 'active': 0, 'left': 0, 'ids': []})
@@ -150,8 +151,8 @@ def hotspots(months=12):
             d['active'] += 1
         if e['id'] in left and left[e['id']] >= since:
             d['left'] += 1
-    a_since = date.today() - timedelta(days=90)
-    abs_rows = AD.objects.filter(date__gte=a_since, date__lte=date.today()).values('employee_id', 'status')
+    a_since = _zt_today() - timedelta(days=90)
+    abs_rows = AD.objects.filter(date__gte=a_since, date__lte=_zt_today()).values('employee_id', 'status')
     absent, days = defaultdict(int), defaultdict(int)
     for r in abs_rows:
         if r['status'] in ('present', 'absent', 'half_day', 'leave', 'missing_punch', 'not_marked'):
@@ -196,7 +197,7 @@ def recruitment_needs(growth_pct=0.0, months=None):
     left = _leavers()
     for e in M('EmpManagement', 'emp_master').objects.filter(is_active=True).values('id', 'emp_dept_id__dept_name'):
         by_dept[e['emp_dept_id__dept_name'] or '—']['active'] += 1
-        if e['id'] in left and left[e['id']] > date.today():
+        if e['id'] in left and left[e['id']] > _zt_today():
             by_dept[e['emp_dept_id__dept_name'] or '—']['leaving'] += 1
     rows = [{'department': k, 'headcount': v['active'], 'leaving': v['leaving'], 'growth': round(v['active'] * growth_pct / 100 * months / 12, 1),
              'replacement': round(v['leaving'] + hc['avg_leavers'] * months * v['active'] / max(1, cur), 1)} for k, v in by_dept.items()]
@@ -309,7 +310,7 @@ def answer(question, user=None):
         months = _months_in(q, cfg.forecast_months)
         growth = _pct(q) if 'grow' in q else 0.0
         inc = _pct(q) if 'increment' in q or 'increase' in q or 'raise' in q else 0.0
-        b = salary_budget(months=months, growth_pct=growth, increment_pct=inc, increment_month=_month_add(date.today().replace(day=1), 1).strftime('%Y-%m') if inc else None)
+        b = salary_budget(months=months, growth_pct=growth, increment_pct=inc, increment_month=_month_add(_zt_today().replace(day=1), 1).strftime('%Y-%m') if inc else None)
         md = f'**Salary budget forecast – next {months} months**\n\n| Month | Headcount | Salary | Overtime | Total |\n|---|---|---|---|---|\n' + '\n'.join(
             f"| {r['month']} | {r['headcount']} | {r['salary']:,.0f} | {r['overtime']:,.0f} | {r['total']:,.0f} |" for r in b['forecast'])
         md += f"\n\nAnnualised {b['annual_forecast']:,.0f}. " + ' '.join(b['assumptions'])

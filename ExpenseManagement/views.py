@@ -11,6 +11,7 @@ because the tables keep employee ids instead of foreign keys):
     or change_expensereport, the accounting export export_expensereport or view_expensereport, advances
     are approved / paid with change_expenseadvance.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 
 from django.db import connection
@@ -495,6 +496,31 @@ class ExpenseSerializer(NamesMixin, serializers.ModelSerializer):
     def get_has_block(self, o):
         return S.has_block(o.policy_violations)
 
+    # v1.73.1 (ESS test B10) an expense dated a month ahead and one 22 months back were saved without a word. No future dates;
+    # the employee's own claim at most EXPENSE_MAX_AGE_DAYS back (settings, default 90) – older ones HR enters.
+    def validate_date(self, v):
+        from django.conf import settings as dj
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        if v is None or (self.instance is not None and getattr(self.instance, 'date', None) == v):
+            return v   # an existing expense keeps its date
+        today = _zt_today()
+        if v > today:
+            raise serializers.ValidationError(tr('The expense date cannot be in the future.'))
+        req = self.context.get('request')
+        hr = False   # HR entering an expense for another employee
+        try:
+            me = my_emp(req) if req else None
+            other = str(self.initial_data.get('employee_id') or (self.instance.employee_id if self.instance else '') or '')
+            hr = bool(req) and other != '' and (me is None or other != str(me.pk)) and can(req, 'add_expense', 'change_expense')
+        except Exception:
+            hr = False
+        days = int(getattr(dj, 'EXPENSE_MAX_AGE_DAYS', 90) or 90)
+        if not hr and v < today - timedelta(days=days):
+            raise serializers.ValidationError(tr('An expense can be claimed up to {0} days after its date (from {1:%d/%m/%Y}). Ask HR for an older one.',
+                                                 days, today - timedelta(days=days)))
+        return v
+
 
 class ExpenseViewSet(ScopedViewSet):
     queryset = Expense.objects.select_related('category', 'report', 'cost_center')
@@ -547,7 +573,7 @@ class ExpenseViewSet(ScopedViewSet):
             if rep.employee_id != inst.employee_id or rep.status not in ('draft', 'sent_back'):
                 raise S.ExpenseError(tr('The expense can only go into a draft or sent-back report of the same employee.'))
         if not inst.date:
-            inst.date = date.today()
+            inst.date = _zt_today()
         self._receipt_read(inst)
         S.prepare_expense(inst)
         if rep is not None:
@@ -1016,7 +1042,7 @@ class HomeView(Base, APIView):
     def get(self, request):
         emp = my_emp(request)
         eid = emp.pk if emp else -1
-        today = date.today()
+        today = _zt_today()
         mine = Expense.objects.filter(employee_id=eid)
         unrep = mine.filter(status='unreported', report__isnull=True)
         reps = ExpenseReport.objects.filter(employee_id=eid)
@@ -1078,7 +1104,7 @@ class ExportView(Base, APIView):
         data = S.journal(f, t, branches(request))
         if request.query_params.get('as') == 'csv':
             resp = HttpResponse(S.journal_csv(data), content_type='text/csv')
-            resp['Content-Disposition'] = f'attachment; filename="expense-journal-{f or "start"}-{t or date.today()}.csv"'
+            resp['Content-Disposition'] = f'attachment; filename="expense-journal-{f or "start"}-{t or _zt_today()}.csv"'
             return resp
         return Response(data)
 

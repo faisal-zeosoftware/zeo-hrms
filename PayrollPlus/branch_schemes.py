@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates in texts dd/mm/yyyy
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.62.11 (item 229) – the pension / end-of-service scheme of each branch (UAE):
 
     pension  'gpssa' (default)  UAE nationals: GPSSA (federal law)
@@ -99,9 +100,11 @@ def dews_start(employee):
 
 def is_gcc_national(employee):
     """A UAE or other GCC national – registered with GPSSA (the GCC extension), so exempt from DEWS (DIFC Employment Law Art. 65)."""
+    import re
     n = str(getattr(employee, 'emp_nationality', '') or '').upper()
     from .statutory import is_national
-    return is_national(employee) or any(w in n for w in GCC_WORDS)
+    # v1.68.0: as whole words – "ROMANIAN" contains "OMAN", so a Romanian employee was taken for a GCC national (no DEWS)
+    return is_national(employee) or any(re.search(r'\b' + w + r'(I|IS|IAN)?\b', n) for w in GCC_WORDS)
 
 
 def _emirate(b):
@@ -315,7 +318,7 @@ def report(year, code, c=None):
     if code == 'dews':
         from .statutory import _rows, base_amount
         E = M('EmpManagement', 'emp_master')
-        today = timezone.localdate()
+        today = _zt_today()
         ids = [k for k, v in all_branches().items() if v['dews']]
         if c is not None and c.branches is not None:
             ids = [i for i in ids if i in {int(x) for x in c.branches}]
@@ -375,7 +378,7 @@ class BranchSchemesView(Base):
                 raise Refused(tr('Choose ADPF or DEWS.'), problems={'scheme': tr('Choose ADPF or DEWS.')})
             try:
                 from django.utils import timezone as _tz
-                year = int(request.GET.get('year') or 0) or _tz.localdate().year
+                year = int(request.GET.get('year') or 0) or _zt_today().year
             except ValueError:
                 raise Refused(tr('Enter a valid year.'), problems={'year': tr('Enter a valid year.')})
             return Response(report(year, code, self.c))

@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.13.0 – the employee profile as self service sees it: groups, fields, ESS policy, reading and applying changes.
 
 EmployeeProfile (built in parallel by "empmaster") provides profile_groups(), validate_change() and apply_change().
@@ -410,7 +411,7 @@ def skills(emp):
 
 def salary_rows(emp):
     ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
-    today = date.today()
+    today = _zt_today()
     rows = []
     for s in ESS.objects.filter(employee=emp, is_active=True).select_related('component').order_by('component__component_type', 'component__name'):
         if s.valid_from and s.valid_from > today:
@@ -441,11 +442,12 @@ def employment(emp):
         except Exception:
             info = None
     days = getattr(emp.emp_branch_id, 'probation_period_days', 0) if emp.emp_branch_id_id else 0
-    prob_end = (emp.emp_joined_date + timedelta(days=days)) if (emp.emp_joined_date and days) else None
+    from EmpManagement.probation import probation_end as _pe   # v1.67.24 (L-BUG-20)
+    prob_end = _pe(emp.emp_joined_date, days) if (emp.emp_joined_date and days) else None
     return {'status': getattr(info, 'status', None) or ('active' if emp.is_active else 'left'),
             'probation_end_date': (getattr(info, 'probation_end_date', None) or prob_end),
             'probation_status': getattr(info, 'probation_status', None) or (
-                ('confirmed' if emp.emp_date_of_confirmation or (prob_end and prob_end <= date.today()) else 'on_probation') if prob_end else None),
+                ('confirmed' if emp.emp_date_of_confirmation or (prob_end and prob_end <= _zt_today()) else 'on_probation') if prob_end else None),
             'date_of_leaving': getattr(info, 'date_of_leaving', None), 'leaving_reason': getattr(info, 'leaving_reason', '') if info else '',
             'joining_date': emp.emp_joined_date, 'confirmation_date': emp.emp_date_of_confirmation}
 
@@ -466,6 +468,19 @@ def read_profile(emp, masked=True):
             item['fields'] = _row(g, objs, pm, masked)
             if key == 'org':
                 item['fields'] = [f for f in item['fields']]
+                # v1.73.1 (ESS test B4) the stored emp_weekend_calendar is empty when the weekend comes from a branch / department
+                # assignment – My profile showed "Weekend calendar —" while attendance and leave used the branch weekend
+                for f in item['fields']:
+                    if f['key'] == 'emp_weekend_calendar' and not f['value']:
+                        try:
+                            from calendars.workdays import weekend_of, model_days, DAY_NAMES
+                            m, level, _a = weekend_of(emp)
+                            if m is not None:
+                                days = ', '.join(sorted(model_days(m), key=DAY_NAMES.index))
+                                f['value'] = m.pk
+                                f['display'] = f'{m.calendar_code} ({days})' if days else str(m.calendar_code)
+                        except Exception:
+                            pass
         elif key == 'identity':
             item['fields'] = _row(g, [ident], pm, masked) if ident is not None else _row(g, [], pm, masked)
         elif key == 'employment':
@@ -512,7 +527,7 @@ def read_profile(emp, masked=True):
 def expiry_badge(d, warn_days=60):
     if not d:
         return {'state': 'none', 'label': 'No expiry', 'days': None}
-    days = (d - date.today()).days
+    days = (d - _zt_today()).days
     if days < 0:
         return {'state': 'expired', 'label': f'Expired {-days} day{"s" if days != -1 else ""} ago', 'days': days}
     if days <= warn_days:
@@ -594,7 +609,7 @@ def _fallback_validate(emp, group, record_id, data, action='update'):
             errors['emp_jh_end_date'] = tr('The end date cannot be before the start date.')
     if group == 'family':
         d = data.get('ef_date_of_birth')
-        if d and str(d) > date.today().isoformat():
+        if d and str(d) > _zt_today().isoformat():
             errors['ef_date_of_birth'] = tr('The date of birth cannot be in the future.')
     if errors:
         raise ValidationError(errors)

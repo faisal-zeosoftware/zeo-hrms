@@ -5,6 +5,7 @@ Pattern tokens: {TYPE} the type's code · {BRANCH} branch code · {LOC} location
 month or never. While the pattern is on, it is used instead of the prefix / length rows of Settings › Document numbering
 (those rows are kept and work again when the pattern is switched off). Numbers already issued are never changed.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 
@@ -128,7 +129,7 @@ def render(pattern, code, branch, loc, when, seq):
 
 
 def preview(pattern, codes, branch=None, types=('leave_request', 'payroll_run')):
-    when = timezone.localdate()
+    when = _zt_today()
     B = apps.get_model('OrganisationManager', 'brnch_mstr')
     branches = [branch] if branch is not None else list(B.objects.order_by('id')[:2]) or [None]
     out = []
@@ -161,7 +162,7 @@ def next_number(doc_type, branch, taken=None):
     try:
         if branch is not None and isinstance(branch, int):
             branch = apps.get_model('OrganisationManager', 'brnch_mstr').objects.filter(pk=branch).first()
-        when = timezone.localdate()
+        when = _zt_today()
         loc = _location() if (row.scope == 'location' or '{LOC}' in row.pattern) else None
         if row.scope == 'company':
             key = ''

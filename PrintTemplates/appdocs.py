@@ -9,6 +9,7 @@ the editor, the branding and the defaults are the existing ones.
 A document is described by APP_DOCS: the model, the number / date / status fields, the detail rows, the party (customer,
 tenant …), optional lines with totals, notes and terms. One generic block set ("record") draws every one of them.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -260,7 +261,7 @@ def sample_ctx(doc_type, lang='en'):
     if not c['company'].get('name'):
         c['company'].update(name='Golden Dune Integrated Services LLC', initials='GD')
     smp = SAMPLES.get(doc_type) or SAMPLES.get({'sales_order': 'quotation', 'asset_work_order': 'work_order'}.get(doc_type, ''), {})
-    c['doc'].update(number=f'{doc_type[:3].upper()}-00042', date=_fmt(date.today(), '', lang), status='')
+    c['doc'].update(number=f'{doc_type[:3].upper()}-00042', date=_fmt(_zt_today(), '', lang), status='')
     fields = spec.get('fields', [])
     vals = smp.get('fields', [])
     rec = {'party_label': _lab(spec.get('party', ('',))[0], lang) if spec.get('party') else '', 'party': smp.get('party', []),

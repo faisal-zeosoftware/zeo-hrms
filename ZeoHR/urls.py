@@ -14,4 +14,6 @@ urlpatterns = [
     path('api/my-tickets/', V.MyTicketsView.as_view(app=app)),               # v1.51.0 HR helpdesk
     path('api/services/', V.ServicesView.as_view(app=app)),
     path('api/assignments-report/', V.AssignmentsReportView.as_view(app=app)),   # v1.58.0
+    path('api/kb/', V.KBListView.as_view(app=app)),                               # v1.67.26 knowledge base (employees)
+    path('api/kb/<int:pk>/', V.KBArticleView.as_view(app=app)),
 ]

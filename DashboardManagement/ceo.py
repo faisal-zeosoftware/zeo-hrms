@@ -8,6 +8,7 @@ Who: company admins, or users holding the permission code `view_ceo_dashboard`.
 Branch users only see their branches (same rules as the report centre).
 Trends end at `to` (default today): 12 months for headcount / attrition, 6 months for pay, cost, overtime and absence.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import copy
 import logging
 from collections import defaultdict
@@ -71,7 +72,7 @@ def ceo_summary(request):
     # v1.16.0: the dashboard period (?period= or ?from=&to=, default this month); the trend charts end with the period
     from .period import resolve, label as p_label
     from django.utils import timezone as _tz
-    d_from, d_to_p, preset = resolve(request.query_params, _tz.localdate())
+    d_from, d_to_p, preset = resolve(request.query_params, _zt_today())
     d_to = min(d_to_p, today) if d_from <= today else d_to_p
     m_end = d_to.replace(day=1)
     months12 = R._months((m_end - timedelta(days=330)).replace(day=1), d_to)[-12:]
@@ -203,7 +204,7 @@ def ceo_summary(request):
         basic = R.basic_by_employee(all_emps)
         grat_total = sum(R.gratuity_for(e, R.years_between(e.emp_joined_date, today) or 0, basic.get(e.id, 0))[1] for e in emps)
         bal = defaultdict(float)
-        for b_ in apps.get_model('calendars', 'emp_leave_balance').objects.filter(employee_id__in=all_emps, leave_type__leave_category='annual').values('employee_id', 'balance'):
+        for b_ in apps.get_model('calendars', 'emp_leave_balance').objects.filter(employee_id__in=all_emps, leave_type__leave_category__in=__import__('LeavePolicy.categories', fromlist=['x']).keys_like('annual')).values('employee_id', 'balance'):
             bal[b_['employee_id']] += float(b_['balance'] or 0)
         leave_liab = sum(basic.get(i, 0) * 12 / 365 * bal.get(i, 0) for i in all_emps)
         out['sections']['payroll'] = {'months': [dict(m, month=None) for m in months]}

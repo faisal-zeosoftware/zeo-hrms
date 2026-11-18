@@ -10,6 +10,7 @@ GET  api/workspace/approvals/                  payslips waiting for this user's 
 GET  api/workspace/salaries/                   employees with their fixed monthly components and total, last change date
 GET  api/workspace/components/                 salary components once per code with their branches, readable formula, use
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 import re
 from collections import defaultdict
@@ -305,6 +306,7 @@ class WorkspaceRunsView(_RunBase):
     def get(self, request):
         self.need_view()
         _UN.clear()
+        _QTY.clear()
         runs = self.visible_runs()
         y = request.query_params.get('year')
         if y and str(y).isdigit():
@@ -314,7 +316,7 @@ class WorkspaceRunsView(_RunBase):
         rows = _run_rows(runs, kinds)
         if y and str(y).isdigit():
             rows = [x for x in rows if x['year'] == int(y)]
-        years = sorted({r.year for r in self.visible_runs()} | {date.today().year}, reverse=True)
+        years = sorted({r.year for r in self.visible_runs()} | {_zt_today().year}, reverse=True)
         return Response({'runs': rows, 'years': years, 'can_add': self.can({'add_payrollrun'}),
                          'segregation': S.settings().segregation, 'options': self._options() if self.can({'add_payrollrun'}) else {}})
 
@@ -331,11 +333,30 @@ class WorkspaceRunsView(_RunBase):
 
 
 # ------------------------------------------------------------------ one run
+def _qty_ids():
+    """v1.67.24 (P-BUG-26): hour / day quantities of "Others" monthly inputs – not an employer cost (cached for one request)."""
+    from django.db import connection
+    key = connection.schema_name
+    if key not in _QTY:
+        try:
+            from PayrollPlus.monthly_inputs import quantity_input_ids
+            _QTY[key] = quantity_input_ids()
+        except Exception:   # noqa: BLE001
+            _QTY[key] = set()
+    return _QTY[key]
+
+
+_QTY = {}
+
+
 def _amounts(ps):
     """basic / allowances (other fixed additions) / additions (the rest of gross) / deductions / employer contributions."""
     basic = allow = er = ZERO
+    qty = _qty_ids()
     for pc in ps.components.all():
         c = pc.component
+        if c.pk in qty:
+            continue
         a = Decimal(str(pc.amount or 0))
         if c.component_type == 'addition' and c.show_in_payslip:
             if c.payroll_category == 'basic':
@@ -373,6 +394,7 @@ class WorkspaceRunView(_RunBase):
     def get(self, request, pk):
         self.need_view()
         _UN.clear()
+        _QTY.clear()
         run = self._run(pk)
         kinds = _kinds()
         PR = M('PayrollManagement', 'PayrollRun')
@@ -628,6 +650,10 @@ class WorkspaceRunView(_RunBase):
                 info = (ch['wps_file'] or {}).get('info') or {}
                 ev.append({'at': r.at, 'by': _user(r.user_id) or r.user_name, 'text': tr('Made the WPS file – {0} employee(s), AED {1}', info.get('employees', '–'),
                                                                       f"{Decimal(str(info.get('total') or 0)):,.2f}")})
+            elif 'recalculated' in ch:   # v1.67.24 (P-BUG-08 / 12): recalculated in place
+                o, n_ = (ch['recalculated'] or {}).get('old') or '', (ch['recalculated'] or {}).get('new') or ''
+                ev.append({'at': r.at, 'by': _user(r.user_id) or r.user_name,
+                           'text': tr('Recalculated the payroll – {0} payslip(s) before, {1} after', o.split(' – ')[0], n_.split(' – ')[0])})
             elif 'status' in ch:
                 new = str((ch['status'] or {}).get('new') or '')
                 txt = {'Processed': tr('Calculated the payslips'), 'Approved': tr('Approved the run'), 'Paid': tr('Marked the run as paid'),
@@ -690,6 +716,30 @@ class WorkspaceWpsMadeView(WorkspaceRunView):
         return Response({'ok': True})
 
 
+class WorkspaceRecalcView(WorkspaceRunView):
+    """v1.67.24 (P-BUG-08 / 12): POST – Recalculate in place (same run, id and numbers; history kept). GET – the recalculations."""
+    def get(self, request, pk):
+        self.need_view()
+        self._run(pk)
+        from .run_recalc import history_rows
+        return Response({'rows': history_rows(pk)})
+
+    def post(self, request, pk):
+        if not (self.can({'change_payrollrun'}) and self.can({'add_payrollrun'})):
+            raise S.Refused(tr('You do not have the right to recalculate this payroll.'), status=403)
+        run = self._run(pk)
+        from .run_recalc import recalculate
+        out = recalculate(run, request.user)
+        RL = M('Chatter', 'RecordLog')
+        u = request.user
+        h = out['history'][0] if out['history'] else {}
+        RL.objects.create(model=RUN_MODEL, object_id=str(run.pk), record_label=(run.name or _period(run))[:255], action='updated',
+                          changes={'recalculated': {'label': 'Recalculated', 'old': f"{h.get('payslips_before')} – {h.get('net_before')}",
+                                                    'new': f"{h.get('payslips_after')} – {h.get('net_after')}"}},
+                          user=u, user_name=getattr(u, 'username', '')[:150], path=request.path[:255], method='POST')
+        return Response(out)
+
+
 # ------------------------------------------------------------------ approvals grouped by run
 class WorkspaceApprovalsView(Base):
     def get(self, request):
@@ -744,7 +794,7 @@ class WorkspaceSalariesView(Base):
             raise S.Refused(tr('You do not have the right to see salaries.'), status=403)
         E = M('EmpManagement', 'emp_master')
         ESS = M('PayrollManagement', 'EmployeeSalaryStructure')
-        today = date.today()
+        today = _zt_today()
         emps = E.objects.filter(is_active=True).select_related('emp_dept_id', 'emp_desgntn_id', 'emp_branch_id').order_by('emp_code')
         if self.c.branches is not None:
             emps = emps.filter(emp_branch_id__in=self.c.branches)

@@ -19,9 +19,20 @@ BRANCH = 'OrganisationManager.brnch_mstr'
 
 INDUSTRIES = (('general', 'General'), ('construction', 'Construction and engineering'), ('manufacturing', 'Manufacturing'),
               ('healthcare', 'Hospitals and healthcare'), ('oil_gas', 'Oil and gas'),
-              ('education', 'Education'), ('retail', 'Retail and hospitality'), ('office', 'Offices (IT, finance, services, property)'))   # v1.38.0
+              ('education', 'Education'), ('retail', 'Retail and hospitality'), ('office', 'Offices (IT, finance, services, property)'),   # v1.38.0
+              # v1.67.27 (HSE scope): 15 more industry packs
+              ('mining', 'Mining, quarrying and cement'), ('logistics', 'Warehousing, logistics and transport'), ('hospitality', 'Hotels and restaurants'),
+              ('facilities', 'Facilities management and building maintenance'), ('agriculture', 'Agriculture and farming'),
+              ('food', 'Food processing'), ('marine', 'Marine, shipping and ports'), ('aviation', 'Aviation and airports'),
+              ('telecom', 'Telecom and network infrastructure'), ('utilities', 'Electrical, power and utilities'), ('waste', 'Waste management and recycling'),
+              ('cleaning', 'Cleaning and pest control'), ('laboratory', 'Laboratories and pharmaceuticals'), ('shipyard', 'Marine construction and shipyards'),
+              ('data_center', 'Data centres and critical infrastructure'))
 # company.industry_type (UserManagement) → pack
-INDUSTRY_FROM_COMPANY = {'CON': 'construction', 'MFG': 'manufacturing', 'HC': 'healthcare', 'OG': 'oil_gas', 'EDU': 'education', 'RET': 'retail', 'IT': 'office', 'FIN': 'office', 'PM': 'office'}   # v1.38.0
+INDUSTRY_FROM_COMPANY = {'CON': 'construction', 'MFG': 'manufacturing', 'HC': 'healthcare', 'OG': 'oil_gas', 'EDU': 'education', 'RET': 'retail', 'IT': 'office', 'FIN': 'office', 'PM': 'office',   # v1.38.0
+                         # v1.67.27 (HSE scope): the service industries get the nearest new pack
+                         'FM': 'facilities', 'HVAC': 'facilities', 'LIFT': 'facilities', 'FIRE': 'facilities', 'POOL': 'facilities', 'MEP': 'construction',
+                         'FITOUT': 'construction', 'CLEAN': 'cleaning', 'PEST': 'cleaning', 'TEL': 'telecom', 'CCTV': 'telecom', 'SOLAR': 'utilities',
+                         'WATER': 'utilities', 'KITCH': 'hospitality', 'INDM': 'manufacturing', 'MEDEQ': 'healthcare'}
 
 REVIEW = (('to_review', 'To review'), ('reviewed', 'Reviewed'))
 # HSE roles – permissions on HSESettings, given through the "HSE – …" groups (zeohse_setup --roles)
@@ -63,6 +74,8 @@ class HSESettings(models.Model):
     # v1.17.0 links with other ZEO apps (each works only when that app is installed; HSE runs alone otherwise)
     links_off = models.JSONField(default=list, blank=True, help_text='Links the HSE manager switched off')
     fatigue_max_hours = models.PositiveSmallIntegerField(default=12, help_text='Warn on a permit when a crew member worked more than this the day before (0 = off)')
+    # v1.67.27 (HSE scope): 3×3, 4×4 or 5×5 risk matrix
+    matrix_size = models.PositiveSmallIntegerField(default=5, choices=((3, '3 × 3'), (4, '4 × 4'), (5, '5 × 5')))
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -95,6 +108,11 @@ class Site(models.Model):
     is_active = models.BooleanField(default=True)
     project_id = models.IntegerField(null=True, blank=True, db_index=True, help_text='Project (Projects app) this site belongs to')
     cost_center_id = models.IntegerField(null=True, blank=True, help_text='Cost centre (Expenses app)')
+    # v1.67.27 (HSE scope): site classification and emergency details
+    risk_class = models.CharField(max_length=10, blank=True, choices=(('', '–'), ('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('major', 'Major hazard')))
+    operating_hours = models.CharField(max_length=120, blank=True, help_text='e.g. 24/7, 07:00–19:00 two shifts')
+    emergency_contact = models.CharField(max_length=120, blank=True)
+    emergency_phone = models.CharField(max_length=40, blank=True)
 
     class Meta:
         ordering = ['name']
@@ -241,7 +259,8 @@ class IncidentCategory(PackItem):
 # ------------------------------------------------------------------ records
 class RiskAssessment(models.Model):
     KINDS = (('hira', 'HIRA'), ('jsa', 'Job safety analysis'), ('tra', 'Task risk assessment'), ('aspect', 'Environmental aspects'),
-             ('health', 'Health risk assessment'), ('icra', 'Infection control risk assessment'))
+             ('health', 'Health risk assessment'), ('icra', 'Infection control risk assessment'),
+             ('hazid', 'HAZID – hazard identification study'), ('hazop', 'HAZOP – hazard and operability study'))   # v1.67.27 (HSE scope)
     STATUS = (('draft', 'Draft'), ('submitted', 'Waiting for approval'), ('approved', 'Approved'), ('rejected', 'Rejected'),
               ('superseded', 'Superseded'))
     number = models.CharField(max_length=30, unique=True)
@@ -482,6 +501,7 @@ class Action(models.Model):
                ('observation', 'BBS observation'), ('moc', 'Change (MOC)'), ('audit', 'Audit finding'), ('quality', 'Quality NC'),
                ('environment', 'Environmental'), ('hygiene', 'Industrial hygiene'), ('compliance', 'Compliance'), ('review', 'Management review'),
                ('ergonomics', 'Ergonomics'), ('chemical', 'Chemical'), ('health', 'Occupational health'), ('kpi', 'KPI deviation'),
+               ('ppe', 'PPE'), ('emergency', 'Emergency'), ('equipment', 'Safety equipment'), ('contractor', 'Contractor'),   # v1.67.27 (HSE scope)
                ('manual', 'Other'))
     STATUS = (('open', 'Open'), ('in_progress', 'In progress'), ('done', 'Done – waiting for verification'), ('closed', 'Verified and closed'),
               ('rejected', 'Not effective – reopened'), ('cancelled', 'Cancelled'))
@@ -1135,3 +1155,281 @@ class Handover(models.Model):
 
     class Meta:
         ordering = ['status', '-created_at']
+
+
+# ================================================================== v1.67.27 (HSE scope): PPE, emergency, safety equipment, contractor workforce
+class PPEItem(models.Model):
+    """PPE catalogue with stock: what the company issues, its standard, life and how many are in store."""
+    CATEGORY = (('head', 'Head protection'), ('eye', 'Eye and face'), ('hearing', 'Hearing'), ('respiratory', 'Respiratory'),
+                ('hand', 'Hand protection'), ('foot', 'Foot protection'), ('body', 'Body / coveralls'), ('fall', 'Fall protection'),
+                ('hi_vis', 'High visibility'), ('other', 'Other'))
+    code = models.CharField(max_length=30, unique=True)
+    name = models.CharField(max_length=150)
+    category = models.CharField(max_length=12, choices=CATEGORY, default='other')
+    standard = models.CharField(max_length=80, blank=True, help_text='Standard or specification, e.g. EN 397, EN 166, ANSI Z89.1')
+    sizes = models.CharField(max_length=120, blank=True, help_text='Sizes offered, comma separated (S, M, L, XL / 40, 41, 42 …)')
+    life_months = models.PositiveSmallIntegerField('Life (months)', default=0, help_text='Replace after this many months (0 = no fixed life)')
+    reusable = models.BooleanField(default=False, help_text='A returned item in good condition goes back to stock')
+    stock = models.PositiveIntegerField('In stock', default=0)
+    min_stock = models.PositiveIntegerField('Minimum stock', default=0, help_text='HSE is told when stock falls to this')
+    supplier = models.CharField(max_length=150, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['category', 'name']
+        verbose_name = 'PPE item'
+
+    def __str__(self):
+        return f'{self.code} {self.name}'
+
+
+class PPERequirement(models.Model):
+    """Which PPE a job, activity or area needs (the PPE matrix)."""
+    site = models.ForeignKey('Site', null=True, blank=True, on_delete=models.CASCADE, related_name='ppe_requirements', help_text='Empty = every site')
+    job_role = models.CharField('Job / activity', max_length=150)
+    department = models.CharField(max_length=120, blank=True)
+    items = models.ManyToManyField(PPEItem, related_name='requirements', verbose_name='PPE required')
+    mandatory = models.BooleanField(default=True)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['job_role']
+        verbose_name = 'PPE requirement'
+
+
+class EmergencyScenario:
+    CHOICES = (('fire', 'Fire'), ('medical', 'Medical emergency'), ('chemical_spill', 'Chemical spill / release'), ('gas_leak', 'Gas leak'),
+               ('evacuation', 'General evacuation'), ('bomb_threat', 'Bomb threat / security'), ('flood', 'Flood / water ingress'),
+               ('power_failure', 'Power failure'), ('heat', 'Heat stress emergency'), ('confined_space', 'Confined space rescue'),
+               ('height_rescue', 'Rescue from height'), ('man_overboard', 'Man overboard'), ('other', 'Other'))
+
+
+class AssemblyPoint(models.Model):
+    site = models.ForeignKey('Site', on_delete=models.CASCADE, related_name='assembly_points')
+    name = models.CharField(max_length=120)
+    location = models.CharField(max_length=255, blank=True, help_text='Where it is, how to reach it')
+    capacity = models.PositiveIntegerField(default=0)
+    warden = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_assembly_points')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['site__name', 'name']
+
+    def __str__(self):
+        return f'{self.site.name} / {self.name}'
+
+
+class EmergencyPlan(models.Model):
+    STATUS = (('draft', 'Draft'), ('approved', 'Approved – in force'), ('archived', 'Archived'))
+    number = models.CharField(max_length=30, unique=True)
+    title = models.CharField(max_length=200)
+    site = models.ForeignKey('Site', null=True, blank=True, on_delete=models.SET_NULL, related_name='emergency_plans')
+    scenario = models.CharField(max_length=16, choices=EmergencyScenario.CHOICES, default='fire')
+    alarm = models.CharField('How the alarm is raised', max_length=255, blank=True)
+    procedure = models.TextField('Response procedure', help_text='Step by step: raise the alarm, isolate, evacuate, account for people, call services')
+    assembly_points = models.ManyToManyField(AssemblyPoint, blank=True, related_name='plans')
+    external_contacts = models.TextField('External contacts', blank=True, help_text='Civil defence 997, ambulance 998, police 999, hospital, utility …')
+    owner = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_emergency_plans')
+    review_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS, default='draft', db_index=True)
+    approved_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-id']
+
+    def __str__(self):
+        return f'{self.number} {self.title}'
+
+
+class EmergencyTeamMember(models.Model):
+    ROLES = (('controller', 'Incident controller'), ('fire_warden', 'Fire warden'), ('first_aider', 'First aider'),
+             ('spill_responder', 'Spill responder'), ('rescue', 'Rescue team'), ('security', 'Security / access control'), ('other', 'Other'))
+    NEEDS = {'fire_warden': 'FIRE', 'first_aider': 'FA'}   # competency type code the role needs (when the company has it)
+    site = models.ForeignKey('Site', on_delete=models.CASCADE, related_name='emergency_team')
+    employee = models.ForeignKey(EMP, on_delete=models.CASCADE, related_name='hse_emergency_roles')
+    role = models.CharField(max_length=16, choices=ROLES)
+    shift = models.CharField(max_length=60, blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['site__name', 'role']
+        verbose_name = 'emergency team member'
+
+
+class EmergencyEquipment(models.Model):
+    KINDS = (('extinguisher', 'Fire extinguisher'), ('hose_reel', 'Hose reel / hydrant'), ('fire_alarm', 'Fire alarm panel / call point'),
+             ('detector', 'Smoke / heat detector'), ('sprinkler', 'Sprinkler / suppression system'), ('emergency_light', 'Emergency light / exit sign'),
+             ('first_aid_kit', 'First aid kit'), ('eye_wash', 'Eye wash / safety shower'), ('aed', 'AED (defibrillator)'), ('scba', 'Breathing apparatus (SCBA)'),
+             ('spill_kit', 'Spill kit'), ('fire_blanket', 'Fire blanket'), ('stretcher', 'Stretcher / rescue kit'), ('other', 'Other'))
+    STATUS = (('ok', 'In order'), ('defect', 'Defect reported'), ('out_of_service', 'Out of service'), ('removed', 'Removed'))
+    number = models.CharField(max_length=30, unique=True)
+    kind = models.CharField(max_length=16, choices=KINDS)
+    site = models.ForeignKey('Site', on_delete=models.CASCADE, related_name='emergency_equipment')
+    area = models.ForeignKey('Area', null=True, blank=True, on_delete=models.SET_NULL, related_name='emergency_equipment')
+    location = models.CharField(max_length=200, help_text='Exact place, e.g. "Ground floor, corridor B, next to stair 2"')
+    spec = models.CharField('Type / size', max_length=120, blank=True, help_text='e.g. CO₂ 5 kg, dry powder 6 kg, AED model')
+    serial_no = models.CharField(max_length=80, blank=True)
+    inspect_days = models.PositiveSmallIntegerField('Inspect every (days)', default=30)
+    last_inspected = models.DateField(null=True, blank=True)
+    next_due = models.DateField('Next inspection', null=True, blank=True)
+    service_due = models.DateField('Service / refill / expiry date', null=True, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS, default='ok', db_index=True)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['site__name', 'kind', 'number']
+        verbose_name_plural = 'emergency equipment'
+
+    def __str__(self):
+        return f'{self.number} {self.get_kind_display()}'
+
+
+class EmergencyDrill(models.Model):
+    STATUS = (('planned', 'Planned'), ('done', 'Done – to evaluate'), ('closed', 'Closed'), ('cancelled', 'Cancelled'))
+    RATING = (('', '–'), ('excellent', 'Excellent'), ('good', 'Good'), ('improve', 'Needs improvement'), ('poor', 'Poor'))
+    number = models.CharField(max_length=30, unique=True)
+    plan = models.ForeignKey(EmergencyPlan, null=True, blank=True, on_delete=models.SET_NULL, related_name='drills')
+    site = models.ForeignKey('Site', on_delete=models.CASCADE, related_name='drills')
+    scenario = models.CharField(max_length=16, choices=EmergencyScenario.CHOICES, default='evacuation')
+    planned_on = models.DateField()
+    coordinator = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_drills')
+    target_minutes = models.DecimalField('Target evacuation time (min)', max_digits=6, decimal_places=1, null=True, blank=True)
+    conducted_on = models.DateField(null=True, blank=True)
+    participants = models.PositiveIntegerField(default=0)
+    evacuation_minutes = models.DecimalField('Evacuation time (min)', max_digits=6, decimal_places=1, null=True, blank=True)
+    head_count_ok = models.BooleanField('Head count matched', null=True, blank=True)
+    observations = models.TextField(blank=True)
+    rating = models.CharField(max_length=10, choices=RATING, blank=True, default='')
+    improvement_needed = models.BooleanField(default=False)
+    status = models.CharField(max_length=10, choices=STATUS, default='planned', db_index=True)
+    created_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-planned_on', '-id']
+
+    def __str__(self):
+        return f'{self.number} {self.get_scenario_display()}'
+
+
+class SafetyEquipment(models.Model):
+    """Equipment that needs a certificate or a periodic inspection before use – lifting gear, scaffolds, harnesses, pressure
+    vessels, gas detectors … – with a green / yellow / red tag."""
+    KINDS = (('lifting_gear', 'Lifting gear (slings, shackles, hoists)'), ('crane', 'Crane'), ('forklift', 'Forklift / telehandler'),
+             ('mewp', 'MEWP / boom lift / scissor lift'), ('scaffold', 'Scaffold'), ('ladder', 'Ladder'), ('harness', 'Harness / lanyard / lifeline'),
+             ('pressure', 'Pressure vessel / compressor'), ('gas_detector', 'Gas detector'), ('machine', 'Machine'), ('vehicle', 'Vehicle'),
+             ('power_tool', 'Power tool'), ('electrical', 'Electrical equipment / panel'), ('other', 'Other'))
+    TAGS = (('green', 'Green – safe to use'), ('yellow', 'Yellow – use with restrictions'), ('red', 'Red – do not use'))
+    STATUS = (('in_service', 'In service'), ('out_of_service', 'Out of service'), ('retired', 'Retired'))
+    number = models.CharField(max_length=30, unique=True)
+    name = models.CharField(max_length=150)
+    kind = models.CharField(max_length=14, choices=KINDS)
+    site = models.ForeignKey('Site', null=True, blank=True, on_delete=models.SET_NULL, related_name='safety_equipment')
+    area = models.ForeignKey('Area', null=True, blank=True, on_delete=models.SET_NULL, related_name='safety_equipment')
+    location = models.CharField(max_length=200, blank=True)
+    serial_no = models.CharField(max_length=80, blank=True)
+    manufacturer = models.CharField(max_length=120, blank=True)
+    capacity = models.CharField('Capacity / SWL', max_length=60, blank=True)
+    owner = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_safety_equipment')
+    contractor = models.ForeignKey(Contractor, null=True, blank=True, on_delete=models.SET_NULL, related_name='safety_equipment', help_text='When it belongs to a contractor')
+    certificate_no = models.CharField(max_length=80, blank=True)
+    certified_by = models.CharField('Certifying body / inspector', max_length=150, blank=True)
+    certified_on = models.DateField(null=True, blank=True)
+    cert_expires = models.DateField('Certificate expires', null=True, blank=True)
+    inspect_days = models.PositiveSmallIntegerField('Inspect every (days)', default=0, help_text='0 = only the certificate')
+    last_inspected = models.DateField(null=True, blank=True)
+    next_inspection = models.DateField(null=True, blank=True)
+    tag = models.CharField(max_length=8, choices=TAGS, default='green')
+    status = models.CharField(max_length=16, choices=STATUS, default='in_service', db_index=True)
+    restrictions = models.TextField(blank=True, help_text='What a yellow tag limits')
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['kind', 'number']
+        verbose_name_plural = 'safety equipment'
+
+    def __str__(self):
+        return f'{self.number} {self.name}'
+
+
+class ContractorWorker(models.Model):
+    """A contractor's own people: cleared to work only with a valid induction (and medical, when tracked) and an approved contractor."""
+    STATUS = (('active', 'Active'), ('blocked', 'Blocked'))
+    contractor = models.ForeignKey(Contractor, on_delete=models.CASCADE, related_name='workers')
+    name = models.CharField(max_length=150)
+    id_number = models.CharField('ID / passport no.', max_length=40, blank=True)
+    trade = models.CharField(max_length=120, blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    induction_on = models.DateField('Inducted on', null=True, blank=True)
+    induction_valid_until = models.DateField(null=True, blank=True)
+    medical_valid_until = models.DateField('Medical fitness valid until', null=True, blank=True)
+    competencies = models.TextField('Cards and certificates', blank=True, help_text='e.g. rigger card 12345 valid to 03/2027')
+    status = models.CharField(max_length=10, choices=STATUS, default='active', db_index=True)
+    block_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['contractor__name', 'name']
+        verbose_name = 'contractor worker'
+
+    def __str__(self):
+        return f'{self.name} ({self.contractor.name})'
+
+
+class PPEIssue(models.Model):
+    STATUS = (('issued', 'Issued'), ('returned', 'Returned'), ('replaced', 'Replaced'), ('lost', 'Lost'), ('damaged', 'Damaged'), ('expired', 'Expired – replace'))
+    number = models.CharField(max_length=30, unique=True)
+    item = models.ForeignKey(PPEItem, on_delete=models.PROTECT, related_name='issues', verbose_name='PPE item')
+    employee = models.ForeignKey(EMP, null=True, blank=True, on_delete=models.SET_NULL, related_name='hse_ppe')
+    worker = models.ForeignKey(ContractorWorker, null=True, blank=True, on_delete=models.SET_NULL, related_name='ppe', verbose_name='contractor worker')
+    site = models.ForeignKey('Site', null=True, blank=True, on_delete=models.SET_NULL, related_name='ppe_issues')
+    size = models.CharField(max_length=20, blank=True)
+    qty = models.PositiveSmallIntegerField('Quantity', default=1)
+    issued_on = models.DateField()
+    expires_on = models.DateField('Replace by', null=True, blank=True)
+    issued_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS, default='issued', db_index=True)
+    returned_on = models.DateField(null=True, blank=True)
+    condition = models.CharField(max_length=20, blank=True, choices=(('', '–'), ('good', 'Good – reusable'), ('worn', 'Worn'), ('damaged', 'Damaged')))
+    reason = models.TextField(blank=True)
+    replaces = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='replaced_by')
+
+    class Meta:
+        ordering = ['-issued_on', '-id']
+        verbose_name = 'PPE issue'
+
+    def __str__(self):
+        return self.number
+
+
+class ContractorEvaluation(models.Model):
+    """Contractor HSE performance for a period – calculated from incidents, permits, audits, documents and workers."""
+    STATUS = (('draft', 'Calculated – draft'), ('final', 'Final'))
+    RATING = (('A', 'A – preferred'), ('B', 'B – acceptable'), ('C', 'C – improvement plan'), ('D', 'D – do not use'))
+    number = models.CharField(max_length=30, unique=True)
+    contractor = models.ForeignKey(Contractor, on_delete=models.CASCADE, related_name='evaluations')
+    period_from = models.DateField()
+    period_to = models.DateField()
+    incidents = models.PositiveIntegerField(default=0)
+    lost_time = models.PositiveIntegerField('Lost-time injuries', default=0)
+    permits = models.PositiveIntegerField(default=0)
+    permits_suspended = models.PositiveIntegerField(default=0)
+    audit_score = models.DecimalField('Average audit score', max_digits=5, decimal_places=1, null=True, blank=True)
+    documents_valid = models.BooleanField('Licence and insurance valid', default=True)
+    workers_cleared = models.DecimalField('Workers cleared (%)', max_digits=5, decimal_places=1, null=True, blank=True)
+    score = models.DecimalField(max_digits=5, decimal_places=1, default=0)
+    rating = models.CharField(max_length=1, choices=RATING, blank=True)
+    breakdown = models.JSONField(default=list, blank=True)
+    note = models.TextField(blank=True)
+    status = models.CharField(max_length=8, choices=STATUS, default='draft')
+    evaluated_by = models.ForeignKey(USER, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-period_to', '-id']
+        verbose_name = 'contractor evaluation'
+
+    def __str__(self):
+        return f'{self.number} {self.contractor.name}'

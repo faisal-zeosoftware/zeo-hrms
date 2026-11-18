@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from zeo.workflow_utils import replace_existing_workflows
 from EmpManagement.email_utils import warn_if_email_not_configured
 
@@ -250,7 +251,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         expiry = attrs.get('emp_doc_expiry_date', getattr(inst, 'emp_doc_expiry_date', None))
         if issued and expiry and expiry <= issued:
             raise serializers.ValidationError({'emp_doc_expiry_date': 'The expiry date must be after the issue date.'})
-        if issued and issued > datetime.date.today():
+        if issued and issued > _zt_today():
             raise serializers.ValidationError({'emp_doc_issued_date': 'The issue date cannot be in the future.'})
         return attrs
     def to_representation(self, instance):
@@ -734,7 +735,7 @@ class EmpSerializer(serializers.ModelSerializer):
             if not _auto_code_on(getattr(b, 'pk', b)):
                 errors['emp_code'] = 'Enter the employee code (automatic numbering is off for this branch).'
         dob, joined = now('emp_date_of_birth'), now('emp_joined_date')
-        if dob and changed('emp_date_of_birth') and dob > datetime.date.today():
+        if dob and changed('emp_date_of_birth') and dob > _zt_today():
             errors['emp_date_of_birth'] = 'The date of birth cannot be in the future.'
         if dob and joined and (changed('emp_date_of_birth') or changed('emp_joined_date')) and 'emp_date_of_birth' not in errors:
             age = joined.year - dob.year - ((joined.month, joined.day) < (dob.month, dob.day))
@@ -1185,8 +1186,11 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
             first_level = CommonWorkflow.objects.order_by("level").first()
 
             if not first_level:
+                # v1.73.2 (test run): the bare "Approval levels are not configured." did not say what to do
                 raise serializers.ValidationError({
-                    "approval": "Approval levels are not configured."
+                    "approval": (f'The request type "{request_type.name}" uses the common approval workflow, which has no levels yet. '
+                                 'HR: add the levels of the common approval workflow, or untick "Use the common approval workflow" '
+                                 'on the request type and set its own approval levels (e.g. reporting manager).')
                 })
 
             approval_type = 'multi_approval'   # v1.40.1: CommonWorkflow has no approval_type (AttributeError before)
@@ -1818,6 +1822,27 @@ class EmployeeResignationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "last_working_date": "The last working day is before the joining date."
             })
+        # v1.73.1 (ESS test B6) the employee's own resignation: dated today or at most 7 days back, the last working day not in the
+        # past (a resignation dated 01/01/2025 with the last working day 31/01/2025 was sent). HR entering one keeps any date.
+        _req = self.context.get('request') if hasattr(self, 'context') else None
+        _own = bool(_req and getattr(_req, 'user', None) and employee.users_id and employee.users_id == _req.user.id)
+        if _own and self.instance is None:
+            from django.utils import timezone as _tz
+            from datetime import timedelta as _td
+            _today = _zt_today()
+            _on = data.get('resigned_on')
+            if _on and _on < _today - _td(days=7):
+                raise serializers.ValidationError({
+                    "resigned_on": __import__('Translations.i18n', fromlist=['tr']).tr('The date of resignation can be at most 7 days back (from {0:%d/%m/%Y}). Ask HR for an earlier date.', _today - _td(days=7))   # v1.73.3: translated
+                })
+            if _on and _on > _today + _td(days=90):
+                raise serializers.ValidationError({
+                    "resigned_on": "The date of resignation can be at most 90 days ahead."
+                })
+            if _lwd and _lwd < _today:
+                raise serializers.ValidationError({
+                    "last_working_date": "The last working day cannot be in the past."
+                })
 
         # ✅ FIX 1: correct ManyToMany filtering + stable selection
         workflow = ResignationApprovalWorkflow.objects.filter(
@@ -1910,12 +1935,8 @@ class EndOfServiceSerializer(serializers.ModelSerializer):
 
     def get_basic_salary(self, obj):
         from PayrollManagement.models import EmployeeSalaryStructure,Payslip
-        component = EmployeeSalaryStructure.objects.filter(
-            employee=obj.resignation.employee,
-            component__payroll_category='basic',  # UAE gratuity is on basic salary (is_gratuity no longer exists)
-            is_active=True
-        ).order_by('-date_updated').first()
-        return component.amount if component else Decimal('0.00')
+        from PayrollManagement.basic import base_of   # v1.73.7: the categories ticked for gratuity (default: every Basic line)
+        return base_of(obj.resignation.employee, 'gratuity')
     def get_asset_return_pending(self, obj):
         employee = obj.resignation.employee
         try:  # v1.12.0: AssetPlus exit clearance (assets, custody, undecided damage / loss, deductions left)

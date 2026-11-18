@@ -186,7 +186,13 @@ class ProjectsSettings(models.Model):
     @classmethod
     def get(cls):
         obj = cls.objects.order_by('id').first()
-        return obj or cls.objects.create()
+        if obj:
+            return obj
+        try:   # v1.67.23 (GCC invoices): a new company's VAT rate is its country's (SA 15 %, BH 10 %, QA / KW none)
+            from .gcc_invoice import default_vat_rate
+            return cls.objects.create(default_vat_rate=default_vat_rate())
+        except Exception:   # noqa: BLE001
+            return cls.objects.create()
 
 
 class Sequence(models.Model):
@@ -331,6 +337,9 @@ class AMCContract(models.Model):
     billing_frequency = models.CharField(max_length=12, choices=BILLING_FREQ, default='annual')
     unlimited_hours = models.BooleanField(default=False)
     included_hours = models.DecimalField(max_digits=8, decimal_places=2, default=ZERO)
+    # v1.67.23 (pending 270): the included hours are for the whole term (as before) or for each calendar month – a monthly allowance;
+    # hours used over a month's allowance are billed at hourly_rate_outside ("Bill extra hours", ZeoProjects/services.overage)
+    hours_period = models.CharField(max_length=6, choices=(('term', 'Whole contract term'), ('month', 'Each month')), default='term')
     onsite_hours = models.DecimalField(max_digits=8, decimal_places=2, default=ZERO, help_text='Part of the included hours that may be onsite (0 = no limit)')
     hourly_rate_outside = models.DecimalField(max_digits=10, decimal_places=2, default=ZERO, help_text='Rate for chargeable work outside the contract')
     sla_policy = models.ForeignKey(SLAPolicy, null=True, blank=True, on_delete=models.SET_NULL, related_name='contracts')
@@ -581,6 +590,10 @@ class ProjectProfile(models.Model):
     product = models.ForeignKey(ServiceProduct, null=True, blank=True, on_delete=models.SET_NULL, related_name='projects')
     plan_template = models.ForeignKey('PlanTemplate', null=True, blank=True, on_delete=models.SET_NULL, related_name='projects')
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        # v1.67.24 (pending 288): "change project" lets a project manager change the projects they manage; this right every project
+        permissions = [('change_all_projects', 'Can change every project (not only the ones they manage)')]
 
 
 class Milestone(models.Model):

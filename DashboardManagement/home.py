@@ -16,6 +16,7 @@ GET /dashboard/api/home/
                            expense reports not submitted
                policies    (v1.17.1) company policies the user still has to acknowledge (My view)
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 
 from django.utils import timezone
@@ -51,7 +52,7 @@ def tabs_for(request):
 
 def actions_for(request, c, allowed):
     user = request.user
-    today = timezone.localdate()
+    today = _zt_today()
     out = []
 
     # v1.17.0 (audit L4): every item belongs to the view where the user acts on it – the strip of a view shows its own items
@@ -149,7 +150,7 @@ class HomeView(APIView):
         if c.emp is not None:
             name = ' '.join(x for x in (getattr(c.emp, 'emp_first_name', '') or '', getattr(c.emp, 'emp_last_name', '') or '') if x).strip()
         out = {'tabs': [{'key': k, 'label': labels[k]} for k in allowed], 'default': allowed[0], 'is_admin': bool(c.admin),
-               'has_employee': c.emp is not None, 'today': timezone.localdate(),
+               'has_employee': c.emp is not None, 'today': _zt_today(),
                'name': name or request.user.get_full_name() or request.user.username}
         if request.query_params.get('actions') != '0':
             out['actions'] = actions_for(request, c, allowed)

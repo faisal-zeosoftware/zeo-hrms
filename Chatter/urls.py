@@ -54,5 +54,7 @@ urlpatterns = [
     path('api/messaging/test/', mv.MessagingTestView.as_view()),
     path('api/messaging/log/', mv.MessageLogView.as_view()),
     path('api/push-settings/', mv.PushSettingsView.as_view()),    # v1.51.0 company Firebase project
+    path('api/chat-webhooks/', mv.ChatWebhooksView.as_view()),    # v1.67.26 Teams and Slack
+    path('api/chat-webhooks/test/', mv.ChatWebhooksTestView.as_view()),
     path('api/push-settings/test/', mv.PushTestView.as_view()),
 ]

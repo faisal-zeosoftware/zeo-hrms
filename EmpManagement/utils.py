@@ -466,14 +466,11 @@ def _calculate_settlement(eos, opts=None):
         # -------------------------------
         # GET BASIC SALARY
         # -------------------------------
-        salary_component = EmployeeSalaryStructure.objects.filter(
-            employee=employee,
-            component__payroll_category='basic',  # UAE gratuity is on basic salary (is_gratuity no longer exists)
-            is_active=True
-        ).order_by('-date_updated').first()
+        from PayrollManagement.basic import base_of   # v1.73.7: the categories ticked for gratuity (default: every Basic line)
+        _basic_total = base_of(employee, 'gratuity')
 
-        if salary_component and salary_component.amount:
-            basic_salary = Decimal(salary_component.amount)
+        if _basic_total:
+            basic_salary = _basic_total
         else:
             # fallback to payslip basic
             payslip = employee.payslips.filter(status='Approved').order_by('-created_at').first()
@@ -517,6 +514,16 @@ def _calculate_settlement(eos, opts=None):
 
         eos.gratuity_days = gratuity_days
         eos.gratuity_amount = gratuity_amount
+        _r170 = None
+        try:   # v1.70.0 (items 142 – 148): a branch of another country – that country's gratuity (wage basis, shares, nationals, funds)
+            from PayrollPlus.country170 import gratuity as _g170
+            _r170 = _g170(employee, end_date, resignation.termination_type, eos.leave_days_without_pay or 0)
+            if _r170 is not None:
+                eos.gratuity_days, eos.gratuity_amount = _r170['days'], _r170['amount']
+        except ImportError:
+            pass
+        except Exception:
+            logger.exception('country gratuity (1.70.0)')
         try:   # v1.18.0: UAE nationals are covered by the GPSSA pension – no Labour Law gratuity (Art. 51 is for non-nationals)
             from PayrollManagement.signals import is_uae_national
             if is_uae_national(employee):
@@ -539,7 +546,7 @@ def _calculate_settlement(eos, opts=None):
                 max_gratuity = eos.gratuity_amount
         except ImportError:
             pass
-        if eos.gratuity_amount > max_gratuity:
+        if _r170 is None and eos.gratuity_amount > max_gratuity:   # v1.70.0: another country's cap is applied by its own rule
             eos.gratuity_amount = max_gratuity
         # -------------------------------
         # NOTICE PAY

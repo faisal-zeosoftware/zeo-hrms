@@ -29,7 +29,7 @@ from .models import AICallLog, AISettings, PROVIDERS
 log = logging.getLogger(__name__)
 
 ADMIN_ONLY = 'Only the company administrator can see or change the AI settings.'
-FIELDS = {'mode', 'provider', 'api_url', 'model', 'api_key', 'clear_key', 'use_ask', 'use_documents', 'use_tickets', 'monthly_limit'}
+FIELDS = {'mode', 'provider', 'api_url', 'model', 'api_key', 'clear_key', 'use_ask', 'use_documents', 'use_tickets', 'use_crm', 'monthly_limit'}
 DOC_RATE = (30, 600)   # document readings per user per 10 minutes
 
 
@@ -81,6 +81,9 @@ def data_sent_notice():
                         'passports, Emirates IDs, visas …) and its file name. The file itself is not sent.'),
         'tickets': tr('HR tickets: the subject and the question of a new ticket (at most 2,000 characters) and the names and descriptions of '
                       'the helpdesk categories. Not the employee\'s name or other records.'),
+        'crm': tr('CRM assistant (v1.67.30): for the record you work on – the lead, opportunity, conversation or complaint texts (requirements, notes, '
+                  'messages, at most 6,000 characters), names of the people and companies involved and the figures shown on the record. Only when '
+                  'a user presses an AI action; never whole lists.'),
         'general': tr('The provider receives this data under your contract with them. Check that it is allowed by your company\'s '
                       'data-protection rules (UAE PDPL) before you switch external AI on.'),
     }
@@ -97,16 +100,32 @@ def serialize(row):
     return {
         'mode': row.mode, 'provider': row.provider, 'api_url': row.api_url, 'model': row.model,
         'key_set': bool(row.api_key_enc), 'key_last4': row.key_last4, 'key_unreadable': bool(row.api_key_enc) and key is None,
-        'use_ask': row.use_ask, 'use_documents': row.use_documents, 'use_tickets': row.use_tickets, 'monthly_limit': row.monthly_limit, 'used_this_month': used,
+        'use_ask': row.use_ask, 'use_documents': row.use_documents, 'use_tickets': row.use_tickets, 'use_crm': row.use_crm, 'monthly_limit': row.monthly_limit, 'used_this_month': used,
         'server_external_allowed': S.server_allows_external(),
         'server_note': '' if S.server_allows_external() else tr('External AI is switched off by the server administrator.'),
-        'effective': {'ask': S.feature_mode('ask', row)[0], 'documents': S.feature_mode('documents', row)[0], 'tickets': S.feature_mode('tickets', row)[0]},
+        'effective': {'ask': S.feature_mode('ask', row)[0], 'documents': S.feature_mode('documents', row)[0], 'tickets': S.feature_mode('tickets', row)[0], 'crm': S.feature_mode('crm', row)[0]},
         'ocr_available': ocr_available(),
         'providers': [{'code': c, 'label': l, 'default_url': S.DEFAULT_URLS.get(c, ''), 'default_model': S.DEFAULT_MODELS.get(c, '')} for c, l in PROVIDERS],
         'data_sent': data_sent_notice(),
         'recent_calls': calls,
         'updated_at': row.updated_at, 'updated_by': by,
+        'askzeo': _askzeo_usage(),   # v1.72.0 (Ask ZEO cost controls): tokens and estimated cost this month
     }
+
+
+def _askzeo_usage():
+    """Ask ZEO's AI use this month: tokens in / out, estimated cost and the budget (None when Ask ZEO is not installed)."""
+    try:
+        from django.db.models import Sum
+        from django.utils import timezone
+        from AskZeo.models import AskSettings, AskUsage
+        start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        a = AskUsage.objects.filter(at__gte=start, mode='ai').aggregate(tin=Sum('tokens_in'), tout=Sum('tokens_out'), cost=Sum('cost_usd'), calls=Sum('calls'))
+        st = AskSettings.get()
+        return {'tokens_in': a['tin'] or 0, 'tokens_out': a['tout'] or 0, 'calls': a['calls'] or 0, 'cost_usd': f"{(a['cost'] or 0):.2f}",
+                'budget_usd': f'{st.monthly_budget_usd:.2f}'}
+    except Exception:   # Ask ZEO not installed / not migrated
+        return None
 
 
 class SettingsView(_Admin):
@@ -129,7 +148,7 @@ class SettingsView(_Admin):
                 row.mode = d['mode']
         if 'provider' in d:
             if d['provider'] not in dict(PROVIDERS):
-                errors['provider'] = tr('Choose Anthropic, OpenAI-compatible or Azure OpenAI.')
+                errors['provider'] = tr('Choose Claude (Anthropic), ChatGPT (OpenAI), Gemini (Google) or Azure OpenAI.')
             else:
                 row.provider = d['provider']
         if 'api_url' in d:
@@ -146,7 +165,7 @@ class SettingsView(_Admin):
             if len(m) > 120 or (m and not re.fullmatch(r'[\w.:/@\-]+', m)):
                 errors['model'] = tr('The model name may contain letters, digits and . : / @ - _ (at most 120 characters).')
             row.model = m
-        for f in ('use_ask', 'use_documents', 'use_tickets'):
+        for f in ('use_ask', 'use_documents', 'use_tickets', 'use_crm'):
             if f in d:
                 try:
                     setattr(row, f, _bool(d[f]))
@@ -191,7 +210,7 @@ class TestView(_Admin):
         row = AISettings.get()
         override = {k: d.get(k) for k in ('provider', 'api_url', 'model', 'api_key') if k in d}
         if override.get('provider') and override['provider'] not in dict(PROVIDERS):
-            return Response({'ok': False, 'message': tr('Choose Anthropic, OpenAI-compatible or Azure OpenAI.')}, status=400)
+            return Response({'ok': False, 'message': tr('Choose Claude (Anthropic), ChatGPT (OpenAI), Gemini (Google) or Azure OpenAI.')}, status=400)
         if override.get('api_url') is not None:
             override['api_url'] = str(override['api_url']).strip()
         return Response(S.test_connection(request, row, override))

@@ -444,10 +444,23 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
         read_only=True
     )
     # leave_category_name = serializers.CharField(source='leave_category.name', read_only=True)
+    # v1.73.7: a key of Leave › Leave categories (the 8 system ones or the company's own)
+    leave_category = serializers.CharField(max_length=30, required=False, default='annual')
 
     class Meta:
         model = leave_type
         fields = '__all__'
+
+    def validate_leave_category(self, v):
+        v = (v or '').strip()
+        try:
+            from LeavePolicy.categories import all_keys
+            keys = all_keys()
+        except Exception:
+            keys = {k for k, _l in leave_type.CATEGORY_CHOICES}
+        if v not in keys:
+            raise serializers.ValidationError('Choose a leave category of Leave › Leave categories.')
+        return v
 
     def validate_unit(self, value):
         # v1.11.0: leave requests counted days only – hourly leave was hidden until requests could take hours.
@@ -490,12 +503,46 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
     leave_duration = serializers.FloatField(write_only=True, required=False, allow_null=True)
     # v1.65.0 (item 82): the date of birth of the child (maternity / parental leave) – kept in LeavePolicy.LeaveRequestInfo
     birth_date = serializers.DateField(write_only=True, required=False, allow_null=True)
+    # v1.67.22 (pending C13): "Approvals go to" while away – the colleague who approves for the applicant (the mobile app and
+    # HR's leave screens send it with the request); refused when that colleague cannot approve (Out of office setting)
+    ooo_delegate_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = employee_leave_request
         fields = '__all__'
 
     def create(self, validated_data):   # v1.65.0 (item 82)
+        dg = validated_data.pop('ooo_delegate_id', None)
+        if dg:
+            from django.db import transaction as _tx
+            with _tx.atomic():
+                obj = self._create(validated_data)
+                self._ooo(obj, dg)
+            return obj
+        return self._create(validated_data)
+
+    def _ooo(self, obj, dg):   # v1.67.22 (pending C13)
+        try:
+            from ZeoAdmin.delegation import choose_for_leave, Refused, settings_get, is_approver, leave_counts
+            from ZeoAdmin.views import company_users
+        except ImportError:
+            return
+        owner = getattr(obj.employee, 'users', None)
+        st = settings_get()
+        if owner is None or not st.get('on') or not is_approver(owner) or not leave_counts(obj, st):
+            return   # not asked for this employee / leave (the company's rule decides) – ignored, as the screens do
+        delegate = company_users().filter(pk=dg, is_active=True).first()
+        if owner is None:
+            return
+        if delegate is None or delegate.pk == owner.pk:
+            raise serializers.ValidationError({'ooo_delegate_id': ['Choose the colleague who approves for you.']})
+        try:
+            choose_for_leave(obj, owner, delegate.pk)
+        except Refused as ex:
+            from Translations.i18n import current_lang, for_lang
+            raise serializers.ValidationError({'ooo_delegate_id': [for_lang(ex.args[0], current_lang())]})
+
+    def _create(self, validated_data):
         bd = validated_data.pop('birth_date', None)
         try:
             from LeavePolicy.leave_rules import extras
@@ -600,9 +647,9 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
             if duration is None and self.instance is not None and getattr(self.instance, 'leave_type_id', None) == leave_type.pk:
                 duration = float(self.instance.applied_days or 0)   # an edit that does not change the hours keeps them
             duration = float(duration or 0)
-            if duration > 8 or duration <= 0:
+            if duration > 8 or duration < 0.5:   # v1.73.1 (ESS test B15) 0.25 h was accepted; the form says minimum 0.5
                 raise serializers.ValidationError(
-                    "For hourly leave types, duration must be between 0 and 8 hours."
+                    "For hourly leave types, the hours must be at least 0.5 and at most 8."
                 )
             data['applied_days'] = duration
             data['dis_half_day'] = False
@@ -1615,9 +1662,18 @@ class CompensatoryLeaveAllocationSerializer(serializers.ModelSerializer):
         return f'{name} ({e.emp_code})' if name else e.emp_code
 
 class CompensatoryLeaveRequestSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()   # v1.73.4 for the Compensatory work requests screen
+
     class Meta:
         model = CompensatoryLeaveRequest
         fields ='__all__'
+
+    def get_employee_name(self, obj):
+        e = getattr(obj, 'employee', None)
+        if e is None:
+            return ''
+        name = ' '.join(x for x in [getattr(e, 'emp_first_name', '') or '', getattr(e, 'emp_last_name', '') or ''] if x)
+        return f"{name} ({getattr(e, 'emp_code', '')})" if getattr(e, 'emp_code', '') else name
     
 
 class CompensatoryLeaveBalanceSerializer(serializers.ModelSerializer):

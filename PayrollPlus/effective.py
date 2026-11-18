@@ -1,4 +1,5 @@
 # v1.67.12 (effective): new module
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.67.12 (effective, item 64) – dated versions ("effective from") of the setup records that calculations read:
 
   kind               record                                  children kept with it
@@ -214,7 +215,7 @@ def _day(on):
             from CountryPack.services import rule_date
             on = rule_date()
         except Exception:
-            on = _dt.date.today()
+            on = _zt_today()
     if isinstance(on, _dt.datetime):
         on = on.date()
     return on
@@ -268,7 +269,7 @@ def _after(sender, instance, raw=False, **kw):
             # a correction: the version in force today follows the record (only when the record has dated versions)
             if not RV.objects.filter(kind=kind, object_id=oid).exists():
                 return
-            v = RV.objects.filter(kind=kind, object_id=oid, effective_from__lte=_dt.date.today()).order_by('-effective_from').first()
+            v = RV.objects.filter(kind=kind, object_id=oid, effective_from__lte=_zt_today()).order_by('-effective_from').first()
             data = snapshot(kind, oid)
             if v is not None and data is not None:
                 v.data = data
@@ -595,7 +596,7 @@ def history(kind, object_id):
     """The versions of a record, oldest first: {id, effective_from, until, base, changes, created_at, created_by, in_force}."""
     RV = M('PayrollPlus', 'RuleVersion')
     rows = list(RV.objects.filter(kind=kind, object_id=object_id).order_by('effective_from'))
-    today = _dt.date.today()
+    today = _zt_today()
     users = {}
     try:
         U = M('UserManagement', 'CustomUser')

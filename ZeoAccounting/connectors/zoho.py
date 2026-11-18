@@ -185,7 +185,9 @@ class Zoho:
                 if l.partner_ref:
                     it['customer_id'] = l.partner_ref
                 items.append(it)
-            body = {'journal_date': batch.date.isoformat(), 'reference_number': batch.number, 'notes': f'ZEO {batch.source_label}'[:500],
+            dd = batch.document_date or batch.date   # v1.70.5: Zoho journals have one date (the posting date) – the document date goes in the notes
+            body = {'journal_date': batch.date.isoformat(), 'reference_number': batch.number,
+                    'notes': (f'ZEO {batch.source_label}' + (f' (document date {dd:%d/%m/%Y})' if dd != batch.date else ''))[:500],
                     'journal_type': 'both', 'line_items': items, 'status': 'published' if self.st.post_as == 'posted' else 'draft'}
             d = self.req('POST', '/journals', body)
             j = d.get('journal') or {}
@@ -311,7 +313,7 @@ class Zoho:
                     applied.append({'invoice_id': str(x['invoice_id']), 'amount_applied': a})
                     left -= a
         body = {'customer_id': contact, 'payment_mode': 'cash' if doc.get('method') == 'cash' else 'banktransfer',
-                'amount': amount, 'date': doc.get('date') or batch.date.isoformat(), 'account_id': acc[bank[0].account],
+                'amount': amount, 'date': batch.date.isoformat(), 'account_id': acc[bank[0].account],   # v1.70.5: the posting date
                 'reference_number': f'ZEO {batch.number} {batch.reference}'[:100], 'description': (doc.get('description') or '')[:500],
                 'invoices': applied}
         d = self.req('POST', '/customerpayments', body)

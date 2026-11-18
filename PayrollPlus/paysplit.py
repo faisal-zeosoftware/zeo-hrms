@@ -1,4 +1,5 @@
 # v1.63.0 (item 27): new module – one salary paid through two bank accounts or part cash
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.63.0 (item 27) – salary split.
 
 Per employee a dated split (PaySplit): the main account (the employee's payment mode – WPS for the UAE part) plus a second part paid by
@@ -164,6 +165,29 @@ def parts(net, held, split, main):
     return out
 
 
+def payslip_parts(ps, lang=None):
+    """v1.67.22 (pending C3): the parts of a payslip's net pay for the payslip PDF – [] without a split, else
+    [{method, amount, account}] (main part first; the account masked to its last 4 characters)."""
+    try:
+        sp = split_on(ps.employee_id, payslip_day(ps))
+        if sp is None:
+            return []
+        from .payctl import held_amount
+        net = max(q2(ps.net_salary or 0), ZERO)
+        main = main_method(ps.employee_id)
+        ps_parts = parts(net, held_amount(ps), sp, main)
+        if len(ps_parts) < 2:
+            return []
+        out = []
+        for x in ps_parts:
+            acct = x.get('iban') or ''
+            out.append({'method': tr(METHOD_NAMES.get(x['method'], '')) if x['method'] in METHOD_NAMES else method_name(x['method']),
+                        'amount': q2(x['gross']), 'account': ('…' + acct[-4:]) if len(acct) > 4 else acct})
+        return out
+    except Exception:   # noqa: BLE001 – the payslip prints without the split rather than failing
+        return []
+
+
 def wps_amount(ps, net, held):
     """The amount the WPS file pays for a payslip: net − held without a split; with a split (main method WPS) the WPS portion –
     or the whole salary when the company setting says 'full' (to be confirmed). → (amount, split or None)."""
@@ -203,13 +227,13 @@ def method_choices():
 def row(s, emps=None):
     from .payctl import emp_label
     e = (emps or {}).get(s.employee_id) or M('EmpManagement', 'emp_master').objects.filter(pk=s.employee_id).first()
-    cur = split_on(s.employee_id, timezone.localdate())
+    cur = split_on(s.employee_id, _zt_today())
     return {'id': s.pk, 'employee_id': s.employee_id, 'employee': emp_label(e), 'emp_code': getattr(e, 'emp_code', ''),
             'effective_from': s.effective_from.isoformat(), 'method': s.method, 'method_label': method_name(s.method), 'basis': s.basis,
             'basis_label': tr(dict(s.BASIS).get(s.basis, s.basis)), 'value': str(q2(s.value)),
             'text': split_text(s), 'bank_name': s.bank_name, 'iban': s.iban, 'account_number': s.account_number, 'routing_code': s.routing_code,
             'note': s.note, 'status': s.status, 'status_label': tr(dict(s.STATUS).get(s.status, s.status)),
-            'current': bool(cur and cur.pk == s.pk), 'future': s.effective_from > timezone.localdate(), 'history': s.history or [],
+            'current': bool(cur and cur.pk == s.pk), 'future': s.effective_from > _zt_today(), 'history': s.history or [],
             'created_at': s.created_at.isoformat() if s.created_at else None}
 
 
@@ -300,7 +324,7 @@ def create(employee_id, data, user=None):
 def cancel(s, user=None, note=''):
     if s.status != 'active':
         raise Refused(tr('This split is already cancelled.'))
-    if s.effective_from <= timezone.localdate() and _closed_month(s.employee_id, s.effective_from):
+    if s.effective_from <= _zt_today() and _closed_month(s.employee_id, s.effective_from):
         raise Refused(tr('A paid month used this split – add a new entry from a later date instead (e.g. "No split").'))
     s.status = 'cancelled'
     s.history = list(s.history or []) + [{'action': 'cancelled', 'by': _user_name(user), 'by_id': getattr(user, 'pk', None),

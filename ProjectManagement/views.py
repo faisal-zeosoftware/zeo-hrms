@@ -32,6 +32,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return S.visible_projects(self.request).order_by('-id')
 
+    def get_object(self):
+        """v1.67.24 (pending 288): changing or deleting a project – the projects the user manages, or every project with "Can change
+        every project" (ZeoProjects change_all_projects); a company administrator always."""
+        obj = super().get_object()
+        if getattr(self, 'action', '') in ('update', 'partial_update', 'destroy'):
+            from ProjectManagement.permissions import ProjectPermission
+            if not ProjectPermission().has_object_permission(self.request, self, obj):
+                from rest_framework.exceptions import PermissionDenied
+                try:
+                    from Translations.i18n import tr
+                    msg = tr('You can change only the projects you manage. Ask for "Can change every project" to change the others.')
+                except Exception:   # noqa: BLE001
+                    msg = 'You can change only the projects you manage. Ask for "Can change every project" to change the others.'
+                raise PermissionDenied(msg)
+        return obj
+
 
 class ProjectStageViewSet(viewsets.ModelViewSet):
     queryset = ProjectStage.objects.all()

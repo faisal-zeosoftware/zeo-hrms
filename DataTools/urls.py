@@ -17,6 +17,7 @@ urlpatterns = [
     # v1.62.0 workbook – Settings › Data workbook
     path('api/workbooks/', WB.WorkbookListView.as_view(), name='tools-workbooks'),
     path('api/workbooks/template/', WB.WorkbookTemplateView.as_view(), name='tools-workbook-template'),
+    path('api/workbooks/demo/', WB.WorkbookDemoView.as_view(), name='tools-workbook-demo'),   # v1.67.25 (item 1.62.9)
     path('api/workbooks/<int:pk>/', WB.WorkbookDetailView.as_view(), name='tools-workbook'),
     path('api/workbooks/<int:pk>/errors/', WB.WorkbookErrorsView.as_view(), name='tools-workbook-errors'),
     path('api/workbooks/<int:pk>/runs/<int:run>/', WB.WorkbookRunView.as_view(), name='tools-workbook-run'),

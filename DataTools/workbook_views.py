@@ -10,6 +10,8 @@ GET    /tools/api/workbooks/<id>/errors/[?run=N]   the error report (.xlsx) of t
 GET    /tools/api/workbooks/<id>/runs/<run>/       one run (?all=1 – every error, not only the first 300)
 DELETE /tools/api/workbooks/<id>/                  remove an upload (its history stays in the runs of other uploads)
 GET    /tools/api/workbooks/template/              the blank client template ZEO_Client_Data_Template_1.62.0.xlsx
+GET    /tools/api/workbooks/demo/                  v1.67.25 (item 1.62.9): the demo workbook – a fictional company (Desert Palm Trading LLC)
+                                                   with 3 months of work, made from the template; loads into a new company with 0 failed rows
 """
 import os
 
@@ -157,6 +159,15 @@ class WorkbookErrorsView(_Base):
         if r is None:
             return Response({'detail': tr('Check or load it first – the report is made by a finished run.')}, status=404)
         return _file(J.error_report(r), J.report_name(r))
+
+
+class WorkbookDemoView(_Base):
+    """v1.67.25 (item 1.62.9): the demo workbook, made from this server's template (DataTools.demo_workbook)."""
+    def get(self, request):
+        if not os.path.exists(J.TEMPLATE_PATH):
+            return Response({'detail': tr('The template is not installed on this server.')}, status=404)
+        from . import demo_workbook as DW
+        return _file(DW.build(J.TEMPLATE_PATH), DW.FILE_NAME)
 
 
 class WorkbookTemplateView(_Base):

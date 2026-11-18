@@ -1,4 +1,5 @@
 """ESS / manager dashboard API (read-only). All endpoints take ?schema=<company> like the rest of ZEO."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.apps import apps
 from rest_framework import permissions
 from rest_framework.response import Response
@@ -14,7 +15,7 @@ class EssDashboardView(APIView):
     def get(self, request):
         from django.utils import timezone
         from .period import resolve
-        a, b, preset = resolve(request.query_params, timezone.localdate())   # v1.16.0 dashboard period
+        a, b, preset = resolve(request.query_params, _zt_today())   # v1.16.0 dashboard period
         data = services.ess_summary(request.user, a, b)
         data['period'] = {'from': a, 'to': b, 'preset': preset}
         return Response(data)
@@ -28,7 +29,7 @@ class TeamDashboardView(APIView):
         scope = request.query_params.get('scope') or ('company' if services.is_admin(request.user) else 'team')
         from django.utils import timezone
         from .period import resolve
-        a, b, preset = resolve(request.query_params, timezone.localdate())   # v1.16.0 dashboard period
+        a, b, preset = resolve(request.query_params, _zt_today())   # v1.16.0 dashboard period
         data = services.team_summary(request.user, scope, request.query_params.get('department') or None, a, b)
         data['period']['preset'] = preset
         return Response(data)

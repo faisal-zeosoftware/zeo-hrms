@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -208,7 +209,7 @@ class Certificate(models.Model):
             return 'renewed'
         if not self.expiry_date:
             return 'valid'
-        today = timezone.localdate()
+        today = _zt_today()
         if self.expiry_date < today:
             return 'expired'
         if self.expiry_date <= today + relativedelta(days=60):
@@ -251,7 +252,7 @@ class TrainingBond(models.Model):
         # Only a bond the employee has accepted is enforceable, and only once training has started.
         if self.status != 'active':
             return Decimal('0')
-        on_date = on_date or timezone.localdate()
+        on_date = on_date or _zt_today()
         if isinstance(on_date, str):
             on_date = date.fromisoformat(on_date)
         if on_date < self.start_date:

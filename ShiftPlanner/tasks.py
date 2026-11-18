@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.12.0 – shift reminders: the day before a published shift every employee gets a notice (in-app + e-mail).
 Celery beat entry (zeo/settings.py, see INTEGRATION.md): 'shift-reminders-daily' → ShiftPlanner.tasks.shift_reminders."""
 from ZeoApps.scheduling import hr_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without HR
@@ -16,7 +17,7 @@ def send_reminders(on=None):
     """Remind everybody who works a published-roster shift on `on` (default tomorrow). Returns how many were sent."""
     from . import notify, services as S
     from .models import RosterEntry
-    on = on or (date.today() + timedelta(days=1))
+    on = on or (_zt_today() + timedelta(days=1))
     shifts = S.shifts_by_id()
     sent = 0
     seen = set()

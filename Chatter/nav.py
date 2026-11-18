@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.47.0 – navigation and the social side of the product:
 
 * search()        global search (Ctrl+K): employees and the records of every active app, with the user's rights
@@ -274,7 +275,7 @@ def comment_json(c, user=None):
 
 
 def wall(request):
-    today = timezone.localdate()
+    today = _zt_today()
     emps = branch_emps(request).select_related('emp_desgntn_id', 'emp_dept_id')
     items = _celebrations(list(emps), today) + _joiners(emps, today)
     for a in my_announcements(request):
@@ -348,7 +349,7 @@ def oo_json(o, viewer_is_manager=True):
 def team_hub(request, include_indirect=False):
     from DashboardManagement import services as S
     user = request.user
-    today = timezone.localdate()
+    today = _zt_today()
     emps = list(team_members(user, include_indirect))
     ids = [e.id for e in emps]
     out = {'today': today, 'headcount': len(ids), 'working_day': S.is_working_day(today), 'indirect': include_indirect}
@@ -451,6 +452,246 @@ def set_flag(user, key, value):
 
 
 RELEASES = [
+    {'version': '1.73.18', 'date': '2026-11-17', 'title': 'Demo data, GCC rules and checked business apps', 'items': [   # v1.73.18 the team's demo data and 1.73.4 re-test, items 147, 155, 283, 289
+        ('dataset', 'Do you want demo data?', 'Create company asks: no demo, Simple demo (1 month) or Heavy demo (6 months) – the time each takes is shown.'),
+        ('public', 'All industries or one', '10 demo companies in the UAE, Saudi Arabia, Qatar, Oman, Bahrain, Kuwait and India – or one company of the industry you choose.'),
+        ('autorenew', 'Always the latest months', 'The data ends today; Choose a company › Refresh demo data makes it again with new dates, Remove deletes the demo companies.'),
+        ('upload_file', 'Large imports in parts', 'A large file is imported 200 rows at a time – the row numbers stay those of the file and Undo takes back the whole file.'),
+        ('fact_check', 'Business apps checked field by field', 'CRM, Property, HSE, Maintenance and Assets: negative costs, prices and quantities and end dates before start dates are refused.'),
+        ('account_balance', 'Kuwait PIFSS by tiers', 'Kuwaitis of a Kuwait branch: employee 10.5 % up to KWD 1,500 and 8 % above, employer 11.5 %, wage 230 – 2,750.'),
+        ('savings', 'Oman Social Protection Fund', 'Omanis of an Oman branch: employee 8 %, employer 13.5 % – 14.5 % from 19/07/2026 with sick leave; ceiling OMR 3,000.'),
+        ('dark_mode', 'Ramadan hours by country', 'A branch in Saudi Arabia, Qatar, Oman or Bahrain: at most 6 hours of work a day in Ramadan; Kuwait 36 hours a week.'),
+        ('gavel', 'Checked in two sources', 'Kuwait resignation shares confirmed; India TDS named for the Income-tax Act 2025 (slabs unchanged).'),
+    ]},
+    {'version': '1.73.17', 'date': '2026-11-17', 'title': 'API for AI tools: proposals you approve', 'items': [   # v1.73.17 Ask ZEO A9
+        ('smart_toy', 'AI tools propose', 'An AI tool with an API key (modules, reports, workflow or settings scope) proposes a change in plain words; ZEO keeps it as a draft.'),
+        ('fact_check', 'You approve', 'Settings › Ask ZEO › Waiting for approval: each draft with its before and after – Approve or Reject. A key can never approve.'),
+        ('history', 'Logged and undoable', 'Every proposal says which API key made it and who approved it; an applied change can be undone.'),
+        ('hub', 'MCP connector', 'tools/mcp/zeo_mcp.py connects AI tools that speak MCP to ZEO (read with API v1, propose changes). Guide: tools/mcp/README.md.'),
+    ]},
+    {'version': '1.73.16', 'date': '2026-11-17', 'title': "Time zones: your day, your branch's day", 'items': [   # v1.73.16
+        ('schedule', 'Your own time zone', 'Language menu › Time zone: automatic (your branch, else the company) or a zone you choose – "today" on the server is your day.'),
+        ('public', "Each branch's day", "Attendance and leave of a Riyadh or Bangalore branch follow that branch's time zone (the branch › Registration and site details › Timezone)."),
+        ('event_repeat', "Jobs on the company's day", "Daily jobs (reminders, accruals) use the company's day – not the server's UTC day, which was yesterday between 00:00 and 04:00."),
+        ('lock_clock', 'Access checked safely', 'If the server is too slow to check your access, the page is not opened: "Couldn\'t check your access" with Try again.'),
+    ]},
+    {'version': '1.73.15', 'date': '2026-11-17', 'title': 'Setup by screens: imports and new companies', 'items': [   # v1.73.15 = the team's 1.73.4 (fresh-install walkthrough of 1.73.3)
+        ('event', 'Financial year', 'Create company and Company save the financial year start you choose – 01/01 was saved as 31/12 of the year before.'),
+        ('hourglass_top', 'New companies', 'A company still being created is listed with its progress and opens when it is ready.'),
+        ('upload_file', 'More imports', 'Air ticket rules, assign weekends, shifts, expense category limits, increment bands, assets, asset allocations, late in / early out requests, timesheets and skill levels from a file; large imports no longer stop with "Request was throttled".'),
+        ('link', 'Import links', 'A nomination or other record without a code that is not found is reported as not found, not linked to another record.'),
+        ('work_history', 'Compensatory work requests', 'A screen to approve the compensatory work requests – each approved request credits the day.'),
+    ]},
+    {'version': '1.73.14', 'date': '2026-11-17', 'title': 'App homes, default dashboards and self-service', 'items': [   # v1.73.14 = the team's 1.73.3 -> 1.73.6
+        ('dashboard', 'Default dashboards', 'Company, HR, Payroll, CRM, Property, Maintenance, Assets, HSE and Projects dashboards are made once for the apps you use.'),
+        ('touch_app', 'Click to see the records', 'A click on a bar, slice or row opens the records behind it – search, export, open the full report; a date filter for the whole dashboard.'),
+        ('palette', 'New app homes', 'CRM, Property, Maintenance and Assets homes with a themed banner, KPI tiles and View dashboard.'),
+        ('person', 'Self-service hero', 'Home › My dashboard: your photo, role, service years, manager, quick actions and live tiles.'),
+    ]},
+    {'version': '1.73.13', 'date': '2026-11-17', 'title': '"+ Create new …" in master drop-downs', 'items': [   # v1.73.13 = the team's 1.73.5 create from drop-down
+        ('add_circle', 'Create a missing master from the drop-down', 'A department, leave type, customer or project you need is missing? Choose "+ Create new …" at the end of the drop-down.'),
+        ('verified_user', 'Same checks and rights', "The record is saved through the master's own screen rules – its checks, rights and numbering."),
+        ('block', 'Not for people or branches', 'Employees, users, companies and branches are added on their own screens.'),
+    ]},
+    {'version': '1.73.12', 'date': '2026-11-17', 'title': 'Fixes from the full manual test (10 employees, 3 payrolls)', 'items': [   # v1.73.12 = the team's 1.73.2 fixes
+        ('flight', 'Air ticket allocations', 'A pending allocation now has Approve / Reject, so the employee can request the ticket.'),
+        ('lock_open', 'No more false "No access"', 'A slow rights check no longer locks approvers (e.g. Resignation approvals) out for the session.'),
+        ('mail', 'Resignation approved e-mail', 'The employee now gets the "Resignation approved" e-mail.'),
+        ('payments', 'Final settlement by finance', 'The Payroll Manager group can check and pay final settlements.'),
+        ('badge', 'Smaller fixes', 'Salary assignment form starts empty; undoing an employee import frees the codes; no duplicate GPSSA component; clearer approval set-up message.'),
+    ]},
+    {'version': '1.73.11', 'date': '2026-11-17', 'title': 'Document Center: industry packs', 'items': [   # v1.73.11 DMS phase 6
+        ('domain', 'Industry packs', 'Ready categories, checklists and letter templates for 23 kinds of business – construction, healthcare, schools, logistics, hotels and more.'),
+        ('fact_check', 'Only adds what is missing', 'Installing never changes or removes what the company has; templates come as drafts to read and publish.'),
+        ('badge', 'The UAE papers', 'Trade licence, establishment card, Ejari tenancy, VAT and corporate tax, passport, visa, Emirates ID, labour contract and work permit.'),
+    ]},
+    {'version': '1.73.10', 'date': '2026-11-17', 'title': 'Document Center: scans read (OCR) and search in words', 'items': [   # v1.73.10 DMS phase 5
+        ('document_scanner', 'Scans are read', 'Photos and scanned PDFs are read on the server, in English and Arabic, so their words can be searched.'),
+        ('manage_search', 'Search in words', 'Ask "Khalid\'s passport" or "expired trade licences": categories, employees, dates and the words in the files are understood.'),
+        ('auto_awesome', 'Answers with your AI', 'When the company\'s AI is on for Documents, it answers from the documents found and names them.'),
+    ]},
+    {'version': '1.73.9', 'date': '2026-11-17', 'title': 'Document Center: checklists, upload links, templates and e-signature', 'items': [   # v1.73.9 DMS phase 4
+        ('checklist', 'Document checklists', 'The documents each employee, project or partner must have – the folder shows what is missing, expired or to review.'),
+        ('upload_file', 'Upload links', 'Ask a candidate, supplier or tenant for documents: they upload through a link into the right folder; you accept or reject.'),
+        ('draw', 'Templates and e-signature', 'Controlled templates make PDFs with the record\'s details; send any document for signature inside or outside the company.'),
+    ]},
+    {'version': '1.73.8', 'date': '2026-11-17', 'title': 'Leave setup on one page, more leave rules, anniversary credit and leave grants', 'items': [   # v1.73.8
+        ('tune', 'Leave setup on one page', 'Leave › Leave setup: one page per leave type – basics, days by policy, who & when, special rules – and Check my setup.'),
+        ('rule', 'More leave rules', 'Windows to ask, days in a row, gap and how often, not next to another leave, marital status, designations and exceptions, a balance cap, restricted holidays, over the balance as unpaid.'),
+        ('card_giftcard', 'Anniversary credit and grants', 'Extra days on the service anniversary (e.g. 10 days after 1 year), leave years from the joining date, leave grants with a reason, and four new leave reports.'),
+    ]},
+    {'version': '1.73.7', 'date': '2026-11-16', 'title': 'Payroll and leave categories, reports by category, no day paid twice', 'items': [   # v1.73.7
+        ('label', 'Payroll and leave categories', 'Payroll › Payroll categories and Leave › Leave categories: the system ones plus your own; what each counts for (gratuity, pension, leave salary, WPS).'),
+        ('view_column', 'Reports by category', 'Payroll and leave reports show one column per category – every Basic item in one Basic column – or one per item.'),
+        ('health_and_safety', 'Safer payroll', 'Basic is every Basic item added up; no day is paid twice; a category change can switch the salary template; a health check before each run.'),
+    ]},
+    {'version': '1.73.6', 'date': '2026-11-16', 'title': 'Document Center: expiry and renewal, retention, legal hold and correspondence', 'items': [   # v1.73.6 DMS phase 3
+        ('event_repeat', 'Expiry and renewal', 'Reminders 90, 60, 30, 15 and 7 days before a document expires go to its renewal owner and up to a named user when nothing is done; Renew files the new copy and replaces the old one.'),
+        ('inventory_2', 'Retention and legal hold', 'Retention counts from the date the category says; at its end the document comes up for review. Legal hold stops disposal; every disposal is kept in a register with its certificate.'),
+        ('mail', 'Correspondence register', 'Incoming and outgoing letters get IN / OUT numbers, are assigned with a reply-by date, approved before dispatch and linked to their replies and scanned documents.'),
+    ]},
+    {'version': '1.73.5', 'date': '2026-11-16', 'title': 'Ask ZEO: apps tried in the test company, print layouts and spoken SOPs', 'items': [   # v1.73.5
+        ('science', 'Test company first', 'When the company has a test company, Ask ZEO offers to make the app there first; confirm the live one when it works.'),
+        ('print', 'Print layout and settings', 'Apps made by Ask ZEO get an A4 print layout, and the preview shows their numbering and who may add and see records.'),
+        ('record_voice_over', 'Spoken SOPs and code modules', 'The spoken words of an SOP video are read too; on own servers Ask ZEO drafts full code modules for a developer to review.'),
+    ]},
+    {'version': '1.73.4', 'date': '2026-11-16', 'title': 'Ask ZEO builds apps from SOPs and writes scripts', 'items': [   # v1.73.4 (A10, A11, A14, A15)
+        ('description', 'App from an SOP', 'Attach an SOP (PDF, Word, text, photo or short video) and ask Ask ZEO to make the app: fields, approvals and reminders – preview, confirm, undo.'),
+        ('functions', 'Calculated fields and tables', 'Apps built by Ask ZEO can have calculated fields, rate-table lookups, tables of rows, links to records and QR / barcodes.'),
+        ('code', 'Scripts written by the AI', '"Write a script that …" – the AI writes a ZEO Developer script, tests it on sample data and saves it only after you read and confirm it.'),
+    ]},
+    {'version': '1.73.3', 'date': '2026-11-16', 'title': 'Ask ZEO and self-service fixes', 'items': [   # v1.73.3 (Ask ZEO test 1.73.2 + ESS test fixes merged)
+        ('psychology', 'Ask ZEO', 'Better answers on CRM, assets, GCC and India questions; reports and dashboards built from a sentence (preview, confirm, undo); apps with any approver role and in Arabic.'),
+        ('groups', 'CRM assignment', 'New leads and escalations go to the CRM roles, not to HR or administrators; amounts in the enquiry are read for assignment rules.'),
+        ('person', 'Self-service', 'Withdraw a request nobody has acted on; tickets need the dates; limits on advances, expenses and short leave; requests without a workflow go to the reporting manager.'),
+        ('lock', 'Rights', 'Employees no longer change attendance records, company objectives or HR-only pages.'),
+    ]},
+    {'version': '1.73.2', 'date': '2026-11-16', 'title': 'Same screen rules in HR, payroll and shifts', 'items': [   # v1.73.2 (1.73 screen rules – HR and payroll leftovers)
+        ('filter_alt', 'One branch filter', 'Payroll runs, bulk final settlement and shift reports follow the branch chosen in the top bar.'),
+        ('delete', 'Delete on pending records', 'Pending resignations and requests can be deleted from the list; decided ones are kept and the screen says why.'),
+        ('edit_note', 'Row actions', 'Rosters and employee availability have Edit / Delete on each row and one "+ New"; overtime policy rows stay on one line.'),
+        ('toggle_on', 'Active filter', 'Projects › Customers uses the same Active only / Inactive only filter as the other lists.'),
+    ]},
+    {'version': '1.73.1', 'date': '2026-11-16', 'title': 'CRM: industries, customer 360°, marketing and AI', 'items': [   # v1.73.1 (CRM 1.67.27 – 1.67.31 merged)
+        ('category', 'Industry packs', '24 industry packs add the fields, pipelines and reports each industry needs; add the industries in CRM › Setup.'),
+        ('groups', 'Customer 360° and onboarding', 'Enquiries, customer profiles, onboarding checklists, contracts, complaints, commissions and CRM documents.'),
+        ('campaign', 'Marketing', 'Lead connectors, conversations, e-mail inboxes, templates, segments and campaign sends.'),
+        ('auto_awesome', 'CRM AI', 'E-mail drafts, summaries, lead qualification, forecasts and deal analysis – reviewed by authorised users.'),
+        ('build', 'Fixes', 'New companies keep every migration, and standard permission groups give their rights again.'),
+    ]},
+    {'version': '1.73.0', 'date': '2026-11-16', 'title': 'Same screen rules in Projects and HSE', 'items': [   # v1.73.0 (pending 158)
+        ('edit', 'Edit and Delete on every row', 'Projects › Customers, AMC contracts, Renewals, Tickets and Projects, and HSE › Incidents, BBS observations and Corrective actions have Edit and Delete on each row, and Delete selected for ticked rows.'),
+        ('block', 'Used records are kept', 'A customer already used is made inactive instead of deleted; contracts, tickets, projects and HSE records with work on them are not deleted – the message says what uses them.'),
+        ('filter_alt', 'One branch filter', 'The dashboards of Projects, CRM, Property, Maintenance, Assets and HSE follow the branches ticked in the top bar – also for administrators – instead of a Branch drop-down of their own.'),
+    ]},
+    {'version': '1.70.9', 'date': '2026-11-16', 'title': 'HSE industry packs in Arabic', 'items': [   # v1.70.9 (open point of 1.70.2)
+        ('translate', 'Checklists, permits and talks in Arabic', 'The content of the 15 HSE industry packs – checklist lines, permit checks, hazards and controls, toolbox talks – shows in Arabic, also in packs already installed.'),
+    ]},
+    {'version': '1.70.8', 'date': '2026-11-16', 'title': 'Files of the other apps in the Document Center', 'items': [   # v1.70.8 (pending: linked files)
+        ('folder_shared', 'One place for a record\'s files', "An employee's folder shows the leave documents, letters, receipts, payslips, handovers and more; a project's folder its task and ticket files – by source, never copied, with each app's rights."),
+        ('content_copy', 'Copy to Document Center', 'Make a managed document (versions, approval, distribution) from any of them; search finds them by name or source.'),
+    ]},
+    {'version': '1.70.7', 'date': '2026-11-16', 'title': 'Document Center fields', 'items': [   # v1.70.7 (pending: Document Center fields like the form designer)
+        ('dynamic_form', 'The 20 field types', "A category's own fields get the form designer's types – amount, Yes / No, multi-select, employee, file, rating and more – with help text, default value, hidden / read-only and order."),
+        ('note_add', 'Fields of every document and of folders', 'Document Center › Settings › Fields: fields on every document whatever its category, and folder fields in every folder\'s details. "Add field" and "Arrange fields" in the document window.'),
+        ('manage_search', 'Search and export by field', 'Search by a field\'s value, and export the found documents to Excel with a column per field.'),
+    ]},
+    {'version': '1.70.6', 'date': '2026-11-16', 'title': "Today's date on the screens", 'items': [   # v1.70.6 (found in the 1.70.5 tests: the UTC day)
+        ('today', 'Your own day, also after midnight', "The screens took today's date from the UTC clock, so between 00:00 and 04:00 in the UAE they showed yesterday. Punch map, the app forms, HSE due dates, Projects and Expenses now use your own calendar day."),
+        ('event_available', 'Dates you pick stay the same', 'A date chosen in a calendar is sent as that day, never the day before.'),
+    ]},
+    {'version': '1.70.5', 'date': '2026-11-16', 'title': 'Document date and posting date', 'items': [   # v1.70.5 (pending: GL documents with both dates)
+        ('event', 'Two dates on every journal', 'Accounting journals show the document date (payslip month, invoice, receipt …) and the posting date. The posting date starts as the document date and can be changed until the journal is posted.'),
+        ('lock', 'Books closed up to', 'Settings of the accounting integration: no journal is posted on or before the date you close; a journal dated there is held until you change its posting date.'),
+        ('rule', 'Right dates from the apps', 'Property bills use their invoice date (not the due date), vendor bills the supplier\'s invoice date, commissions the approval date; recoveries keep their own date; depreciation runs have a posting date.'),
+        ('filter_alt', 'Filter by either date', 'Accounting journals: filter by document or posting date, and list the journals posted in a different period than their document.'),
+    ]},
+    {'version': '1.70.4', 'date': '2026-11-16', 'title': 'Ask ZEO', 'items': [   # v1.70.4 = Ask ZEO built as 1.71.0 – 1.74.0 on 1.67.26 (their four entries in one)
+        ('construction', 'A custom module from a sentence', 'Ask "Create a vehicle request module with vehicle type (car, van or bus), from date, to date and purpose, approved by the line manager then HR": the fields and the Blueprint (states and moves) are shown first and made when you confirm.', ('hrms', 'settings')),
+        ('add_box', 'Add fields to a module', 'Ask "Add a field driver needed (yes/no) to the vehicle request module" – existing records keep their data; Undo puts the old design back.', ('hrms', 'settings')),
+        ('account_tree', 'Setup, data and development in one place', 'Setup checks and changes, client files loaded into the data workbook, and custom modules – all as a preview to confirm, recorded "via Ask ZEO" and undone in one click.', ('hrms', 'projects', 'settings')),
+        ('search', 'Explain any record by its number', 'Ask "explain WO-00012" or "status of TKT-00045": the record of any app you may open, its main fields, status and last steps, with the link.', ('hrms', 'projects', 'settings')),
+        ('fact_check', 'Is the app ready?', 'Ask "Is CRM ready?" or "Check the HSE setup": activation, the industry pack review, roles and the setup lists, each with the link that fixes it.', ('hrms', 'projects', 'settings')),
+        ('inbox', 'What is waiting for me', 'Ask "What is waiting for me?": the work lists of Projects, CRM, Property, Maintenance, Assets and HSE in one table.', ('hrms', 'projects')),
+        ('menu_book', 'Guides for every app', 'Rent billing and collection, permits to work, asset counts, preventive maintenance, the sales pipeline and project delivery – step by step with the screens.', ('hrms', 'projects')),
+        ('smart_toy', 'Your company\'s own AI', 'Connect the company\'s own AI key in Settings › AI settings (the provider is chosen there); Ask ZEO then answers free questions, writes, translates and reads files. Figures still come from ZEO.', ('hrms', 'settings')),
+        ('description', 'Answers from your policies', 'Add the handbook, policies and SOPs in Settings › Ask ZEO; answers name the document and the section, and each document says who may read it.', ('hrms', 'settings')),
+        ('upload_file', 'Load setup and data files', 'Upload a client file: Ask ZEO maps its columns to the data workbook, shows the first rows and loads it after you confirm.', ('hrms',)),
+        ('help', 'Product and scope questions', 'Ask how ZEO does something or how to implement a requirement; the answer comes from the ZEO guides, with the screens to use.', ('hrms', 'projects', 'settings')),
+        ('mail', 'Monthly summary e-mail', 'On the 1st of the month: payroll changes and why, expiring documents, absence and overtime outliers.', ('hrms', 'settings')),
+        ('forum', 'Ask ZEO', 'Ask in English or Arabic: your data with your own rights, where and how to do things in ZEO, explanations of payslips, leave, settlements and gratuity – AI assistants › Ask ZEO.', ('hrms', 'projects', 'settings')),
+        ('fact_check', 'Checks before go-live and before approval', 'Ask "Am I ready to go live?", "Check data quality" (IBAN, Emirates ID, duplicates, documents) or "Check the payroll before approval".', ('hrms',)),
+        ('playlist_play', 'Guided payroll', 'Say "Run payroll": inputs, preview, calculate, pre-check, approval, WPS file and payslips, one confirmed step at a time.', ('hrms',)),
+        ('undo', 'Every change shown first, and undone in one click', 'Ask ZEO shows a preview; nothing changes before you confirm. Changes are recorded "via Ask ZEO" – Settings › Ask ZEO.', ('hrms', 'settings')),
+    ]},
+    {'version': '1.70.3', 'date': '2026-11-16', 'title': 'ZEO Developer', 'items': [   # v1.70.3 (ZEO Developer handoff, made as 1.74.0 on 1.67.26)
+        ('code', 'Developer mode', 'Settings › Developer mode (company administrators): the Developer menu with rate tables, Python scripts with a code editor, test on sample data and versions, triggers by hand, on records of any app, daily or monthly.'),
+        ('functions', 'Formulas, lookups and child tables in custom modules', 'Custom module fields: formula, lookup, child table, link to any record, QR code and barcode; show when / required when; LOOKUP() in rate tables.'),
+        ('verified_user', 'Safe actions with approval', 'Scripts send e-mails and to-dos, make leave requests and expense claims at once; payroll inputs, deductions, journals and money records wait for another administrator.'),
+        ('inventory_2', 'Reports, print layouts and packages', 'Reports and print layouts for custom modules, scheduled calculations, and packages to move modules between companies (imported scripts arrive switched off).'),
+    ]},
+    {'version': '1.70.2', 'date': '2026-11-15', 'title': 'HSE: PPE, emergency, equipment and contractors', 'items': [   # v1.70.2 (HSE scope patch 1.67.27)
+        ('checkroom', 'PPE management', 'HSE › PPE, emergency & equipment: the PPE catalogue with stock and sizes, the PPE matrix (which PPE each job needs), issue to employees and contractor workers, "I received it", return, replace and replace-by dates.', ('hse',)),
+        ('emergency', 'Emergency management', 'Emergency plans approved by the HSE manager, the emergency team (wardens, first aiders), assembly points, emergency equipment with inspections, and drills with evacuation times and actions.', ('hse',)),
+        ('construction', 'Safety equipment and contractors', 'Lifting gear, scaffolds and harnesses with green / yellow / red tags and certificates; contractor workers cleared to work, and a contractor HSE score A–D per period.', ('hse',)),
+        ('grid_on', 'Risk matrix size and 15 industry packs', 'Choose a 3×3, 4×4 or 5×5 risk matrix; HAZID and HAZOP assessments; site risk class and emergency contacts; packs for mining, logistics, hotels, facilities management, agriculture, food, ports, aviation, telecom, utilities, waste, cleaning, laboratories, shipyards and data centres.', ('hse',)),
+    ]},
+    {'version': '1.70.1', 'date': '2026-11-15', 'title': 'Document Center', 'items': [   # v1.70.1 (DMS SOP phases 1 and 2)
+        ('folder_shared', 'One folder tree for the company', 'Documents › Document Center: a folder for every employee, project, business partner, building, asset, HSE site and CRM account (made and named from the record), General for company folders and My folders for each user. Users create their own folders where they have the right.'),
+        ('admin_panel_settings', 'Folder rights', 'Give users, permission groups, branches, departments or everyone a preset (viewer, contributor, reviewer, approver, manager) or single rights; subfolders inherit them unless you switch it off. Employees always see their own folder.'),
+        ('history', 'Versions, approval and distribution', 'Every new file is a version (1.0, 1.1, 2.0) with compare and restore. A category with a workflow sends documents through review and approval before they are published; published documents are locked. Send documents to people with a read acknowledgement, or share a link outside that expires.'),
+        ('notifications_active', 'Document expiry alerts fixed', 'Alerts now use the current documents of active employees (also passport, visa, Emirates ID), follow their branches and departments, tell once when a document enters the window and once when it expires, and send each alert\'s own summary to its users.', ('hrms',)),
+    ]},
+    {'version': '1.70.0', 'date': '2026-11-15', 'title': 'GCC and India country rules', 'items': [   # v1.70.0 (pending items 142 – 151)
+        ('public', 'End of service by the branch\'s country', 'Saudi Arabia and Kuwait on the full wage with their resignation shares, Bahrain with the SIO fund from 01/03/2024, Oman old / new law and the savings scheme from 19/07/2027, Qatar on the basic, India with the Labour Codes (fixed term after 1 year, the 50 % wages rule). Nationals covered by their pension get no gratuity.', ('hrms',)),
+        ('account_balance', 'GOSI, SIO and Oman savings contributions', 'GOSI on basic + housing with the new-entrant rates from 03/07/2024; the Bahrain SIO end-of-service contribution (4.2 % / 8.4 %); the Oman savings scheme (9 %) from 19/07/2027.', ('hrms',)),
+        ('event', 'Settlement due dates and deduction limits', 'Final settlement due in 7 / 14 days (Saudi Arabia) or 2 working days (India); deduction limit 50 % (Saudi Arabia) or 25 % with loans 10 % (Kuwait).', ('hrms',)),
+    ]},
+    {'version': '1.69.0', 'date': '2026-11-15', 'title': 'Printed reports, leave statement and punch map', 'items': [   # v1.69.0 (pending item 21)
+        ('print', 'Print any report', 'Every report (also the ones made with the report builder) has a Print button: a PDF on the company letterhead with the period, branches, the table as you filtered it, totals and page numbers.', ('hrms',)),
+        ('receipt_long', 'Employee leave statement', 'Reports › Leave & attendance › Employee leave statement and Self service › My leave statement: one year per leave type – brought forward, earned, taken, encashed, lapsed and the balance – with Print / PDF.', ('hrms',)),
+        ('map', 'Punch map', 'Attendance › Punch map: the geofences and the punches of a day on a map – inside in green, outside in red with the metres outside.', ('hrms',)),
+    ]},
+    {'version': '1.68.0', 'date': '2026-11-15', 'title': 'UAE payroll extras', 'items': [   # v1.68.0 (pending items 29 – 40)
+        ('percent', 'Commission plans', 'Payroll › Payroll extras › Commission: tiers on sales or on the % of the target; the commission goes to the payslip as a monthly input.', ('hrms',)),
+        ('redeem', 'Retention bonus with clawback', 'Paid with a chosen payroll; repaid on the final settlement (whole or pro rata) when the employee leaves within the clawback months.', ('hrms',)),
+        ('room_service', 'Service charge pool', 'The service charge of a month and branch shared by points, days worked or equally.', ('hrms',)),
+        ('payments', 'Ramadan / Eid advance in one go', 'Approved advances for many employees at once (fixed or % of salary), recovered in instalments.', ('hrms',)),
+        ('schedule', 'Hourly and daily pay, ILOE, Emiratisation', 'Hourly / daily rates for the formulas, ILOE subscriptions, Nafis and the Emiratisation quota, GCC nationals\' pension, cost to company.', ('hrms',)),
+    ]},
+    {'version': '1.67.28', 'date': '2026-11-15', 'title': 'Optional connections per branch', 'items': [   # v1.67.28 (optional by-branch connections)
+        ('webhook', 'Webhooks for some branches only', 'Settings › API keys and webhooks and Accounting › API and webhooks: a webhook can be limited to the records or journals of chosen branches (none ticked: every branch, as before).', ('hrms',)),
+        ('forum', 'A Teams / Slack channel per branch', 'Settings › Teams and Slack: a branch can have its own channel; its events go there instead of the company channel.', ('hrms',)),
+        ('account_balance', 'Odoo / Zoho per branch', 'Accounting › Posting rules and connection › Branch connections: a branch can post its journals to its own Odoo database or Zoho Books organisation; journals are then made per branch.', ('hrms',)),
+    ]},
+    {'version': '1.67.27', 'date': '2026-11-15', 'title': 'Reports: payroll, attendance, helpdesk and talent', 'items': [   # v1.67.27 (pending item 1.62.13)
+        ('shield', 'Social security and loss of pay', 'Social security summary (GPSSA, GOSI …), Loss of pay summary and Data for payroll – the figures to check before running the payroll.', ('hrms',)),
+        ('account_balance', 'Payroll liability and journal', 'What the payroll owes and to whom, the accounting lines of the payroll journals, salary withhold, DIFC DEWS and ADPF.', ('hrms',)),
+        ('timelapse', 'Daily leave, hours and remote work', 'Who is on leave today, expected against worked hours, office against remote days.', ('hrms',)),
+        ('support_agent', 'HR helpdesk SLA and trends', 'Every question against its answer and solution times; month by month on time % and rating.', ('hrms',)),
+        ('grid_view', 'Nine-box grid and salary bands', 'Performance against potential (Performance › Nine-box grid), salaries against the grade bands, learning progress and training ratings.', ('hrms',)),
+    ]},
+    {'version': '1.67.26', 'date': '2026-11-15', 'title': 'People: pre-onboarding, OKR, eNPS, knowledge base, integrations', 'items': [   # v1.67.26 (pending item 1.62.12)
+        ('how_to_reg', 'Pre-onboarding', 'Send the new joiner a private link before the first day: they fill their details and upload their documents; HR accepts and the details go to the employee record.', ('hrms',)),
+        ('flag', 'Objectives and key results', 'Company, department and personal objectives with key results and check-ins – People › OKR tree.', ('hrms',)),
+        ('sentiment_satisfied', 'eNPS survey', 'A survey of the kind eNPS asks the 0–10 question anonymously and shows the score and its trend.', ('hrms',)),
+        ('menu_book', 'HR knowledge base', 'HR writes the answers once; employees search them, and the helpdesk suggests them while typing the question.', ('hrms',)),
+        ('payments', 'Compensation cycles and mail merge', 'Salary reviews against a budget, approved by another person, applied from one date, with increment letters for all in one ZIP.', ('hrms',)),
+        ('event', 'Calendar sync', 'Your leave, your team\'s leave, holidays and interviews in Google Calendar, Outlook or your phone.', ('hrms',)),
+        ('forum', 'Teams and Slack', 'Who is out, new joiners, announcements and approved payrolls posted to a channel.', ('hrms',)),
+        ('widgets', 'Custom modules and Blueprint', 'Your own registers with their states and who may move a record – no programming.', ('hrms',)),
+        ('language', 'Custom domain', 'Open ZEO at your own address, e.g. hr.yourcompany.com.', ('hrms',)),
+        ('analytics', 'Bradford factor report', 'Short, frequent absences weigh more – Reports › Leave & attendance.', ('hrms',)),
+    ]},
+    {'version': '1.67.25', 'date': '2026-11-15', 'title': 'Demo workbook', 'items': [   # v1.67.25 (pending item 1.62.9)
+        ('science', 'Try ZEO with a demo company', 'Settings › Data workbook › Download the demo workbook: a fictional trading company with 14 employees and three months of leave, payroll and WPS – load it into a new, empty company.', ('hrms',)),
+    ]},
+    {'version': '1.67.24', 'date': '2026-11-14', 'title': 'Fixes and decisions: payroll, leave, shifts, rights', 'items': [   # v1.67.24 (pending group 1 and 2)
+        ('refresh', 'Recalculate keeps the payroll run', 'Recalculate makes the payslips again in the same run – same number, same page, and the history shows each recalculation.', ('hrms',)),
+        ('picture_as_pdf', 'Payslip PDF with text', 'Download and Save PDF on the payslip page give the payslip made on the server – searchable text, in English, Arabic or both.', ('hrms',)),
+        ('event_available', 'Approve fewer leave days', 'The approver can approve fewer days than asked; only those days come off the balance, the other days are leave without pay.', ('hrms',)),
+        ('face', 'Blink to punch', 'Punching with the face can ask for one blink – a photo held to the camera is refused (setting – switch it on once the phones have the new app).', ('hrms',)),
+        ('schedule', '24-hour duties and holidays on rotations', 'A shift from 07:00 to 07:00 is a 24-hour duty; a rotation pattern can keep its shifts on public holidays.', ('hrms',)),
+        ('admin_panel_settings', 'Rights', 'The Payroll Manager group holds the whole payroll month; in Projects "change project" covers the projects you manage – "change every project" is its own right.', ('hrms', 'projects')),
+    ]},
+    {'version': '1.67.23', 'date': '2026-11-14', 'title': 'Projects: monthly AMC hours, checklists, GCC invoices', 'items': [   # v1.67.23 (pending 270, 271)
+        ('schedule', 'AMC hours for each month', 'An AMC can give its included hours for each month; the hours over a month are billed after the month with "Bill extra hours".', ('projects',)),
+        ('checklist', 'Service checklists you can edit', 'Change the service checklist of an equipment category on screen – the technician\'s visit uses it; the industry pack no longer overwrites it.', ('projects',)),
+        ('receipt_long', 'Invoices for the GCC', 'Tax invoices follow the company\'s country: Saudi Arabia in Arabic with the ZATCA QR code, Bahrain and Oman with their VAT, Qatar and Kuwait without VAT.', ('projects',)),
+    ]},
+    {'version': '1.67.22', 'date': '2026-11-14', 'title': 'Payroll open points closed', 'items': [   # v1.67.22 (pending C3, C7, C11–C14)
+        ('account_balance', 'Salary payments in accounting', 'Marking salaries paid posts a journal from the paying account (bank, cash or your own method); a split salary is shown on the payslip.', ('hrms',)),
+        ('dark_mode', 'Ramadan in payroll', 'The planned hours of the month count the shorter Ramadan days, and a Ramadan break can be set.', ('hrms',)),
+        ('flight', 'Air tickets bought by the company', 'Record a ticket bought by a travel agency, company card or expense claim – taken from the air ticket provision first; family relations can be set.', ('hrms',)),
+        ('event_repeat', 'Instalments on weekly pay', 'Loans and advances can take a share of the instalment in every weekly period.', ('hrms',)),
+        ('person_off', 'Out of office checks the right', 'A colleague who cannot approve is refused; HR and the mobile app can choose "Approvals go to" with a leave request.', ('hrms',)),
+        ('calendar_month', 'Monthly inputs per month', 'Figures are kept for their own month – enter next month ahead without the current payroll taking them.', ('hrms',)),
+    ]},
+    {'version': '1.67.21', 'date': '2026-11-14', 'title': 'Approval rules and notifications per app', 'items': [   # v1.67.21 (item 1.62.8)
+        ('approval', 'Approval rules in each app', 'HR, Payroll, Projects, CRM, Property, Maintenance, Asset Management and HSE each have their own Approval rules page: the approval levels and escalation of their requests and their approval flows.'),
+        ('notifications', 'Notifications in each app', 'Each app shows its e-mail templates, alerts and the rules that send e-mails or notifications – only its own.'),
+        ('fact_check', 'All apps for the administrator', 'Settings › Automation › Approval rules – all apps and Notifications – all apps: one row per app, open an app or show its rules below.'),
+    ]},
     {'version': '1.67.20', 'date': '2026-11-13', 'title': 'Import from every screen', 'items': [   # v1.67.20 (1.67.17 import patch merged)
         ('upload_file', 'Import on more screens', 'Customers, contacts, sites, equipment, AMC contracts, projects, tickets, stores and vans, resignations, employees and their details, salaries, air tickets, loans and expenses have an Import button with an Excel template.'),
         ('fact_check', 'Check before import', 'Check now runs the screen\'s own save and undoes it, so the rows it says are ready really import.'),

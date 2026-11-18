@@ -9,6 +9,7 @@ urlpatterns = [
     path('api/jobs/<str:job>/', V.JobView.as_view()),
     path('api/jobs/<str:job>/retry/', V.JobRetryView.as_view()),   # v1.67.2 (signup)
     path('api/status/', V.StatusView.as_view()),
+    path('api/domain-company/', V.DomainCompanyView.as_view()),   # v1.67.26 custom domain (public)
     path('api/notices/seen/', V.NoticesSeenView.as_view()),
     path('api/accounts/<int:pk>/subscription/', V.SubscriptionView.as_view()),
     path('api/accounts/<int:pk>/companies/', V.AccountCompanyCreateView.as_view()),

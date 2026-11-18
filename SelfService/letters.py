@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.13.0 – HR letters: templates with placeholders, request → HR approval → PDF with reference number and verification code."""
 import io
 import logging
@@ -33,6 +34,10 @@ PLACEHOLDERS = [
     ('destination', 'Travel destination'), ('travel_from', 'Travel from'), ('travel_to', 'Travel to'),
     ('company_name', 'Company name'), ('today', "Today's date"), ('reference_no', 'Reference number'),
     ('verification_code', 'Verification code'), ('last_working_date', 'Last working date (if left)'),
+    # v1.67.26 (item 234) increment letters of a compensation cycle (empty in other letters)
+    ('old_basic', 'Basic salary before the increment'), ('new_basic', 'Basic salary after the increment'),
+    ('increment_percent', 'Increment %'), ('increment_amount', 'Increment amount a month'), ('new_gross', 'Gross salary after the increment'),
+    ('effective_date', 'Effective date of the increment'), ('bonus_amount', 'Bonus'), ('cycle_name', 'Compensation cycle'), ('rating', 'Appraisal rating'),
 ]
 
 EN = {
@@ -75,6 +80,13 @@ EN = {
         'is employed with {company_name} as {designation} since {joining_date} with a total monthly salary of {currency} {gross_salary}.\n\n'
         'The employee wishes to travel to {destination} from {travel_from} to {travel_to}. We kindly request you to grant the visa. '
         'The employee will return to resume duty after the trip.', True),
+    'increment': ('Salary increment',
+        'Dear {title} {employee_name},\n\nWe are pleased to inform you that, in recognition of your contribution, your basic salary is revised '
+        'from {currency} {old_basic} to {currency} {new_basic} a month ({increment_percent}%) with effect from {effective_date}. '
+        'Your total monthly salary from that date is {currency} {new_gross}.\n\nAll other terms of your employment remain unchanged. '
+        'We thank you for your work and look forward to your continued success with {company_name}.', True),
+    'general': ('Letter',
+        'Dear {title} {employee_name},\n\n{purpose}', False),
     'bank_account': ('Bank account opening letter',
         'This is to certify that {title} {employee_name} (employee code {employee_code}), holder of passport number {passport_no}, '
         'is employed with {company_name} as {designation} since {joining_date} with a total monthly salary of {currency} {gross_salary}.\n\n'
@@ -90,6 +102,10 @@ AR = {
     'experience': ('شهادة خبرة', 'نشهد بأن {employee_name}، الرقم الوظيفي {employee_code}، عمل لدى {company_name} بوظيفة {designation} من {joining_date} إلى {last_working_date}.\n\nوقد كان مثالاً للجد والإخلاص، ونتمنى له التوفيق.', False),
     'employment': ('شهادة عمل', AR_INTRO + '\n\nأعطيت هذه الشهادة بناءً على طلبه لغرض {purpose}.', False),
     'embassy': ('رسالة إلى السفارة', AR_INTRO + '\n\nويتقاضى راتباً شهرياً قدره {gross_salary} {currency}، ويرغب في السفر إلى {destination} من {travel_from} إلى {travel_to}. نرجو التكرم بمنحه التأشيرة.', True),
+    'increment': ('زيادة الراتب', 'عزيزنا {employee_name}،\n\nيسعدنا إبلاغك بتعديل راتبك الأساسي من {old_basic} {currency} إلى {new_basic} {currency} شهرياً '
+                  '(بنسبة {increment_percent}%) اعتباراً من {effective_date}، ليصبح إجمالي راتبك الشهري {new_gross} {currency}.\n\nوتبقى شروط عملك الأخرى دون تغيير. '
+                  'نشكرك على جهودك ونتمنى لك دوام التوفيق مع {company_name}.', True),
+    'general': ('رسالة', 'عزيزنا {employee_name}،\n\n{purpose}', False),
     'bank_account': ('رسالة فتح حساب بنكي', AR_INTRO + '\n\nويتقاضى راتباً شهرياً قدره {gross_salary} {currency}، ولا مانع لدينا من فتح حساب له لدى {bank_name}.', True),
 }
 NEEDS = {
@@ -100,14 +116,13 @@ NEEDS = {
 
 def ensure_templates():
     """Create the default templates once (HR edits them in Self-service settings → Letter templates)."""
-    if LetterTemplate.objects.exists():
-        return
-    for t, (title, body, sal) in EN.items():
-        LetterTemplate.objects.get_or_create(letter_type=t, language='en', branch_id=None, defaults={'title': title, 'body': body, 'show_salary': sal,
-                                             'signatory_title': 'Human Resources'})
-    for t, (title, body, sal) in AR.items():
-        LetterTemplate.objects.get_or_create(letter_type=t, language='ar', branch_id=None, defaults={'title': title, 'body': body, 'show_salary': sal,
-                                             'signatory_title': 'الموارد البشرية'})
+    # v1.67.26: a letter type added later (increment, general) gets its default template too – a type HR already has is left alone
+    have = set(LetterTemplate.objects.values_list('letter_type', 'language'))
+    first = not have
+    for lang, src, sig in (('en', EN, 'Human Resources'), ('ar', AR, 'الموارد البشرية')):
+        for t, (title, body, sal) in src.items():
+            if (t, lang) not in have and (first or t in ('increment', 'general')):
+                LetterTemplate.objects.create(letter_type=t, language=lang, branch_id=None, title=title, body=body, show_salary=sal, signatory_title=sig)
 
 
 def template_for(letter_type, language, branch_id):
@@ -151,7 +166,7 @@ def values(emp, lr):
         'account_number': (bank.account_number if bank else '') or '', 'addressee': lr.addressee or 'To whom it may concern',
         'purpose': lr.purpose or 'personal use', 'destination': lr.destination or '',
         'travel_from': lr.travel_from.strftime('%d/%m/%Y') if lr.travel_from else '', 'travel_to': lr.travel_to.strftime('%d/%m/%Y') if lr.travel_to else '',
-        'company_name': company_name(), 'today': date.today().strftime('%d/%m/%Y'),
+        'company_name': company_name(), 'today': _zt_today().strftime('%d/%m/%Y'),
         'reference_no': lr.reference_no or '', 'verification_code': lr.verification_code or '',
         'last_working_date': leave.strftime('%d/%m/%Y') if leave else 'date',
     }
@@ -167,6 +182,10 @@ def values(emp, lr):
                     v[key] = translated(getattr(emp, fk), attr, lr.language) or v[key]
         except Exception:
             log.debug('translated names for the letter skipped', exc_info=True)
+    # v1.67.26: the text HR typed (purpose – the whole body of a general / mail-merge letter) may use the placeholders too
+    # ("Dear {employee_name}, …", "{designation}") – filled once with the employee's values (a placeholder never fills itself)
+    if '{' in (v.get('purpose') or ''):
+        v['purpose'] = re.sub(r'\{(\w+)\}', lambda m: str(v.get(m.group(1), m.group(0))) if m.group(1) != 'purpose' else m.group(0), v['purpose'])
     return v
 
 
@@ -295,7 +314,7 @@ def render_pdf(emp, lr, tpl, vals):
     y = yy - 9 * mm
     # reference and date
     ref = f'Ref: {lr.reference_no}' if not rtl else f'المرجع: {lr.reference_no}'
-    dt = f'Date: {date.today():%d/%m/%Y}' if not rtl else f'التاريخ: {date.today():%d/%m/%Y}'
+    dt = f'Date: {_zt_today():%d/%m/%Y}' if not rtl else f'التاريخ: {_zt_today():%d/%m/%Y}'
     if rtl:
         txt(right, y, ref, font, 9.5, 'right')
         txt(left, y, dt, font, 9.5)
@@ -393,6 +412,7 @@ def issue(lr, user, note=''):
     if not lr.verification_code:
         lr.verification_code = new_code()
     vals = values(emp, lr)
+    vals.update({k: v for k, v in (getattr(lr, '_extra', None) or {}).items()})   # v1.67.26 mail merge / increment values
     pdf = None
     try:   # v1.62.0 print – the layout of the company's default print template; the wording of the letter template fills the body
         from PrintTemplates.hooks import letter_pdf

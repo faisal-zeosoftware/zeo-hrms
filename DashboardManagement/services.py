@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """Read-only dashboard aggregations for ESS users and managers (all modules).
 
 Everything here is computed from the existing models; the app has no tables of its own.
@@ -218,18 +219,45 @@ def today_status(emp_qs, today):
 
 
 # --------------------------------------------------------------------------- request registry (all modules)
+def _tn(obj, field):
+    """v1.73.1 (ESS test B18) a master name (leave type, request type …) in the reader's language: the record's own translation,
+    else the language pack (English names on Arabic screens in My requests and Home)."""
+    v = getattr(obj, field, '') if obj is not None else ''
+    try:
+        from Translations.services import translated
+        x = translated(obj, field)
+        if x and x != v:
+            return x
+        from Translations.i18n import tr as _t
+        return _t(v) if v else v
+    except Exception:
+        return v
+
+
+def _word(text):
+    try:
+        from Translations.i18n import tr as _t
+        return _t(text) if text else text
+    except Exception:
+        return text
+
+
+def _unit(r):   # v1.73.1 (ESS test B15) a leave type counted in hours shows hours, not days
+    return 'h' if getattr(getattr(r, 'leave_type', None), 'unit', 'days') == 'hours' else 'd'
+
+
 REQUESTS = [
     # key, label, request model, approval model, approval fk, request date field, summary(fn)
     ('leave', 'Leave', 'calendars.employee_leave_request', 'calendars.LeaveApproval', 'leave_request', 'applied_on',
-     lambda r: f"{r.leave_type.name if r.leave_type_id else 'Leave'} · {r.start_date:%d/%m} – {r.end_date:%d/%m} ({r.number_of_days or 0:g} d)"),
+     lambda r: f"{_tn(r.leave_type, 'name') if r.leave_type_id else 'Leave'} · {r.start_date:%d/%m} – {r.end_date:%d/%m} ({r.number_of_days or 0:g} {_unit(r)})"),
     ('latein', 'Late in / early out', 'calendars.LateinEarlyoutRequest', 'calendars.LateinEarlyoutApproval', 'lateinearlyout_request', 'date',
-     lambda r: f"{(r.request_type or '').replace('_', ' ').title()} · {r.date:%d/%m/%Y}" if r.date else (r.request_type or '')),
+     lambda r: f"{_word((r.request_type or '').replace('_', ' ').capitalize())} · {r.date:%d/%m/%Y}" if r.date else (r.request_type or '')),
     ('general', 'General request', 'EmpManagement.GeneralRequest', 'EmpManagement.Approval', 'general_request', 'created_at_date',
-     lambda r: f"{r.request_type.name if r.request_type_id else ''} · {r.reason[:40] if r.reason else ''}"),
+     lambda r: f"{_tn(r.request_type, 'name') if r.request_type_id else ''} · {r.reason[:40] if r.reason else ''}"),
     ('document', 'Document request', 'EmpManagement.DocumentRequest', 'EmpManagement.DocumentApproval', 'document_request', 'created_at_date',
-     lambda r: f"{r.request_type.type_name if r.request_type_id else ''} · {r.reason[:40] if r.reason else ''}"),
+     lambda r: f"{_tn(r.request_type, 'type_name') if r.request_type_id else ''} · {r.reason[:40] if r.reason else ''}"),
     ('asset', 'Asset request', 'OrganisationManager.AssetRequest', 'OrganisationManager.AssetApproval', 'asset_request', 'request_date',
-     lambda r: f"{r.asset_type.name if r.asset_type_id else ''}{' · ' + r.requested_asset.name if r.requested_asset_id else ''}"),
+     lambda r: f"{_tn(r.asset_type, 'name') if r.asset_type_id else ''}{' · ' + r.requested_asset.name if r.requested_asset_id else ''}"),
     ('loan', 'Loan', 'PayrollManagement.LoanApplication', 'PayrollManagement.LoanApproval', 'loan_request', 'applied_on',
      lambda r: f"{r.loan_type.loan_type if r.loan_type_id else 'Loan'} · AED {r.amount_requested:,.0f} / {r.repayment_period} m"),
     ('advance', 'Advance salary', 'PayrollManagement.AdvanceSalaryRequest', 'PayrollManagement.AdvanceSalaryApproval', 'request', 'created_at',
@@ -267,6 +295,54 @@ def _status_key(s):
     return s or 'pending'
 
 
+# v1.73.1 (ESS test B7) the employee withdraws a request nobody has acted on yet (My requests › Withdraw). Leave keeps its own
+# withdraw on My leave (balance), the newer modules (expense, corrections, profile changes …) their own screens.
+WITHDRAWABLE = ('latein', 'general', 'document', 'asset', 'loan', 'advance', 'airticket', 'resignation')
+
+
+def _cancel_word(cur):
+    cur = str(cur or '')
+    return 'CANCELLED' if cur.isupper() else ('cancelled' if cur.islower() else 'Cancelled')
+
+
+def can_withdraw(key, obj):
+    if key not in WITHDRAWABLE or _status_key(getattr(obj, 'status', '')) != 'pending':
+        return False
+    _k, _l, _rm, am, fk, _d, _s = REQ[key]
+    AM = M(am)
+    if AM is not None:
+        try:
+            if AM.objects.filter(**{fk: obj}).filter(Q(status__iexact='approved') | Q(status__iexact='rejected')).exists():
+                return False   # a step already decided: the approvers finish it
+        except Exception:
+            pass
+    return True
+
+
+def withdraw(emp, key, pk):
+    """Returns (ok, message) – the message already in the user's language."""
+    from Translations.i18n import tr as _tr
+    if key not in WITHDRAWABLE:
+        return False, _tr('This kind of request is withdrawn on its own screen.')
+    _k, label, rm, am, fk, _d, _s = REQ[key]
+    RM = M(rm)
+    obj = RM.objects.filter(pk=pk, employee=emp).first() if RM is not None and emp is not None else None
+    if obj is None:
+        return False, _tr('Request not found.')
+    if not can_withdraw(key, obj):
+        return False, _tr('This request is already {0} or an approver has acted on it – it can no longer be withdrawn.', _tr(str(obj.status).lower()))   # v1.73.3: translated
+    word = _cancel_word(obj.status)
+    RM.objects.filter(pk=obj.pk).update(status=word)
+    AM = M(am)
+    if AM is not None:
+        try:
+            for a in AM.objects.filter(**{fk: obj}, status__iexact='pending'):
+                type(a).objects.filter(pk=a.pk).update(status=_cancel_word(a.status))
+        except Exception:
+            pass
+    return True, _tr('{0} {1} withdrawn.', _tr(label), getattr(obj, 'document_number', '') or '').replace('  ', ' ')
+
+
 def my_requests(emp, limit=None):
     rows = []
     for key, label, rm, am, fk, dfield, summ in REQUESTS:
@@ -280,7 +356,8 @@ def my_requests(emp, limit=None):
             except Exception:
                 text = ''
             rows.append({'module': key, 'module_label': label, 'id': r.id, '_m': rm, '_id': r.id, 'document_number': getattr(r, 'document_number', None),
-                         'summary': text, 'date': _date_of(r, dfield), 'status': r.status, 'status_key': _status_key(r.status)})
+                         'summary': text, 'date': _date_of(r, dfield), 'status': r.status, 'status_key': _status_key(r.status),
+                         'can_withdraw': can_withdraw(key, r)})   # v1.73.1 (ESS test B7)
     if emp:   # v1.17.1: the newer modules (expense, corrections, shift requests, profile changes, letters, complaints, asset returns, timesheets)
         from .dash171 import requests_of
         for r in requests_of([emp.id]):
@@ -347,7 +424,7 @@ def pending_approvals(user, request=None):
 # --------------------------------------------------------------------------- ESS summary
 def ess_summary(user, d_from=None, d_to=None):
     emp = my_employee(user)
-    today = timezone.localdate()
+    today = _zt_today()
     data = {'today': today, 'employee': None, 'has_team': bool(team_ids(user, depth=1)), 'is_admin': is_admin(user)}
     if not emp:
         data['message'] = 'This login is not linked to an employee record.'
@@ -356,6 +433,15 @@ def ess_summary(user, d_from=None, d_to=None):
     data['employee'] = dict(emp_brief(emp), joined=emp.emp_joined_date,
                             manager=emp.emp_reporting_manager.username if emp.emp_reporting_manager_id else None,
                             service_years=round((today - emp.emp_joined_date).days / 365.25, 1) if emp.emp_joined_date else None)
+    try:   # v1.73.6: the ESS profile banner – the manager by name, the branch, the e-mail
+        from EmpManagement.models import emp_master as _EM
+        mg = _EM.objects.filter(users_id=emp.emp_reporting_manager_id).first() if emp.emp_reporting_manager_id else None
+        b = emp.emp_branch_id
+        data['employee'].update(manager_name=emp_name(mg) if mg else data['employee'].get('manager'),
+                                branch=(getattr(b, 'branch_name', None) or getattr(b, 'name', None) or str(b)) if b else None,
+                                email=getattr(emp, 'emp_personal_email', None) or getattr(getattr(emp, 'users', None), 'email', None))
+    except Exception:   # noqa: BLE001
+        pass
 
     # leave balances
     LB = M('calendars.emp_leave_balance')
@@ -377,6 +463,25 @@ def ess_summary(user, d_from=None, d_to=None):
     if not (d_from and d_to):
         d_from, d_to = today.replace(day=1), today
     rib_from = max(d_from, min(d_to, today) - timedelta(days=61))
+    # v1.73.1 (ESS test B13) Home read the attendance days before the attendance app had worked them out (that happened only when
+    # My attendance was opened): every past working day showed "not marked" – drawn like "In, not out yet" – and Absent 0. The
+    # missing days of the ribbon are worked out here first, the same way My attendance does.
+    try:
+        from django.apps import apps as _apps
+        if _apps.is_installed('AttendancePlus'):
+            from AttendancePlus import engine as _E
+            from AttendancePlus.models import AttendanceDay as _AD
+            _start = max(rib_from, emp.emp_joined_date) if emp.emp_joined_date else rib_from
+            _last = min(d_to, today)
+            _have = set(_AD.objects.filter(employee_id=emp.id, date__range=(_start, _last)).values_list('date', flat=True))
+            _d = _start
+            while _d <= _last:
+                if _d not in _have:
+                    _E.recompute_day(emp, _d, sync_calendar=False)
+                _d += timedelta(days=1)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('ess home: attendance days not worked out')
     lst = AD.days([emp], d_from, d_to, today).get(emp.id, [])
     c_, _bl = AD.counts(lst)
     worked = [r for r in lst if r['status'] in AD.WORKED]
@@ -502,7 +607,7 @@ def _task_rows(user, emp, today):
 
 def my_tasks(user, emp, today=None):
     """Open project tasks where the employee is a member, plus open to-dos / meetings planned for the user (Chatter)."""
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     rows = _task_rows(user, emp, today)
     return {'open': len(rows), 'overdue': sum(1 for r in rows if r['overdue']),
             'due_week': sum(1 for r in rows if r['due'] and today <= r['due'] <= today + timedelta(days=7)), 'items': rows[:6]}
@@ -536,7 +641,7 @@ def announcements(n=4, emp=None):
 def summarize_approvals(items):
     by = Counter(i['module'] for i in items)
     labels = {i['module']: i['module_label'] for i in items}
-    today = timezone.localdate()
+    today = _zt_today()
     oldest = min((i['date'] for i in items if i['date']), default=None)
     return {'total': len(items), 'by_module': [{'module': k, 'label': labels[k], 'count': v} for k, v in by.most_common()],
             'oldest_days': (today - oldest).days if oldest else None, 'items': items[:6]}
@@ -546,7 +651,7 @@ def summarize_approvals(items):
 def team_summary(user, scope='team', department=None, d_from=None, d_to=None, only=None):
     """v1.16.0: d_from / d_to = the dashboard period (attendance trend, who is out, celebrations, overtime, payroll);
     only = a set of section keys to compute (a card with its own period reloads just its section)."""
-    today = timezone.localdate()
+    today = _zt_today()
     if not (d_from and d_to):
         d_from, d_to = today.replace(day=1), (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
@@ -741,7 +846,7 @@ def team_probation(ids, today):
 def my_input_rows(user, emp, today=None):
     """v1.17.0 – the user's own items that need their input: overdue tasks and to-dos, goals to set in the active appraisal
     cycle, own documents expired or expiring within 30 days, expense reports still in draft."""
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     rows = []
     for t in _task_rows(user, emp, today):
         if t['overdue']:
@@ -860,7 +965,7 @@ def can_view_employee(user, emp):
 
 
 def employee_360(user, emp):
-    today = timezone.localdate()
+    today = _zt_today()
     data = {'employee': dict(emp_brief(emp), joined=emp.emp_joined_date, email=emp.emp_company_email, mobile=str(emp.emp_mobile_number_1 or ''),
                              manager=emp.emp_reporting_manager.username if emp.emp_reporting_manager_id else None,
                              nationality=emp.emp_nationality.N_name if getattr(emp, 'emp_nationality_id', None) else None)}
@@ -903,7 +1008,7 @@ EMP_COLS = [col('code', 'Code'), col('name', 'Employee'), col('department', 'Dep
 
 
 def drill(user, metric, params, request=None):
-    today = timezone.localdate()
+    today = _zt_today()
     scope = params.get('scope') or 'team'
     if scope == 'company' and not is_admin(user):
         scope = 'team'

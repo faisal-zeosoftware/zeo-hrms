@@ -3,6 +3,7 @@ from django.urls import path
 from .assistant import AssistantView
 from .records import RecordView
 from .reports import ReportEmailView, ReportListView, ReportView
+from .report_pdf import LeaveStatementView, ReportPdfView   # v1.69.0
 from .ceo import CeoDashboardView
 from .unified_calendar import CalendarView
 from .layout import LayoutView   # v1.16.0
@@ -24,4 +25,6 @@ urlpatterns = [
     path('api/reports/', ReportListView.as_view(), name='report-list'),
     path('api/reports/<slug:key>/', ReportView.as_view(), name='report-run'),
     path('api/reports/<slug:key>/email/', ReportEmailView.as_view(), name='report-email'),
+    path('api/reports/<slug:key>/pdf/', ReportPdfView.as_view(), name='report-pdf'),   # v1.69.0 printed reports
+    path('api/leave-statement/<str:emp>/', LeaveStatementView.as_view(), name='leave-statement'),   # v1.69.0
 ]

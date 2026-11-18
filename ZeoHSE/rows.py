@@ -53,7 +53,10 @@ def site(s):
             'branch': s.branch_id, 'branch_name': s.branch.branch_name if s.branch_id else '', 'is_active': s.is_active,
             'project_id': s.project_id, 'project_name': _L().label('projects', s.project_id) if s.project_id else '',
             'cost_center_id': s.cost_center_id, 'cost_center_name': _L().label('cost-centers', s.cost_center_id) if s.cost_center_id else '',
-            'areas': [{'id': a.pk, 'name': a.name, 'is_active': a.is_active} for a in s.areas.all()]}
+            'areas': [{'id': a.pk, 'name': a.name, 'is_active': a.is_active} for a in s.areas.all()],
+            # v1.67.27 (HSE scope): risk class, operating hours and the site's emergency contact
+            'risk_class': s.risk_class, 'risk_class_label': s.get_risk_class_display() if s.risk_class else '', 'operating_hours': s.operating_hours,
+            'emergency_contact': s.emergency_contact, 'emergency_phone': s.emergency_phone}
 
 
 def contractor(c):

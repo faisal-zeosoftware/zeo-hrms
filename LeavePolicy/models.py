@@ -20,6 +20,8 @@ class LeavePolicy(models.Model):
     category_ids = models.JSONField(default=list, blank=True, help_text='Employee categories that get this policy')
     is_default = models.BooleanField(default=False, help_text='For employees whose category has no policy')
     leave_year_start = models.PositiveSmallIntegerField(default=1, help_text='Month the leave year starts (1 = January)')
+    # v1.73.8 – the leave year of each employee from the joining date (1 Mar 2024 joiner: 1 Mar – 28 Feb) instead of one month for all
+    year_basis = models.CharField(max_length=10, default='month', choices=[('month', 'Same month for everyone'), ('joining', "Each employee's joining date")])
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -81,6 +83,8 @@ class LeavePolicyLine(models.Model):
     worked_source = models.CharField(max_length=10, choices=WORKED_FROM, default='punch',
                                      help_text='Days worked prorate: where the days worked come from')
     worked_paid_leave = models.BooleanField(default=True, help_text='Days worked prorate: paid leave days count as days worked')
+    # v1.73.8 – more rules, all optional (empty = no rule): see LeavePolicy/more.py RULES for the keys
+    more = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ['policy', 'id']
@@ -99,7 +103,7 @@ class LeaveLedger(models.Model):
     """Every change to a leave balance, so a balance can be shown at any date and explained line by line."""
     KINDS = [('opening', 'Opening balance'), ('accrual', 'Earned'), ('taken', 'Taken'), ('cancelled', 'Cancelled leave returned'),
              ('encashed', 'Encashed'), ('carry_forward', 'Carried forward'), ('lapsed', 'Lapsed'), ('reset', 'Yearly reset'),
-             ('adjustment', 'Adjustment')]
+             ('adjustment', 'Adjustment'), ('grant', 'Leave grant'), ('anniversary', 'Service anniversary credit')]
     employee_id = models.IntegerField(db_index=True)
     leave_type_id = models.IntegerField(db_index=True)
     date = models.DateField(db_index=True)
@@ -245,6 +249,7 @@ class LeaveRequestInfo(models.Model):
     cancelled_days = models.FloatField(default=0)
     cancel_note = models.CharField(max_length=255, blank=True, default='')
     advance = models.JSONField(default=dict, blank=True)                      # item 85 {status, amount, lines, run}
+    lop_days = models.FloatField(null=True, blank=True)                       # v1.73.8 days over the balance taken as unpaid
     updated_at = models.DateTimeField(auto_now=True)
 
 
@@ -261,3 +266,22 @@ class LeaveEligibility(models.Model):
 
     class Meta:
         unique_together = ('employee_id', 'leave_type_id')
+
+
+class LeaveCategory(models.Model):
+    """v1.73.7 – Leave › Setup › Leave categories: the 8 system categories (fixed keys – annual, maternity … are read by the
+    calculations) and the company's own (Hajj, Study …, each behaving like a system one). leave_type.leave_category holds the key."""
+    key = models.CharField(max_length=30, unique=True)
+    name = models.CharField(max_length=80)
+    name_ar = models.CharField(max_length=80, blank=True, default='')
+    header = models.CharField(max_length=80, blank=True, default='')
+    header_ar = models.CharField(max_length=80, blank=True, default='')
+    order = models.PositiveIntegerField(default=100)
+    system = models.BooleanField(default=False)
+    like = models.CharField(max_length=30, blank=True, default='')
+    active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'name']
+        permissions = [('manage_leavecategory', 'Set up leave categories')]

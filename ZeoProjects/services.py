@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """Business rules of Projects: numbering, tickets and their SLA clock, AMC coverage and hours, renewals and billing,
 development requests, project milestones / change requests, notifications (e-mail + ZEO To-do)."""
 import logging
@@ -45,7 +46,7 @@ def local_today():
         from zoneinfo import ZoneInfo
         return timezone.now().astimezone(ZoneInfo(settings().timezone or 'Asia/Dubai')).date()
     except Exception:
-        return date.today()
+        return _zt_today()
 
 
 # ------------------------------------------------------------------ numbering
@@ -258,10 +259,34 @@ def active_contract(customer, on=None, product=None):
     return fallback
 
 
-def contract_usage(c):
-    """Hours and money of a contract: included / used / remaining, onsite, chargeable work outside, cost and margin."""
+MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+
+def month_bounds(on):
+    """first and last day of the month of `on`"""
+    a = date(on.year, on.month, 1)
+    b = date(on.year + (on.month == 12), on.month % 12 + 1, 1) - timedelta(days=1)
+    return a, b
+
+
+def is_monthly(c):
+    """v1.67.23 (pending 270): the included hours are a monthly allowance"""
+    return getattr(c, 'hours_period', 'term') == 'month' and not c.unlimited_hours
+
+
+def contract_usage(c, on=None):
+    """Hours and money of a contract: included / used / remaining, onsite, chargeable work outside, cost and margin.
+    v1.67.23 (pending 270): with a monthly allowance the included / used / remaining hours are those of the month of `on`
+    (today by default); the whole term's hours stay in term_used_hours."""
     logs = WorkLog.objects.filter(ticket__contract=c).exclude(status='rejected')
+    term_used = q2(logs.filter(counts_against_amc=True).aggregate(s=Sum('hours'))['s'])
+    month_label = ''
+    if is_monthly(c):
+        a, b = month_bounds(on or local_today())
+        month_label = f'{MONTHS[a.month - 1]} {a.year}'
     amc_logs = logs.filter(counts_against_amc=True)
+    if month_label:
+        amc_logs = amc_logs.filter(date__range=(a, b))
     used = q2(amc_logs.aggregate(s=Sum('hours'))['s'])
     onsite = q2(amc_logs.filter(onsite=True).aggregate(s=Sum('hours'))['s'])
     remote = q2(used - onsite)
@@ -276,6 +301,7 @@ def contract_usage(c):
     remaining = None if c.unlimited_hours else q2(included - used)
     revenue = q2(c.value) + outside_value
     return {
+        'hours_period': 'month' if month_label else 'term', 'month': month_label, 'term_used_hours': term_used,   # v1.67.23 (270)
         'unlimited': c.unlimited_hours, 'included_hours': included, 'used_hours': used, 'remote_hours': remote,
         'onsite_hours': onsite, 'onsite_limit': q2(c.onsite_hours), 'remaining_hours': remaining,
         'used_pct': None if c.unlimited_hours or not included else float(q2(used * 100 / included)),
@@ -285,6 +311,59 @@ def contract_usage(c):
         'cost': cost, 'revenue': revenue, 'margin': q2(revenue - cost),
         'margin_pct': float(q2((revenue - cost) * 100 / revenue)) if revenue else None,
     }
+
+
+def overage(c, month):
+    """v1.67.23 (pending 270): the hours of a month over the monthly allowance and their amount at the rate for work outside the
+    contract. → {month, label, included, used, over, rate, amount, billing (id of the AMC billing line made, or None)}"""
+    a, b = month_bounds(month)
+    used = q2(WorkLog.objects.filter(ticket__contract=c, counts_against_amc=True, date__range=(a, b)).exclude(status='rejected')
+              .aggregate(s=Sum('hours'))['s'])
+    included = q2(c.included_hours)
+    over = q2(max(used - included, ZERO)) if is_monthly(c) else ZERO
+    rate = q2(c.hourly_rate_outside or 0)
+    key = f'overage:{a:%Y-%m}'
+    bl = c.billing.filter(note__startswith=key).exclude(status='cancelled').first()
+    return {'month': f'{a:%Y-%m}', 'label': f'{MONTHS[a.month - 1]} {a.year}', 'included': included, 'used': used, 'over': over,
+            'rate': rate, 'amount': q2(over * rate), 'billing': bl.pk if bl else None, 'billing_status': bl.status if bl else ''}
+
+
+def overage_months(c, upto=None):
+    """the months of the contract up to `upto` (today) with their overage, newest first (at most 24)"""
+    if not is_monthly(c):
+        return []
+    end = min(upto or local_today(), c.end_date)
+    m = date(end.year, end.month, 1)
+    out = []
+    while m >= date(c.start_date.year, c.start_date.month, 1) and len(out) < 24:
+        out.append(overage(c, m))
+        m = date(m.year - (m.month == 1), (m.month - 2) % 12 + 1, 1)
+    return out
+
+
+def bill_overage(c, month, user=None):
+    """Make the AMC billing line of a month's extra hours (stage "Invoice to create" – it is invoiced from Billing and collections
+    like any AMC line). Refused when the contract has no monthly allowance, the month is not over, there is nothing over, no rate,
+    or the month was billed already."""
+    if not is_monthly(c):
+        raise ProjectsError('Only a contract with hours for each month has extra hours to bill.', 'hours_period')
+    o = overage(c, month)
+    a, b = month_bounds(month)
+    if b >= local_today():
+        raise ProjectsError(f'{o["label"]} is not over yet – bill its extra hours after the month ends.', 'month')
+    if a > c.end_date or b < c.start_date:
+        raise ProjectsError(f'{o["label"]} is outside the contract.', 'month')
+    if o['billing']:
+        raise ProjectsError(f'The extra hours of {o["label"]} are already billed.', 'month')
+    if o['over'] <= 0:
+        raise ProjectsError(f'No extra hours in {o["label"]}: {o["used"]} h used of {o["included"]} h.', 'month')
+    if o['rate'] <= 0:
+        raise ProjectsError('Set the rate for work outside the contract first (per hour).', 'hourly_rate_outside')
+    bl = AMCBilling.objects.create(contract=c, due_date=b, amount=o['amount'], status='to_invoice',
+                                   period_label=f'Extra support hours – {o["label"]}'[:60],
+                                   note=f'overage:{a:%Y-%m} {o["over"]} h × {o["rate"]} ({o["used"]} h used, {o["included"]} h included)'[:255])
+    log.info('AMC %s: extra hours of %s billed (%s h, %s)', c.number, o['label'], o['over'], o['amount'])
+    return bl
 
 
 def apply_coverage(t):
@@ -327,7 +406,7 @@ def apply_coverage(t):
         reasons.append(f'{t.product.name} is not covered by {c.number}')
     if cat and cat.needs_development:
         reasons.append('new development is excluded from the AMC')
-    if not c.unlimited_hours:
+    if not c.unlimited_hours and not is_monthly(c):   # v1.67.23 (270): a monthly allowance stays covered – the extra hours are billed per month
         u = contract_usage(c)
         if u['remaining_hours'] is not None and u['remaining_hours'] <= 0:
             reasons.append('the AMC hours are used up')
@@ -931,8 +1010,18 @@ def log_work(t, emp, *, hours, day=None, description='', onsite=False, billable=
                                approved_by=user if auto_approve else None, approved_at=now() if auto_approve else None)
     event(t, 'worklog', f'{emp_name(emp)} logged {hours} h' + (' onsite' if onsite else ''), user, public=False)
     if t.contract_id and not t.contract.unlimited_hours and counts_against_amc:
-        u = contract_usage(t.contract)
-        if u['remaining_hours'] is not None and u['remaining_hours'] <= 0:
+        u = contract_usage(t.contract, day)
+        if is_monthly(t.contract) and u['remaining_hours'] is not None and u['remaining_hours'] < 0 \
+                and u['remaining_hours'] + q2(hours) >= 0:   # v1.67.23 (270): crossed the month's allowance with this log
+            event(t, 'coverage', f'The {u["month"]} hours of {t.contract.number} are used up – the extra hours are billed after the month '
+                  f'at {q2(t.contract.hourly_rate_outside)} an hour', None, public=False)
+            mgr = t.contract.account_manager
+            if mgr:
+                notify_emp(mgr, f'{t.contract.number}: hours of {u["month"]} used up',
+                           f'{t.contract.customer.name} has used the {t.contract.included_hours} hours of {u["month"]} on {t.contract.number}. '
+                           'The extra hours are billed after the month (Contracts › Extra hours).', t.contract,
+                           '/main-sidebar/zeo-projects/contracts/' + str(t.contract_id), f'AMC monthly hours used up {t.contract.number} {u["month"]}')
+        elif not is_monthly(t.contract) and u['remaining_hours'] is not None and u['remaining_hours'] <= 0:
             event(t, 'coverage', f'AMC hours of {t.contract.number} are used up – further work is chargeable', None, public=False)
             mgr = t.contract.account_manager
             if mgr:
@@ -1116,7 +1205,7 @@ def renew_contract(c, user=None, *, start_date=None, end_date=None, value=None, 
         n = AMCContract.objects.create(
             number=next_number('amc'), customer=c.customer, title=c.title, contract_type=c.contract_type, start_date=start,
             end_date=end_date, value=q2(value if value is not None else (c.renewal_value or c.value)), currency=c.currency,
-            billing_frequency=c.billing_frequency, unlimited_hours=c.unlimited_hours,
+            billing_frequency=c.billing_frequency, unlimited_hours=c.unlimited_hours, hours_period=c.hours_period,   # v1.67.23
             included_hours=included_hours if included_hours is not None else c.included_hours, onsite_hours=c.onsite_hours,
             hourly_rate_outside=c.hourly_rate_outside, sla_policy=c.sla_policy, support_timing=c.support_timing,
             exclusions=c.exclusions, account_manager=c.account_manager, status='draft', previous=c, version=(c.version or 1) + 1,

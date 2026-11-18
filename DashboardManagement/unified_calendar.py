@@ -16,6 +16,7 @@ Rights
             (attendance and shifts summarised per day).
 A scope the user may not use falls back to the widest one they have.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
@@ -92,7 +93,7 @@ class Cal:
         self.request, self.user = request, request.user
         self.c = ctx(request)
         q = request.query_params
-        self.today = timezone.localdate()
+        self.today = _zt_today()
         self.d_from = _date(q.get('from')) or self.today.replace(day=1)
         self.d_to = _date(q.get('to')) or (self.d_from.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
         if self.d_to < self.d_from:

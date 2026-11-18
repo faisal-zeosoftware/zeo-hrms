@@ -444,7 +444,22 @@ class EmployeeLeaveRequestPermission(permissions.BasePermission):
             if group.permissions.filter(codename=required_perm).exists():
                 return True
 
+        # v1.67.22 (found by the phone app test): an employee who also has a back-office login with other rights (e.g. a manager who
+        # approves payroll) could not see or ask for his OWN leave – My leave and the phone app answered "no permission". Like a
+        # self-service user he works with his own requests (and his team's) – the view limits the rows (LeaveRequestviewset).
+        if _own_employee(request.user) is not None:
+            request._lv_own_only = True
+            return True
         return False
+
+
+def _own_employee(user):
+    """v1.67.22: the employee record of a login (None when the login is not an employee's)"""
+    try:
+        from EmpManagement.models import emp_master
+        return emp_master.objects.filter(users=user).first()
+    except Exception:
+        return None
 
 class LvEmailTemplatePermission(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -1211,6 +1226,8 @@ class CompensatoryLeaveRequestPermission(permissions.BasePermission):
             'update': 'change_compensatoryleaverequest',
             'partial_update': 'change_compensatoryleaverequest',
             'destroy': 'delete_compensatoryleaverequest',
+            'approve': 'change_compensatoryleaverequest',   # v1.73.4
+            'reject': 'change_compensatoryleaverequest',
         }
 
         required_perm = action_permissions.get(view.action)

@@ -103,6 +103,21 @@ def build(doc, kind, app):
     t = Table([[cl, mt]], colWidths=[108 * mm, 70 * mm])
     t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
     story += [t, Spacer(1, 6 * mm)]
+    try:   # v1.67.27 the industry fields marked "print on quotations" (Setup › Industry fields)
+        from .industry import pack_label, pdf_rows
+        xr = pdf_rows(doc)
+    except Exception:
+        xr = []
+    if xr:
+        head = (pack_label(doc.industry) + ' – details') if doc.industry else 'Details'
+        cells = [[P(k, 8, color='#5b6170'), P(v, 8.5)] for k, v in xr]
+        half = (len(cells) + 1) // 2
+        left, right = cells[:half], cells[half:]
+        grid = [l + (right[i] if i < len(right) else [P('', 8), P('', 8)]) for i, l in enumerate(left)]
+        xt = Table(grid, colWidths=[34 * mm, 55 * mm, 34 * mm, 55 * mm])
+        xt.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('TOPPADDING', (0, 0), (-1, -1), 2), ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                                ('LINEBELOW', (0, 0), (-1, -1), 0.3, colors.HexColor('#e3e6ee'))]))
+        story += [P(head, 9, True, '#0f4c81'), Spacer(1, 1.5 * mm), xt, Spacer(1, 5 * mm)]
 
     money = lambda v: f'{float(v or 0):,.2f}'  # noqa: E731
     rows = [[P('#', 8, True, '#ffffff'), P('Description', 8, True, '#ffffff'), P('Qty', 8, True, '#ffffff', 2), P('Unit', 8, True, '#ffffff'),
@@ -128,6 +143,9 @@ def build(doc, kind, app):
     story += [tt, Spacer(1, 6 * mm)]
     if doc.notes:
         story += [P('Notes', 8, True, '#5b6170'), P(doc.notes, 9), Spacer(1, 3 * mm)]
+    for attr, head in (('scope_of_work', 'Scope of work'), ('delivery_terms', 'Delivery terms')):   # v1.67.28
+        if getattr(doc, attr, ''):
+            story += [P(head, 8, True, '#5b6170'), P(getattr(doc, attr), 8.5, color='#3a4050'), Spacer(1, 3 * mm)]
     if doc.terms:
         story += [P('Terms and conditions', 8, True, '#5b6170'), P(doc.terms, 8.5, color='#3a4050'), Spacer(1, 6 * mm)]
     sig = [P('For ' + name, 9, True)]

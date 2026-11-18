@@ -305,10 +305,40 @@ class SurveyTakeView(Base):
         for i, q in enumerate(s.questions or []):
             if q.get('required', True) and (i >= len(answers) or answers[i] in (None, '', [])):
                 raise AppError(f'Question {i + 1} needs an answer.')
+            if q.get('type') == 'nps' and i < len(answers) and answers[i] not in (None, ''):   # v1.67.26: a score 0–10
+                try:
+                    ok = 0 <= float(answers[i]) <= 10 and float(answers[i]) == int(float(answers[i]))
+                except (TypeError, ValueError):
+                    ok = False
+                if not ok:
+                    raise AppError(f'Question {i + 1}: choose a score from 0 to 10.')
         SurveyResponse.objects.create(survey=s, employee=None if s.anonymous else e, employee_key=key, department=getattr(getattr(e, 'emp_dept_id', None), 'dept_name', '') or '',
                                       answers=[str(a)[:2000] if not isinstance(a, (int, float)) else a for a in answers])
         app.close_todos('survey', s.pk)
         return Response({'ok': True, 'message': 'Thank you – your answers are saved.' + (' They are anonymous.' if s.anonymous else '')})
+
+
+def enps_score(s):
+    """v1.67.26 (item 235): the eNPS of a survey – its first 0–10 question; None when it has none or no answers."""
+    qs = s.questions or []
+    i = next((k for k, q in enumerate(qs) if q.get('type') == 'nps'), None)
+    if i is None:
+        return None, 0
+    nums = [int(float(r.answers[i])) for r in s.responses.all() if i < len(r.answers or []) and str(r.answers[i]).replace('.', '').isdigit()]
+    if not nums:
+        return None, 0
+    pro, det = sum(1 for n in nums if n >= 9), sum(1 for n in nums if n <= 6)
+    return round(100 * (pro - det) / len(nums)), len(nums)
+
+
+def enps_trend(cur=None):
+    """The eNPS of every eNPS survey (open or closed), oldest first – how the score moves from one survey to the next."""
+    out = []
+    for s in Survey.objects.filter(kind='enps').exclude(status='draft').order_by('start', 'created_at'):
+        v, n = enps_score(s)
+        if v is not None and (not s.anonymous or n >= 3):
+            out.append({'id': s.pk, 'title': s.title, 'start': s.start, 'enps': v, 'answers': n, 'current': bool(cur and s.pk == cur.pk)})
+    return out
 
 
 class SurveyResultsView(Base):
@@ -331,6 +361,13 @@ class SurveyResultsView(Base):
                 row['avg'] = round(sum(nums) / len(nums), 2) if nums else None
                 row['dist'] = [sum(1 for n in nums if int(n) == k) for k in range(1, 6)]
                 row['favourable'] = round(100 * sum(1 for n in nums if n >= 4) / len(nums)) if nums else 0
+            elif q.get('type') == 'nps':   # v1.67.26 (item 235): 0–10, eNPS = % promoters (9–10) − % detractors (0–6)
+                nums = [int(float(v)) for v in vals if str(v).replace('.', '').isdigit() and 0 <= float(v) <= 10]
+                row['dist'] = [sum(1 for n in nums if n == k) for k in range(0, 11)]
+                pro, det = sum(1 for n in nums if n >= 9), sum(1 for n in nums if n <= 6)
+                row['promoters'], row['passives'], row['detractors'] = pro, len(nums) - pro - det, det
+                row['enps'] = round(100 * (pro - det) / len(nums)) if nums else None
+                row['favourable'] = round(100 * pro / len(nums)) if nums else 0
             elif q.get('type') == 'yesno':
                 yes = sum(1 for v in vals if str(v).lower() in ('yes', 'true', '1'))
                 row['yes'], row['no'] = yes, len(vals) - yes
@@ -345,10 +382,13 @@ class SurveyResultsView(Base):
             out.append(row)
         depts = sorted({r.department for r in s.responses.all() if r.department})
         ratings = [q for q in out if q['type'] == 'rating' and q.get('avg') is not None]
+        nps = next((q for q in out if q['type'] == 'nps' and q.get('enps') is not None), None)
+        trend = enps_trend(s) if any(q.get('type') == 'nps' for q in (s.questions or [])) else []
         return Response({'id': s.pk, 'title': s.title, 'anonymous': s.anonymous, 'status': s.status, 'responses': len(rs), 'invited': total,
                          'rate': round(100 * len(rs) / total, 1) if total else 0, 'questions': out, 'departments': depts, 'department': by_dept,
                          'engagement': round(sum(q['favourable'] for q in ratings) / len(ratings)) if ratings else None,
-                         'min_group': 3 if s.anonymous else 0, 'hidden': s.anonymous and len(rs) < 3})
+                         'min_group': 3 if s.anonymous else 0, 'hidden': s.anonymous and len(rs) < 3,
+                         'enps': nps['enps'] if nps else None, 'enps_trend': trend})
 
 
 # ====================================================================== forms
@@ -663,3 +703,39 @@ class InsurerPlansView(Base):
                 pass
             out.append(row)
         return Response({'plans': out, 'on': on})
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 235) OKR alignment tree
+class OkrTreeView(Base):
+    """GET ?on=YYYY-MM-DD (default today) – the objectives whose period covers the date, as a tree (company › department › team ›
+    individual) with progress; the user sees what the register would show them."""
+    needs_activation = False
+
+    @guard
+    def get(self, request):
+        from datetime import date as _d
+        from .models import Objective
+        on = request.query_params.get('on')
+        try:
+            day = _d.fromisoformat(on) if on else today()
+        except ValueError:
+            raise AppError('Enter a date.', 'on')
+        reg = app.regs['okr']
+        qs = reg.scope(request).filter(period_start__lte=day, period_end__gte=day).exclude(status='cancelled').select_related('owner', 'department')
+        rows = {o.pk: {'id': o.pk, 'number': o.number, 'title': o.title, 'level': o.level, 'level_label': o.get_level_display(), 'status': o.status,
+                       'progress': float(o.progress or 0), 'owner': emp_name(o.owner) if o.owner_id else '', 'department': o.department.dept_name if o.department_id else '',
+                       'parent': o.parent_id, 'children': [], 'krs': o.key_results.count(),
+                       'at_risk': o.key_results.filter(confidence__in=('at_risk', 'off_track')).count()} for o in qs}
+        roots = []
+        for r in rows.values():
+            p = rows.get(r['parent'])
+            (p['children'] if p else roots).append(r)
+        order = {'company': 0, 'department': 1, 'team': 2, 'individual': 3}
+        def sort(lst):
+            lst.sort(key=lambda x: (order.get(x['level'], 9), x['title'].lower()))
+            for x in lst:
+                sort(x['children'])
+        sort(roots)
+        n = len(rows)
+        return Response({'on': day, 'tree': roots, 'count': n, 'avg': round(sum(r['progress'] for r in rows.values()) / n, 1) if n else 0,
+                         'can_create': True})

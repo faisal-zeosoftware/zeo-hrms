@@ -134,6 +134,36 @@ RAMADAN_LAW = {
 }
 
 
+# v1.73.18 (item 155) the other GCC countries – used for a branch in that country (Branch › rule set). A maximum of hours a day:
+# the shift ends earlier so that its hours (without the break) are at most that. "Muslim workers only": leave the others out with
+# Ramadan › Categories left out (ZEO has no religion field). Checked 17/11/2026 – two sources each, listed.
+RAMADAN_LAW_GCC = {
+    'SA': {'max_daily_hours': 6, 'max_weekly_hours': 36, 'who': 'Muslim workers',
+           'law': 'Saudi Labour Law art. 98: in Ramadan at most 6 hours a day / 36 a week for Muslim workers.',
+           'sources': ['Morgan Lewis, "Ramadan in the Arab Gulf Cooperation Countries" (11/02/2026)', 'Economy Middle East, "Working hours during Ramadan in GCC countries"']},
+    'QA': {'max_daily_hours': 6, 'max_weekly_hours': 36, 'who': 'all workers',
+           'law': 'Qatar Labour Law art. 73: in Ramadan at most 6 hours a day / 36 a week, Muslim or not.',
+           'sources': ['The Peninsula, Ministry of Labour (10/03/2024)', 'PwC, "Ramadan in the GCC: what employers need to know"', 'Morgan Lewis (11/02/2026)']},
+    'OM': {'max_daily_hours': 6, 'max_weekly_hours': 30, 'who': 'Muslim workers',
+           'law': 'Oman Labour Law: in Ramadan at most 6 hours a day / 30 a week for Muslim workers.',
+           'sources': ['Morgan Lewis (11/02/2026)', 'Economy Middle East']},
+    'KW': {'max_daily_hours': None, 'max_weekly_hours': 36, 'who': 'all workers',
+           'law': 'Kuwait Labour Law: in Ramadan at most 36 hours a week, Muslim or not – set the reduction a day to fit your week.',
+           'sources': ['PwC, "Ramadan in the GCC"', 'Morgan Lewis (11/02/2026)']},
+    'BH': {'max_daily_hours': 6, 'max_weekly_hours': 36, 'who': 'confirm – all workers (PwC) or Muslim workers (Morgan Lewis)',
+           'law': 'Bahrain Labour Law: in Ramadan at most 6 hours a day / 36 a week; the sources differ on whether non-Muslims are included – confirm.',
+           'sources': ['PwC, "Ramadan in the GCC"', 'Morgan Lewis (11/02/2026)']},
+}
+
+
+def _branch_country(employee):
+    try:
+        from PayrollPlus.country170 import country
+        return country(employee) or ''
+    except Exception:   # noqa: BLE001
+        return ''
+
+
 def _country():
     try:
         from .v149 import country
@@ -163,6 +193,9 @@ def _pt(v):
 
 def ramadan_settings():
     law = RAMADAN_LAW.get(_country())
+    if law is None and _country() in RAMADAN_LAW_GCC:   # v1.73.18 (item 155) a company in another GCC country
+        g = RAMADAN_LAW_GCC[_country()]
+        law = {'reduce_hours': 0, 'law': g['law'] + f" ({g['who']})", 'sources': g['sources']}
     v = _get(RAMADAN_KEY)
     periods = []
     for p in v.get('periods') or []:
@@ -178,6 +211,8 @@ def ramadan_settings():
             'reduce_hours': float(v['reduce_hours']) if v.get('reduce_hours') not in (None, '') else float(law['reduce_hours'] if law else 0),
             'periods': periods, 'shift_times': times,
             'exclude_category_ids': [int(x) for x in (v.get('exclude_category_ids') or []) if str(x).isdigit()],
+            # v1.67.22 (pending C7): the break on a Ramadan day – None keeps the shift's / rule's break (no legal rule: the company decides)
+            'break_minutes': int(v['break_minutes']) if v.get('break_minutes') not in (None, '') else None,
             'country': _country(), 'law': law['law'] if law else '', 'sources': list(law['sources']) if law else [],
             'law_default_hours': law['reduce_hours'] if law else None, 'verified': bool(law), 'saved': bool(v)}
 
@@ -228,6 +263,18 @@ def save_ramadan(data):
         cur['shift_times'] = st
     if 'exclude_category_ids' in data:
         cur['exclude_category_ids'] = [int(x) for x in (data.get('exclude_category_ids') or []) if str(x).isdigit()]
+    if 'break_minutes' in data:   # v1.67.22 (pending C7)
+        b = data.get('break_minutes')
+        if b in (None, ''):
+            cur.pop('break_minutes', None)
+        else:
+            try:
+                b = int(str(b).strip())
+                if b < 0 or b > 240:
+                    raise ValueError
+                cur['break_minutes'] = b
+            except (TypeError, ValueError):
+                errors['break_minutes'] = tr('Enter a number between {0} and {1}.', 0, 240)
     if errors:
         return None, errors
     _put(RAMADAN_KEY, cur)
@@ -249,8 +296,15 @@ def ramadan_for(employee, day):
         return None
     if getattr(employee, 'emp_ctgry_id_id', None) in s['exclude_category_ids']:
         return None
+    bc = _branch_country(employee)   # v1.73.18 (item 155) a branch in another GCC country: that country's hours a day
+    g = RAMADAN_LAW_GCC.get(bc) if bc and bc != s['country'] else (RAMADAN_LAW_GCC.get(s['country']) if not s['saved'] else None)
+    if g is not None:
+        return {'reduce_minutes': 0, 'max_daily_minutes': int(g['max_daily_hours'] * 60) if g.get('max_daily_hours') else None, 'country': bc or s['country'],
+                'times': {int(k): (_pt(t['start']), _pt(t['end'])) for k, t in s['shift_times'].items()}, 'period': per,
+                'break_minutes': s.get('break_minutes')}
     return {'reduce_minutes': int(round(float(s['reduce_hours'] or 0) * 60)),
-            'times': {int(k): (_pt(t['start']), _pt(t['end'])) for k, t in s['shift_times'].items()}, 'period': per}
+            'times': {int(k): (_pt(t['start']), _pt(t['end'])) for k, t in s['shift_times'].items()}, 'period': per,
+            'break_minutes': s.get('break_minutes')}
 
 
 def apply_ramadan(employee, day, sh, rule, aware, minutes):
@@ -274,6 +328,17 @@ def apply_ramadan(employee, day, sh, rule, aware, minutes):
             sh['start'], sh['end'] = st, en
             flag['times'] = f'{t[0]:%H:%M}–{t[1]:%H:%M}'
             cut = max(0, before - minutes(en - st))
+        elif rm.get('max_daily_minutes'):   # v1.73.18 (item 155) at most N hours of work a day (the break not counted)
+            brk = int(rm['break_minutes']) if rm.get('break_minutes') is not None else int(sh.get('break_minutes') or 0)
+            cut = max(0, before - brk - int(rm['max_daily_minutes']))
+            if cut:
+                sh['end'] = sh['end'] - timedelta(minutes=cut)
+                if sh.get('segments'):
+                    segs = list(sh['segments'])
+                    a, b = segs[-1]
+                    segs[-1] = (a, max(a, b - timedelta(minutes=cut)))
+                    sh['segments'] = segs
+            flag['max_hours'] = int(rm['max_daily_minutes']) // 60
         elif cut and before - cut >= 60:
             sh['end'] = sh['end'] - timedelta(minutes=cut)
             if sh.get('segments'):
@@ -287,6 +352,10 @@ def apply_ramadan(employee, day, sh, rule, aware, minutes):
             sh['min_hours'] = max(0, float(sh['min_hours']) - cut / 60)
         if cut and sh.get('half_day_hours'):
             sh['half_day_hours'] = max(0, float(sh['half_day_hours']) - cut / 120)
+        if rm.get('break_minutes') is not None:   # v1.67.22 (pending C7): the company's Ramadan break replaces the shift's break
+            sh['break_minutes'] = int(rm['break_minutes'])
+            sh['ramadan_break'] = True
+            flag['break'] = int(rm['break_minutes'])
         flag['shift'] = f"{sh['start'].strftime('%H:%M')}–{sh['end'].strftime('%H:%M')}"
     if cut:
         from decimal import Decimal

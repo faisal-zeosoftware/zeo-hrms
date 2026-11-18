@@ -1,4 +1,5 @@
 """v1.27.0 – group API (/group/api/...). Public schema; the group key is the account (acc<id>) or "server"."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.http import HttpResponse
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -172,7 +173,7 @@ class ConsolidationView(_G):
         from django.utils import timezone
         from . import consolidation as C
         g = self.group(request, key)
-        today = timezone.localdate()
+        today = _zt_today()
         last = C.parse_month(request.query_params.get('to'), today.replace(day=1))
         first = C.parse_month(request.query_params.get('from'), date(last.year - (1 if last.month < 12 else 0), last.month % 12 + 1, 1))
         if first > last:

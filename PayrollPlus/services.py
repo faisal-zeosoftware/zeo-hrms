@@ -1,6 +1,7 @@
 """
 v1.18.0 – payroll controls, leave-encashment approval steps and the final settlement.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 import logging
 from datetime import date, timedelta
@@ -96,7 +97,18 @@ def _sod_hint():
     try:
         from django.db import connection
         U = M('UserManagement', 'CustomUser')
-        n = U.objects.filter(is_active=True, is_ess=False, tenants__schema_name=connection.schema_name).distinct().count()
+        ids = set(U.objects.filter(is_active=True, is_ess=False, tenants__schema_name=connection.schema_name).values_list('pk', flat=True))
+        if len(ids) <= 1:
+            # v1.73.4: employees with payroll rights (e.g. the payslip approvers of Payroll approval levels, or users who already
+            # prepared / approved / paid a run) count too – the hint said "only one user" in a company with three payroll users
+            try:
+                ids |= set(M('PayrollManagement', 'PayslipCommonWorkflow').objects.filter(approver__is_active=True)
+                           .exclude(approver_id=None).values_list('approver_id', flat=True))
+            except Exception:   # noqa: BLE001
+                pass
+            for c in M('PayrollPlus', 'RunControl').objects.values_list('prepared_by_id', 'approved_by_id', 'paid_by_id')[:500]:
+                ids |= {x for x in c if x}
+        n = len(ids)
     except Exception:
         n = 2
     if n <= 1:
@@ -305,7 +317,7 @@ def _annual_type(emp=None):
     policy and the requests use) – before, the first 'annual' type of the company (head office) was read for everybody: GD-0048
     (Dubai branch) was paid 10 days from the head-office type instead of the 30 days of the branch's Annual Leave."""
     LT = M('calendars', 'leave_type')
-    base = LT.objects.filter(leave_category='annual').order_by('id').first()
+    base = LT.objects.filter(leave_category__in=__import__('LeavePolicy.categories', fromlist=['x']).keys_like('annual')).order_by('id').first()
     if base is None or emp is None:
         return base
     try:
@@ -354,9 +366,15 @@ def _gratuity_steps(eos, res, basic, daily_mode=None):
         days_total = Decimal(str(eos.gratuity_days or 0))
         daily = basic / 30
         GT = M('OrganisationManager', 'GratuityTable')
+        _rows = _gratuity_rows_on(getattr(res, 'last_working_date', None))   # v1.67.12 (effective): the table of the last working day
+        try:   # v1.67.24 (pending C8): a "0–1 year: 0 days" band is the minimum service (Art. 51), read as the calculation reads it
+            from EmpManagement.utils import normalize_gratuity_rules
+            _ok, _rows = normalize_gratuity_rules(_rows, years)
+        except Exception:   # noqa: BLE001
+            pass
         rules = [(Decimal(str(r.minimum_value)), Decimal(str(r.maximum_value)) if r.maximum_value else None,
                   Decimal(str(r.termination_days if res.termination_type in ('termination', 'retirement', 'death_or_disablement') else r.resignation_days)))
-                 for r in _gratuity_rows_on(getattr(res, 'last_working_date', None))]   # v1.67.12 (effective): the table of the last working day
+                 for r in _rows]
         if not rules:
             rules = [(Decimal(0), Decimal(5), Decimal(21)), (Decimal(5), None, Decimal(30))]
         steps, got = [], Decimal(0)
@@ -804,6 +822,12 @@ def compute(st, user=None):
     except Exception:
         log.exception('DEWS / ADPF gratuity of the final settlement')
         _v16211_done = False
+    if not _v16211_done:
+        try:   # v1.70.0 (items 142 – 148): a branch of another country (SA, KW, BH, OM, QA, IN) – the gratuity by that country's law
+            from .country170 import exit_gratuity as _v170_eg
+            _v16211_done = _v170_eg(emp, lwd, res.termination_type, add, info, eos.leave_days_without_pay or 0)
+        except Exception:
+            log.exception('country gratuity of the final settlement (1.70.0)')
     if _v16211_done:
         pass
     elif eos.gratuity_amount:
@@ -893,7 +917,7 @@ def compute(st, user=None):
     ded = sum((Decimal(str(l['amount'])) for l in lines if l['kind'] == 'deduction'), Decimal('0'))
     st.lines = lines
     st.total_earnings, st.total_deductions, st.net = q2(earn), q2(ded), q2(earn - ded)
-    st.calc_date = timezone.localdate()
+    st.calc_date = _zt_today()
     st.joined = emp.emp_joined_date
     st.last_working_date = lwd
     st.exit_type = res.get_termination_type_display() if hasattr(res, 'get_termination_type_display') else (res.termination_type or '')
@@ -901,6 +925,13 @@ def compute(st, user=None):
     st.unpaid_days = q2(eos.leave_days_without_pay or 0)
     st.basic, st.wage = q2(basic), q2(wage)
     st.due_date = lwd + timedelta(days=settings().settlement_due_days)
+    try:   # v1.70.0 (item 151): the law of the branch's country (Saudi Arabia 1 / 2 weeks, India 2 working days) when it is earlier
+        from .country170 import settlement_due as _v170_due
+        _d170 = _v170_due(emp, lwd, res.termination_type, settings().settlement_due_days)
+        if _d170 is not None and _d170 < st.due_date:
+            st.due_date = _d170
+    except Exception:
+        log.exception('country settlement due date (1.70.0)')
     st.save()
     return st
 
@@ -910,7 +941,7 @@ def start(eos, user, exit_reason=None):
     st = S.objects.filter(eos_id=eos.pk).first()
     new = st is None
     if st is None:
-        st = S(eos_id=eos.pk, employee_id=eos.resignation.employee_id, calc_date=timezone.localdate(), last_working_date=eos.resignation.last_working_date,
+        st = S(eos_id=eos.pk, employee_id=eos.resignation.employee_id, calc_date=_zt_today(), last_working_date=eos.resignation.last_working_date,
                created_by_id=getattr(user, 'pk', None))
         if exit_reason:   # v1.62.0 EOS
             st.exit_reason = exit_reason
@@ -983,15 +1014,15 @@ def act(st, action, user, codes, admin, data=None):
             if not ref:
                 raise Refused(tr('Enter the payment reference (bank transfer / WPS).'), problems={'payment_ref': 'Required.'})
             on = data.get('paid_on')
-            st.paid_on = date.fromisoformat(str(on)[:10]) if on else timezone.localdate()
+            st.paid_on = date.fromisoformat(str(on)[:10]) if on else _zt_today()
             st.payment_ref, st.paid_by_id, st.paid_at = ref[:60], user.pk, now
             _close_eos(st, user)
         elif action == 'return':
             st.submitted_by_id = st.validated_by_id = st.approved_by_id = None
             st.submitted_at = st.validated_at = st.approved_at = None
-            st.notes = (st.notes + '\n' if st.notes else '') + f'{timezone.localdate():%d/%m/%Y} sent back by {user_name(user.pk)}: {data.get("note")}'
+            st.notes = (st.notes + '\n' if st.notes else '') + f'{_zt_today():%d/%m/%Y} sent back by {user_name(user.pk)}: {data.get("note")}'
         if action in ('submit', 'validate', 'approve', 'pay') and data.get('note'):
-            st.notes = (st.notes + '\n' if st.notes else '') + f'{timezone.localdate():%d/%m/%Y} {action} – {user_name(user.pk)}: {data.get("note")}'
+            st.notes = (st.notes + '\n' if st.notes else '') + f'{_zt_today():%d/%m/%Y} {action} – {user_name(user.pk)}: {data.get("note")}'
         hn = data.get('note') or ''
         if action == 'pay':
             hn = (tr('Paid on {0:%d/%m/%Y}, reference {1}', st.paid_on, st.payment_ref) + (' – ' + hn if hn else ''))
@@ -1049,7 +1080,7 @@ def close_recovered(st, user=None):
     from . import loans as L
     LA, LR = M('PayrollManagement', 'LoanApplication'), M('PayrollManagement', 'LoanRepayment')
     AS, ALC = M('PayrollManagement', 'AdvanceSalaryRequest'), M('PayrollManagement', 'AirTicketAllocation')
-    when = st.paid_on or timezone.localdate()
+    when = st.paid_on or _zt_today()
     note = tr('Final settlement {0}', st.number or st.pk)
     out = {'loans': [], 'advances': [], 'allocations': []}
 
@@ -1179,7 +1210,7 @@ def _eligible_years(st):
 def settlement_row(st, full=False):
     E = M('EmpManagement', 'emp_master')
     e = E.objects.filter(pk=st.employee_id).select_related('emp_dept_id', 'emp_desgntn_id').first()
-    today = timezone.localdate()
+    today = _zt_today()
     row = {'id': st.pk, 'number': st.number, 'eos_id': st.eos_id, 'employee_id': st.employee_id, 'employee': f'{e.emp_first_name} {e.emp_last_name or ""}'.strip() if e else '',
            'employee_code': e.emp_code if e else '', 'department': str(e.emp_dept_id) if e and e.emp_dept_id_id else '',
            'designation': str(e.emp_desgntn_id) if e and e.emp_desgntn_id_id else '', 'joined': st.joined, 'last_working_date': st.last_working_date,
@@ -1214,7 +1245,7 @@ def _patterns():
         import os
         import re
         here = os.path.dirname(os.path.abspath(__file__))
-        src = ''.join(open(os.path.join(here, f), encoding='utf-8').read() for f in ('services.py', 'leavers.py', 'accruals.py', 'branch_schemes.py', 'eos_settings.py', 'payctl.py'))   # v1.67.15 (C10): + payctl.py (held salary lines); v1.62.7 (item 18): + accruals.py; v1.62.11 (item 229): + branch_schemes.py; v1.62.11 (EOS settings): + eos_settings.py
+        src = ''.join(open(os.path.join(here, f), encoding='utf-8').read() for f in ('services.py', 'leavers.py', 'accruals.py', 'branch_schemes.py', 'eos_settings.py', 'payctl.py', 'country170.py'))   # v1.70.0: + country170.py   # v1.67.15 (C10): + payctl.py (held salary lines); v1.62.7 (item 18): + accruals.py; v1.62.11 (item 229): + branch_schemes.py; v1.62.11 (EOS settings): + eos_settings.py
         out = []
         for m in re.finditer(r"tr\(\s*'((?:[^'\\]|\\.)*)'", src):
             t = m.group(1)

@@ -1,4 +1,5 @@
 """v1.13.0 – self-service business rules: rights, notifications, profile change requests, dashboard, payslips, announcements."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from datetime import date
 
@@ -377,7 +378,7 @@ def payslip_json(p, lines=False):
 
 
 def ytd(emp, year=None):
-    year = year or date.today().year
+    year = year or _zt_today().year
     qs = my_payslips(emp).filter(payroll_run__year=year)
     agg = qs.aggregate(g=Sum('gross_salary'), d=Sum('total_deductions'), n=Sum('net_salary'))
     return {'year': year, 'payslips': qs.count(), 'gross': float(agg['g'] or 0), 'deductions': float(agg['d'] or 0), 'net': float(agg['n'] or 0)}
@@ -391,7 +392,7 @@ def next_payslip(emp):
         if m > 12:
             y, m = y + 1, 1
     else:
-        t = date.today()
+        t = _zt_today()
         y, m = t.year, t.month
     preparing = PS.objects.filter(employee=emp, payroll_run__year=y, payroll_run__month=m).exclude(status__in=RELEASED).exists()
     return {'year': y, 'month': m, 'period': date(y, m, 1).strftime('%B %Y'),
@@ -436,7 +437,7 @@ def dashboard(request, emp):
     last = my_payslips(emp).first()
     out['last_payslip'] = payslip_json(last) if last else None
     docs = M('EmpManagement', 'Emp_Documents').objects.filter(emp_id=emp, is_active=True)   # v1.13.0: not the replaced copies
-    soon = date.today() + timezone.timedelta(days=60)
+    soon = _zt_today() + timezone.timedelta(days=60)
     out['documents_expiring'] = docs.filter(emp_doc_expiry_date__lte=soon).count()
     if can(request, *CR_HR):
         out['hr_change_requests'] = ProfileChangeRequest.objects.filter(branch_q(request), status='pending').count()

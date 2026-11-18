@@ -4,6 +4,7 @@ Company at a glance (main dashboard, v1.7.0): one card per module with the numbe
 Every count goes through the same access rules as the lists (AccessControl.scope_queryset), so a branch
 HR user sees their branches only, and a card is left out when the user has no right to see that module.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from datetime import timedelta
 from decimal import Decimal
@@ -177,7 +178,7 @@ def overview(request):
     from . import period as P
     from .attendance_data import WORKED
     c = ctx(request)
-    today = timezone.localdate()
+    today = _zt_today()
     q = request.query_params
     p_from, p_to, preset = P.resolve(q, today)
     only = q.get('card') or None
@@ -618,7 +619,7 @@ def my_space(request):
     from .services import ess_summary
     from . import period as P
     try:
-        a, b, _p = P.resolve(request.query_params, timezone.localdate())   # v1.16.0: "My pay" follows the dashboard period
+        a, b, _p = P.resolve(request.query_params, _zt_today())   # v1.16.0: "My pay" follows the dashboard period
         d = ess_summary(request.user, a, b)
     except Exception:
         logger.exception('my space failed')

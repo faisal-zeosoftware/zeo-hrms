@@ -181,8 +181,12 @@ class RunPaymentMarkView(_R):
                 datetime.date.fromisoformat(on)
             except ValueError:
                 raise S.Refused(tr('Enter the date paid.'), problems={'paid_on': tr('Required.')})
-        n = RP.mark(run, [(l['payslip'], method) for l in ls], on, re.sub(r'[\r\n\t]+', ' ', str(d.get('reference') or ''))[:60], request.user, unmark=unmark)
-        return Response({'marked': n, 'unmark': unmark})
+        _ref = re.sub(r'[\r\n\t]+', ' ', str(d.get('reference') or ''))[:60]
+        n = RP.mark(run, [(l['payslip'], method) for l in ls], on, _ref, request.user, unmark=unmark)
+        # v1.67.22 (pending C3): the payment is posted to accounting – Dr salaries payable / Cr the method's bank or cash account
+        from . import pay_journal as _PJ
+        jb = _PJ.on_marked(run, ls, on, _ref, request.user, unmark=unmark)
+        return Response({'marked': n, 'unmark': unmark, 'journal': {'id': jb.pk, 'number': jb.number, 'status': jb.status} if jb else None})
 
 
 # ------------------------------------------------------------------ company methods

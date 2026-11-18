@@ -30,20 +30,71 @@ def _period(pr):
     return date(pr.year, pr.month, 1).strftime('%b %Y')
 
 
+_MODE = {'v': 'category'}   # v1.73.7: set by col_mode(run) for the report being made (one request at a time per worker)
+
+
+def col_mode(run):
+    """v1.73.7 – "Columns by": payroll category (default – every Basic item in one Basic column) or salary item (?cols=item)"""
+    try:
+        m = run.request.query_params.get('cols') or run.request.GET.get('cols')
+    except Exception:
+        m = None
+    _MODE['v'] = 'item' if m == 'item' else 'category'
+    return _MODE['v']
+
+
+def _cat_label(key):
+    try:
+        from PayrollExtras.categories import label
+        from Translations.i18n import current_lang
+        return label(key, current_lang() if callable(current_lang) else 'en', header=True)
+    except Exception:
+        try:
+            from PayrollExtras.categories import label
+            return label(key, 'en', header=True)
+        except Exception:
+            return key.replace('_', ' ').title()
+
+
 def _lines(p):
-    """[(name, type, category, amount)] of a payslip (deductions as positive amounts)."""
+    """[(name, type, category, amount)] of a payslip (deductions as positive amounts). v1.73.7: with columns by payroll category
+    the name is the category's report header, so all Basic items fall in one Basic column (items of one category with
+    different types – e.g. a deduction marked Basic – keep their item name, nothing is merged across types)."""
     out = []
     for c in p.components.all():
         comp = c.component
         # v1.62.0 payroll (audit P1-3): a component hidden from the payslip is not in its totals (calculate_payslip_totals) –
         # it is reported as an employer-side line ("others"), never as pay
         t = comp.component_type if comp.show_in_payslip else 'others'
-        out.append((comp.name, t, comp.payroll_category or '', money(c.amount)))
+        name = comp.name
+        if _MODE['v'] == 'category' and comp.payroll_category and t != 'others' and _kind_ok(comp.payroll_category, t):
+            name = _cat_label(comp.payroll_category)
+        out.append((name, t, comp.payroll_category or '', money(c.amount)))
     return out
 
 
+def _kind_ok(key, t):
+    try:
+        from PayrollExtras.categories import kind_of
+        k = kind_of(key)
+    except Exception:
+        k = 'addition'
+    return (k == 'deduction') == (t == 'deduction')
+
+
+def _rank(n):
+    try:
+        from PayrollExtras.categories import rows
+        for r in rows():
+            if n in (r.name, r.header, r.name_ar, r.header_ar):
+                return r.order
+    except Exception:
+        pass
+    return 500
+
+
 def _order(names, kinds):
-    adds = sorted([n for n in names if kinds[n] not in ('deduction', 'others')], key=lambda n: (n.lower() not in ('basic', 'basic salary'), n.lower()))
+    adds = sorted([n for n in names if kinds[n] not in ('deduction', 'others')], key=lambda n: (n.lower() not in ('basic', 'basic salary'), _rank(n), n.lower()))
     deds = sorted([n for n in names if kinds[n] == 'deduction'], key=str.lower)
     return adds, deds
 
@@ -54,6 +105,7 @@ def _employer(names, kinds):
 
 
 def r_payroll_register(run):
+    col_mode(run)   # v1.73.7
     slips = _payslips(run, components=True)
     kinds, names = {}, []
     per_slip = []
@@ -98,6 +150,7 @@ def r_payroll_register(run):
 
 
 def r_payroll_department(run):
+    col_mode(run)   # v1.73.7
     slips = _payslips(run, components=True)
     kinds, names, groups = {}, [], {}
     for p in slips:
@@ -193,6 +246,7 @@ def r_bank_transfer(run):
 
 
 def r_payroll_mom(run):
+    col_mode(run)   # v1.73.7
     """Per employee: gross and net of the last month of the period against the month before."""
     import copy
     wide = copy.copy(run)

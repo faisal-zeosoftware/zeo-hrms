@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django_tenants.signals import post_schema_sync
 from django.dispatch import receiver
 from django_tenants.utils import schema_context
@@ -46,7 +47,7 @@ def create_tenant_defaults(sender, tenant, **kwargs):
         )
 
         # Current year
-        current_year = date.today().year
+        current_year = _zt_today().year
 
         # 1. Create Default Weekend Calendar (Saturdays and Sundays as off)
         weekend = weekend_calendar.objects.create(
@@ -264,7 +265,7 @@ def create_defaults_for_branch(sender, instance, created, **kwargs):
                     'current_number': 0,
                     'total_length': 12,
                     'created_by': getattr(instance, 'br_created_by', None),
-                    'start_date': timezone.now().date(),
+                    'start_date': _zt_today(),
                     # v1.67.8 (fixes) item 6: no end date unless one is entered (was today + 365 – the numbering of the branch
                     # stopped after a year: "Document number cannot be generated outside the valid date range")
                     'end_date': None,
@@ -457,6 +458,34 @@ PAYROLL_CODES = [
     "view_wps",
     "export_wps",
 ]
+# v1.67.24 (pending 285, decision 14 Nov): what the standard Payroll Manager holds besides the above – the whole payroll month
+# (payslips and their lines, salary rows and revisions, monthly inputs, loans and advances with their schedules and recoveries,
+# holds and splits, arrears, off-cycle and pay-calendar runs, WPS per branch, cost allocation) and payroll reports / provisions /
+# journals to read. Not: final settlement approval / validation / payment, unlocking a locked period, the payroll settings,
+# statutory schemes and legal rates (read only), posting to accounting, company settings and users.
+PAYROLL_CODES_1_67_24 = [
+    'add_payslip', 'change_payslip', 'view_payslipcomponent', 'add_payslipcomponent', 'change_payslipcomponent',
+    'view_payslipleave', 'view_payrollrunbranch', 'add_payrollrunbranch', 'change_payrollrunbranch',
+    'add_salarystructure', 'change_salarystructure', 'view_salarystructure', 'view_salaryrevisionhistory',
+    'add_loanapplication', 'change_loanapplication', 'view_loanapplication', 'add_loanrepayment', 'change_loanrepayment', 'view_loanrepayment',
+    'view_loantype', 'view_loanapproval', 'add_loanterms', 'change_loanterms', 'view_loanterms', 'add_loanevent', 'view_loanevent',
+    'add_advanceterms', 'change_advanceterms', 'view_advanceterms', 'add_advanceinstalment', 'change_advanceinstalment', 'view_advanceinstalment',
+    'view_loantyperule', 'add_recovery', 'change_recovery', 'view_recovery', 'add_recoveryentry', 'view_recoveryentry',
+    'add_deductioncut', 'change_deductioncut', 'view_deductioncut', 'add_salaryhold', 'change_salaryhold', 'view_salaryhold',
+    'add_paysplit', 'change_paysplit', 'view_paysplit', 'add_arrearline', 'change_arrearline', 'view_arrearline',
+    'add_offcyclerun', 'change_offcyclerun', 'view_offcyclerun', 'add_calendarrun', 'change_calendarrun', 'view_calendarrun', 'view_paycalendar',
+    'add_branchwps', 'change_branchwps', 'view_branchwps', 'add_costallocation', 'change_costallocation', 'view_costallocation',
+    'view_runcontrol', 'view_provisionrun', 'view_provisionline', 'view_accrualentry', 'view_leaveencashment', 'view_periodlock',
+    'view_payrollplussettings', 'view_statutoryscheme', 'view_legalrate', 'view_employeepension', 'view_exitsettlement',
+    'view_journalbatch', 'view_journalline', 'view_accounting',
+]
+PAYROLL_CODES = PAYROLL_CODES + [c for c in PAYROLL_CODES_1_67_24 if c not in PAYROLL_CODES]
+# v1.73.2 (test run): finance could not do its two steps of a final settlement (Exit › Leavers): the Payroll Manager group had only
+# "view". It now checks ("Checked – send for approval" / "Send back to HR") and marks the settlement paid. Approving stays with
+# the approve right, and the system still refuses the same person for two steps. Existing companies:
+#   python manage.py payroll_manager_rights --apply
+PAYROLL_CODES_1_73_2 = ['validate_exitsettlement', 'pay_exitsettlement']
+PAYROLL_CODES = PAYROLL_CODES + [c for c in PAYROLL_CODES_1_73_2 if c not in PAYROLL_CODES]
 @receiver(post_migrate)
 def create_default_groups(sender, **kwargs):
     hr_group, _ = Group.objects.get_or_create(name="HR Manager")

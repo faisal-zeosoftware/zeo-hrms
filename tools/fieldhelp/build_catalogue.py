@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.16.0 – build the field help catalogue i18n/field_help.json (English + Arabic) for EVERY form field of ZEO HRMS.
 
     python tools/fieldhelp/build_catalogue.py [--frontend <hrms-project folder>] [--out i18n/field_help.json]
@@ -214,7 +215,7 @@ def build(front, repo=REPO):
     version = hashlib.sha1(json.dumps(body, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()[:12]
     stats = {'fields': total, 'help_keys': len(entries), 'specific': specific, 'specific_pct': round(100.0 * specific / max(total, 1), 1),
              'generic_only': total - specific, 'kb_entries': len(kb.KB), 'kb_used': len(used_kb)}
-    return dict(version=version, generated=datetime.date.today().isoformat(), stats=stats, **body)
+    return dict(version=version, generated=_zt_today().isoformat(), stats=stats, **body)
 
 
 def main():

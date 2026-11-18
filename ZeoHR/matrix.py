@@ -8,6 +8,7 @@
 Used by: payroll cost allocation (PayrollPlus.costalloc – the assignment shares when the employee has no cost rule of its own),
 approvals (LeavePolicy.approvers role "functional_manager"), My team ("Dotted line"), the org chart and the reports here.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 from datetime import date, timedelta
 from decimal import Decimal
@@ -24,7 +25,7 @@ D100 = Decimal('100')
 
 
 def today():
-    return timezone.localdate()
+    return _zt_today()
 
 
 def pct(x):

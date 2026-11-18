@@ -19,9 +19,23 @@ from calendars .models import emp_leave_balance
 
 
 class SalaryComponentSerializer(serializers.ModelSerializer):
+    # v1.73.7: the payroll category is a key of Payroll › Payroll categories (the 21 system ones or the company's own)
+    payroll_category = serializers.CharField(max_length=50, required=False, default='basic')
+
     class Meta:
         model = SalaryComponent
         fields = '__all__'
+
+    def validate_payroll_category(self, v):
+        v = (v or '').strip()
+        try:
+            from PayrollExtras.categories import all_keys
+            keys = all_keys()
+        except Exception:
+            keys = {k for k, _l in SalaryComponent.COMPONENT_MASTER_CHOICES}
+        if v not in keys:
+            raise serializers.ValidationError('Choose a payroll category of Payroll › Payroll categories.')
+        return v
 
     def to_representation(self, instance):   # v1.67.19: the branch's name, so pickers can tell two "Basic" apart
         rep = super().to_representation(instance)
@@ -36,6 +50,13 @@ class SalaryComponentSerializer(serializers.ModelSerializer):
         code = (data.get('code') or '').strip()
         if 'code' in attrs and code and not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', code) and (not self.instance or self.instance.code != code):
             raise serializers.ValidationError({'code': 'Use letters, digits and _ only, starting with a letter (e.g. HRA, OT_1) – the code is used in formulas.'})
+        # v1.73.7: once an item is on a payslip its payroll category and type stay (gratuity, pension, WPS and the reports read
+        # them – a change would rewrite past months); make a new item instead
+        if self.instance and self.instance.pk:
+            changed = [f for f in ('payroll_category', 'component_type') if f in attrs and attrs[f] != getattr(self.instance, f)]
+            if changed and PayslipComponent.objects.filter(component_id=self.instance.pk).exists():
+                raise serializers.ValidationError({f: 'This item is on payslips already – its payroll category and type cannot change. '
+                                                      'Make a new item (and switch this one off) instead.' for f in changed})
         formula = (data.get('formula') or '').strip()
         if data.get('component_value_type') == 'variable' and formula and ('formula' in attrs or 'component_value_type' in attrs):
             errs = problems(formula, own_code=code or None, own_name=data.get('name'))
@@ -2456,6 +2477,25 @@ class AirTicketRequestSerializer(serializers.ModelSerializer):
         # left and no other ticket / cash payout request (a cash payout was accepted on an allocation whose ticket was approved,
         # on another employee's allocation and on a pending / expired allocation – all paid by payroll)
         inst = getattr(self, 'instance', None)
+        # v1.73.1 (ESS test B8) a ticket request needs the departure date and the destination (an empty one was sent and used up the
+        # entitlement); the return, if given, is not before the departure. Cash (encashment) needs neither.
+        _rt = str(data.get('request_type', getattr(inst, 'request_type', 'TICKET')) or 'TICKET').upper()
+        _dep = data.get('departure_date', getattr(inst, 'departure_date', None))
+        _ret = data.get('return_date', getattr(inst, 'return_date', None))
+        _to = data.get('destination', getattr(inst, 'destination', None))
+        _req = self.context.get('request') if hasattr(self, 'context') else None
+        _emp0 = data.get('employee', getattr(inst, 'employee', None))
+        _own = bool(_req and _emp0 is not None and getattr(_emp0, 'users_id', None) and _emp0.users_id == getattr(_req.user, 'id', None))
+        if _rt == 'TICKET' and _own:   # the employee's own request (HR may record a ticket before the dates are known)
+            _miss = {}
+            if not _dep:
+                _miss['departure_date'] = 'The departure date is required for a ticket.'
+            if not str(_to or '').strip():
+                _miss['destination'] = 'The destination is required for a ticket.'
+            if _miss:
+                raise serializers.ValidationError(_miss)
+        if _dep and _ret and _ret < _dep:
+            raise serializers.ValidationError({'return_date': 'The return is before the departure.'})
         _alloc = data.get('allocation', getattr(inst, 'allocation', None))
         _emp = data.get('employee', getattr(inst, 'employee', None))
         if inst is None or (getattr(_alloc, 'pk', None) != inst.allocation_id or getattr(_emp, 'pk', None) != inst.employee_id

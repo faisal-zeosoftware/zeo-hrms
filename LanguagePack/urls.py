@@ -6,6 +6,7 @@ urlpatterns = [
     path('api/languages/', v.LanguagesView.as_view()),
     path('api/pack/<str:lang>/', v.PackView.as_view()),
     path('api/me/', v.MeView.as_view()),
+    path('api/my-timezone/', __import__('UserManagement.views', fromlist=['MyTimezoneView']).MyTimezoneView.as_view()),   # v1.73.16 (in the company's schema)
     path('api/settings/', v.SettingsView.as_view()),
     path('api/terms/', v.TermsView.as_view()),
     path('api/terms/review/', v.ReviewView.as_view()),

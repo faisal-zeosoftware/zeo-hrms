@@ -5,6 +5,7 @@ from . import views
 from . import register62   # v1.62.0 people
 from . import weekend_change   # v1.62.6 (item 22)
 from . import rules_views   # v1.65.0 (items 82–97)
+from . import setup_views   # v1.73.8 one page per leave type, grants
 
 router = DefaultRouter()
 router.register(r'api/policies', views.PolicyViewSet, basename='leave-policy')
@@ -13,6 +14,11 @@ router.register(r'api/employee-policies', views.EmployeePolicyViewSet, basename=
 urlpatterns = [
     path('', include(router.urls)),
     path('api/effective/', views.EffectiveView.as_view()),
+    path('api/setup/', setup_views.SetupListView.as_view()),                 # v1.73.8 leave setup per leave type
+    path('api/setup/<int:pk>/', setup_views.SetupView.as_view()),
+    path('api/grants/', setup_views.GrantsView.as_view()),
+    path('api/categories/', views.LeaveCategoriesView.as_view()),          # v1.73.7 leave categories
+    path('api/categories/<int:pk>/', views.LeaveCategoryOneView.as_view()),
     path('api/coverage/', views.CoverageView.as_view()),                      # v1.62.1
     path('api/uae-setup/', views.UAESetupView.as_view()),
     path('api/accrual/', views.AccrualView.as_view()),

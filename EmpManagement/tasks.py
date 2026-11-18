@@ -26,48 +26,146 @@ from .utils import get_employee_context,send_notification_email
 
 @shared_task
 def send_document_expiry_notifications_for_all_tenants():
+    """v1.70.1 – the daily document expiry alert (runs every hour; each company once a day from 09:00 of its own time zone).
+
+    Fixed in 1.70.1 (Documents note, open points 1 – 9): the documents are the CURRENT ones of ACTIVE employees – employee document
+    rows and the identity details (passport, visa, Emirates ID …), as the expiry hub shows them; an alert applies its branches,
+    departments, categories and designations; each alert sends its own summary to its users; the templates "Employee Notification"
+    and "User Notification" are used (the old name "ESS User Notification" too); the built-in texts get their values; a document is
+    told once when it enters the warning window and once when it expires (not every day)."""
     try:
         tenants = get_tenant_model().objects.exclude(schema_name__in=_zeo_off())
-        print(f"[TENANT TASK] Found {tenants.count()} tenants")
-
         for tenant in tenants:
             try:
-                print(f"[TENANT TASK] Processing tenant: {tenant.schema_name}")
                 with schema_context(tenant.schema_name):
-                    today = date.today()
+                    _expiry_alerts_for_company()
+            except Exception:
+                logger.exception('document expiry alerts of %s', tenant.schema_name)
+    except Exception:
+        logger.exception('document expiry alerts')
 
-                    # Document notifications for employees
-                    documents = Emp_Documents.objects.all()
-                    employee_docs = []
 
-                    for doc in documents:
-                        settings = NotificationSettings.objects.filter(
-                            branch=doc.emp_id.emp_branch_id,
-                            document_type=doc.document_type
-                            ).first()
-                        if not settings:
-                            continue
+DOCEXP_KEY = 'v1701_docexp'
 
-                        days_before = settings.days_before_expiry
-                        days_after = settings.days_after_expiry
-                        expiry_window_start = today - timedelta(days=days_after)
-                        expiry_window_end = today + timedelta(days=days_before)
 
-                        if expiry_window_start <= doc.emp_doc_expiry_date <= expiry_window_end:
-                            status = "expiring" if doc.emp_doc_expiry_date >= today else "expired"
-                            send_document_notification(doc, doc.emp_doc_expiry_date, status, settings)
-                            employee_docs.append((doc, status))
+def _company_today():
+    """(today, hour) in the company's time zone"""
+    from zoneinfo import ZoneInfo
+    try:
+        from zeo.appkit.engine import company_tz
+        tz = ZoneInfo(company_tz())
+    except Exception:
+        tz = ZoneInfo('Asia/Dubai')
+    now = timezone.now().astimezone(tz)
+    return now.date(), now.hour
 
-                    # ESS user notifications
-                    send_ess_user_notifications(employee_docs)
 
-            except Exception as e:
-                print(f"[ERROR] Error processing tenant {tenant.schema_name}: {e}")
-                traceback.print_exc()
+def _docexp_state():
+    from django.apps import apps as _apps
+    CO = _apps.get_model('ZeoApps', 'CompanyOption')
+    o = CO.objects.filter(key=DOCEXP_KEY).first()
+    return CO, (dict(o.value) if o and isinstance(o.value, dict) else {})
 
-    except Exception as e:
-        print(f"[FATAL ERROR] Error in tenant loop: {e}")
-        traceback.print_exc()
+
+def _alert_applies(alert, emp):
+    """the alert's branches / departments / categories / designations (empty = all)"""
+    for field, attr in (('branch', 'emp_branch_id_id'), ('Department', 'emp_dept_id_id'), ('Category', 'emp_ctgry_id_id'),
+                        ('Designation', 'emp_desgntn_id_id')):
+        ids = {x.pk for x in getattr(alert, field).all()}
+        if ids and getattr(emp, attr, None) not in ids:
+            return False
+    return True
+
+
+def _expiry_alerts_for_company(today=None, force=False):
+    """one company: returns {'sent': n, 'users': n} (tests call it with today / force)"""
+    from django.apps import apps as _apps
+    from DashboardManagement.documents import current_documents, _key
+    day, hour = _company_today()
+    today = today or day
+    CO, st = _docexp_state()
+    if not force and (hour < 9 or st.get('last_run') == today.isoformat()):
+        return {'sent': 0, 'users': 0, 'skipped': True}
+    sent = st.get('sent') or {}
+    E = _apps.get_model('EmpManagement', 'emp_master')
+    emps = {e.pk: e for e in E.objects.filter(is_active=True).select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id')}
+    alerts = list(NotificationSettings.objects.select_related('document_type').prefetch_related('branch', 'Department', 'Category',
+                                                                                                 'Designation', 'notify_users'))
+    docs = current_documents(list(emps), today)
+    n_sent, n_users = 0, 0
+    for alert in alerts:
+        tkey = _key(getattr(alert.document_type, 'type_name', '') or '')
+        lines = []
+        for d in docs:
+            if not d['expiry'] or _key(d['type']) != tkey:
+                continue
+            e = emps.get(d['employee_id'])
+            if e is None or not _alert_applies(alert, e):
+                continue
+            if not (today - timedelta(days=alert.days_after_expiry) <= d['expiry'] <= today + timedelta(days=alert.days_before_expiry)):
+                continue
+            status = 'expiring' if d['expiry'] >= today else 'expired'
+            k = f"{d['employee_id']}|{_key(d['type'])}|{d['expiry'].isoformat()}"
+            lines.append((e, d, status))
+            if sent.get(k) == status or (sent.get(k) == 'expired' and status == 'expiring'):
+                continue   # already told at this stage
+            sent[k] = status
+            n_sent += 1
+            _notify_employee(e, d, status, alert)
+        if lines and alert.send_email:
+            n_users += _notify_users(alert, lines)
+    # forget the documents that expired more than a year ago
+    cut = (today - timedelta(days=400)).isoformat()
+    sent = {k: v for k, v in sent.items() if k.rsplit('|', 1)[-1] >= cut}
+    CO.objects.update_or_create(key=DOCEXP_KEY, defaults={'value': {'last_run': today.isoformat(), 'sent': sent}})
+    return {'sent': n_sent, 'users': n_users}
+
+
+def _notify_employee(e, d, status, alert):
+    """bell notification + the "Employee Notification" e-mail (when the alert sends e-mails)"""
+    label = 'is expiring' if status == 'expiring' else 'has expired'
+    message = f"The {d['type']} of {e.emp_first_name} {e.emp_last_name or ''} {label} on {_dmy(d['expiry'])}."[:200]
+    doc = d.get('doc')
+    notification.objects.create(message=message, document_id=doc if doc is not None else None)
+    if alert.send_email and (e.emp_personal_email or e.emp_company_email):
+        ctx = _doc_context(e, d, status)
+        send_template_email('Employee Notification', e.emp_company_email or e.emp_personal_email, ctx)
+
+
+def _doc_context(e, d, status):
+    doc = d.get('doc')
+    return {
+        'emp_first_name': e.emp_first_name, 'emp_last_name': e.emp_last_name, 'employee_first_name': e.emp_first_name,
+        'emp_gender': e.emp_gender, 'emp_date_of_birth': e.emp_date_of_birth, 'emp_personal_email': e.emp_personal_email,
+        'emp_company_email': e.emp_company_email, 'emp_branch_name': e.emp_branch_id, 'emp_department_name': e.emp_dept_id,
+        'emp_designation_name': e.emp_desgntn_id, 'emp_joined_date': e.emp_joined_date, 'document_type': d['type'],
+        'document_number': d.get('number') or '', 'doc_issued_date': getattr(doc, 'emp_doc_issued_date', '') if doc is not None else '',
+        'doc_expiry_date': _dmy(d['expiry']), 'expiry_date': _dmy(d['expiry']), 'status': status, 'is_active': True,
+    }
+
+
+def _notify_users(alert, lines):
+    """one summary e-mail per alert to its users"""
+    summary = '\n'.join(f"{e.emp_first_name} {e.emp_last_name or ''} ({e.emp_code}) – {d['type']} {d.get('number') or ''} "
+                         f"{'expires' if s == 'expiring' else 'expired'} on {_dmy(d['expiry'])}" for e, d, s in lines)
+    n = 0
+    for user in alert.notify_users.all():
+        if not user.email:
+            continue
+        e, d, s = lines[0]
+        first = _user_first(user)
+        ctx = {**_doc_context(e, d, s), 'user_first_name': first, 'ess_user_first_name': first,
+               'documents': summary, 'count': len(lines)}
+        send_template_email('User Notification', user.email, ctx)
+        n += 1
+    return n
+
+
+def _user_first(user):
+    """the first name of a user: their employee record's, else the user name"""
+    from django.apps import apps as _apps
+    emp = _apps.get_model('EmpManagement', 'emp_master').objects.filter(users=user).only('emp_first_name').first()
+    return (emp.emp_first_name if emp and emp.emp_first_name else '') or user.username or user.email
 
 
 def _dmy(d):
@@ -169,26 +267,34 @@ def send_ess_user_notifications(employee_docs):
 
   
 def send_template_email(template_name, recipient_email, context):
+    # v1.70.1: the users' template is "User Notification" (the list of Settings › E-mail templates); "ESS User Notification" was
+    # looked for and never found, so the company's own text was never used
+    names = [template_name] + (['ESS User Notification'] if template_name == 'User Notification' else
+                               ['User Notification'] if template_name == 'ESS User Notification' else [])
+    template_obj = DocExpEmailTemplate.objects.filter(template_name__in=names).order_by('-id').first()
     try:
-        template_obj = DocExpEmailTemplate.objects.get(template_name=template_name)
+        from SelfService.letters import company_name as _cn
+        company = _cn() or ''
+    except Exception:
+        company = ''
+    if template_obj is not None:
         subject = template_obj.subject
-        template = Template(template_obj.body)
-        html_message = template.render(Context(context))
-    except DocExpEmailTemplate.DoesNotExist:
-        if template_name == 'ESS User Notification':
-            subject = "All Document Expiry Notifications"
-            html_message = (
-                f"Dear {context.get('ess_user_first_name', 'User')},\n\n"
-                f"The following documents are expiring or have expired:\n\n"
-                f"{context.get('documents', '')}\n\nRegards,\nYour Company"
-            )
-        else:
-            subject = "Document Expiry Notification"
-            html_message = (
-                f"Dear {context.get('employee_first_name', 'Employee')},\n\n"
-                f"Your document '{context.get('document_type', '')}' is {context.get('status', '')} "
-                f"on {_dmy(context.get('expiry_date', ''))}.\n\nRegards,\nYour Company"   # v1.67.10 (regression): dd/mm/yyyy
-            )
+        html_message = Template(template_obj.body).render(Context(context))
+    elif template_name in ('User Notification', 'ESS User Notification'):
+        subject = "Document expiry – {0} document(s)".format(context.get('count', ''))
+        html_message = (
+            f"Dear {context.get('user_first_name') or 'colleague'},\n\n"
+            f"These documents are expiring or have expired:\n\n"
+            f"{context.get('documents', '')}\n\nRegards,\n{company or 'HR'}"
+        )
+    else:
+        status = 'expires' if context.get('status') == 'expiring' else 'expired'
+        subject = f"Your {context.get('document_type', 'document')} {status} on {context.get('expiry_date', '')}"
+        html_message = (
+            f"Dear {context.get('employee_first_name') or 'colleague'},\n\n"
+            f"Your {context.get('document_type', '')} {context.get('document_number', '')} {status} on {context.get('expiry_date', '')}. "
+            f"Please arrange the renewal with HR.\n\nRegards,\n{company or 'HR'}"
+        )
 
     plain_message = strip_tags(html_message)
 

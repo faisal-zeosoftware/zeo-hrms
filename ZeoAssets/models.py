@@ -357,6 +357,7 @@ class DepreciationRun(models.Model):
     number = models.CharField(max_length=20, blank=True)
     period_from = models.DateField('from')
     period_to = models.DateField('to')
+    posting_date = models.DateField(null=True, blank=True, help_text='v1.70.5: the date of the journal in the books (empty = the last day of the period, the document date)')
     status = models.CharField(max_length=10, choices=RUN_STATUS, default='draft')
     assets = models.PositiveIntegerField(default=0)
     total = models.DecimalField('depreciation', default=0, **MONEY)

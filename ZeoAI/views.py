@@ -23,6 +23,7 @@ GET  api/workforce/headcount|budget|hotspots|recruitment|compare/
 POST api/workforce/ask/                                  {question}
 GET  api/log/
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date, datetime
 
 from django.apps import apps
@@ -239,7 +240,7 @@ class ReplacementsView(Base):
     need = ATTEND
 
     def get(self, request):
-        emp, day = self.i('employee'), self.d('date', date.today())
+        emp, day = self.i('employee'), self.d('date', _zt_today())
         if not emp:
             return Response({'detail': tr('employee is required.')}, status=400)
         return Response(AT.replacements(emp, day, self.i('shift'), self.i('limit', 8)))
@@ -393,7 +394,7 @@ class PlanSaveView(Base):
         from ZeoPeople.app import app as people
         E = M('EmpManagement', 'emp_master').objects.get(pk=pk)
         row = DP.objects.create(number=people.next_number('development_plan', 'PDP'), employee=E, branch=E.emp_branch_id, title=(request.data.get('title') or d['title'])[:150],
-                                steps=steps, status='draft', start=date.today(), notes=d['summary'][:1000])
+                                steps=steps, status='draft', start=_zt_today(), notes=d['summary'][:1000])
         self.log('dev_plan', row.id, f'Development plan drafted for {d["employee"]["name"]}')
         return Response({'id': row.id, 'number': row.number, 'title': row.title})
 

@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """Business logic of LearningPlus. Views and tasks call these; LearningManagement.services calls
 sync_attendance / skills_from_course through plus_hook()."""
 import logging
@@ -175,7 +176,7 @@ def sync_attendance(session_id):
 def skills_from_course(employee_id, course, source='course', ref=None):
     """Raise EmployeeSkill to the level the course gives (never lowers a higher level)."""
     n = 0
-    today = timezone.localdate()
+    today = _zt_today()
     cid = course.id if hasattr(course, 'id') else int(course)
     for cs in CourseSkill.objects.filter(course_id=cid).select_related('skill'):
         es = EmployeeSkill.objects.filter(employee_id=employee_id, skill=cs.skill).first()
@@ -332,7 +333,7 @@ def maybe_complete_course(course, employee):
         en.nomination_id = nom.id
     else:
         # self-paced: completion record + certificate + skills now
-        today = timezone.localdate()
+        today = _zt_today()
         expiry = today + relativedelta(months=course.certificate_validity_months) if course.certificate_validity_months else None
         cert = m.Certificate.objects.create(
             employee=employee, course=course, title=course.title, issued_on=today, expiry_date=expiry,
@@ -565,7 +566,7 @@ def certificate_expiry_alerts(today=None, run_scan=True):
     """Daily: certificates expiring within 60 / 30 / 7 days or just expired -> employee + manager + HR, once per threshold."""
     from LearningManagement.services import expiry_scan, ld_users
     m = _lm()
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     out = {'alerts': 0, 'notified': 0, 'needs_created': 0}
     certs = (m.Certificate.objects.filter(expiry_date__isnull=False, expiry_date__lte=today + timedelta(days=60),
                                          expiry_date__gte=today - timedelta(days=30))

@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """
 v1.12.0 – Shift planner API (mounted at /shift-planner/api/, every call with ?schema=<company>).
 
@@ -17,6 +18,7 @@ rules are applied here):
 from itertools import islice  # v1.22.0 branch rights
 import csv
 import io
+import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -163,10 +165,11 @@ RULE_NUM = {'grace_in_minutes': 'int', 'grace_out_minutes': 'int', 'ot_after_min
 
 
 def shift_row(s, rule, n=None, usage=None):
-    d = describe(s, rule, date.today(), 'master') if s.start_time and s.end_time else None
+    d = describe(s, rule, _zt_today(), 'master') if s.start_time and s.end_time else None
     row = {'id': s.pk, 'name': s.name, 'start_time': hhmm(s.start_time), 'end_time': hhmm(s.end_time),
            'break_minutes': int(s.break_duration.total_seconds() // 60) if s.break_duration else 0,
            'cross_midnight': crosses_midnight(s), 'hours': fl(d['hours']) if d else 0.0,
+           'duty_24h': bool(s.start_time and s.end_time and s.start_time == s.end_time),   # v1.67.24
            'code': rule.code if rule else '', 'colour': rule.colour if rule else '#5b4ff5', 'active': rule.active if rule else True,
            'grace_in_minutes': rule.grace_in_minutes if rule else 0, 'grace_out_minutes': rule.grace_out_minutes if rule else 0,
            'min_hours': fl(rule.min_hours) if rule else None, 'max_hours': fl(rule.max_hours) if rule else None,
@@ -235,7 +238,7 @@ def shift_input(data, shift=None, rule=None, r=None):
 
             class _R:
                 segments = [{'start': hhmm(a), 'end': hhmm(b)} for a, b in segs]
-            spans = segment_spans(_R, date.today())
+            spans = segment_spans(_R, _zt_today())
             if (spans[-1][1] - spans[0][0]) > timedelta(hours=24):
                 errors['segments'] = tr('The parts must fit in 24 hours, in order.')
             for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
@@ -244,8 +247,8 @@ def shift_input(data, shift=None, rule=None, r=None):
             if 'segments' not in errors:
                 st, en = segs[0][0], segs[-1][1]   # the shift runs from the first part to the last
         rv['segments'] = [{'start': hhmm(a), 'end': hhmm(b)} for a, b in segs] if len(segs) >= 2 else []
-    if st and en and st == en:
-        errors['end_time'] = tr('The end time must differ from the start time.')
+    # v1.67.24 (shift check, decision 14 Nov): the same start and end time is a 24-hour duty (e.g. 07:00 → 07:00 next day) –
+    # every engine already counts an end at or before the start as the next day; the rest-time rules of the attendance rule apply
     sv['start_time'], sv['end_time'] = st, en
     if 'break_minutes' in data or shift is None:
         try:
@@ -259,7 +262,7 @@ def shift_input(data, shift=None, rule=None, r=None):
     brk = sv.get('break_duration', getattr(shift, 'break_duration', None) or timedelta(0))
     length = None
     if st and en:
-        a, b = datetime.combine(date.today(), st), datetime.combine(date.today(), en)
+        a, b = datetime.combine(_zt_today(), st), datetime.combine(_zt_today(), en)
         if b <= a:
             b += timedelta(days=1)
         length = Decimal((b - a).total_seconds()) / Decimal(3600)
@@ -982,7 +985,7 @@ class OpenShiftsView(Base):
         errors = {}
         try:
             day = pdate(d.get('date'), 'date')
-            if day < date.today():
+            if day < _zt_today():
                 errors['date'] = tr('Choose today or a later day.')
         except PlanError as e:
             errors['date'], day = e.message, None
@@ -1149,7 +1152,7 @@ class RequestsView(Base):
         if scope == 'mine':
             qs = qs.filter(Q(employee_id=me) | Q(swap_employee_id=me))
         elif scope == 'offers':   # v1.49.0 shifts offered by colleagues that I may take
-            qs = qs.filter(kind='offer', status='open', date__gte=date.today()).exclude(employee_id=me)
+            qs = qs.filter(kind='offer', status='open', date__gte=_zt_today()).exclude(employee_id=me)
         elif scope == 'team':
             qs = qs.filter(employee_id__in=list(self.r.team))
         st = request.GET.get('status')
@@ -1168,7 +1171,7 @@ class RequestsView(Base):
             raise PlanError(tr('Choose swap, change, cancel or offer.'), problems={'kind': 'Required.'})
         emp = _target_emp(self.r, d.get('employee'), 'shift requests')
         day = pdate(d.get('date'), 'date')
-        if day < date.today():
+        if day < _zt_today():
             raise PlanError(tr('You can only change today or later days.'), problems={'date': 'In the past.'})
         if ShiftRequest.objects.filter(employee_id=emp.pk, date=day, status__in=('open', 'peer', 'pending')).exists():
             raise PlanError(tr('There is already an open request for this day. Withdraw it first.'), status=409)
@@ -1204,7 +1207,7 @@ class RequestsView(Base):
             if other.emp_branch_id_id != emp.emp_branch_id_id:
                 raise PlanError(tr('You can only swap with a colleague of your branch.'), problems={'swap_employee': 'Other branch.'})
             sday = pdate(d.get('swap_date'), 'swap_date', required=False) or day
-            if sday < date.today():
+            if sday < _zt_today():
                 raise PlanError(tr("The colleague's day is in the past."), problems={'swap_date': 'In the past.'})
             for x, dd in ((emp, day), (other, sday), (emp, sday), (other, day)):
                 S.refuse_if_leave(x, dd)
@@ -1356,7 +1359,7 @@ def day_rows(emp, a, b, book=None, shifts=None):
 
 
 def _range(request, default_days=14):
-    a = pdate(request.GET.get('from'), 'from', required=False) or date.today()
+    a = pdate(request.GET.get('from'), 'from', required=False) or _zt_today()
     b = pdate(request.GET.get('to'), 'to', required=False) or (a + timedelta(days=default_days - 1))
     if b < a:
         raise PlanError(tr('The end date must be on or after the start date.'))
@@ -1374,7 +1377,7 @@ class MyScheduleView(Base):
             raise PlanError(tr('Your login is not linked to an employee.'), status=403)
         a, b = _range(request)
         shifts, n = S.shifts_by_id(), names()
-        opens = [open_row(o, self.r, shifts, n) for o in OpenShift.objects.filter(status='open', date__gte=date.today(), branch_id=emp.emp_branch_id_id)
+        opens = [open_row(o, self.r, shifts, n) for o in OpenShift.objects.filter(status='open', date__gte=_zt_today(), branch_id=emp.emp_branch_id_id)
                  .prefetch_related('claims') if _eligible(o, emp)]
         mine = ShiftRequest.objects.filter(Q(employee_id=emp.pk) | Q(swap_employee_id=emp.pk)).order_by('-created_at')[:30]
         return Response({'employee': {'id': emp.pk, 'code': emp.emp_code, 'name': person(emp)}, 'from': a, 'to': b,
@@ -1479,6 +1482,16 @@ SHIFT_COLS = ['name', 'code', 'start_time', 'end_time', 'break_minutes', 'grace_
               'half_day_hours', 'night_shift', 'ot_after_minutes', 'shift_allowance', 'night_allowance', 'colour', 'active']
 
 
+# v1.73.4: the column titles of ZEO's own templates ("Name *", "Start time", "Break duration") – "Name *" was read as "name_*",
+# so a file made from the list template was refused with "The file needs at least the column name"
+HEAD_ALIASES = {'break_duration': 'break_minutes', 'break': 'break_minutes', 'break_(minutes)': 'break_minutes'}
+
+
+def _head(h):
+    k = re.sub(r'[\s*]+$', '', str(h or '').strip()).strip().lower().replace(' ', '_')
+    return HEAD_ALIASES.get(k, k)
+
+
 def read_table(f):
     """Rows (dicts with lower-case headers) of an uploaded CSV or XLSX file."""
     name = (getattr(f, 'name', '') or '').lower()
@@ -1487,7 +1500,7 @@ def read_table(f):
         wb = load_workbook(f, read_only=True, data_only=True)
         ws = wb.worksheets[0]
         it = ws.iter_rows(values_only=True)
-        head = [str(h or '').strip().lower().replace(' ', '_') for h in next(it, [])]
+        head = [_head(h) for h in next(it, [])]
         rows = []
         for vals in it:
             if not any(v not in (None, '') for v in vals):
@@ -1508,7 +1521,7 @@ def read_table(f):
     raw = f.read()
     text = raw.decode('utf-8-sig') if isinstance(raw, bytes) else raw
     rd = csv.DictReader(io.StringIO(text))
-    rd.fieldnames = [(h or '').strip().lower().replace(' ', '_') for h in (rd.fieldnames or [])]
+    rd.fieldnames = [_head(h) for h in (rd.fieldnames or [])]
     return [{k: (v or '').strip() for k, v in r.items() if k} for r in rd if any((v or '').strip() for v in r.values() if isinstance(v, str))]
 
 
@@ -1595,6 +1608,9 @@ class UploadShiftsView(Base):
             s = Shift.objects.filter(name__iexact=name).first() if name else None
             rule = ShiftRule.objects.filter(shift_id=s.pk).first() if s else None
             data = {k: v for k, v in row.items() if k in SHIFT_COLS and (v != '' or k in ('start_time', 'end_time'))}
+            m = re.fullmatch(r'(\d{1,2}):(\d{2})(?::\d{2})?', str(data.get('break_minutes') or ''))   # v1.73.4 a break given as 01:00
+            if m:
+                data['break_minutes'] = str(int(m.group(1)) * 60 + int(m.group(2)))
             if s is not None:
                 data.pop('name', None)
             try:
@@ -1629,8 +1645,8 @@ class TemplateView(Base):
             ex = S.E().objects.exclude(is_active=False).order_by('emp_code').first()
             code = next((r.code for r in ShiftRule.objects.exclude(code='')[:1]), 'GEN')
             return csv_response('roster_upload_template.csv', ROSTER_COLS,
-                                [[ex.emp_code if ex else 'EMP0001', date.today().isoformat(), code, ''],
-                                 [ex.emp_code if ex else 'EMP0001', (date.today() + timedelta(days=1)).isoformat(), 'OFF', 'Weekly off']])
+                                [[ex.emp_code if ex else 'EMP0001', _zt_today().isoformat(), code, ''],
+                                 [ex.emp_code if ex else 'EMP0001', (_zt_today() + timedelta(days=1)).isoformat(), 'OFF', 'Weekly off']])
         if kind == 'shifts':
             return csv_response('shift_upload_template.csv', SHIFT_COLS,
                                 [['Morning 07:00-15:00', 'MOR', '07:00', '15:00', '60', '10', '10', '8', '10', '4', 'no', '30', '0', '0', '#2e7d32', 'yes'],
@@ -1653,7 +1669,7 @@ def roster_report_rows(r, a, b, branch=None, department=None, status='published'
     rows = []
     for x in qs.order_by('date', 'employee_id'):
         e = emps.get(x.employee_id)
-        if e is None or not (r.manages_emp(e) or r.is_manager_of(e) or r.admin):
+        if e is None or not (r.manages_emp(e) or r.is_manager_of(e) or (r.admin and r.branch_ok(e.emp_branch_id_id))):   # v1.73.2: top-bar branches
             continue
         sh = shifts.get(x.shift_id) if x.shift_id and not x.off else None
         info = describe(sh, rules.get(sh.pk) if sh else None, x.date, 'roster') if sh else None

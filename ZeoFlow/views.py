@@ -181,6 +181,36 @@ class DashboardView(APIView):
         })
 
 
+class ByAppView(APIView):
+    """v1.67.21 (item 1.62.8): the administrator's combined view of notifications and approval rules – per app of the company:
+    rules, rules that notify, templates, approval flows, requests waiting. The built-in approval levels and e-mail templates of each
+    app are listed by the screen (links)."""
+    zeo_access = False
+    zeo_scope = False
+    permission_classes = [Member]
+
+    def get(self, request):
+        if not (can_view(request) or can_view(request, 'view_approvalflow')):
+            return bad('No right to see the notifications and approval rules.', status.HTTP_403_FORBIDDEN)
+        wfs = list(Workflow.objects.exclude(state='archived').only('pk', 'module', 'model', 'actions', 'state'))
+        tpls = list(FlowTemplate.objects.only('pk', 'model', 'active'))
+        flows = list(ApprovalFlow.objects.only('pk', 'model', 'active'))
+        pend = list(ApprovalRequest.objects.filter(status='pending').values_list('model', flat=True))
+        out = []
+        for m in R.modules():
+            k = m['key']
+            mine = [w for w in wfs if (w.module or R.app_of_key(w.model)) == k]
+            out.append({'key': k, 'label': m['label'],
+                        'rules': len(mine), 'active_rules': sum(1 for w in mine if w.state == 'active'),
+                        'notify_rules': sum(1 for w in mine if R.notifies(w.actions)),
+                        'templates': sum(1 for t in tpls if t.model and R.app_of_key(t.model) == k),
+                        'approval_flows': sum(1 for f in flows if R.app_of_key(f.model) == k),
+                        'active_flows': sum(1 for f in flows if f.active and R.app_of_key(f.model) == k),
+                        'pending': sum(1 for x in pend if R.app_of_key(x) == k)})
+        return Response({'apps': out, 'general_templates': sum(1 for t in tpls if not t.model),
+                         'can_configure': can_configure(request), 'can_flows': can_configure(request, 'change_approvalflow')})
+
+
 # ------------------------------------------------------------------------------------------------ workflows
 class WorkflowViewSet(Base):
     queryset = Workflow.objects.all()
@@ -191,7 +221,10 @@ class WorkflowViewSet(Base):
         st = self.request.GET.get('state')
         if st:
             qs = qs.filter(state__in=st.split(','))
-        if self.request.GET.get('module'):
+        app = self.request.GET.get('app')
+        if app:   # v1.67.21 (item 1.62.8): the rules of one app – its module, or (no module) a record type of the app
+            qs = qs.filter(Q(module=app) | (Q(module='') & R.app_q('model', app)))
+        elif self.request.GET.get('module'):
             qs = qs.filter(module=self.request.GET['module'])
         elif self.request.GET.get('all') not in ('1', 'true') and getattr(self, 'action', '') == 'list':   # v1.67.6 (setup) item 7
             qs = qs.filter(module__in=R.active_modules())
@@ -200,6 +233,8 @@ class WorkflowViewSet(Base):
         q = self.request.GET.get('q')
         if q:
             qs = qs.filter(Q(name__icontains=q) | Q(description__icontains=q) | Q(model__icontains=q))
+        if self.request.GET.get('notify') in ('1', 'true'):   # v1.67.21: rules that send an e-mail / in-app notification
+            qs = qs.filter(pk__in=[w['pk'] for w in qs.values('pk', 'actions') if R.notifies(w['actions'])])
         return qs
 
     def _set_state(self, request, pk, state):
@@ -418,10 +453,25 @@ class ScheduledViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(E.run_due())
 
 
+def _app_filter(qs, request, field='model', general=False):
+    """v1.67.21 (item 1.62.8): ?app=<key> keeps the record types of one app; general=True also keeps the rows without a record
+    type (a template for every app)."""
+    app = request.GET.get('app')
+    if not app:
+        return qs
+    q = R.app_q(field, app)
+    if general:
+        q |= Q(**{field: ''})
+    return qs.filter(q)
+
+
 class TemplateViewSet(Base):
     queryset = FlowTemplate.objects.all()
     serializer_class = FlowTemplateSerializer
     audit_kind = 'template'
+
+    def get_queryset(self):
+        return _app_filter(super().get_queryset(), self.request, general=True)
 
     @action(detail=True, methods=['post'])
     def preview(self, request, pk=None):
@@ -439,6 +489,9 @@ class ApprovalFlowViewSet(Base):
     view_code = 'view_approvalflow'
     change_code = 'change_approvalflow'
     audit_kind = 'approval_flow'
+
+    def get_queryset(self):
+        return _app_filter(super().get_queryset(), self.request)
 
 
 class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):
@@ -466,6 +519,7 @@ class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(status__in=st.split(','))
         if self.request.GET.get('model'):
             qs = qs.filter(model=self.request.GET['model'])
+        qs = _app_filter(qs, self.request)   # v1.67.21
         return qs[:500]
 
     def get_serializer_context(self):
@@ -609,3 +663,156 @@ def _webhooks():
         return list(Webhook.objects.filter(active=True).values('id', 'name', 'url'))
     except Exception:
         return []
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 237) custom modules and Blueprint
+from rest_framework.permissions import IsAuthenticated as _IsAuth  # noqa: E402
+
+from . import custom as CU  # noqa: E402
+from .models import CustomModule as _CM, CustomRecord as _CR  # noqa: E402
+
+
+def _cfail(e):
+    from Translations.i18n import tr
+    return Response({'detail': tr(str(e)), **({'field': e.field} if e.field else {})}, status=e.status)
+
+
+class CustomModulesView(APIView):
+    """Administrators: GET every custom module; POST a new one."""
+    permission_classes = [_IsAuth]
+
+    def get(self, request):
+        if not CU.is_admin(request):
+            return Response({'detail': 'Administrators only.'}, status=403)
+        return Response({'modules': [CU.module_json(m, request) for m in _CM.objects.all()], 'types': CU.TYPES})
+
+    def post(self, request):
+        if not CU.is_admin(request):
+            return Response({'detail': 'Administrators only.'}, status=403)
+        try:
+            return Response(CU.module_json(CU.save_module(request.data, request.user), request), status=201)
+        except CU.CustomError as e:
+            return _cfail(e)
+
+
+class CustomModuleView(APIView):
+    permission_classes = [_IsAuth]
+
+    def _m(self, key):
+        return _CM.objects.filter(key=key).first()
+
+    def get(self, request, key):
+        m = self._m(key)
+        if m is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        return Response(CU.module_json(m, request))
+
+    def put(self, request, key):
+        if not CU.is_admin(request):
+            return Response({'detail': 'Administrators only.'}, status=403)
+        m = self._m(key)
+        if m is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        try:
+            return Response(CU.module_json(CU.save_module(request.data, request.user, m), request))
+        except CU.CustomError as e:
+            return _cfail(e)
+
+    def delete(self, request, key):
+        if not CU.is_admin(request):
+            return Response({'detail': 'Administrators only.'}, status=403)
+        m = self._m(key)
+        if m is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        if m.records.exists():
+            return Response({'detail': 'The module has records – switch it off (Active) instead of deleting it.'}, status=409)
+        m.delete()
+        return Response({'deleted': True})
+
+
+class CustomMyModulesView(APIView):
+    """The active modules this user may open (menu)."""
+    permission_classes = [_IsAuth]
+
+    def get(self, request):
+        out = []
+        for m in _CM.objects.filter(active=True):
+            if CU.can_create(m, request) or CU.scope(m, request).exists() or m.who_view == 'all':
+                out.append(CU.module_json(m, request, full=False))
+        return Response({'modules': out, 'admin': CU.is_admin(request)})
+
+
+class CustomRecordsView(APIView):
+    permission_classes = [_IsAuth]
+
+    def get(self, request, key):
+        m = _CM.objects.filter(key=key, active=True).first()
+        if m is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        qs = CU.scope(m, request)
+        st = request.query_params.get('state')
+        if st:
+            qs = qs.filter(state=st)
+        q = (request.query_params.get('q') or '').strip().lower()
+        rows = [CU.record_json(r, request, full=False) for r in qs[:500]]
+        if q:
+            rows = [x for x in rows if q in (x['number'] + ' ' + ' '.join(str(v) for v in x['data'].values() if v is not None) + ' ' + x['owner']).lower()]
+        return Response({'module': CU.module_json(m, request), 'rows': rows})
+
+    def post(self, request, key):
+        m = _CM.objects.filter(key=key, active=True).first()
+        if m is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        try:
+            r = CU.create(m, request.data.get('data') or {}, request)
+        except CU.CustomError as e:
+            return _cfail(e)
+        return Response(CU.record_json(r, request), status=201)
+
+
+class CustomRecordView(APIView):
+    permission_classes = [_IsAuth]
+
+    def _r(self, request, key, pk):
+        m = _CM.objects.filter(key=key).first()
+        return CU.scope(m, request).filter(pk=pk).first() if m else None
+
+    def get(self, request, key, pk):
+        r = self._r(request, key, pk)
+        if r is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        return Response({**CU.record_json(r, request), 'module': CU.module_json(r.module, request)})
+
+    def patch(self, request, key, pk):
+        r = self._r(request, key, pk)
+        if r is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        try:
+            r = CU.update(r, request.data.get('data') or {}, request)
+        except CU.CustomError as e:
+            return _cfail(e)
+        return Response(CU.record_json(r, request))
+
+    def delete(self, request, key, pk):
+        r = self._r(request, key, pk)
+        if r is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        if not CU.record_json(r, request)['can_delete']:
+            return Response({'detail': 'Only a record still in its first state can be deleted (by the person who made it).'}, status=403)
+        r.delete()
+        return Response({'deleted': True})
+
+
+class CustomMoveView(APIView):
+    permission_classes = [_IsAuth]
+
+    def post(self, request, key, pk):
+        m = _CM.objects.filter(key=key).first()
+        r = CU.scope(m, request).filter(pk=pk).first() if m else None
+        if r is None:
+            return Response({'detail': 'Not found.'}, status=404)
+        try:
+            r = CU.move(r, request.data.get('transition'), request.data.get('note', ''), request)
+        except CU.CustomError as e:
+            return _cfail(e)
+        return Response(CU.record_json(r, request))

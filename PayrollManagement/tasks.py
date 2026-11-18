@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from ZeoApps.scheduling import payroll_off as _zeo_off   # v1.67.1 (companies); v1.67.3 (apps) also the companies without Payroll
 from celery import shared_task
 from .utils import send_payslip_email 
@@ -53,7 +54,7 @@ logger = logging.getLogger(__name__)
 @shared_task
 def accrue_air_tickets():
     tenants = get_all_tenant_schemas()  # List of tenant schema names
-    today = timezone.now().date()
+    today = _zt_today()
 
     for tenant_schema_name in tenants:
         try:
@@ -80,7 +81,7 @@ def allocate_air_tickets(today=None):
     from PayrollPlus import air_rules as AR
     from PayrollPlus import air_policy as AP   # v1.66.0 (items 119–123)
     from EmpManagement.utils import service_years
-    today = today or timezone.now().date()
+    today = today or _zt_today()
     policies = list(AirTicketPolicy.objects.filter(is_active=True).prefetch_related(
         'rules', 'eligible_departments', 'eligible_designations', 'eligible_categories', 'branch').order_by('id'))
     try:   # v1.67.12 (effective, item 64): each policy as in force on the allocation day (amount, frequency, class)

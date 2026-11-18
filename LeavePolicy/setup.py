@@ -143,9 +143,25 @@ POLICIES = {
 }
 
 
+class _ByName(dict):
+    """v1.67.24 (L-BUG-21): name → leave type, also found by a near-duplicate name ("Sick leave", "Sick", "Sick Leaves")."""
+    def get(self, k, d=None):
+        if dict.__contains__(self, k):
+            return dict.get(self, k)
+        from OrganisationManager.defaults import name_key
+        nk = name_key(k)
+        for n, t in self.items():
+            if name_key(n) == nk:
+                return t
+        return d
+
+    def __contains__(self, k):
+        return self.get(k) is not None
+
+
 def _types():
     LT = M('calendars', 'leave_type')
-    by_name = {t.name.strip().lower(): t for t in LT.objects.all()}
+    by_name = _ByName({t.name.strip().lower(): t for t in LT.objects.all()})
     return LT, by_name
 
 

@@ -12,6 +12,14 @@ from django.apps import apps
 from django.db import transaction
 from django.db.models import Q
 
+
+def _tr(s, *a):   # v1.67.24: import row messages in the user's language
+    try:
+        from Translations.i18n import tr
+        return tr(s, *a)
+    except Exception:   # noqa: BLE001
+        return s.format(*a) if a else s
+
 EMP = ('EmpManagement', 'emp_master')
 
 
@@ -70,7 +78,8 @@ def _specs():
             F('portal_role', 'Portal role', choices=Contact.PORTAL_ROLES)],
         '/zeo-projects/api/equipment-categories/': [
             F('code', 'Code', required=True), F('name', 'Name', required=True),
-            F('pm_months', 'Preventive maintenance every (months)', 'number')],
+            F('pm_months', 'Preventive maintenance every (months)', 'number'),
+            F('checklist', 'Service checklist', help_='One item per line (Alt+Enter in Excel); empty = keep the checklist as it is.')],   # v1.67.23 (271)
         '/zeo-projects/api/sites/': [
             F('customer', 'Customer', required=True, link=cust), F('code', 'Code'), F('name', 'Name', required=True),
             F('site_type', 'Site type', choices=_choices('SITE_TYPES')), F('address', 'Address'), F('area', 'Area'),
@@ -90,6 +99,8 @@ def _specs():
             F('start_date', 'Start date', 'date', required=True), F('end_date', 'End date', 'date', required=True),
             F('value', 'Contract value', 'number'), F('billing_frequency', 'Billing', choices=_choices('BILLING_FREQ')),
             F('included_hours', 'Included hours', 'number'), F('hourly_rate_outside', 'Hourly rate outside the AMC', 'number'),
+            F('hours_period', 'Included hours are for', choices=[('term', 'Whole contract term'), ('month', 'Each month')],
+              help_='Each month = a monthly allowance; the hours over it are billed per month at the hourly rate.'),   # v1.67.23 (270)
             F('parts_limit', 'Parts limit (value)', 'number'),
             F('account_manager', 'Account manager', link=EMP, match=('emp_code',)), F('notes', 'Notes'),
             F('activate', 'Activate now', 'yes/no', help_='Yes = active with its billing lines (as "Activate" on the contract).')],
@@ -179,7 +190,7 @@ def convert(path, row):
         v = row.get(f['key'])
         if v in (None, ''):
             if f['required']:
-                problems.append(f"{f['label']}: this field is required")
+                problems.append(_tr('{0}: this field is required', _tr(f['label'])))
             continue
         t = f['type']
         if t == 'yes/no':
@@ -188,14 +199,14 @@ def convert(path, row):
             try:
                 data[f['key']] = float(str(v).replace(',', ''))
             except ValueError:
-                problems.append(f"{f['label']}: “{v}” is not a number")
+                problems.append(_tr('{0}: “{1}” is not a number', _tr(f['label']), v))
         elif t == 'date':
             data[f['key']] = _date(v)
         elif t == 'choice':
             s = str(v).strip().lower()
             hit = next((c['value'] for c in f['choices'] if s in (str(c['value']).lower(), str(c['label']).lower())), None)
             if hit is None:
-                problems.append(f"{f['label']}: “{v}” – use one of " + ', '.join(c['label'] for c in f['choices']))
+                problems.append(_tr('{0}: “{1}” – use one of {2}', _tr(f['label']), v, ', '.join(_tr(c['label']) for c in f['choices'])))
             else:
                 data[f['key']] = hit
         elif t == 'link':
@@ -203,7 +214,7 @@ def convert(path, row):
             scope_q = None
             if f.get('_scope'):
                 if data.get(f['_scope']) is None:
-                    problems.append(f"{f['label']}: give the {f['_scope']} too")
+                    problems.append(_tr('{0}: give the {1} too', _tr(f['label']), _tr(f['_scope'])))
                     continue
                 scope_q = {f"{f['_scope']}_id": data[f['_scope']]}
             vals = [x.strip() for x in str(v).split(',')] if f.get('many') else [v]
@@ -215,9 +226,9 @@ def convert(path, row):
                 if len(hits) == 1:
                     ids.append(hits[0])
                 elif hits:
-                    problems.append(f"{f['label']}: “{x}” matches several records – use the code")
+                    problems.append(_tr('{0}: “{1}” matches several records – use the code', _tr(f['label']), x))
                 else:
-                    problems.append(f"{f['label']}: “{x}” not found")
+                    problems.append(_tr('{0}: “{1}” not found', _tr(f['label']), x))
             if ids:
                 data[f['key']] = ids if f.get('many') else ids[0]
         else:
@@ -239,7 +250,11 @@ def run(request, path, rows, dry, schema, factory):
     except Exception:   # noqa: BLE001
         import contextlib
         guard = contextlib.nullcontext
-    for i, row in enumerate(rows, start=1):
+    try:   # v1.73.4 a large file comes in parts: the rows keep their numbers in the file
+        start = 1 + max(0, int((request.data or {}).get('row_offset') or 0))
+    except Exception:   # noqa: BLE001
+        start = 1
+    for i, row in enumerate(rows, start=start):
         data, problems = convert(path, row if isinstance(row, dict) else {})
         if problems:
             results.append({'row': i, 'ok': False, 'errors': problems})

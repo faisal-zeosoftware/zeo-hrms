@@ -1046,7 +1046,16 @@ def observation_escalate(o, request, f):
 def daily_all():
     return {'moc_temporary': moc_overdue_temporary(), 'health_due': health_due(), 'env_due': env_due(), 'chemicals_due': chem_due(),
             'compliance': compliance_due(), 'documents_due': doc_due(), 'competency_expiring': competency_expiring(),
-            'kpis': kpi_calculate() if today().day == 1 else 0, 'links': _links_daily()}
+            'kpis': kpi_calculate() if today().day == 1 else 0, 'links': _links_daily(), 'scope': _scope_daily()}
+
+
+def _scope_daily():   # v1.67.27 (HSE scope): PPE replace-by and stock, emergency equipment, safety equipment certificates, contractor workers
+    try:
+        from . import scope
+        return scope.daily()
+    except Exception:
+        log.exception('HSE scope daily failed')
+        return {}
 
 
 def _links_daily():

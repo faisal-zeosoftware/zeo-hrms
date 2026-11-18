@@ -4,6 +4,7 @@ Payroll keeps deducting the instalment (emi_amount) of approved loans each month
 this module shows the schedule (paid + planned months) and changes a running loan the way payroll understands it:
 amount_requested + top-ups − paid = balance; repayment_period = months paid + months left.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -45,7 +46,7 @@ def balance(loan):
 
 def schedule(loan, today=None):
     """Paid months (from the repayments) and the planned months until the balance is nil."""
-    today = today or date.today()
+    today = today or _zt_today()
     reps = list(M('LoanRepayment').objects.filter(loan=loan).order_by('repayment_date', 'id').select_related('payslip__payroll_run'))
     rows, run = [], Decimal(str(loan.amount_requested or 0))
     # v1.67.11 (loans): a write-off is recorded as a repayment outside payroll – shown as "written off"; months skipped (item 113)
@@ -134,7 +135,7 @@ def summary(loan):
 
 def _event(loan, kind, user, **kw):
     name = (getattr(user, 'get_full_name', lambda: '')() or getattr(user, 'username', '')) if user else ''
-    return LoanEvent.objects.create(loan_id=loan.pk, kind=kind, date=kw.pop('date', None) or date.today(), user_id=getattr(user, 'pk', None),
+    return LoanEvent.objects.create(loan_id=loan.pk, kind=kind, date=kw.pop('date', None) or _zt_today(), user_id=getattr(user, 'pk', None),
                                     user_name=name[:150], **kw)
 
 
@@ -205,7 +206,7 @@ def settle(loan, user=None, note='', at_exit=False, when=None):
     loan.remaining_balance = Decimal('0')
     loan.status = 'Closed'
     loan.save(update_fields=['remaining_balance', 'status'])
-    _event(loan, 'exit' if at_exit else 'settle', user, amount=bal, balance_after=Decimal('0'), note=note[:255], date=when or date.today())
+    _event(loan, 'exit' if at_exit else 'settle', user, amount=bal, balance_after=Decimal('0'), note=note[:255], date=when or _zt_today())
     return loan
 
 
@@ -213,9 +214,9 @@ def settle(loan, user=None, note='', at_exit=False, when=None):
 def pause(loan, start=None, resume=None, user=None, note=''):
     if loan.status not in ('Approved', 'Disbursed', 'In Progress'):
         raise LoanError('Only a running loan can be paused.')
-    loan.status, loan.pause_start_date, loan.resume_date, loan.pause_reason = 'Paused', start or date.today(), resume, note or loan.pause_reason
+    loan.status, loan.pause_start_date, loan.resume_date, loan.pause_reason = 'Paused', start or _zt_today(), resume, note or loan.pause_reason
     loan.save(update_fields=['status', 'pause_start_date', 'resume_date', 'pause_reason'])
-    _event(loan, 'pause', user, note=(note or '')[:255], date=start or date.today())
+    _event(loan, 'pause', user, note=(note or '')[:255], date=start or _zt_today())
     return loan
 
 
@@ -223,7 +224,7 @@ def pause(loan, start=None, resume=None, user=None, note=''):
 def resume(loan, user=None, note=''):
     if loan.status != 'Paused':
         raise LoanError('This loan is not paused.')
-    loan.status, loan.resume_date = 'Approved', date.today()
+    loan.status, loan.resume_date = 'Approved', _zt_today()
     loan.save(update_fields=['status', 'resume_date'])
     _event(loan, 'resume', user, note=(note or '')[:255])
     return loan
@@ -231,7 +232,7 @@ def resume(loan, user=None, note=''):
 
 def resume_due(today=None):
     """Daily: paused loans whose resume date has come start again."""
-    today = today or date.today()
+    today = today or _zt_today()
     n = 0
     for loan in M('LoanApplication').objects.filter(status='Paused', resume_date__isnull=False, resume_date__lte=today):
         loan.status = 'Approved'

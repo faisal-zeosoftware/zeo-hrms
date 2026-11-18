@@ -69,6 +69,9 @@ class Webhook(models.Model):
     secret = models.TextField('signing secret (encrypted)', blank=True)
     models_list = models.JSONField('record types', default=list, help_text='["calendars.employee_leave_request", …]')
     events = models.JSONField(default=list, help_text='created, updated, deleted')
+    # v1.67.28 (optional by-branch connections): only records of these branches are sent (empty = every branch, as before)
+    branches = models.JSONField('only these branches', default=list, blank=True,
+                                help_text='[branch id, …] – empty: every branch; records without a branch go only to webhooks without this filter')
     active = models.BooleanField(default=True)
     last_status = models.CharField(max_length=120, blank=True)
     last_at = models.DateTimeField(null=True, blank=True)

@@ -21,6 +21,7 @@ Dry run by default: the work is done inside a transaction that is rolled back, s
   manage.py clean_leave_balances --schema gdis --apply       # writes
   manage.py clean_leave_balances --schema gdis --report /tmp/leave_clean.json
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import json
 from datetime import date
 
@@ -52,7 +53,7 @@ def target_type(emp, lt, types):
 def work(on=None, user_id=None):
     from calendars.utils import leave_gender
     from LeavePolicy import engine
-    on = on or date.today()
+    on = on or _zt_today()
     engine._run.types = None
     B, LR = M('calendars', 'emp_leave_balance'), M('calendars', 'employee_leave_request')
     _, _, _, Ledger = engine._models()

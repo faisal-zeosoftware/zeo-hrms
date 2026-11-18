@@ -16,6 +16,7 @@ urlpatterns = [
     # v1.62.0 people: the Resignations register (stage, waiting for me, names, Leavers link)
     path('api/resignations/', registers62.ResignationsView.as_view()),
     path('api/resignations/stats/', registers62.ResignationStatsView.as_view()),
+    path('api/resignations/<int:pk>/', registers62.ResignationOneView.as_view()),   # v1.73.2 Delete while pending
     path('api/resignations/<int:pk>/<str:action>/', registers62.ResignationActionView.as_view()),
     # v1.62.0 people: general and document requests – one row per request, stage, waiting for me
     path('api/requests/<str:kind>/', requests62.RequestsView.as_view()),
@@ -25,5 +26,6 @@ urlpatterns = [
     path('api/org-overview/', company62.OrgOverviewView.as_view()),   # v1.62.0 people: organisation overview  # v1.62.0 people: announcements register
     path('api/announcements/<int:pk>/<str:action>/', company62.AnnouncementActionView.as_view()),
     path('api/requests/<str:kind>/stats/', requests62.RequestStatsView.as_view()),
+    path('api/requests/<str:kind>/<int:pk>/', requests62.RequestOneView.as_view()),   # v1.73.2 Delete while no approver decided
     path('api/requests/<str:kind>/<int:pk>/<str:action>/', requests62.RequestActionView.as_view()),
 ]

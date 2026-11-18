@@ -12,6 +12,7 @@ GET  api/loan-desk/approvals/?kind=loan|advance&box=waiting|open|decided   one r
 GET  api/loan-desk/repayments/?branch_id=                      loan instalments (employee, loan, payroll month and pay date)
 GET  api/loan-desk/levels/?kind=loan|advance                   approval workflows with their levels and escalation
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 from datetime import date
 from decimal import Decimal
@@ -211,7 +212,7 @@ class DeskBase(AtBase):
 class RequestsView(DeskBase):
     def get(self, request):
         kind = self.kind(request)
-        today = timezone.localdate()
+        today = _zt_today()
         if kind == 'loan':
             self.need(LOAN_READ)
             reqs = list(self.in_branches(loans_qs(), 'employee__emp_branch_id', request).order_by('-applied_on', '-id')[:500])
@@ -322,7 +323,7 @@ class RepaymentsView(DeskBase):
                 month = date(int(pr.year), int(pr.month), 1)
                 paid_on = pr.payment_date or month_end(int(pr.year), int(pr.month))
             else:
-                month = (x.repayment_date or timezone.localdate()).replace(day=1)
+                month = (x.repayment_date or _zt_today()).replace(day=1)
                 paid_on = x.repayment_date
             l, e = x.loan, x.loan.employee
             rows.append({'id': x.pk, 'loan_id': l.pk, 'number': l.document_number or str(l.pk), 'employee_id': e.pk, 'employee': emp_name(e),

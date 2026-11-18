@@ -4,6 +4,7 @@ Older versions created every branch with the same prefixes (BR-LEA, BR-LOA …),
 same document numbers and saving failed. The first branch keeps its prefix; the others get one from their
 branch code (e.g. BR-DXB → DXB-LEA). Run once per server:  python manage.py fix_document_prefixes [--dry-run]
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.core.management.base import BaseCommand
 from django_tenants.utils import get_tenant_model, schema_context
 
@@ -61,6 +62,6 @@ class Command(BaseCommand):
                         self.stdout.write(f'{t.schema_name}: {b} {label}: {prefix}')
                         if not dry:
                             DocumentNumbering.objects.create(branch_id=b, type=doc_type, prefix=prefix, suffix='', current_number=0,
-                                                             total_length=12, start_date=timezone.now().date(),
+                                                             total_length=12, start_date=_zt_today(),
                                                              end_date=None)   # v1.67.8 (fixes) item 6: no end date unless entered
         self.stdout.write(self.style.SUCCESS(f'{made} numbering row(s) {"would be added" if dry else "added"}.'))

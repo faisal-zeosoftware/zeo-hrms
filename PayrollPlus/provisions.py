@@ -5,6 +5,7 @@ open air-ticket entitlements; the provision to book is the change on the previou
 month before (Celery beat 'payrollplus-provisions') or any time from the Provisions page; when the Accounting integration is
 on, 'Post to accounting' sends the same amounts as the month-end provisions journal.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 from collections import defaultdict
 from datetime import date, timedelta
@@ -24,7 +25,7 @@ def month_end(d):
 
 
 def last_month_end(today=None):
-    t = today or date.today()
+    t = today or _zt_today()
     return t.replace(day=1) - timedelta(days=1)
 
 

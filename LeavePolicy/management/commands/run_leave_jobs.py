@@ -1,4 +1,5 @@
 """v1.11.0 – run the scheduled leave jobs by hand or from cron: escalations, and on the 1st the leave-year end and monthly accrual."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 
 from django.core.management.base import BaseCommand
@@ -40,7 +41,7 @@ class Command(BaseCommand):
                             for e, lt, b, s in bad:
                                 if b is None:
                                     continue   # ledger lines without a balance row – listed only
-                                post(e, lt, date.today(), 'adjustment', round(b - s, 2), note='Opening line for a balance loaded without a ledger line (v1.62.11)')
+                                post(e, lt, _zt_today(), 'adjustment', round(b - s, 2), note='Opening line for a balance loaded without a ledger line (v1.62.11)')
                                 n += 1
                         self.stdout.write(f'{t}: {n} adjustment line(s) written; now {len(ledger_mismatches())} difference(s)')
                     continue

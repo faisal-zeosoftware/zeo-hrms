@@ -13,6 +13,7 @@ UAE Federal Decree-Law 33 of 2021 (Labour Law) and Cabinet Resolution 1 of 2022 
 * Hajj (unpaid, up to 30 days, once in service) and unpaid leave by agreement.
 Every number is a policy line setting, so a company can give more than the law.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import copy
 import logging
 from collections import defaultdict
@@ -220,12 +221,29 @@ def months_of_service(emp, on):
     return max(m, 0)
 
 
-def leave_year(policy, d):
+def leave_year(policy, d, emp=None):
+    if emp is not None and getattr(policy, 'year_basis', 'month') == 'joining' and getattr(emp, 'emp_joined_date', None):
+        return joining_year(emp.emp_joined_date, d)   # v1.73.8 – the employee's own leave year from the joining date
     start_month = getattr(policy, 'leave_year_start', 1) or 1
     y = d.year if d.month >= start_month else d.year - 1
     start = date(y, start_month, 1)
     end = date(y + 1, start_month, 1) - timedelta(days=1)
     return start, end
+
+
+def _anniv(j, y):
+    try:
+        return j.replace(year=y)
+    except ValueError:   # joined on 29 February
+        return date(y, 3, 1)
+
+
+def joining_year(j, d):
+    """v1.73.8 – the leave year running from the joining date's day and month that holds d."""
+    s = _anniv(j, d.year)
+    if s > d:
+        s = _anniv(j, d.year - 1)
+    return s, _anniv(j, s.year + 1) - timedelta(days=1)
 
 
 # ------------------------------------------------------------------ counting days
@@ -299,7 +317,7 @@ def balance_row(emp_id, lt_id):
 def post(emp_id, lt_id, d, kind, days, ref=None, note='', user_id=None, move_balance=False):
     """One ledger line; optionally move the balance too (accrual, opening, encashment – the leave request moves its own)."""
     _, _, _, Ledger = _models()
-    Ledger.objects.create(employee_id=emp_id, leave_type_id=lt_id, date=d, kind=kind, days=round(float(days), 2),
+    row = Ledger.objects.create(employee_id=emp_id, leave_type_id=lt_id, date=d, kind=kind, days=round(float(days), 2),
                           ref_model=ref._meta.label if ref is not None else '', ref_id=ref.pk if ref is not None else None,
                           note=note[:255], created_by_id=user_id)
     if move_balance:
@@ -307,6 +325,7 @@ def post(emp_id, lt_id, d, kind, days, ref=None, note='', user_id=None, move_bal
         b.balance = round(float(b.balance or 0) + float(days), 2)
         b._lp_ledger = True   # v1.62.4 (item 79): the ledger line is written – the balance guard (signals.py) adds nothing
         b.save(update_fields=['balance', 'updated_at'])
+    return row
 
 
 def balance_as_of(emp_id, lt_id, d):
@@ -394,7 +413,7 @@ def _validate_request(req):
             raise ValidationError(errors)
         return
     policy = line.policy
-    today = date.today()
+    today = _zt_today()
     hourly = is_hourly(lt)   # v1.62.4 (item 81): a type counted in hours – the request's hours, not days
     days = float(req.applied_days or 0) if hourly else leave_days(emp, req.start_date, req.end_date, line.count_days, bool(req.dis_half_day))
     _sp = None if hourly else _lr().special_days(emp, lt, line, req.start_date, req.end_date, bool(req.dis_half_day))
@@ -425,7 +444,12 @@ def _validate_request(req):
         errors.append(tr('{0} must be requested {1} days in advance (from {2:%d/%m/%Y}).', lt.name, line.notice_days, today + timedelta(days=line.notice_days)))
     if line.max_per_request and days > line.max_per_request:
         errors.append(tr('{0} is at most {1:g} days per request; this request is {2:g} days.', lt.name, line.max_per_request, days))
-    y0, y1 = leave_year(policy, req.start_date)
+    try:   # v1.73.8 – more rules (window, in a row, gap, how often, not next to, who, restricted holidays)
+        from . import more as _more
+        errors += _more.request_problems(req, line, days, by_hr=by_hr, today=today)
+    except Exception:
+        log.exception('v1.73.8 more leave rules')
+    y0, y1 = leave_year(policy, req.start_date, emp)
     if line.max_per_year and not _lr().skip_year_limit(req):   # v1.65.0 (item 82): with the birth rule the days are per birth
         used = used_in(emp.pk, lt.pk, y0, y1, exclude_id=req.pk)
         if used + days > line.max_per_year:
@@ -438,7 +462,13 @@ def _validate_request(req):
         errors.append(tr('{0} needs a supporting document (e.g. medical report, certificate) – attach it to the request.', lt.name))
     if line.accrual in ('monthly', 'yearly', 'earned') and lt.type != 'unpaid' and (line.allow_negative or lt.negative):
         errors += negative_limit_problems(emp, lt, req, days, hourly)   # v1.67.12 (effective, item 62): the limit below zero, when set
-    if line.accrual in ('monthly', 'yearly', 'earned') and lt.type != 'unpaid' and not (line.allow_negative or lt.negative):
+    _lop = False
+    try:
+        from . import more as _more
+        _lop = _more.exceed_lop(line) and not hourly
+    except Exception:
+        pass
+    if line.accrual in ('monthly', 'yearly', 'earned') and lt.type != 'unpaid' and not (line.allow_negative or lt.negative) and not _lop:
         bal = float(balance_row(emp.pk, lt.pk).balance or 0)
         if _lr().allow_projected(lt) and not hourly:   # v1.65.0 (item 88): the days earned before the leave starts count
             bal = round(bal + _lr().projected_extra(emp, line, req.start_date), 2)
@@ -479,6 +509,7 @@ def negative_limit_problems(emp, lt, req, days, hourly=False):
 
 # ------------------------------------------------------------------ v1.62.4 leave request checks (items 71, 77, 81)
 SHORT_LEAVE_MAX_HOURS = 8.0
+SHORT_LEAVE_MIN_HOURS = 0.5   # v1.73.1 (ESS test B15) the request form says minimum 0.5
 
 
 def is_hourly(lt):
@@ -494,7 +525,7 @@ def request_day_problems(req):
     * item 77 – a request with no working day in it (a half day / days on a weekend or public holiday) was accepted with 0 days.
     * item 81 – short leave in hours: one day, a working day, more than 0 and at most 8 hours."""
     out, emp, lt = [], req.employee, req.leave_type
-    lwd = exit_date(emp)
+    lwd = exit_date(emp, approved_only=True)
     if lwd and req.end_date > lwd:
         out.append(tr("{0}'s last working day is {1:%d/%m/%Y}: leave cannot go past it (unused leave is paid in the final settlement).",
                       emp.emp_first_name, lwd))
@@ -502,8 +533,8 @@ def request_day_problems(req):
         hrs = float(req.applied_days or 0)
         if req.start_date != req.end_date:
             out.append(tr('Short leave in hours is for one day: the start and end dates must be the same.'))
-        elif hrs <= 0 or hrs > SHORT_LEAVE_MAX_HOURS:
-            out.append(tr('Give the hours of the short leave: more than 0 and at most {0:g}.', SHORT_LEAVE_MAX_HOURS))
+        elif hrs < SHORT_LEAVE_MIN_HOURS or hrs > SHORT_LEAVE_MAX_HOURS:   # v1.73.1 (ESS test B15): 0.25 h was accepted
+            out.append(tr('Give the hours of the short leave: at least {0:g} and at most {1:g}.', SHORT_LEAVE_MIN_HOURS, SHORT_LEAVE_MAX_HOURS))
         elif not scheduled_days(emp, req.start_date, req.start_date):
             out.append(tr('{0:%d/%m/%Y} is not a working day: short leave is taken on a working day.', req.start_date))
         return out
@@ -514,6 +545,10 @@ def request_day_problems(req):
         n = float(req.calculate_leave_days())   # the days the request takes, counted as the model counts them
     except Exception:
         n = None
+    if n is not None and n > 0 and not scheduled_days(emp, req.start_date, req.end_date):
+        # v1.73.1 (ESS test B4) a policy that counts calendar days took a Saturday–Sunday leave as 2 days although nothing is
+        # taken off work – a request made only of days off is refused whatever the counting
+        n = 0
     if n is not None and n <= 0:
         out.append(tr('There is no working day from {0:%d/%m/%Y} to {1:%d/%m/%Y} (weekend / public holiday): the request would take 0 days.',
                       req.start_date, req.end_date))
@@ -552,8 +587,8 @@ def _req_days(req, line=None):
     return days
 
 
-def _year_of(policy, d):
-    return leave_year(policy, d) if policy else (date(d.year, 1, 1), date(d.year, 12, 31))
+def _year_of(policy, d, emp=None):
+    return leave_year(policy, d, emp) if policy else (date(d.year, 1, 1), date(d.year, 12, 31))
 
 
 def year_split(emp, lt, y0, y1, extra=None):
@@ -611,7 +646,7 @@ def paid_split(req):
     policy = line.policy if line else None
     out, years = [], {}
     for d in days:
-        y = _year_of(policy, d)
+        y = _year_of(policy, d, emp)
         if y not in years:
             years[y] = year_split(emp, lt, y[0], y[1], extra=req)
         paid, u = years[y].get((req.pk or 0, d), (1.0, unit))
@@ -628,6 +663,13 @@ def approved_and_rest(req, days):
         return list(days), []
     ok = float(req.approved_days or 0)
     asked = float(req.applied_days or req.number_of_days or 0)
+    if ok <= 0 and req.approved_days is not None and asked > 0:
+        try:   # v1.73.8 – no balance left and the type takes the days over the balance as unpaid: all days unpaid
+            from .more import lop_of
+            if lop_of(req):
+                return [], list(days)
+        except Exception:
+            pass
     if ok <= 0 or ok >= asked - 1e-9:
         return list(days), []
     unit = 0.5 if req.dis_half_day else 1.0
@@ -648,7 +690,7 @@ def resync_year(req, user_id=None):
         return 0
     line = line_for(emp, lt.pk)
     policy = line.policy if line else None
-    a, b = _year_of(policy, req.start_date), _year_of(policy, req.end_date)
+    a, b = _year_of(policy, req.start_date, emp), _year_of(policy, req.end_date, emp)
     LR = M('calendars', 'employee_leave_request')
     n = 0
     for r in LR.objects.filter(employee=emp, leave_type=lt, status='approved', start_date__lte=b[1], end_date__gte=a[0]).exclude(pk=req.pk):
@@ -681,15 +723,20 @@ def _active_employees():
     return M('EmpManagement', 'emp_master').objects.filter(is_active=True).select_related('emp_ctgry_id')
 
 
-def exit_date(emp):
-    """Last working day from the employee's resignation / termination (not rejected), if any."""
-    exits = getattr(_run, 'exits', None)
+def exit_date(emp, approved_only=False):
+    """Last working day from the employee's resignation / termination (not rejected), if any.
+    v1.73.1 (ESS test B5) approved_only: only an approved resignation / termination (the leave request check) – a resignation the
+    employee had only sent, and nobody had approved, already refused every leave after its last working day."""
+    exits = None if approved_only else getattr(_run, 'exits', None)
     if exits is not None:
         lwd = exits.get(emp.pk)
     else:
         try:
             R = M('EmpManagement', 'EmployeeResignation')
-            r = R.objects.filter(employee=emp).exclude(status__iexact='rejected').exclude(status__iexact='cancelled').order_by('-last_working_date').first()
+            qs = R.objects.filter(employee=emp).exclude(status__iexact='rejected').exclude(status__iexact='cancelled')
+            if approved_only:
+                qs = qs.filter(status__iexact='approved')
+            r = qs.order_by('-last_working_date').first()
             lwd = r.last_working_date if r else None
         except Exception:
             return None
@@ -962,9 +1009,9 @@ def to_earn_by_year_end(emp, line, today=None, ye=None):
     (2.5 on 2 November instead of 5; 2.5 instead of 14 for a joiner reaching 6 months in November)."""
     if line.accrual != 'monthly':
         return 0.0
-    today = today or date.today()
+    today = today or _zt_today()
     p = line.policy
-    y0, y1 = leave_year(p, today)
+    y0, y1 = leave_year(p, today, emp)
     ye = ye or y1
     j = emp.emp_joined_date
     if not j:
@@ -1026,7 +1073,7 @@ def run_accrual(on=None, user_id=None, preview=False):
 
 
 def _run_accrual(on=None, user_id=None, preview=False):
-    on = on or (date.today().replace(day=1) - timedelta(days=1))
+    on = on or (_zt_today().replace(day=1) - timedelta(days=1))
     m_end = (on.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     with _rules_day(m_end):   # v1.67.12 (effective, item 64): the policy lines as in force in the accrual month
         return _run_accrual_month(on, user_id, preview)
@@ -1057,8 +1104,14 @@ def _run_accrual_month(on=None, user_id=None, preview=False):
         left = exit_date(emp)
         if left and left < m_start:
             continue
-        y0, y1 = leave_year(p, m_end)
-        for line in emp_lines(emp, p):   # v1.62.1: on the employee's branch copy of the leave type
+        y0, y1 = leave_year(p, m_end, emp)
+        _lines = emp_lines(emp, p)
+        try:   # v1.73.8 – the service anniversary credit (more.anniversary) in the month of the anniversary
+            from . import more as _more
+            rows += _more.run_anniversary(emp, [l for l in _lines if not (l.gender != 'B' and (emp.emp_gender or '') != l.gender)], m_start, m_end, user_id, preview)
+        except Exception:
+            log.exception('v1.73.8 anniversary credit for %s', emp.pk)
+        for line in _lines:   # v1.62.1: on the employee's branch copy of the leave type
             if line.accrual not in ('monthly', 'yearly'):
                 continue
             if line.gender != 'B' and (emp.emp_gender or '') != line.gender:
@@ -1090,7 +1143,7 @@ def _run_accrual_month(on=None, user_id=None, preview=False):
                 if any(y0 <= d <= y1 and d >= emp.emp_joined_date.replace(day=1) for d in list(near.get((emp.pk, line.leave_type_id), []))
                        + list(near.get((emp.pk, was), []) if was is not None else [])):
                     continue
-                if m_start == y0:     # close last leave year first if nobody did (carry-forward limit, encash / lapse)
+                if m_start <= y0 <= m_end:     # close last leave year first if nobody did (carry-forward limit, encash / lapse)
                     closed = close_line(emp, line, y0 - timedelta(days=1), user_id=user_id, preview=preview)
                     if closed:
                         rows.append(dict(closed, kind='year_end', days=-closed['lapsed'] if closed['lapsed'] else 0,
@@ -1106,6 +1159,18 @@ def _run_accrual_month(on=None, user_id=None, preview=False):
                     amt = round(full * year_fraction(line, y0, y1, joined), 2)   # joined during this leave year
                     how = line.get_prorate_display().lower() if line.prorate != 'worked' else 'calendar days'
                     note = f'{tag} · {amt:g} of {full:g} days (joined {joined:%d/%m/%Y}, {how})'
+            if line.accrual == 'monthly' and getattr(p, 'year_basis', 'month') == 'joining' and m_start <= y0 <= m_end and y0 > emp.emp_joined_date:
+                closed = close_line(emp, line, y0 - timedelta(days=1), user_id=user_id, preview=preview)   # v1.73.8 – own leave year ended
+                if closed:
+                    rows.append(dict(closed, kind='year_end', days=-closed['lapsed'] if closed['lapsed'] else 0,
+                                     note=f'{tag} · leave year to {y0 - timedelta(days=1):%d/%m/%Y} closed: {closed["carry_forward"]:g} carried'))
+            try:   # v1.73.8 – the balance cap
+                from . import more as _more
+                amt, _why = _more.capped(line, emp.pk, amt)
+                if _why:
+                    note = f'{note} · {_why}'
+            except Exception:
+                pass
             amt = round(amt, 2)
             if not amt:
                 continue
@@ -1146,7 +1211,7 @@ def expire_carry_forward(m_end, user_id=None, preview=False):
         p = policy_for(emp)
         if p is None:
             continue
-        y0, _ = leave_year(p, m_end)
+        y0, _ = leave_year(p, m_end, emp)
         for line in [l for l in emp_lines(emp, p) if (l.carry_forward_expiry_months or 0) > 0]:   # v1.26.0: prefetched; v1.62.1 branch copies
             exp = (y0.replace(day=1) + timedelta(days=31 * line.carry_forward_expiry_months)).replace(day=1) - timedelta(days=1)
             if exp != m_end:
@@ -1262,7 +1327,7 @@ def encash_room(emp, line):
     if not line.encash_max_per_year:
         return None
     LE = M('PayrollManagement', 'LeaveEncashment')
-    y0, y1 = leave_year(line.policy, date.today())
+    y0, y1 = leave_year(line.policy, _zt_today(), emp)
     qs = LE.objects.filter(employee=emp, leave_type_id=line.leave_type_id)
     done = sum(float(x.encashment_days or 0) for x in qs.filter(status__in=('approved', 'processed'), approved_at__date__gte=y0, approved_at__date__lte=y1))
     done += sum(float(x.encashment_days or 0) for x in qs.filter(status__in=('draft', 'pending')))
@@ -1293,7 +1358,9 @@ def _run_year_end(year_end=None, user_id=None, preview=False, policy_ids=None):
         p = policy_for(emp)
         if p is None or (policy_ids is not None and p.pk not in policy_ids):
             continue
-        ye = year_end or (leave_year(p, date.today())[0] - timedelta(days=1))
+        if getattr(p, 'year_basis', 'month') == 'joining':
+            continue   # v1.73.8 – each employee's own leave year is closed by the monthly accrual run in the month of the joining date
+        ye = year_end or (leave_year(p, _zt_today())[0] - timedelta(days=1))
         for line in emp_lines(emp, p, [l for l in policy_lines(p) if l.accrual in ('monthly', 'yearly')]):   # v1.62.1 branch copies; v1.67.12 dated lines
             if not (line.gender == 'B' or (emp.emp_gender or '') == line.gender):
                 continue
@@ -1306,8 +1373,8 @@ def _run_year_end(year_end=None, user_id=None, preview=False, policy_ids=None):
 # ------------------------------------------------------------------ encashment
 def basic_of(emp):
     try:
-        from DashboardManagement.reports import basic_by_employee
-        return float(basic_by_employee([emp.pk]).get(emp.pk, 0))
+        from PayrollManagement.basic import base_of   # v1.73.7: the categories ticked for encashment (default: Basic)
+        return float(base_of(emp, 'encashment'))
     except Exception:
         return 0.0
 
@@ -1346,7 +1413,7 @@ def check_encashment(enc):
             errs.append(tr('The policy {0} does not allow encashing this leave type.', line.policy.name))
         if line.encash_max_per_year:
             LE = M('PayrollManagement', 'LeaveEncashment')
-            y0, y1 = leave_year(line.policy, date.today())
+            y0, y1 = leave_year(line.policy, _zt_today(), emp)
             done = sum(float(x.encashment_days) for x in LE.objects.filter(employee=emp, leave_type_id=lt_id, status__in=('approved', 'processed'),
                                                                           approved_at__date__gte=y0, approved_at__date__lte=y1).exclude(pk=enc.pk))
             # v1.18.0: requests still waiting for approval count too (two open requests could each stay under the limit)

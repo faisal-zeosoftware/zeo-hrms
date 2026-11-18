@@ -1398,6 +1398,8 @@ class employee_leave_request(models.Model):
         )
 
         # Deduct based on approved_days, fallback to number_of_days
+        if getattr(self, '_lop_all', False):
+            return   # v1.73.8 – no balance left: every day is taken as unpaid (LeavePolicy more.exceed = lop)
         days_to_deduct = self.approved_days or self.number_of_days
         leave_balance.balance = (leave_balance.balance or 0) - days_to_deduct
         leave_balance.save()
@@ -1416,6 +1418,13 @@ class employee_leave_request(models.Model):
 
     def restore_leave_balance(self):
         from decimal import Decimal
+        if not self.approved_days:   # v1.73.8 – nothing was taken from the balance (every day unpaid: LeavePolicy more.exceed = lop)
+            try:
+                from django.apps import apps as _apps
+                if _apps.get_model('LeavePolicy', 'LeaveRequestInfo').objects.filter(request_id=self.pk, lop_days__gt=0).exists():
+                    return
+            except LookupError:
+                pass
 
         leave_balance, created = emp_leave_balance.objects.get_or_create(
             employee=self.employee,

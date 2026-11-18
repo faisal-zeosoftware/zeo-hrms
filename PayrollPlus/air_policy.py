@@ -23,6 +23,7 @@ item 122  request checks: a second request for the same cycle, leavers (approved
 item 123  policy overlap: two active policies for the same employee – the first (today), the most specific wins, or saving the second
           policy is refused; a category change closes the old policy pro-rata and opens the new one (no second full allocation).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 import logging
 from datetime import date, timedelta
@@ -59,6 +60,10 @@ DEFAULTS = {
     'check_type': False,               # 122: ticket or cash as the policy allows (cash only / ticket only / both)
     'overlap': 'first',                # 123: first (today: every matching policy allocates; the settlement takes the first) | specific | refuse
     'category_change': 'off',          # 123: split = a change of policy closes the old one pro-rata and opens the new one
+    # v1.67.22 (pending C12): tickets bought outside payroll – an agency invoice, a company card or an employee's expense claim
+    'agency_payable_account': '2120',  # Cr when the travel agency invoices the ticket
+    'card_account': '2130',            # Cr when the ticket is paid with a company card
+    'expense_category_ids': [],        # expense claim categories that are air tickets: their claims are taken from the provision first
 }
 POLICY_CHOICES = {'fare_source': ('policy', 'fares'), 'accrual': ('off', 'monthly'), 'unused': ('keep', 'lapse')}
 POLICY_DEFAULTS = {
@@ -157,6 +162,8 @@ def save_settings(data, user=None):
                 continue
         elif isinstance(dv, bool):
             v = bool(v)
+        elif isinstance(dv, list):   # v1.67.22 (C12): expense categories (ids)
+            v = [int(x) for x in (v or []) if str(x).isdigit()]
         else:
             v = str(v or '').strip()[:40]
         cur[k] = v
@@ -420,19 +427,81 @@ def family(emp, policy, day):
     F = M('EmpManagement', 'emp_family')
     kids = []
     spouse_done = False
+    _kinds = relation_kinds()   # v1.67.22 (pending C12): the relation HR set on Air tickets › Family relations wins over the words
     for f in F.objects.filter(emp_id=emp, is_active=True).order_by('ef_date_of_birth', 'pk'):
-        rel = str(f.emp_relation or '').strip().lower()
         age = _age(f.ef_date_of_birth, day)
-        if any(w in rel for w in SPOUSE_WORDS):
+        kind = _kinds.get(str(f.pk)) or relation_kind(f.emp_relation)
+        if kind == 'spouse':
             if pr['spouse'] and not spouse_done:
                 out.append({'key': f'fam:{f.pk}', 'name': f.ef_member_name, 'relation': 'spouse', 'age': age, 'fare': 'adult'})
                 spouse_done = True
-        elif any(w in rel for w in CHILD_WORDS):
+        elif kind == 'child':
             if age is not None and age < int(pr['child_max_age']):
                 kids.append({'key': f'fam:{f.pk}', 'name': f.ef_member_name, 'relation': 'child', 'age': age,
                              'fare': 'child' if age < int(pr['child_fare_age']) else 'adult'})
     out += kids[:int(pr['max_children'])]
     return out
+
+
+# ------------------------------------------------------------------ v1.67.22 (pending C12): family relations
+RELATIONS_KEY = 'v16722_air_relations'   # {family record id: 'spouse' | 'child' | 'other'} set by HR
+SPOUSE_WORDS_X = SPOUSE_WORDS + ('partner', 'zawja', 'زوجه')
+CHILD_WORDS_X = CHILD_WORDS + ('ولد', 'بنت', 'إبن', 'ابنه', 'إبنة', 'children')
+OTHER_WORDS = ('father', 'mother', 'brother', 'sister', 'parent', 'uncle', 'aunt', 'grand', 'cousin', 'in-law', 'in law', 'أب', 'أم', 'أخ', 'أخت', 'والد')
+
+
+def relation_kind(text):
+    """'spouse' | 'child' | 'other' | '' (not recognised) from the free-text relation of a family record."""
+    rel = str(text or '').strip().lower()
+    if not rel:
+        return ''
+    if any(w in rel for w in ('grand', 'in-law', 'in law', 'nephew', 'niece', 'cousin')):
+        return 'other'
+    if any(w in rel for w in SPOUSE_WORDS_X):
+        return 'spouse'
+    if any(w in rel for w in CHILD_WORDS_X):
+        return 'child'
+    if any(w in rel for w in OTHER_WORDS):
+        return 'other'
+    return ''
+
+
+def relation_kinds():
+    v = _opt(RELATIONS_KEY, {})
+    return {str(k): x for k, x in (v or {}).items() if x in ('spouse', 'child', 'other')} if isinstance(v, dict) else {}
+
+
+def relations(only_open=False):
+    """Every active family record of the active employees: what the words say, what HR set, what counts."""
+    F = M('EmpManagement', 'emp_family')
+    set_ = relation_kinds()
+    out = []
+    for f in F.objects.filter(is_active=True).select_related('emp_id').order_by('emp_id__emp_code', 'pk'):
+        e = f.emp_id
+        if e is None:
+            continue
+        words = relation_kind(f.emp_relation)
+        chosen = set_.get(str(f.pk), '')
+        if only_open and (chosen or words):
+            continue
+        out.append({'id': f.pk, 'employee_id': e.pk, 'emp_code': e.emp_code, 'employee': ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x),
+                    'name': f.ef_member_name, 'relation_text': f.emp_relation or '', 'date_of_birth': f.ef_date_of_birth.isoformat() if f.ef_date_of_birth else None,
+                    'from_words': words, 'set': chosen, 'counts_as': chosen or words or 'unknown'})
+    return out
+
+
+def set_relation(fid, kind):
+    if kind not in ('spouse', 'child', 'other', ''):
+        raise Refused(tr('Choose spouse, child or other.'), {'kind': 'Invalid.'})
+    if not M('EmpManagement', 'emp_family').objects.filter(pk=fid).exists():
+        raise Refused(tr('Not found.'))
+    cur = dict(_opt(RELATIONS_KEY, {}) or {})
+    if kind:
+        cur[str(fid)] = kind
+    else:
+        cur.pop(str(fid), None)
+    _put(RELATIONS_KEY, cur)
+    return relation_kinds().get(str(fid), '')
 
 
 def applicable_rule(policy, emp, day, kinds):
@@ -566,7 +635,7 @@ def set_travel(req, keys, user=None):
     keys = [str(k) for k in (keys or [])]
     if not keys:
         raise Refused(tr('Choose who travels.'), {'travellers': tr('Choose who travels.')})
-    day = _day(req.departure_date or req.request_date) or date.today()
+    day = _day(req.departure_date or req.request_date) or _zt_today()
     covered = {t['key']: t for t in family(req.employee, a.policy, day)}
     bad = [k for k in keys if k not in covered]
     if bad:
@@ -649,7 +718,7 @@ def request_problem(emp, allocation, request_type, request_date, departure_date=
         return None
     p = allocation.policy
     pr = policy_rules(p.pk)
-    day = _day(request_date) or date.today()
+    day = _day(request_date) or _zt_today()
     if probation_blocks(emp, p, day):   # 119
         return tr('The employee is in probation until {0:%d/%m/%Y} and the policy is not for probation.', probation_end(emp))
     if st['check_leavers']:   # 122
@@ -695,7 +764,7 @@ def payout_problem(ticket):
     rs = [r for r in a.policy.rules.all() if r.rule_type == 'ENCASHMENT']
     if not rs:
         return None
-    r = applicable_rule(a.policy, ticket.employee, _day(ticket.request_date) or date.today(), ('ENCASHMENT',)) or rs[0]
+    r = applicable_rule(a.policy, ticket.employee, _day(ticket.request_date) or _zt_today(), ('ENCASHMENT',)) or rs[0]
     return None if r.apply_in_next_payroll else 'paid outside payroll (cash rule without "Pay in the next payroll")'
 
 
@@ -708,7 +777,7 @@ def pay_outside(req, ref, user=None):
     a.remaining_amount = ZERO
     a.save(update_fields=['remaining_amount'])
     req.status = 'PROCESSED'
-    req.notes = ((req.notes or '') + f"\nPaid outside payroll {date.today():%d/%m/%Y}: {ref or '-'} ({amt:,.2f})").strip()
+    req.notes = ((req.notes or '') + f"\nPaid outside payroll {_zt_today():%d/%m/%Y}: {ref or '-'} ({amt:,.2f})").strip()
     req.save(update_fields=['status', 'notes'])
     return amt
 
@@ -762,6 +831,7 @@ def category_change(emp, new_policy, today):
     policy's cycle starts today (its first allocation a full cycle later). Returns the closing allocation, or None (no change)."""
     if settings()['category_change'] != 'split':
         return None
+    today = change_day(emp, today)   # v1.67.22 (pending C12): the effective date of the transfer, not the day the job runs
     A = M('PayrollManagement', 'AirTicketAllocation')
     if A.objects.filter(employee=emp, policy=new_policy).exists() or _opt(f'{CYCLE_KEY}{emp.pk}:{new_policy.pk}'):
         return None
@@ -786,6 +856,128 @@ def category_change(emp, new_policy, today):
                                                   'closed_amount': str(amt), 'cycle': [last.allocated_date.isoformat(), cend.isoformat()]})
     log.info('Air ticket: %s policy %s → %s on %s, old cycle closed pro-rata %s', emp.emp_code, old.pk, new_policy.pk, today, amt)
     return a
+
+
+def change_day(emp, today):
+    """v1.67.22 (pending C12): the day the employee's policy changed – the effective date of the latest done transfer (HR actions ›
+    Transfers) that moved the category, department or branch, on or before today; else today (as before: the day the job saw it)."""
+    try:
+        T = M('HRActions', 'EmployeeTransfer')
+    except LookupError:
+        return today
+    from django.db.models import F, Q
+    t = (T.objects.filter(employee_id=emp.pk, status='done', effective_date__lte=today)
+         .filter(Q(to_category_id__isnull=False) & ~Q(to_category_id=F('from_category_id')) | Q(to_department_id__isnull=False) & ~Q(to_department_id=F('from_department_id'))
+                 | Q(to_branch_id__isnull=False) & ~Q(to_branch_id=F('from_branch_id')))
+         .order_by('-effective_date', '-id').first())
+    return t.effective_date if t is not None else today
+
+
+# ------------------------------------------------------------------ v1.67.22 (pending C12): tickets bought outside payroll
+BUY_KEY = 'v16722_air_bought:'
+PAID_BY = ('agency', 'card', 'expense_claim')
+
+
+def bought(req_id):
+    return _opt(f'{BUY_KEY}{req_id}', None)
+
+
+def ticket_bought(req, data, user=None):
+    """An approved ticket request whose ticket the company bought outside payroll: a travel agency invoice, a company card, or the
+    employee's expense claim. The request is processed (the allocation used, as an approved ticket always was) and, with the
+    accounting journals on, the cost is posted: Dr air ticket provision (up to the employee's posted provision, only with "Post the
+    air ticket provision" on), Dr air ticket expense (the rest), Cr the agency payable / company card / (claim: nothing – the claim's
+    own journal pays it, its category taken from the provision). → {'status', 'journal'}"""
+    if req.request_type != 'TICKET' or req.status not in ('APPROVED', 'PROCESSED'):
+        raise Refused(tr('Only an approved ticket request can be recorded as bought.'))
+    if bought(req.pk):
+        raise Refused(tr('This ticket is already recorded as bought.'))
+    errs = {}
+    try:
+        cost = q2(D(data.get('cost')))
+        if cost <= 0:
+            raise ValueError
+    except Exception:   # noqa: BLE001
+        errs['cost'] = tr('Enter the cost of the ticket.')
+        cost = ZERO
+    paid_by = str(data.get('paid_by') or '')
+    if paid_by not in PAID_BY:
+        errs['paid_by'] = tr('Choose how the ticket was paid.')
+    on = _day(data.get('date')) or _zt_today()
+    ref = str(data.get('reference') or '').strip()[:60]
+    if paid_by == 'agency' and not ref:
+        errs['reference'] = tr('Enter the invoice number of the travel agency.')
+    if errs:
+        raise Refused(tr('Check the marked fields.'), errs)
+    if req.status != 'PROCESSED':
+        req.status = 'PROCESSED'
+        req.notes = ((req.notes or '') + f"\nTicket bought {on:%d/%m/%Y}: {ref or '-'} ({cost:,.2f})").strip()
+        req.save(update_fields=['status', 'notes'])
+    jb = None
+    if paid_by != 'expense_claim':
+        jb = _bought_journal(req, cost, paid_by, on, ref, user)
+    _put(f'{BUY_KEY}{req.pk}', {'cost': str(cost), 'paid_by': paid_by, 'date': on.isoformat(), 'reference': ref, 'by': getattr(user, 'username', '') or '',
+                                'journal': jb.pk if jb else None})
+    return {'status': req.status, 'journal': {'id': jb.pk, 'number': jb.number, 'status': jb.status} if jb else None}
+
+
+def _bought_journal(req, cost, paid_by, on, ref, user=None):
+    try:
+        from ZeoAccounting.services import Builder, settings as _ast, Refused as _AR
+        from ZeoAccounting.models import ProvisionBalance
+    except ImportError:
+        return None
+    if not _ast().auto_build:
+        return None
+    st = settings()
+    e = req.employee
+    dept, branch = e.emp_dept_id_id, e.emp_branch_id_id
+    b = Builder('air_ticket', str(req.pk), tr('Air ticket bought – {0}', ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x) or e.emp_code), on,
+                ref or (req.document_number or f'AT-{req.pk}'))
+    b.dims.emps[e.pk] = e
+    exp_acc, prov_acc = accounts()
+    used = ZERO
+    if st['post_provision']:
+        p = ProvisionBalance.objects.filter(kind='air_ticket', employee_id=e.pk).first()
+        have = q2(p.amount) if p else ZERO
+        used = min(cost, max(have, ZERO))
+    if used:
+        pa, pl = b.accts.find('provision', 'air_ticket', 'credit', e.pk, dept, branch, prov_acc)
+        b.add(pa, tr('Air ticket (from provision)'), used, 'debit', e.pk, dept, branch, cost=False, level=pl, group='prov')
+    if cost - used:
+        ea, el = b.accts.find('provision', 'air_ticket', 'debit', e.pk, dept, branch, exp_acc)
+        b.add(ea, tr('Air ticket'), cost - used, 'debit', e.pk, dept, branch, cost=True, level=el, group='exp')
+    cr = st['agency_payable_account'] if paid_by == 'agency' else st['card_account']
+    b.add(cr, tr('Travel agency payable') if paid_by == 'agency' else tr('Company card'), cost, 'credit', e.pk, dept, branch, cost=False, group='cr')
+    b.extra = {'air_provision_used': {str(e.pk): str(used)} if used else {}, 'request': req.pk, 'paid_by': paid_by}
+    try:
+        return b.save(user)
+    except _AR:
+        return None
+
+
+def claim_provision_split(lines):
+    """v1.67.22 (pending C12): the expense claims journal – lines [(employee_id, category_id, amount)] → {employee_id: amount taken from
+    the air ticket provision} for the categories of Air ticket settings › "expense categories that are air tickets" (only with the
+    provision posted)."""
+    st = settings()
+    cats = set(st.get('expense_category_ids') or [])
+    if not cats or not st['post_provision']:
+        return {}
+    try:
+        from ZeoAccounting.models import ProvisionBalance
+    except ImportError:
+        return {}
+    want = {}
+    for emp_id, cat_id, amt in lines:
+        if cat_id in cats:
+            want[emp_id] = want.get(emp_id, ZERO) + q2(amt)
+    out = {}
+    for pb in ProvisionBalance.objects.filter(kind='air_ticket', employee_id__in=list(want)):
+        take = min(want[pb.employee_id], max(q2(pb.amount), ZERO))
+        if take > 0:
+            out[pb.employee_id] = take
+    return out
 
 
 # ------------------------------------------------------------------ provisions (items 118, 121)

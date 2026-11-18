@@ -13,6 +13,7 @@ POST api/requests/<id>/extend/ {end_date, reason}         v1.65.0 (item 84): a l
 GET  api/balance-grid/?branch=&department=&q=   employees × leave types (by name) with the balance; a cell opens api/ledger/
 Approval, deduction and restore of the balance stay in calendars (LeaveApproval.approve / reject, restore_leave_balance).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from datetime import date, timedelta
 
@@ -85,8 +86,9 @@ def request_rows(request, g):
     rj = {x.leave_request_id: x for x in RJ.objects.filter(leave_request_id__in=ids)}
     bal = {(b['employee_id'], b['leave_type_id']): b['balance'] for b in BAL.objects.filter(employee_id__in={r.employee_id for r in lrs})
            .values('employee_id', 'leave_type_id', 'balance')}
-    today = date.today()
+    today = _zt_today()
     can_cancel = _ctx(request).admin or bool(_ctx(request).codes & CANCEL)
+    _is_admin = bool(_ctx(request).admin)   # v1.67.24
     from .models import LeaveRequestInfo   # v1.65.0 (items 82–85)
     infos = {i.request_id: i for i in LeaveRequestInfo.objects.filter(request_id__in=ids)}
     ext_of = {}
@@ -152,7 +154,8 @@ def request_rows(request, g):
            
             'stage_short': short or stage,   # v1.62.0 people: the list column (who it waits for is its own column)
             'balance_now': b, 'balance_after': (round(b - days, 2) if (b is not None and r.status == 'pending') else b),
-            'can_act': bool(cur is not None and (_mine(cur, request.user) or getattr(request.user, 'is_superuser', False))),
+            # v1.67.24: a company administrator may decide for the approver (allowed by the action since 1.67.15) – the row offers it too
+            'can_act': bool(cur is not None and (_mine(cur, request.user) or getattr(request.user, 'is_superuser', False) or _is_admin)),
             'waiting_for_me': bool(cur is not None and _mine(cur, request.user)),
             # v1.67.15 lets a waiting request be cancelled (server); v1.67.19 the register offers it too
             'can_cancel': bool(can_cancel and ((r.status == 'approved' and back is None) or r.status == 'pending')),
@@ -239,7 +242,7 @@ class LeaveRequestStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        today = date.today()
+        today = _zt_today()
         rows = request_rows(request, {'from': (today - timedelta(days=45)).isoformat()})
         return Response({
             'on_leave': sum(1 for r in rows if r['stage'] == 'on_leave'),
@@ -274,9 +277,26 @@ class LeaveRequestActionView(APIView):
         if not (_mine(a, request.user) or getattr(request.user, 'is_superuser', False) or _ctx(request).admin):
             return Response({'detail': tr('This leave is waiting for someone else.')}, status=403)
         if action == 'approve':
+            # v1.67.24 (L-BUG-15): approve fewer days than asked ("Days approved" in the Approve dialog) – the balance takes only those
+            days = request.data.get('approved_days')
+            if days in (None, ''):
+                days = None
+            else:
+                try:
+                    days = float(days)
+                except (TypeError, ValueError):
+                    return Response({'approved_days': [tr('Enter the number of days approved, e.g. 3 or 2.5.')]}, status=400)
+                _hours = a.leave_request is not None and getattr(a.leave_request.leave_type, 'unit', 'days') == 'hours'
+                if not _hours and days * 2 != int(days * 2):
+                    return Response({'approved_days': [tr('Days approved can be whole or half days only.')]}, status=400)
+                asked = float(a.leave_request.applied_days or a.leave_request.number_of_days or 0) if a.leave_request else 0
+                if a.leave_request and days > asked:
+                    return Response({'approved_days': [tr('At most {0} day(s) – the days asked for.', f'{asked:g}')]}, status=400)
+                if asked and days == asked:
+                    days = None
             try:
                 with deciding(request):   # v1.62.5 (item 19)
-                    a.approve(note=(request.data.get('note') or None))
+                    a.approve(note=(request.data.get('note') or None), approved_days=days)
             except ValueError as e:
                 return Response({'detail': str(e)}, status=400)
             return Response({'detail': tr('Approved.')})

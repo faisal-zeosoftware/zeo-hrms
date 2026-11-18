@@ -46,7 +46,7 @@ def _rule_row(lt, r):
     blank = LeaveTypeRule()
     for k in RULE_FIELDS:
         out[k] = getattr(r if r is not None else blank, k)
-    out['nursing_default'] = lt.leave_category == 'maternity' and lt.type == 'paid'
+    out['nursing_default'] = __import__('LeavePolicy.categories', fromlist=['x']).system_of(lt.leave_category) == 'maternity' and lt.type == 'paid'
     on = [k for k in ('birth_required', 'sandwich', 'allow_projected', 'advance_salary', 'hr_eligibility', 'nursing_breaks', 'notice_exempt',
                       'nationals_only') if out[k]]
     if out['document_above_days'] is not None:
@@ -177,7 +177,7 @@ class TypeRulesView(APIView):
             r = rule_for(lt)
             out[lt.pk] = {'birth_required': bool(r and r.birth_required), 'birth_window_months': (r.birth_window_months if r else 6),
                           'birth_window_from': (r.birth_window_from if r else 'birth'),
-                          'birth_optional': bool(lt.leave_category in ('maternity', 'paternity') and not (r and r.birth_required)),
+                          'birth_optional': bool(__import__('LeavePolicy.categories', fromlist=['x']).system_of(lt.leave_category) in ('maternity', 'paternity') and not (r and r.birth_required)),
                           'allow_projected': bool(r and r.allow_projected), 'hr_eligibility': bool(r and r.hr_eligibility),
                           'document_above_days': (r.document_above_days if r else None)}
         return Response(out)

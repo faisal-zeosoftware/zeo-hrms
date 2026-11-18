@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from decimal import Decimal
 
@@ -147,7 +148,7 @@ def accept_offer(offer, user=None):
     if not offer.visa_steps.exists():
         VisaStep.objects.bulk_create([VisaStep(offer=offer, sequence=i + 1, name=n,
                                                status='done' if i == 0 else 'pending',
-                                               step_date=timezone.localdate() if i == 0 else None)
+                                               step_date=_zt_today() if i == 0 else None)
                                       for i, n in enumerate(steps)])
     # v1.62.0 the HSE link adds its induction / medical tasks when the accepted offer is saved, so "no tasks yet" was never true and
     # the standard checklist was skipped: add each standard task that is not there yet
@@ -255,6 +256,14 @@ def convert_to_employee(offer, user=None, emp_code=None, require_visa=True):
     offer.save(update_fields=['employee', 'status'])
     move_stage(offer.application, 'hired', user, f"Joined as {emp.emp_code}")
     _assign_induction(emp)
+    try:   # v1.67.26 (item 233): the details the candidate gave before joining (accepted by HR) go to the new employee
+        from . import preonboarding as PO
+        pre = getattr(offer, 'preonboarding', None)
+        if pre is not None:
+            PO.apply_to_employee(pre)
+    except Exception:   # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception('pre-onboarding details not applied')
     notify(user=offer.reporting_manager, title="New joiner", notification_type='recruitment',
            message=f"{cand.full_name} joins as {offer.position_title} on {offer.joining_date} ({emp.emp_code}).")
     return emp

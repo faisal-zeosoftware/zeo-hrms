@@ -1,4 +1,5 @@
 # v1.62.11 (items 228, 231): new module – payroll controls (group payctl)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.62.11 (items 228, 231) – payroll controls.
 
 Hold / release salary (228)
@@ -814,7 +815,7 @@ def gratuity_earned(emp, as_of=None):
     """The gratuity earned to date – the same figure as Reports › Gratuity (DashboardManagement.reports.r_gratuity) and the month-end
     provision. Returns (amount, row)."""
     from DashboardManagement import reports as R
-    as_of = as_of or timezone.localdate()
+    as_of = as_of or _zt_today()
 
     class _Run:
         pass
@@ -1330,7 +1331,7 @@ def import_history(f, name='', apply=False, user=None, allowed=None):
                 errs.append(tr('Old amount is not a number.'))
         if e is not None and eff is not None and e.emp_joined_date and eff < e.emp_joined_date:
             errs.append(tr('The effective date is before the joining date ({0}).', f'{e.emp_joined_date:%d/%m/%Y}'))
-        if eff is not None and eff > timezone.localdate():
+        if eff is not None and eff > _zt_today():
             errs.append(tr('The effective date is in the future – use Revise salary for a coming change.'))
         if e is not None and c is not None and eff is not None:
             k = (e.pk, c.pk, eff)

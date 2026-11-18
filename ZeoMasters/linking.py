@@ -32,7 +32,7 @@ def _norm(v):
 
 def _row(name):
     return OrderedDict([('records', name), ('without_link', 0), ('by_tax_no', 0), ('by_contact', 0), ('by_code', 0), ('by_name', 0),
-                        ('created', 0), ('left', 0)])
+                        ('created', 0), ('left', 0), ('possible_duplicates', 0)])
 
 
 def _keep_partner(p):
@@ -128,6 +128,13 @@ def link_partners(create=True):
             PT.refresh_used_in(p)
         if r['without_link']:
             out.append(r)
+    # v1.67.24: partners made here from a name only are checked for duplicates – the same name without the legal form
+    # (e.g. "Falcon Trading LLC" and "Falcon Trading L.L.C.") goes to Masters › Duplicates to merge or dismiss
+    n = 0
+    for p in P.objects.filter(tags__contains=['from link_partners'], merged_into__isnull=True):
+        n += PT.scan_similar_names(p)
+    if n and out:
+        out[-1]['possible_duplicates'] += n
     return out
 
 

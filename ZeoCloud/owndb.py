@@ -11,6 +11,7 @@
 Shared tables (users, companies, accounts …) are always read and written in the main database (dbrouting). An own
 database keeps a copy only of the rows its company tables point to, so that their foreign keys hold.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import os
 import re
@@ -310,7 +311,7 @@ def create_own_db(account, by=None, note='', new=False, label='', progress=None)
     if new and not srv.extra:   # v1.26.0 an extra database: its own subscription, starting with a 14-day trial
         srv.extra = True
     if new and not srv.trial_ends:   # a removed database added again keeps its old trial (no second trial)
-        srv.trial_ends = timezone.localdate() + timedelta(days=S.DB_TRIAL_DAYS)
+        srv.trial_ends = _zt_today() + timedelta(days=S.DB_TRIAL_DAYS)
     srv.save(update_fields=['state', 'label', 'note', 'extra', 'trial_ends'])
     dbrouting.forget()
     try:
@@ -451,7 +452,7 @@ def remove_db(account, key, by=None):
         raise MoveError('This database has companies – use Delete database (a backup is made and its companies are deleted with it).')
     if MoveJob.objects.filter(target=key, state__in=('waiting', 'running')).exists() or dup_running(key):
         raise MoveError('A copy or a move into this database is still running.')
-    srv.state, srv.retired_on, srv.retired_by = 'retired', timezone.localdate(), by if getattr(by, 'pk', None) else None   # v1.67.1 (companies)
+    srv.state, srv.retired_on, srv.retired_by = 'retired', _zt_today(), by if getattr(by, 'pk', None) else None   # v1.67.1 (companies)
     srv.save(update_fields=['state', 'retired_on', 'retired_by'])
     dbrouting.forget()
     forget_db(key)
@@ -796,11 +797,11 @@ def run_move(job_id, settle=None, own_thread=True, progress=None):
         _say(job, 'Switching to the new database', f'{job.tables} tables, {job.rows} rows, {len(s1)} sequences – same in both')
         P.begin('switch', ('{0} tables, {1} rows – the same in both', [job.tables, f'{job.rows:,}']), tables=job.tables, rows=job.rows)
 
-        old = f'zmv_{timezone.localdate():%Y%m%d}_{schema}'[:63]
+        old = f'zmv_{_zt_today():%Y%m%d}_{schema}'[:63]
         n = 1
         while schema_exists(src, old):
             n += 1
-            old = f'zmv{n}_{timezone.localdate():%Y%m%d}_{schema}'[:63]
+            old = f'zmv{n}_{_zt_today():%Y%m%d}_{schema}'[:63]
         with conn(src).cursor() as cur:
             cur.execute(f'ALTER SCHEMA "{schema}" RENAME TO "{old}"')
         renamed = True
@@ -812,7 +813,7 @@ def run_move(job_id, settle=None, own_thread=True, progress=None):
             _wait(P, settle, 'Every user now opens the company in the new place')   # every process now finds the company in the new database
         link.moving = False
         link.save(update_fields=['moving'])
-        job.old_copy, job.keep_until = old, timezone.localdate() + timedelta(days=KEEP_DAYS)
+        job.old_copy, job.keep_until = old, _zt_today() + timedelta(days=KEEP_DAYS)
         job.state, job.finished_at = 'done', timezone.now()
         job.save(update_fields=['old_copy', 'keep_until', 'state', 'finished_at', 'tables', 'rows'])
         _say(job, 'Done', f'old copy kept as {old} in {src or "the main database"} until {job.keep_until}')
@@ -866,7 +867,7 @@ def move_back(job, by=None, settle=None, run_now=False):
 
 def drop_old_copies(today=None):
     """Old copies older than 7 days are removed (cloud_daily)."""
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     out = []
     for job in MoveJob.objects.filter(state__in=('done', 'rolled_back')).exclude(old_copy='').filter(keep_until__lt=today):
         try:
@@ -889,7 +890,7 @@ def retire_empty():
         # account left Premium (hosting shared) – an explicit Remove retires it at once (remove_db)
         if not AccountCompany.objects.filter(db_alias=srv.key).exists() and srv.account and srv.account.db_alias != srv.key \
                 and srv.account.hosting != 'own':
-            srv.state, srv.retired_on = 'retired', timezone.localdate()   # v1.67.1 (companies)
+            srv.state, srv.retired_on = 'retired', _zt_today()   # v1.67.1 (companies)
             srv.save(update_fields=['state', 'retired_on'])
     dbrouting.forget()
 
@@ -898,11 +899,11 @@ def drop_retired(today=None):
     """Drop retired own databases whose old copies have all expired (cloud_daily).
     v1.67.1 (companies): only RETIRED_DAYS (30) days after it was retired (a server administrator can restore it until
     then); the companies deleted with it are removed first (lifecycle.purge_company)."""
-    today = today or timezone.localdate()
+    today = today or _zt_today()
     out = []
     for srv in DatabaseServer.objects.filter(state='retired'):
         if srv.retired_on is None:   # retired before 1.67.1: the 30 days start now
-            srv.retired_on = timezone.localdate()
+            srv.retired_on = _zt_today()
             srv.save(update_fields=['retired_on'])
         if today <= srv.retired_on + timedelta(days=RETIRED_DAYS):
             continue

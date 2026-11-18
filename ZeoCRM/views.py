@@ -13,7 +13,8 @@ log = logging.getLogger(__name__)
 
 @method_decorator(csrf_exempt, name='dispatch')
 class CaptureView(APIView):
-    """POST /zeo-crm/api/capture/<key>/  {name, email, phone, company, message, source, campaign, city}
+    """POST /zeo-crm/api/capture/<key>/  {name, email, phone, company, message, source, campaign, city,
+    industry (pack code), fields: {industry field code: value} or x_<code>: value}  (v1.67.27)
     The key is "Web form key" in CRM setup. Honeypot: a filled `website` field is ignored silently (bots)."""
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -36,7 +37,9 @@ class CaptureView(APIView):
         try:
             out = SALES['lead_capture'](name=name, email=email, phone=phone, company=str(d.get('company') or ''), message=str(d.get('message') or ''),
                                         source=str(d.get('source') or 'WEB'), channel='web', city=str(d.get('city') or ''), campaign=str(d.get('campaign') or ''),
-                                        area=str(d.get('area') or ''), interest=str(d.get('interest') or ''), budget=d.get('budget'), bedrooms=d.get('bedrooms'))
+                                        area=str(d.get('area') or ''), interest=str(d.get('interest') or ''), budget=d.get('budget'), bedrooms=d.get('bedrooms'),
+                                        industry=str(d.get('industry') or ''), fields=d.get('fields') if isinstance(d.get('fields'), dict) else None,   # v1.67.27
+                                        **{k: d.get(k) for k in d.keys() if str(k).startswith('x_')})
         except Exception:
             log.exception('lead capture')
             return Response({'detail': 'Could not save the enquiry.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

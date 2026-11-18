@@ -66,6 +66,8 @@ LETTER_TYPES = [
     ('employment', 'Employment certificate'),
     ('embassy', 'Embassy letter'),
     ('bank_account', 'Bank account opening letter'),
+    ('increment', 'Increment letter'),          # v1.67.26 (item 234) compensation cycle
+    ('general', 'General letter (mail merge)'),  # v1.67.26 (item 234) any text sent to many employees
 ]
 
 
@@ -202,3 +204,15 @@ class GrievanceMessage(models.Model):
 
     class Meta:
         ordering = ['created_at', 'id']
+
+
+class CalendarFeed(models.Model):
+    """v1.67.26 (pending item 1.62.12, item 236) – a private calendar link (iCalendar) per user: Google Calendar, Outlook or the
+    phone subscribe to it and show the user's leave, the team's leave (managers), public holidays and interviews."""
+    user_id = models.IntegerField(unique=True)
+    token = models.CharField(max_length=64, unique=True)
+    team = models.BooleanField("include my team's leave", default=True)
+    holidays = models.BooleanField('include public holidays', default=True)
+    interviews = models.BooleanField('include interviews', default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used = models.DateTimeField(null=True, blank=True)

@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.db import models
 from EmpManagement.models import emp_master
 from datetime import datetime, timedelta
@@ -236,7 +237,7 @@ class DocumentNumbering(models.Model):
                 return num
         except ImportError:
             pass
-        current_date = timezone.now().date()
+        current_date = _zt_today()
         if self.start_date and self.end_date:
             if not (self.start_date <= current_date <= self.end_date):
                 raise ValidationError("Document number cannot be generated outside the valid date range.")
@@ -510,7 +511,7 @@ class AssetRequest(models.Model):
                 AssetAllocation.objects.create(
                     asset=self.requested_asset,
                     employee=self.employee,
-                    assigned_date=timezone.now().date()
+                    assigned_date=_zt_today()
                 )
                 self.requested_asset.status = "assigned"
                 self.requested_asset.save()
@@ -569,7 +570,7 @@ class AssetRequest(models.Model):
                     AssetAllocation.objects.create(
                         asset=self.requested_asset,
                         employee=self.employee,
-                        assigned_date=timezone.now().date()
+                        assigned_date=_zt_today()
                     )
                     self.requested_asset.status = "assigned"
                     self.requested_asset.save()
@@ -794,7 +795,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         # v1.12.0: an auto-approved request now hands the requested asset over, like the other approval paths
         asset = instance.requested_asset
         if asset and asset.status == 'available' and not AssetAllocation.objects.filter(asset=asset, returned_date__isnull=True).exists():
-            AssetAllocation.objects.create(asset=asset, employee=instance.employee, assigned_date=timezone.now().date())
+            AssetAllocation.objects.create(asset=asset, employee=instance.employee, assigned_date=_zt_today())
 
         send_notification_email(
             user=approver,
@@ -944,7 +945,7 @@ class AssetAllocation(models.Model):
         self.return_condition = condition
 
         # Assign the provided returned_date or use the current date
-        self.returned_date = returned_date or timezone.now().date()
+        self.returned_date = returned_date or _zt_today()
         self.save()
 
         # Update the asset status to available

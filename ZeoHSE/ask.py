@@ -65,6 +65,8 @@ def _flat(row):
         if k.endswith('_label'):
             continue
         lab = row.get(k + '_label')
+        if lab in (None, '') and isinstance(v, int) and not isinstance(v, bool) and row.get(k + '_name') not in (None, ''):
+            lab = row.get(k + '_name')   # v1.73.2: a linked record by its name ("Incidents by category" showed the category id 13)
         out[k] = _plain(lab if lab not in (None, '') else v)
     if isinstance(row.get('band'), dict):
         out['residual_band'] = row['band'].get('label')
@@ -397,7 +399,8 @@ def basic(request, question, period):
     parts = [head + f": **{res['rows_matching']}** {'record' if res['rows_matching'] == 1 else 'records'}."]
     if res.get('groups'):
         gk = [k for k in res['groups'][0] if k != 'count'] if res['groups'] else []
-        t = ['| ' + ' | '.join(gk + ['Count']) + ' |', '|' + '---|' * (len(gk) + 1)]
+        nice = [re.sub(r'_(name|label)$', '', k).replace('_', ' ').capitalize() for k in gk]   # v1.73.2: "Category", not "category"
+        t = ['| ' + ' | '.join(nice + ['Count']) + ' |', '|' + '---|' * (len(gk) + 1)]
         t += ['| ' + ' | '.join([str(g.get(k, '')) for k in gk] + [str(g['count'])]) + ' |' for g in res['groups'][:15]]
         parts.append('\n'.join(t))
     elif res['rows']:

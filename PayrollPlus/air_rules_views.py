@@ -9,6 +9,7 @@ GET  api/air-tickets/rules/provision/?as_of=      the air ticket provision repor
 GET  api/air-tickets/rules/travel/?request_id=    the travellers of a ticket request        POST {request_id, travellers: [...]}
 POST api/air-tickets/rules/pay-outside/           {request_id, reference} an approved cash payout paid outside payroll
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import date
 
 from django.apps import apps
@@ -42,6 +43,13 @@ def _pol_json(p):
             'rules': AP.policy_rules(p.pk)}
 
 
+def _expense_categories():
+    try:
+        return [{'id': c.pk, 'name': c.name} for c in M('ExpenseManagement', 'ExpenseCategory').objects.order_by('name')]
+    except LookupError:
+        return []
+
+
 class RulesView(AtBase):
     def get(self, request):
         self.need(POLICY_READ | ALLOC_READ | SETUP)
@@ -56,6 +64,7 @@ class RulesView(AtBase):
         return Response({'settings': AP.settings(), 'defaults': AP.DEFAULTS, 'policy_defaults': AP.POLICY_DEFAULTS,
                          'policies': [_pol_json(p) for p in pols], 'fares': fares, 'overlaps': AP.overlap_list(),
                          'countries': countries, 'policy_countries': sorted(cids - {None}),
+                         'expense_categories': _expense_categories(),   # v1.67.22 (C12)
                          'can_edit': self.can(SETUP), 'can_requests': self.can(REQ_EDIT)})
 
     def put(self, request):
@@ -99,7 +108,7 @@ class FaresView(AtBase):
 def _on(request, field='on'):
     v = request.query_params.get(field)
     try:
-        return date.fromisoformat(v[:10]) if v else timezone.localdate()
+        return date.fromisoformat(v[:10]) if v else _zt_today()
     except ValueError:
         raise S.Refused(tr('Enter a valid date.'), problems={field: tr('Enter a valid date.')})
 
@@ -160,7 +169,7 @@ class TravelView(AtBase):
             return Response({'rows': rows})
         r = _request(self, rid)
         a = r.allocation
-        day = r.departure_date or r.request_date or timezone.localdate()
+        day = r.departure_date or r.request_date or _zt_today()
         cover = AP.value(r.employee, a.policy, day)[2] if a else []   # the travellers the policy covers, each with the fare
         return Response({'request': {'id': r.pk, 'number': r.document_number or f'#{r.pk}', 'employee': emp_name(r.employee), 'status': r.status,
                                      'policy': a.policy.name if a else '', 'partial': bool(a and AP.is_partial(a.policy_id)),
@@ -190,3 +199,54 @@ class PayOutsideView(AtBase):
         except AP.Refused as ex:
             _refused(ex)
         return Response({'status': 'PROCESSED', 'amount': str(AP.q2(amt))})
+
+
+# ------------------------------------------------------------------ v1.67.22 (pending C12)
+class BoughtView(AtBase):
+    """Tickets bought outside payroll: GET the approved ticket requests (and those already recorded); POST {request_id, cost, paid_by,
+    date, reference} records one (agency invoice / company card / expense claim)."""
+    def get(self, request):
+        self.need(REQ_READ | REQ_EDIT)
+        R = M('PayrollManagement', 'AirTicketRequest')
+        rows = []
+        for r in (R.objects.select_related('employee', 'allocation', 'allocation__policy').filter(request_type='TICKET', status__in=('APPROVED', 'PROCESSED'))
+                  .order_by('-pk')[:300]):
+            if self.c.branches is not None and r.employee.emp_branch_id_id not in self.c.branches:
+                continue
+            b = AP.bought(r.pk)
+            rows.append({'id': r.pk, 'number': r.document_number or f'#{r.pk}', 'employee': emp_name(r.employee), 'code': r.employee.emp_code,
+                         'status': r.status, 'policy': r.allocation.policy.name if r.allocation_id and r.allocation.policy_id else '',
+                         'departure': r.departure_date.isoformat() if getattr(r, 'departure_date', None) else None, 'bought': b})
+        cats = []
+        try:
+            cats = [{'id': c.pk, 'name': c.name} for c in M('ExpenseManagement', 'ExpenseCategory').objects.order_by('name')]
+        except LookupError:
+            pass
+        return Response({'rows': rows, 'categories': cats, 'can_requests': self.can(REQ_EDIT)})
+
+    def post(self, request):
+        self.need(REQ_EDIT)
+        r = _request(self, request.data.get('request_id'))
+        try:
+            with transaction.atomic():
+                out = AP.ticket_bought(r, request.data or {}, request.user)
+        except AP.Refused as ex:
+            _refused(ex)
+        return Response(out)
+
+
+class RelationsView(AtBase):
+    """Family relations for the air tickets: GET every family record (?open=1 only the ones not recognised); POST {id, kind}."""
+    def get(self, request):
+        self.need(POLICY_READ | ALLOC_READ | SETUP)
+        ok = None if self.c.branches is None else set(M('EmpManagement', 'emp_master').objects.filter(emp_branch_id__in=self.c.branches).values_list('pk', flat=True))
+        rows = [x for x in AP.relations(request.GET.get('open') in ('1', 'true')) if ok is None or x['employee_id'] in ok]
+        return Response({'rows': rows, 'can_edit': self.can(SETUP)})
+
+    def post(self, request):
+        self.need(SETUP)
+        try:
+            k = AP.set_relation(request.data.get('id'), str(request.data.get('kind') or ''))
+        except AP.Refused as ex:
+            _refused(ex)
+        return Response({'id': request.data.get('id'), 'set': k})

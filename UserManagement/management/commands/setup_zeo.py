@@ -40,6 +40,11 @@ class Command(BaseCommand):
         p.add_argument('--probation-days', type=int, default=180)
         p.add_argument('--uae-leave', action='store_true', help='Load the UAE leave types and Office / Labour policies')
         p.add_argument('--expense-defaults', action='store_true', help='Load UAE expense categories and a default policy')
+        # v1.73.15 demo data: the demo companies next to this one (7 countries, 10 industries – or one industry with --demo-industry)
+        p.add_argument('--demo', choices=['none', 'simple', 'heavy'], default='none',
+                       help='Make demo companies too: simple (1 month) or heavy (6 months). Same as manage.py make_demo_data')
+        p.add_argument('--demo-industry', default='', help='With --demo: one industry only (CON FM PM OG RET HC MFG FIN EDU IT)')
+        p.add_argument('--demo-country', default='AE', help='With --demo-industry: its country (AE SA QA OM BH KW IN)')
         # v1.21.0 apps of the company and its industry type (each app's default industry; Settings → Apps can change both later)
         p.add_argument('--apps', default=None,
                        help='Apps the company uses, comma separated: hrms, payroll, projects, crm, property, maintenance, assets, people, hse (default for a new company: hrms,projects; add payroll for payroll. v1.67.3: HR only when named or needed – payroll and people bring HR; e.g. --apps property makes a company without HR. On a re-run only the apps named are switched on – none is switched off)')
@@ -228,6 +233,13 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS('Business partners linked (masters_link).'))
         except Exception as e:   # noqa: BLE001
             self.stdout.write(self.style.WARNING(f'Business partners not linked ({e}); run: python manage.py masters_link --schema {t.schema_name}'))
+        if o.get('demo') and o['demo'] != 'none':   # v1.73.15 demo data
+            try:
+                from django.core.management import call_command as _call
+                _call('make_demo_data', level=o['demo'], industry=o.get('demo_industry') or '', country=o.get('demo_country') or 'AE',
+                      user=user.username, stdout=self.stdout)
+            except Exception as e:   # noqa: BLE001
+                self.stdout.write(self.style.WARNING(f'Demo data not made ({e}); run: python manage.py make_demo_data --level {o["demo"]}'))
         self.stdout.write(self.style.SUCCESS(
             f'Done. Log in with the e-mail "{user.email}" and choose "{t.name}". Next: Settings → Branch permissions, '
             f'Organisation → Settings, Employees → Setup.'))

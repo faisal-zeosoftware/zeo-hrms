@@ -372,7 +372,19 @@ class CompanyViewSet(viewsets.ModelViewSet):
                 body[e.field] = [e.message]
             return Response(body, status=e.status)
         sync = str(request.data.get('sync') or request.query_params.get('sync') or '').lower() in ('1', 'true', 'yes')
+        # v1.73.15 demo data: "Do you want demo data?" – the demo companies are made in the background next to this one
+        demo_job, demo_err = None, None
+        if str(request.data.get('demo_level') or '').strip().lower() not in ('', 'none', 'no'):
+            from DataTools.demo_views import may_make, start_from
+            if not may_make(request):
+                return Response({'detail': 'Only administrators can make demo data.', 'demo_level': ['Only administrators can make demo data.']}, status=403)
         job, schema = start(dict(serializer.validated_data), keys, user, run_now=sync, copy=plan)
+        if str(request.data.get('demo_level') or '').strip().lower() not in ('', 'none', 'no'):
+            try:
+                from DataTools.demo_views import start_from
+                demo_job, demo_err = start_from(request.data, user)
+            except Exception as e:   # noqa: BLE001 – the company is made anyway; demo data can be made later in Choose a company
+                demo_err = str(e)[:200]
         if sync:
             st = job_status(job) or {}
             if st.get('state') == 'failed':
@@ -380,6 +392,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
             obj = company.objects.filter(pk=st.get('company_id')).first()
             return Response(dict(self.get_serializer(obj).data, job=job, setup=st), status=status.HTTP_201_CREATED)
         return Response({'job': job, 'schema': schema, 'name': serializer.validated_data.get('name'),
+                         'demo_job': demo_job, 'demo_error': demo_err,   # v1.73.15
                          'status_url': f'/users/api/company-jobs/{job}/',
                          'message': 'The company is being created. This takes about 1–3 minutes.'}, status=status.HTTP_202_ACCEPTED)
 
@@ -1059,15 +1072,28 @@ class MyCompaniesView(APIView):
                             'inactive_by': (_h or {}).get('by', ''), 'inactive_at': (_h or {}).get('at', ''),
                             'inactive_db': _st == 'inactive' and not (_lf and _lf.state == 'inactive')})
                 continue
-            apps, neutral, origin = [], False, ''
+            try:   # v1.73.4: still being made in the background – listed with its progress, not opened
+                from .company_jobs import creating as _creating
+                _mk = _creating(c.schema_name)
+            except Exception:
+                _mk = None
+            if _mk:
+                out.append({'id': c.id, 'name': c.name, 'schema_name': c.schema_name, 'country': getattr(c.country, 'country_name', '') or '',
+                            'city': c.city or '', 'industry': labels.get(c.industry_type or '', ''), 'state_label': '', 'logo': '', 'apps': [],
+                            'neutralized': False, 'copy_of': '', 'state': 'creating', 'can_manage': False, 'creating': _mk})
+                continue
+            apps, neutral, origin, demo = [], False, '', None
             try:
                 with schema_context(c.schema_name):
                     from ZeoApps.services import APPS, is_active
                     apps = [a[2] for a in APPS if is_active(a[0])]
                     from ZeoApps.models import CompanyOption   # v1.22.3: test copies
-                    opts = {o.key: o.value or {} for o in CompanyOption.objects.filter(key__in=('neutralized', 'duplicated_from'))}
+                    opts = {o.key: o.value or {} for o in CompanyOption.objects.filter(key__in=('neutralized', 'duplicated_from', 'demo'))}
                     neutral = bool(opts.get('neutralized', {}).get('on'))
                     origin = opts.get('duplicated_from', {}).get('name', '')
+                    if opts.get('demo', {}).get('on'):   # v1.73.15 demo data: level and months of the demo company
+                        dv = opts['demo']
+                        demo = {'level': dv.get('level', ''), 'from': dv.get('from', ''), 'to': dv.get('to', ''), 'made': dv.get('made', '')}
             except Exception:
                 apps = apps or []
             logo = ''
@@ -1079,7 +1105,7 @@ class MyCompaniesView(APIView):
                         'country': getattr(c.country, 'country_name', '') or '', 'city': c.city or '',
                         'industry': labels.get(c.industry_type or '', ''),
                         'state_label': c.country.get_state_label() if c.country_id and hasattr(c.country, 'get_state_label') else '',
-                        'logo': logo, 'apps': apps, 'neutralized': neutral, 'copy_of': origin,
+                        'logo': logo, 'apps': apps, 'neutralized': neutral, 'copy_of': origin, 'demo': demo,   # v1.73.15 demo data
                         'state': 'active', 'can_manage': _mng})   # v1.67.1 (companies)
         res = {'user': {'id': u.pk, 'username': u.username, 'email': u.email, 'name': ' '.join(x for x in [u.first_name, u.last_name] if x) if hasattr(u, 'first_name') else ''},
                'can_create': bool(u.is_superuser), 'companies': out}
@@ -1236,3 +1262,34 @@ def _zeo_code_failed(user):
         fail(user)
     except Exception:
         pass
+
+
+
+class MyTimezoneView(APIView):
+    """v1.73.16 GET/PUT users/api/my-timezone/ – the signed-in user's own time zone ('' = automatic: their branch's, else the
+    company's). The screens' "today" and the server's day for what this user does follow it (zeo/tz.py)."""
+    from rest_framework.permissions import IsAuthenticated as _IA
+    permission_classes = [_IA]
+
+    def _out(self, user):
+        from zeo import tz as ZT
+        d = ZT.explain(user)
+        d['choices'] = [{'value': k, 'label': v} for k, v in ZT.CHOICES]
+        if d['timezone'] and d['timezone'] not in [k for k, _ in ZT.CHOICES]:
+            d['choices'].insert(0, {'value': d['timezone'], 'label': d['timezone']})
+        d['today'] = str(ZT.today())
+        return d
+
+    def get(self, request):
+        return Response(self._out(request.user))
+
+    def put(self, request):
+        from zeo import tz as ZT
+        v = str(request.data.get('timezone') or '').strip()
+        if v and not ZT.valid(v):
+            return Response({'detail': 'Unknown time zone, e.g. Asia/Dubai.', 'problems': {'timezone': 'Unknown time zone.'}}, status=400)
+        type(request.user).objects.filter(pk=request.user.pk).update(timezone=v or None)
+        request.user.timezone = v or None
+        ZT.forget()
+        ZT.activate(ZT.user_zone_name(request.user))
+        return Response(self._out(request.user))

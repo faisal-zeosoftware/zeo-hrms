@@ -4,6 +4,7 @@ Header:  Authorization: Api-Key zeo_<prefix>_<secret>     (or X-API-Key: zeo_…
 The key acts as the user it was made for – that user's rights and branches apply – read only (GET) or read / write.
 Only the hash of the key is stored; the key is shown once when it is made. Optional: allowed IP addresses, expiry date.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import hashlib
 import secrets
 
@@ -49,7 +50,7 @@ class ApiKeyAuthentication(BaseAuthentication):
         k = ApiKey.objects.select_related('user').filter(key_hash=hash_key(raw), active=True).first()
         if k is None:
             raise exceptions.AuthenticationFailed('API key not valid.')
-        if k.expires_at and k.expires_at < timezone.localdate():
+        if k.expires_at and k.expires_at < _zt_today():
             raise exceptions.AuthenticationFailed('API key expired.')
         if k.v1_only and not request.path.startswith('/api/v1/'):   # v1.61.0
             raise exceptions.AuthenticationFailed('This API key is for /api/v1/ only.')

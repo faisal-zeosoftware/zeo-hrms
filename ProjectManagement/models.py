@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
@@ -44,7 +45,7 @@ class Project(models.Model):
     def clean(self):
         if self.end_date and self.end_date < self.start_date:
             raise ValidationError(_("End date must be after start date"))
-        if self.end_date and self.end_date < date.today():
+        if self.end_date and self.end_date < _zt_today():
             self.status = 'expired'
 
     def __str__(self):
@@ -98,7 +99,7 @@ class Task(models.Model):
         if self.end_date and self.project:
             if self.end_date > self.project.end_date or self.end_date < self.project.start_date:
                 raise ValidationError(_("Task end date must be within project dates"))
-        if self.end_date and self.end_date < date.today():
+        if self.end_date and self.end_date < _zt_today():
             self.status = "expired"
 
     def __str__(self):
@@ -124,7 +125,7 @@ class TimeSheet(models.Model):
             raise ValidationError(_("Project is required"))
         if not self.description:
             raise ValidationError(_("Description is required"))
-        if self.date > date.today():
+        if self.date > _zt_today():
             raise ValidationError(_("Cannot select a future date"))
 
         if self.task:

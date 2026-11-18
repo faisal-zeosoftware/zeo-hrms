@@ -1,6 +1,7 @@
 """v1.50.0 – read a receipt photo / PDF on this server (Tesseract OCR, free; nothing is sent outside): total amount, date,
 VAT, the seller's tax number (TRN / VAT no.), currency and merchant. The employee checks the filled fields before saving;
 the expense keeps what the receipt said so the approver sees when the claimed amount differs from the receipt."""
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -77,7 +78,7 @@ def currency(text, default=''):
 
 def receipt_date(text):
     from AISettings.docread import all_dates
-    today = date.today()
+    today = _zt_today()
     ds = [x for x in all_dates(text) if x <= today and (today - x).days < 800]
     if ds:
         return ds[0]

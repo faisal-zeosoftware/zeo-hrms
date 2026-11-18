@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """v1.47.0 – global search, quick create, company wall, My team hub with 1:1 notes, user flags and "What's new".
 
 GET  search/?q=                    employees and records of every active app the user may open
@@ -139,7 +140,7 @@ class OneOnOnesView(Base):
             return bad('Choose the team member.')
         if not N.is_manager_of(request, e):
             return bad('You can plan 1:1s only with the people who report to you.', status.HTTP_403_FORBIDDEN)
-        o = OneOnOne(employee=e, manager=request.user, created_by=request.user, date=timezone.localdate())
+        o = OneOnOne(employee=e, manager=request.user, created_by=request.user, date=_zt_today())
         err = _oo_in(o, request.data, request)
         if err:
             return bad(err)
@@ -220,7 +221,18 @@ class WhatsNewView(Base):
         except Exception:   # noqa: BLE001
             act = None
 
+        # v1.73.1 (ESS test B17) an employee with self-service only saw the release notes of the admin screens and the other apps
+        # (Projects, CRM, HSE …) – he gets the items marked 'ess' only (none: no "What's new" window)
+        try:
+            from AccessControl.access import ctx as _ctx
+            _c = _ctx(request)
+            ess_only = not (_c.admin or _c.backoffice)
+        except Exception:   # noqa: BLE001
+            ess_only = False
+
         def on(it):
+            if ess_only:
+                return len(it) >= 4 and 'ess' in it[3]
             return len(it) < 4 or act is None or bool(set(it[3]) & act)
         rel = [{'version': r['version'], 'date': r['date'], 'title': r['title'],
                 'items': [{'icon': it[0], 'title': it[1], 'text': it[2]} for it in r['items'] if on(it)]} for r in N.RELEASES]

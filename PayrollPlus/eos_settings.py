@@ -28,6 +28,7 @@ them keeps today's figures:
 Saved settlements (submitted or later) never change – lines are stored; a draft takes the settings when it is calculated again (or when HR
 saves an entry, which calculates it again).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import calendar
 import json
 import logging
@@ -549,7 +550,7 @@ def workflow(st, action, user, codes, admin, data):
             jn = _journal_undo(st, user, reverse_posted=False)
             st.submitted_by_id = st.validated_by_id = st.approved_by_id = None
             st.submitted_at = st.validated_at = st.approved_at = None
-            st.notes = (st.notes + '\n' if st.notes else '') + f'{timezone.localdate():%d/%m/%Y} reset to draft by {S.user_name(user.pk)}: {note}'
+            st.notes = (st.notes + '\n' if st.notes else '') + f'{_zt_today():%d/%m/%Y} reset to draft by {S.user_name(user.pk)}: {note}'
             S.log_step(st, 'reset', user, note + (f' – {jn}' if jn else ''))
             st.status = 'draft'
             st.save()
@@ -560,7 +561,7 @@ def workflow(st, action, user, codes, admin, data):
         if not note:
             raise S.Refused(tr('Say why the settlement is cancelled.'), problems={'note': tr('Required.')})
         jn = _journal_undo(st, user, reverse_posted=True)
-        st.notes = (st.notes + '\n' if st.notes else '') + f'{timezone.localdate():%d/%m/%Y} cancelled by {S.user_name(user.pk)}: {note}'
+        st.notes = (st.notes + '\n' if st.notes else '') + f'{_zt_today():%d/%m/%Y} cancelled by {S.user_name(user.pk)}: {note}'
         S.log_step(st, 'cancel', user, note + (f' – {jn}' if jn else ''))
         st.status = 'cancelled'
         st.save()

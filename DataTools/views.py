@@ -174,15 +174,19 @@ def _readable_link(model, s):
         if len(p) >= 3 and re.fullmatch(r'\d{1,2}', p[-1] or '') and _day(p[-2]):
             nth, p = int(p[-1]), p[:-1]
         if key == 'learningmanagement.trainingsession' and len(p) >= 2 and _day(p[-1]):
-            hits = list(model._default_manager.filter(_course_q('course__', ' | '.join(p[:-1])), start_date=_day(p[-1]))
-                        .order_by('pk').values_list('pk', flat=True)[:20])
+            qs = model._default_manager.filter(_course_q('course__', ' | '.join(p[:-1])), start_date=_day(p[-1]))
+            if not nth and qs.count() > 1:   # v1.73.4 a cancelled session (e.g. a duplicate) is not the one meant
+                qs = qs.exclude(status='cancelled')
+            hits = list(qs.order_by('pk').values_list('pk', flat=True)[:20])
             if nth:
                 return hits[nth - 1] if 0 < nth <= len(hits) else None
             return hits[0] if len(hits) == 1 else None
         if key == 'learningmanagement.nomination' and len(p) >= 3 and _day(p[-1]):
             S = model._meta.get_field('session').related_model
-            sess = list(S._default_manager.filter(_course_q('course__', ' | '.join(p[1:-1])), start_date=_day(p[-1]))
-                        .order_by('pk').values_list('pk', flat=True)[:20])
+            sq = S._default_manager.filter(_course_q('course__', ' | '.join(p[1:-1])), start_date=_day(p[-1]))
+            if not nth and sq.count() > 1:   # v1.73.4
+                sq = sq.exclude(status='cancelled')
+            sess = list(sq.order_by('pk').values_list('pk', flat=True)[:20])
             if nth:
                 sess = sess[nth - 1:nth]
             hits = list(model._default_manager.filter(employee__emp_code__iexact=p[0], session_id__in=sess).values_list('pk', flat=True)[:2])
@@ -232,6 +236,8 @@ def _resolve_link(model, raw, branch=None, many_out=None):
                 q |= Q(country_code__iexact=iso)
         except Exception:
             pass
+    if not q:   # v1.73.4 a record without a code or name (e.g. a nomination): an empty filter matched every row
+        return None
     hits = list(model._default_manager.filter(q).values_list('pk', flat=True)[:50])
     if len(hits) == 1:
         return hits[0]
@@ -290,6 +296,8 @@ def _many_hint(model, raw):
         q = Q()
         for k in keys:
             q |= Q(**{f'{k}__iexact': str(raw).strip()})
+        if not q:   # v1.73.4
+            return ''
         rows = list(model._default_manager.filter(q).values_list('pk', *keys[:2])[:8])
         return ' (' + '; '.join(f'id {r[0]}' + ''.join(f', {x}' for x in r[1:] if x not in (None, '')) for r in rows) + ')'
     except Exception:   # noqa: BLE001
@@ -705,9 +713,25 @@ class ImportView(APIView):
         from Chatter.tracking import paused
         _pause = paused()
         _pause.__enter__()
+        # v1.73.4: the rows are saved by calling the screen's own API inside the server, one row after the other. Those calls
+        # counted against the user's 600 requests a minute, so a large file (e.g. 366 employee documents) was refused part-way
+        # with "Request was throttled" – the import request itself is still rate-limited; only its own inner calls are not.
+        from zeo import throttles as _thr
+        _was = _thr.internal()
+        _thr.INTERNAL.on = True
+        # v1.73.4: salary lines – the formula components of each employee are calculated once after the rows (not after every
+        # line), and not at all for the check (rolled back); 939 lines took longer than a request may take
         try:
-            res = self._rows(request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen)
+            from PayrollManagement.signals import dependents_skipped, dependents_deferred
+            _dep = dependents_skipped() if dry else dependents_deferred()
+        except Exception:   # noqa: BLE001
+            import contextlib
+            _dep = contextlib.nullcontext()
+        try:
+            with _dep:
+                res = self._rows(request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen)
         finally:
+            _thr.INTERNAL.on = _was
             _pause.__exit__(None, None, None)
         if not dry:   # v1.52.0 the import is kept (created records → undo) and its column mapping remembered
             try:
@@ -738,7 +762,33 @@ class ImportView(APIView):
             except Exception:   # noqa: BLE001
                 self_links = []
         nat = _natural_fields(model) if (self_links and model is not None) else []
-        for i, row in enumerate(rows, start=1):
+        # v1.73.4: a large file is sent in parts (a request may take at most 300 s – 2,795 documents took longer): the rows of the
+        # earlier parts come with the check (prior_rows, without file contents) so links and duplicates across parts are seen,
+        # and the rows keep their numbers in the file (row_offset)
+        start = 1
+        try:
+            start = 1 + max(0, int((request.data or {}).get('row_offset') or 0))
+        except Exception:   # noqa: BLE001
+            start = 1
+        prior = (request.data or {}).get('prior_rows') if dry else None
+        if isinstance(prior, list) and prior:
+            _has_branch = False
+            try:
+                _has_branch = model is not None and model._meta.get_field('branch').many_to_one
+            except Exception:   # noqa: BLE001
+                _has_branch = False
+            for j, prow in enumerate(prior, start=1):
+                if not isinstance(prow, dict):
+                    continue
+                for k in nat:
+                    if prow.get(k) not in (None, ''):
+                        in_file.add(str(prow[k]).strip().lower())
+                if not _has_branch:
+                    for f in dup_fields:
+                        v = str(prow.get(f, '') or '').strip().lower()
+                        if v and (f, v) not in seen:
+                            seen[(f, v)] = j
+        for i, row in enumerate(rows, start=start):
             ser = _serializer(cls, request)
             base, xvals, ecf = split_extras(row if isinstance(row, dict) else {})
             for k in self_links:
@@ -823,7 +873,7 @@ class ImportView(APIView):
                 results.append({'row': i, 'ok': False, 'errors': _flatten(getattr(rb.resp, 'data', None) or 'Rejected')})
             except Exception as exc:  # keep going with the next row
                 results.append({'row': i, 'ok': False, 'errors': [str(exc)[:200]]})
-        return {'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': results}
+        return {'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': results}   # (per part)
 
 
 class _Rollback(Exception):

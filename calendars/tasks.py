@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from celery import shared_task
 from django_tenants.utils import schema_context 
 from django_tenants.utils import get_tenant_model                                 
@@ -20,7 +21,7 @@ from EmpManagement .utils import send_notification_email,get_employee_context
 @shared_task
 def accrue_leaves():
     tenants = get_all_tenant_schemas()
-    today = timezone.now().date()
+    today = _zt_today()
 
     for tenant_schema_name in tenants:
         try:
@@ -245,7 +246,7 @@ def month_name_to_number(month_name):
 @shared_task
 def reset_leave_balances():
     tenants = get_all_tenant_schemas()
-    today = timezone.now().date()
+    today = _zt_today()
     logger.info(f"Reset leave balances task started on {today}")
 
     for tenant_schema_name in tenants:
@@ -572,7 +573,7 @@ def deduct_expired_carry_forward_leaves():
     from decimal import Decimal
 
     tenants = get_all_tenant_schemas()
-    today = timezone.now().date()
+    today = _zt_today()
     logger.info(f"Reset leave balances task started on {today}")
 
     for tenant_schema_name in tenants:

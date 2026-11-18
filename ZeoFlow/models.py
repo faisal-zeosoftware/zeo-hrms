@@ -233,3 +233,48 @@ class FlowAudit(models.Model):
 
     class Meta:
         ordering = ['-at', '-id']
+
+
+# ====================================================================== v1.67.26 (pending item 1.62.12, item 237) custom modules and Blueprint
+class CustomModule(models.Model):
+    """A register the company designs itself (no programming): its fields, numbering, who may add / see records, and its Blueprint –
+    the states a record goes through and the moves between them (who may make each move, the fields it needs)."""
+    key = models.SlugField(max_length=40, unique=True)
+    name = models.CharField(max_length=80, help_text='One record, e.g. "Vehicle request"')
+    plural = models.CharField(max_length=80, help_text='The list, e.g. "Vehicle requests"')
+    icon = models.CharField(max_length=40, default='widgets')
+    description = models.CharField(max_length=300, blank=True, default='')
+    prefix = models.CharField('number prefix', max_length=10, default='REC')
+    seq = models.PositiveIntegerField(default=0)
+    fields = models.JSONField(default=list, blank=True, help_text='[{key, label, type, options, required, in_list, help}]')
+    who_create = models.CharField(max_length=10, default='all', choices=(('all', 'Every employee'), ('hr', 'HR and administrators'), ('admin', 'Administrators')))
+    who_view = models.CharField(max_length=10, default='own', choices=(('own', 'Their own records (managers: their team\'s)'), ('all', 'Everyone'),
+                                                                     ('hr', 'HR and administrators')))
+    blueprint = models.JSONField(default=dict, blank=True, help_text='{states: [{key, label, color}], start, transitions: [{key, label, from: [..], to, who, require: [..], note}]}')
+    active = models.BooleanField(default=True)
+    created_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.plural
+
+
+class CustomRecord(models.Model):
+    module = models.ForeignKey(CustomModule, on_delete=models.CASCADE, related_name='records')
+    number = models.CharField(max_length=30, db_index=True)
+    data = models.JSONField(default=dict, blank=True)
+    state = models.CharField(max_length=40, blank=True, default='')
+    owner_id = models.IntegerField(null=True, blank=True, db_index=True, help_text='the user who made it')
+    employee_id = models.IntegerField(null=True, blank=True, db_index=True, help_text='the employee of that user')
+    branch_id = models.IntegerField(null=True, blank=True, db_index=True)
+    history = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-id']
+        unique_together = [('module', 'number')]

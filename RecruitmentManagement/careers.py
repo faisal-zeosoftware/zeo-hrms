@@ -3,6 +3,7 @@
 The careers page is public: /careers/<company> in the web app reads /recruitment/api/careers/…?schema=<company>.
 Nothing here needs a login; what a visitor may see is decided by CareersSettings.enabled and JobOpening.on_careers_page.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 import re
 from datetime import timedelta
@@ -86,7 +87,7 @@ def send_mail(to, subject, body):
 
 
 def open_jobs():
-    today = timezone.localdate()
+    today = _zt_today()
     qs = JobOpening.objects.filter(status__in=('published', 'interviewing')).select_related('department', 'designation', 'branch')
     return [j for j in qs.order_by('-published_on', '-created_at') if 'Careers page' in (j.channels or []) and (j.closing_date is None or j.closing_date >= today)]
 
@@ -312,10 +313,10 @@ def apply(data, files, ip=''):
             cand.nationality = Nationality.objects.filter(pk=int(g('nationality'))).first() or cand.nationality
         if consent:
             cand.consent_to_retain = True
-            cand.consent_until = timezone.localdate() + timedelta(days=30 * (s.retention_months or 24))
+            cand.consent_until = _zt_today() + timedelta(days=30 * (s.retention_months or 24))
         if cv is not None:
             if cand.cv and not new:
-                CandidateDocument.objects.create(candidate=cand, name=f'Earlier CV ({timezone.localdate():%d/%m/%Y})', file=cand.cv)
+                CandidateDocument.objects.create(candidate=cand, name=f'Earlier CV ({_zt_today():%d/%m/%Y})', file=cand.cv)
             cand.cv = cv
         cand.save()
         app = None

@@ -1,4 +1,5 @@
 # v1.67.9 (screens) item 19: dates shown dd/mm/yyyy (date-times dd/mm/yyyy HH:MM)
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 """Asset Management release 2 (v1.34.0) rules: work orders, preventive plans, helpdesk SLA and escalation, spare parts stock."""
 import calendar
 import logging
@@ -35,7 +36,7 @@ def money(v):
 
 
 def today():
-    return timezone.localdate()
+    return _zt_today()
 
 
 def add_months(d, n):

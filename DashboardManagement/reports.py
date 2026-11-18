@@ -11,6 +11,7 @@ Every report:
 * shows readable values (Approved, Yes / No …);
 * takes an optional period (reports with dates open on a sensible default: this month or this year).
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import math
 import re
 from collections import defaultdict
@@ -118,22 +119,78 @@ def month_end(d):
 
 
 def basic_by_employee(emp_ids):
-    """Active monthly basic per employee from the salary structure: the component named / coded Basic;
-    only when there is none, the components whose payroll category is Basic."""
-    by_name, by_cat = defaultdict(float), defaultdict(float)
-    qs = M('PayrollManagement', 'EmployeeSalaryStructure').objects.filter(employee_id__in=emp_ids, is_active=True).select_related('component')
-    for r in qs:
-        c = r.component
-        if c.component_type == 'deduction':
+    """Active monthly basic per employee – v1.73.7 the one rule of PayrollManagement/basic.py (the Basic-category lines;
+    an item named / coded Basic only when there is none)."""
+    from PayrollManagement.basic import basic_map
+    return {e: float(v) for e, v in basic_map(emp_ids).items()}
+
+
+COL_MODE_REPORTS = {'payroll-register', 'payroll-department', 'payroll-mom', 'salary'}   # v1.73.7 "Columns by" category / item
+LEAVE_CAT_REPORTS = {'leave', 'leave-approvals', 'leave-balance', 'leave-statement', 'leave-encashment'}   # v1.73.7 a Leave category column
+LEAVE_MERGE = {'leave-balance': ('policy',), 'leave-encashment': ('status', 'run')}   # by category: rows of one employee + category added up
+
+
+def leave_by_category(key, cols, rows, by_cat):
+    """v1.73.7: the Leave category of each row (from its leave type) after the Leave type column; for the balance and encashment
+    reports in category mode the rows of one employee and category become one (numbers added up, the leave types listed)."""
+    try:
+        from LeavePolicy.categories import label
+        from Translations.i18n import current_lang
+        lang = current_lang()
+    except Exception:
+        return cols, rows
+    cat = {}
+    for name, k in M('calendars', 'leave_type').objects.values_list('name', 'leave_category'):
+        cat.setdefault(name, k)
+    labels = {}
+    for r in rows:
+        k = cat.get(str(r.get('type') or ''), '')
+        if k not in labels:
+            labels[k] = label(k, lang) if k else ''
+        r['lcat'] = labels[k]
+    i = next((n for n, c in enumerate(cols) if c[0] == 'type'), len(cols) - 1)
+    cols = list(cols[:i]) + [('lcat', 'Leave category', 'text')] + list(cols[i:])
+    if not (by_cat and key in LEAVE_MERGE):
+        return cols, rows
+    keep = set(LEAVE_MERGE[key])
+    num = [c[0] for c in cols if c[2] == 'number' and c[0] not in ('service_year',)]   # the service year is the same, not added
+    out, idx = [], {}
+    for r in rows:
+        g = (r.get('_emp'), r['lcat']) + tuple(r.get(k) for k in keep)
+        if g not in idx:
+            idx[g] = len(out)
+            out.append(dict(r, _types=[str(r.get('type') or '')]))
             continue
-        if (c.code or '').upper() in ('BAS', 'BASIC') or (c.name or '').strip().lower() in ('basic', 'basic salary'):
-            by_name[r.employee_id] += float(r.amount or 0)
-        elif c.payroll_category == 'basic':
-            by_cat[r.employee_id] += float(r.amount or 0)
-    return {e: by_name.get(e) or by_cat.get(e, 0) for e in emp_ids}
+        m = out[idx[g]]
+        m['_types'].append(str(r.get('type') or ''))
+        for k in num:
+            a, b = m.get(k), r.get(k)
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
+                m[k] = round(a + b, 2)
+            elif b not in ('', None) and a in ('', None):
+                m[k] = b
+        m.pop('_cell', None)
+    for m in out:
+        m['type'] = ', '.join(sorted(set(t for t in m.pop('_types') if t)))
+    return cols, out
 
 
-VARIABLE = ('bonus', 'commission', 'overtime', 'leave_encashment', 'air_ticket', 'gratuity', 'advance_salary')
+def base_by_employee(emp_ids, flag):
+    """v1.73.7: the salary the payroll categories ticked for gratuity / leave_salary / encashment make (default: Basic)"""
+    from PayrollManagement.basic import base_map
+    return {e: float(v) for e, v in base_map(emp_ids, flag).items()}
+
+
+VARIABLE = ('bonus', 'commission', 'overtime', 'leave_encashment', 'air_ticket', 'gratuity', 'advance_salary')   # before 1.73.7; now the ticks
+
+
+def variable_keys():
+    """v1.73.7: the categories paid as variable pay in the WPS file (Payroll categories › "WPS variable pay")"""
+    try:
+        from PayrollExtras.categories import keys_with
+        return keys_with('wps_variable')
+    except Exception:   # noqa: BLE001
+        return set(VARIABLE)
 
 
 class Run:
@@ -143,7 +200,7 @@ class Run:
         from AccessControl.access import ctx
         self.request = request
         self.c = ctx(request)
-        today = date.today()
+        today = _zt_today()
         q = request.query_params
         self.date_from = _date(q.get('from'))
         self.date_to = _date(q.get('to'))
@@ -558,18 +615,18 @@ def r_leave_encashment(run):
 def r_leave_liability(run):
     """Unused annual leave valued on basic (UAE labour law: leave salary on basic) and, for comparison, on gross."""
     emps = list(run.employees)
-    basic = basic_by_employee([e.id for e in emps])
+    basic = base_by_employee([e.id for e in emps], 'leave_salary')   # v1.73.7 the categories ticked for leave salary
     gross = gross_by_employee([e.id for e in emps])
     bal = defaultdict(float)
-    for b in M('calendars', 'emp_leave_balance').objects.filter(employee__in=[e.id for e in emps], leave_type__leave_category='annual').values('employee_id', 'balance'):
+    for b in M('calendars', 'emp_leave_balance').objects.filter(employee__in=[e.id for e in emps], leave_type__leave_category__in=__import__('LeavePolicy.categories', fromlist=['x']).keys_like('annual')).values('employee_id', 'balance'):
         bal[b['employee_id']] += float(b['balance'] or 0)
     # v1.62.4 (item 78): for a past date (month-end provisions, a report to an earlier month end) the balance on that date –
     # today's balance less the ledger movements dated after it, as LeavePolicy.engine.balance_on; before, today's balance
     as_of = getattr(run, 'today', None) or getattr(run, 'date_to', None)   # ?as_of= (provisions: the month end)
-    if as_of and as_of < date.today():
+    if as_of and as_of < _zt_today():
         try:
             from django.db.models import Sum as _Sum
-            ann = list(M('calendars', 'leave_type').objects.filter(leave_category='annual').values_list('id', flat=True))
+            ann = list(M('calendars', 'leave_type').objects.filter(leave_category__in=__import__('LeavePolicy.categories', fromlist=['x']).keys_like('annual')).values_list('id', flat=True))
             for x in M('LeavePolicy', 'LeaveLedger').objects.filter(employee_id__in=[e.id for e in emps], leave_type_id__in=ann, date__gt=as_of) \
                     .values('employee_id').annotate(s=_Sum('days')):
                 bal[x['employee_id']] -= float(x['s'] or 0)
@@ -704,6 +761,7 @@ def r_payroll_register(run):
 
 
 def r_wps(run):
+    _var = variable_keys()   # v1.73.7
     banks = {}
     for b in M('EmpManagement', 'EmployeeBankDetail').objects.filter(run.emp_q(), is_active=True):
         banks[b.employee_id] = b
@@ -713,7 +771,7 @@ def r_wps(run):
         start = pr.attendance_start_date or date(pr.year, pr.month, 1)
         end = pr.attendance_end_date or month_end(date(pr.year, pr.month, 1))
         variable = round(sum(float(c.amount or 0) for c in p.components.all()
-                             if c.component.component_type == 'addition' and c.component.payroll_category in VARIABLE), 2)
+                             if c.component.component_type == 'addition' and c.component.payroll_category in _var), 2)
         variable = min(variable, money(p.net_salary))
         leave_days = max(0, (p.total_working_days or 0) - (p.days_worked or 0))
         rows.append({'record': 'EDR', 'person_id': e.person_id or '', 'routing': (b.route_code if b else '') or '', 'iban': (b.iban_number if b else '') or '',
@@ -728,15 +786,18 @@ def r_salary(run):
     comps = []
     per = defaultdict(dict)
     line = {}
+    from .pay_reports import col_mode, _cat_label
+    by_cat = col_mode(run) == 'category'   # v1.73.7: every Basic item in one Basic column (?cols=item: one column per item)
     for s in M('PayrollManagement', 'EmployeeSalaryStructure').objects.filter(employee__in=run.employees.values('id'), is_active=True).select_related('component'):
-        n = s.component.name
+        n = _cat_label(s.component.payroll_category) if by_cat and s.component.payroll_category else s.component.name
         if s.component.component_type == 'deduction':
             continue
         if n not in comps:
             comps.append(n)
         per[s.employee_id][n] = per[s.employee_id].get(n, 0) + money(s.amount)
         line[(s.employee_id, n)] = s
-    order = sorted(comps, key=lambda n: (n.lower() != 'basic', n))
+    from .pay_reports import _rank
+    order = sorted(comps, key=lambda n: (n.lower() not in ('basic', 'basic salary'), _rank(n), n))
     rows = []
     for e in run.employees:
         r = {**emp_cols(e), 'joined': e.emp_joined_date}
@@ -860,7 +921,7 @@ def r_gratuity(run):
 
 def _r_gratuity(run):
     emps = list(run.employees)
-    basic = basic_by_employee([e.id for e in emps])
+    basic = base_by_employee([e.id for e in emps], 'gratuity')   # v1.73.7 the categories ticked for gratuity
     rows = []
     unpaid = _unpaid_service_days([e.id for e in emps], run.today)
     try:
@@ -898,6 +959,15 @@ def _r_gratuity(run):
         nat = is_uae_national(e)
         days, amount = (0, 0) if nat else gratuity_for(e, yrs, basic.get(e.id, 0), wage.get(e.id))
         _basis = 'UAE national – GPSSA pension' if nat else ('Under 1 year' if yrs < 1 else 'Labour law')
+        try:   # v1.70.0 (items 142 – 148): a branch of another country – that country's gratuity as of the report date
+            from PayrollPlus.country170 import gratuity as _g170
+            _x170 = _g170(e, end, 'termination', unpaid.get(e.id, 0))
+            if _x170 is not None:
+                days, amount = float(_x170['days']), float(_x170['amount'])
+                _basis = _x170['note'] or (f"{_x170['country']} – {_x170['wage_label']}" + (f" (service from {_x170['covered_from']:%d/%m/%Y} in the fund)"
+                                                                                            if _x170['covered_from'] else ''))
+        except ImportError:
+            pass
         try:   # v1.62.11 (item 229): DIFC DEWS branch – only the gratuity for the service before DEWS; ADPF branch national – ADPF pension
             from PayrollPlus import branch_schemes as _bsch
             if nat and _bsch.is_adpf(e):
@@ -1453,7 +1523,8 @@ def _register(run, kind):
         r['total'] = round(total, 2)
         r['gross'] = money(p.gross_salary)
         rows.append(r)
-    order = sorted(comps, key=lambda n: (n.lower() != 'basic', n))
+    from .pay_reports import _rank
+    order = sorted(comps, key=lambda n: (n.lower() not in ('basic', 'basic salary'), _rank(n), n))
     for r in rows:
         for n in order:
             r.setdefault('c_' + n, 0)
@@ -1898,6 +1969,24 @@ class _Reports(dict):
     """v1.53.0: the keys c-<id> are the reports of the report builder of the open company (ZeoInsights.builder.spec)."""
 
     def _custom(self, key):
+        if isinstance(key, str) and key.startswith('crmx-'):   # v1.67.27 CRM industry reports of the open company
+            try:
+                from ZeoCRM.app import INDUSTRY
+                return INDUSTRY['report_spec'](key)
+            except Exception:
+                import logging as _lg
+                _lg.getLogger(__name__).exception('industry report %s', key)
+            return None
+        if isinstance(key, str) and key.startswith('dev-'):   # v1.74.0 ZEO Developer: reports of custom modules
+            try:
+                from django.apps import apps as _apps
+                if _apps.is_installed('ZeoDeveloper'):
+                    from ZeoDeveloper.reports import spec as _dev_spec
+                    return _dev_spec(key)
+            except Exception:
+                import logging as _lg
+                _lg.getLogger(__name__).exception('developer report %s', key)
+            return None
         if isinstance(key, str) and key.startswith('c-'):
             try:
                 from ZeoInsights.builder import spec
@@ -2039,6 +2128,8 @@ def _org_extend(request, key, cols, rows):
 
 
 def _allowed(c, codes):
+    if list(codes or []) == ['*']:   # v1.74.0 ZEO Developer reports check their own "who" when they run
+        return True
     return c.admin or any(code in c.codes for code in codes)
 
 
@@ -2054,12 +2145,28 @@ class ReportListView(APIView):
         out = [{'key': k, 'title': title_of(k, v[0]), 'section': v[1], 'description': v[2], 'period': v[4], 'perms': v[5]}
                for k, v in REPORTS.items() if _allowed(c, v[5]) and k not in hidden]
         out = _lang_list(_country_list(out), request)
+        try:   # v1.67.27 CRM industry reports (Setup › Industry reports)
+            from django.apps import apps as _apps
+            if _apps.is_installed('ZeoCRM'):
+                from ZeoCRM.app import INDUSTRY
+                out += INDUSTRY['report_listing'](request, c)
+        except Exception:
+            import logging as _lg
+            _lg.getLogger(__name__).exception('industry reports list')
         try:   # v1.53.0 the reports of the report builder shared with the user
             from ZeoInsights.builder import listing
             out += listing(request, c)
         except Exception:
             import logging as _lg
             _lg.getLogger(__name__).exception('custom reports list')
+        try:   # v1.74.0 ZEO Developer: the reports of custom modules
+            from django.apps import apps as _apps
+            if _apps.is_installed('ZeoDeveloper'):
+                from ZeoDeveloper.reports import listing as _dev_listing
+                out += _dev_listing(request, c)
+        except Exception:
+            import logging as _lg
+            _lg.getLogger(__name__).exception('developer reports list')
         return Response({'reports': out, 'ui': home_meta()})
 
 
@@ -2143,6 +2250,8 @@ class ReportView(APIView):
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         cols, rows = res[0], res[1]
+        if key in LEAVE_CAT_REPORTS:   # v1.73.7 leave category column; by category: one row per employee and category
+            cols, rows = leave_by_category(key, cols, rows, request.query_params.get('cols') != 'item')
         cols, rows = _org_extend(request, key, cols, rows)
         extra = res[2] if len(res) > 2 and isinstance(res[2], dict) else {}
         skip = set(extra.get('no_totals') or ())
@@ -2166,14 +2275,17 @@ class ReportView(APIView):
                                           'columns': columns, 'rows': rows, 'totals': totals, 'count': len(rows),
                                           'location': run.locations,   # v1.31.1 location level: the locations the report was run for
                                           'notes': [n for n in (extra.get('notes') or []) if n],
-                                          'filters': filters, 'ui': ui}), request))   # v1.16.0 filter row
+                                          'filters': filters, 'ui': ui,
+                                          'col_mode': (('item' if request.query_params.get('cols') == 'item' else 'category')
+                                                       if key in COL_MODE_REPORTS or key in LEAVE_MERGE else None),
+                                          'col_labels': ['Leave category', 'Leave type'] if key in LEAVE_MERGE else ['Payroll category', 'Salary item']}), request))   # v1.16.0 filter row; v1.73.7 columns by category / item
 
 
 AS_OF_REPORTS = ('gratuity',)   # v1.20.2: snapshot reports that can be run as of a date (e.g. the last month end)
 
 
 def run_as_of(request):
-    return (_date(request.query_params.get('as_of')) or date.today()).isoformat()
+    return (_date(request.query_params.get('as_of')) or _zt_today()).isoformat()
 
 
 def _run_report(request, key):
@@ -2241,7 +2353,7 @@ class ReportEmailView(APIView):
                 conn = get_connection()
                 sender = getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'EMAIL_HOST_USER', None)
             msg = EmailMessage(subject=f"{data['title']}{period}", body=body, from_email=sender, to=[to], connection=conn)
-            msg.attach(f"{key}-{date.today().isoformat()}.csv", '﻿' + buf.getvalue(), 'text/csv')
+            msg.attach(f"{key}-{_zt_today().isoformat()}.csv", '﻿' + buf.getvalue(), 'text/csv')
             msg.send()
         except Exception as exc:  # mail server down or not set up
             logging.getLogger(__name__).warning('report e-mail failed: %s', exc)
@@ -2352,6 +2464,10 @@ REPORTS.update(_DX_ATT)
 REPORTS.update(_DX_PAY)
 REPORT_MODELS.update(_DX_ATT_M)
 REPORT_MODELS.update(_DX_PAY_M)
+# v1.73.8 leave by category and month, grants and anniversary credits, unpaid leave by month, Bradford factor
+from .leave_reports import REPORTS as _LV_REP, REPORT_MODELS as _LV_REP_M  # noqa: E402
+REPORTS.update(_LV_REP)
+REPORT_MODELS.update(_LV_REP_M)
 
 
 # v1.17.0 (dash17): approvals queue + documents and visas expiry (HR operations dashboard); the Management dashboard's
@@ -2362,3 +2478,17 @@ _dash17_register(REPORTS, REPORT_MODELS)
 # v1.17.1 (dash171): policy acknowledgements, expense reports / advances, leavers to clear; the approvals queue opens the newer modules' records
 from .dash171 import register as _dash171_register  # noqa: E402
 _dash171_register(REPORTS, REPORT_MODELS)
+
+# v1.67.26 (pending item 1.62.12): Bradford factor
+from .rep_1626 import register as _r1626_register  # noqa: E402
+_r1626_register(REPORTS, REPORT_MODELS)
+
+# v1.67.27 (pending item 1.62.13): social security, loss of pay, data for payroll, liability, journal, holds, DEWS / ADPF, daily leave,
+# expected vs worked hours, office vs remote, helpdesk SLA / trends, nine-box, salary bands, learning progress, training ratings
+from .rep_1627 import register as _r1627_register  # noqa: E402
+_r1627_register(REPORTS, REPORT_MODELS)
+try:   # v1.68.0 UAE payroll extras
+    from PayrollExtras.reports import register as _r168_register
+    _r168_register(REPORTS, REPORT_MODELS)
+except ImportError:
+    pass

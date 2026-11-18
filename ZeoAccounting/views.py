@@ -27,6 +27,7 @@ GET  v1/journals/?status=ready&since=    Authorization: Bearer <token>
 GET  v1/journals/<id>/
 POST v1/journals/<id>/ack/               {external_id, external_ref} – the application posted it: the journal is "posted"
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import secrets as pysecrets
 from datetime import date
 
@@ -102,6 +103,7 @@ class Base(APIView):
 
 def setting_dict(st):
     d = {f: getattr(st, f) for f in SETTING_FIELDS}
+    d['lock_date'] = st.lock_date   # v1.70.5
     d['secrets'] = secure.present(st)
     return d
 
@@ -139,6 +141,15 @@ class SettingsView(Base):
                     if fld.choices and v not in dict(fld.choices):
                         raise S.Refused(f'{fld.verbose_name}: "{v}" is not a choice.')
                 setattr(st, f, v)
+        if 'lock_date' in d:   # v1.70.5: books closed up to (empty = open)
+            v = d['lock_date']
+            if v in (None, ''):
+                st.lock_date = None
+            else:
+                try:
+                    st.lock_date = date.fromisoformat(str(v)[:10])
+                except ValueError:
+                    raise S.Refused('Books closed up to: give a date (yyyy-mm-dd) or leave it empty.')
         for p in ('{account}',):
             for f in ('dept_gl_pattern', 'emp_gl_pattern', 'branch_gl_pattern'):
                 if p not in getattr(st, f):
@@ -170,6 +181,8 @@ class TestView(Base):
             return Response(con.test())
         except ConnectorError as ex:
             return Response({'ok': False, 'detail': str(ex)})
+        except Exception as ex:   # noqa: BLE001 – v1.67.28: a wrong address (not Odoo / Zoho) said in words, not a server error
+            return Response({'ok': False, 'detail': f'No answer from the accounting application at this address ({str(ex)[:200] or ex.__class__.__name__}).'})
 
 
 class OptionsView(Base):
@@ -205,6 +218,11 @@ def account_items():
     items.append({'kind': 'payable', 'key': 'net', 'label': 'Net salaries payable', 'group': 'Payables', 'side': 'credit', 'default_credit': st.payable_account})
     items.append({'kind': 'payable', 'key': 'settlement', 'label': 'Final settlement payable', 'group': 'Payables', 'side': 'credit',
                   'default_credit': st.settlement_payable_account})
+    try:   # v1.67.22 (pending C3): the account each payment method pays salaries from (Payroll run › Payments › Mark paid)
+        from PayrollPlus.pay_journal import account_items as _v16722_pay
+        items += _v16722_pay()
+    except ImportError:
+        pass
     items.append({'kind': 'provision', 'key': 'gratuity', 'label': 'Gratuity (expense / provision)', 'group': 'Provisions', 'side': 'both',
                   'default_debit': st.gratuity_expense_account, 'default_credit': st.gratuity_provision_account})
     items.append({'kind': 'provision', 'key': 'leave', 'label': 'Leave salary (expense / provision)', 'group': 'Provisions', 'side': 'both',
@@ -341,7 +359,9 @@ class PartnersView(Base):
 # ------------------------------------------------------------------ journals
 def batch_row(b):
     return {'id': b.id, 'number': b.number, 'source': b.source, 'source_name': b.get_source_display(), 'source_id': b.source_id, 'label': b.source_label,
-            'date': b.date, 'reference': b.reference, 'status': b.status, 'status_name': b.get_status_display(), 'connector': b.connector,
+            'date': b.date, 'posting_date': b.date, 'document_date': b.document_date or b.date, 'posting_date_set': b.posting_date_set,   # v1.70.5
+            'other_period': bool(b.document_date and (b.document_date.year, b.document_date.month) != (b.date.year, b.date.month)),
+            'reference': b.reference, 'status': b.status, 'status_name': b.get_status_display(), 'connector': b.connector,
             'debit': d2(b.total_debit), 'credit': d2(b.total_credit), 'lines': b.lines_count, 'external_id': b.external_id, 'external_ref': b.external_ref,
             'problems': b.problems, 'last_error': b.last_error, 'attempts': b.attempts, 'posted_at': b.posted_at,
             'reversal_of': b.reversal_of.number if b.reversal_of_id else '', 'rules': {k: v for k, v in (b.rules or {}).items()
@@ -393,10 +413,16 @@ class JournalsView(Base):
             qs = qs.filter(status__in=p['status'].split(','))
         if p.get('source'):
             qs = qs.filter(source=p['source'])
+        fld = 'document_date' if p.get('by') == 'document' else 'date'   # v1.70.5: filter by the document or the posting date
         if p.get('from'):
-            qs = qs.filter(date__gte=p['from'])
+            qs = qs.filter(**{f'{fld}__gte': p['from']})
         if p.get('to'):
-            qs = qs.filter(date__lte=p['to'])
+            qs = qs.filter(**{f'{fld}__lte': p['to']})
+        if p.get('other_period') in ('1', 'true'):   # v1.70.5: posted in another month than the document's
+            from django.db.models import F
+            from django.db.models.functions import ExtractMonth, ExtractYear
+            qs = qs.exclude(document_date__isnull=True).annotate(_dy=ExtractYear('document_date'), _dm=ExtractMonth('document_date'),
+                                                               _py=ExtractYear('date'), _pm=ExtractMonth('date')).exclude(_dy=F('_py'), _dm=F('_pm'))
         counts = {}
         for s in JournalBatch.objects.values_list('status', flat=True):
             counts[s] = counts.get(s, 0) + 1
@@ -490,6 +516,12 @@ class JournalActionView(Base):
             return Response(batch_row(r))
         elif action == 'cancel':
             b = S.cancel(b, request.user)
+        elif action == 'posting_date':   # v1.70.5: change the posting date until the journal is posted
+            try:
+                on = date.fromisoformat(str(request.data.get('date') or '')[:10])
+            except ValueError:
+                raise S.Refused('Give the posting date (yyyy-mm-dd).')
+            b = S.set_posting_date(b, on, request.user)
         elif action == 'exported':
             if b.status not in ('ready', 'failed') and not (b.status == 'draft' and b.source == 'reversal'):
                 raise S.Refused('Only a journal ready to post can be marked as exported.')
@@ -516,10 +548,10 @@ class ExportView(Base):
             raise S.Refused('No journals to export.')
         if request.query_params.get('type') == 'csv':
             resp = HttpResponse(S.export_csv(bs), content_type='text/csv')
-            resp['Content-Disposition'] = f'attachment; filename="zeo-journals-{date.today():%Y%m%d}.csv"'
+            resp['Content-Disposition'] = f'attachment; filename="zeo-journals-{_zt_today():%Y%m%d}.csv"'
         else:
             resp = HttpResponse(S.export_xlsx(bs), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            resp['Content-Disposition'] = f'attachment; filename="zeo-journals-{date.today():%Y%m%d}.xlsx"'
+            resp['Content-Disposition'] = f'attachment; filename="zeo-journals-{_zt_today():%Y%m%d}.xlsx"'
         for b in bs:
             S.logit(b, 'export', True, request.query_params.get('type', 'xlsx'), request.user)
         return resp
@@ -532,7 +564,8 @@ class ClientsView(Base):
     def get(self, request):
         return Response({'clients': [{'id': c.id, 'name': c.name, 'client_id': c.client_id, 'can_ack': c.can_ack, 'is_active': c.is_active,
                                       'last_used': c.last_used} for c in ApiClient.objects.order_by('name')],
-                         'hooks': [{'id': h.id, 'name': h.name, 'url': h.url, 'events': h.events, 'is_active': h.is_active, 'last_status': h.last_status}
+                         'hooks': [{'id': h.id, 'name': h.name, 'url': h.url, 'events': h.events, 'is_active': h.is_active, 'last_status': h.last_status,
+                                    'branches': h.branches or []}
                                    for h in ApiClientHook.objects.order_by('name')], 'schema': connection.schema_name})
 
     def post(self, request):
@@ -563,7 +596,9 @@ class HooksView(Base):
         if not url.startswith('https://') and not url.startswith('http://'):
             raise S.Refused('Give the webhook URL (https://…).')
         ev = [e for e in (d.get('events') or ['journal.ready', 'journal.posted']) if e in ('journal.ready', 'journal.posted', 'journal.exported')]
-        h = ApiClientHook.objects.create(name=(d.get('name') or url)[:100], url=url, events=ev, secret=(d.get('secret') or pysecrets.token_hex(16))[:100])
+        brs = _branch_ids(d.get('branches'))   # v1.67.28: optional – only the journals of these branches
+        h = ApiClientHook.objects.create(name=(d.get('name') or url)[:100], url=url, events=ev, secret=(d.get('secret') or pysecrets.token_hex(16))[:100],
+                                         branches=brs)
         return Response({'id': h.id, 'secret': h.secret}, status=201)
 
 
@@ -630,6 +665,7 @@ class TokenView(APIView):
 
 def public_journal(b, lines=False):
     d = {'id': b.id, 'number': b.number, 'source': b.source, 'source_id': b.source_id, 'description': b.source_label, 'date': b.date.isoformat(),
+         'document_date': (b.document_date or b.date).isoformat(),   # v1.70.5 ('date' is the posting date)
          'reference': b.reference, 'status': b.status, 'currency': S.settings().currency, 'total_debit': d2(b.total_debit),
          'total_credit': d2(b.total_credit), 'reversal_of': b.reversal_of_id, 'external_id': b.external_id, 'external_ref': b.external_ref,
          'posting_rules': {k: v for k, v in (b.rules or {}).items() if k in ('department', 'employee', 'branch', 'dims_on')},
@@ -745,3 +781,100 @@ class PublicAck(PublicBase):
         S.mark_done(b, 'posted', None, request.data.get('external_id', ''), request.data.get('external_ref', ''))
         S.logit(b, 'ack', True, f'{request.user.name}: {request.data.get("external_ref", "")}')
         return Response(public_journal(b))
+
+
+# ------------------------------------------------------------------ v1.67.28 optional by-branch accounting connections
+def _branch_ids(v):
+    want = {int(x) for x in (v or []) if str(x).isdigit()}
+    if not want:
+        return []
+    known = set(apps.get_model('OrganisationManager', 'brnch_mstr').objects.filter(pk__in=want).values_list('pk', flat=True))
+    if want - known:
+        raise S.Refused('Choose branches of this company.')
+    return sorted(known)
+
+
+BC_FIELDS = ('connector', 'active', 'odoo_url', 'odoo_db', 'odoo_login', 'odoo_api', 'odoo_company_id', 'journal_code', 'zoho_api_domain',
+             'zoho_accounts_domain', 'zoho_org_id', 'zoho_client_id')
+
+
+def bc_dict(bc, names):
+    return {'id': bc.pk, 'branch': bc.branch_id, 'branch_name': names.get(bc.branch_id, f'#{bc.branch_id}'),
+            **{f: getattr(bc, f) for f in BC_FIELDS}, 'secrets_set': secure.present(bc), 'last_status': bc.last_status}
+
+
+class BranchConnectionsView(Base):
+    """Accounting › Settings › Branch connections (optional): a branch posts its journals to its own Odoo / Zoho Books.
+    GET the list and the branches; POST {branch, connector, …, odoo_api_key / zoho_client_secret / zoho_refresh_token} adds or changes one."""
+    def need_for(self, request):
+        return MANAGE if request.method == 'POST' else VIEW
+
+    def get(self, request):
+        from .models import BranchConnection
+        names = dict(apps.get_model('OrganisationManager', 'brnch_mstr').objects.values_list('pk', 'branch_name'))
+        return Response({'rows': [bc_dict(b, names) for b in BranchConnection.objects.all()],
+                         'branches': [{'id': k, 'name': v} for k, v in sorted(names.items(), key=lambda kv: kv[1])],
+                         'company_connector': S.settings().connector, **self.rights()})
+
+    def post(self, request):
+        from .models import BranchConnection
+        d = request.data
+        try:
+            bid = int(d.get('branch'))
+        except (TypeError, ValueError):
+            raise S.Refused('Choose the branch.', problems={'branch': 'Required.'})
+        names = dict(apps.get_model('OrganisationManager', 'brnch_mstr').objects.values_list('pk', 'branch_name'))
+        if bid not in names:
+            raise S.Refused('Choose a branch of this company.', problems={'branch': 'Invalid.'})
+        bc = BranchConnection.objects.filter(branch_id=bid).first() or BranchConnection(branch_id=bid)
+        for f in BC_FIELDS:
+            if f not in d:
+                continue
+            fld = BranchConnection._meta.get_field(f)
+            v = d[f]
+            if fld.get_internal_type() == 'IntegerField':
+                v = int(v) if str(v or '').strip().lstrip('-').isdigit() else None
+            elif fld.get_internal_type() == 'BooleanField':
+                v = v in (True, 'true', 1, '1')
+            else:
+                v = (v or '').strip() if isinstance(v, str) or v is None else str(v)
+                if fld.choices and v not in dict(fld.choices):
+                    raise S.Refused(f'{fld.verbose_name}: "{v}" is not a choice.', problems={f: 'Invalid.'})
+            setattr(bc, f, v)
+        for n in ('odoo_api_key', 'zoho_client_secret', 'zoho_refresh_token'):
+            if d.get(n):
+                secure.put(bc, n, str(d[n]).strip())
+                if n == 'zoho_refresh_token':
+                    secure.put(bc, 'zoho_access_token', '')
+            if d.get(f'clear_{n}'):
+                secure.put(bc, n, '')
+        if bc.connector == 'odoo' and not (bc.odoo_url.startswith(('https://', 'http://')) and bc.odoo_db):
+            raise S.Refused('Odoo: give the address (https://…) and the database of this branch.', problems={'odoo_url': 'Required.'})
+        if bc.connector == 'zoho' and not bc.zoho_org_id:
+            raise S.Refused('Zoho Books: give the organisation id of this branch.', problems={'zoho_org_id': 'Required.'})
+        bc.save()
+        S.logit(None, 'settings', True, f'branch connection {names[bid]}: {bc.connector} {"on" if bc.active else "off"}', request.user)
+        return Response(bc_dict(bc, names), status=201)
+
+
+class BranchConnectionView(Base):
+    need = MANAGE
+
+    def post(self, request, pk):
+        """test the branch's connection"""
+        from .models import BranchConnection
+        bc = BranchConnection.objects.filter(pk=pk).first()
+        if bc is None:
+            raise S.Refused('Not found.', status=404)
+        try:
+            out = S.connector(S.BranchSettings(S.settings(), bc)).test()
+        except Exception as ex:   # noqa: BLE001 – any answer that is not the accounting application's is shown, not a server error
+            out = {'ok': False, 'detail': str(ex)[:300] or ex.__class__.__name__}
+        bc.last_status = (('OK ' if out.get('ok') else 'Failed: ') + str(out.get('detail') or ''))[:160]
+        bc.save(update_fields=['last_status'])
+        return Response(out)
+
+    def delete(self, request, pk):
+        from .models import BranchConnection
+        BranchConnection.objects.filter(pk=pk).delete()   # the branch uses the company connection again
+        return Response(status=204)

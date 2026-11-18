@@ -9,3 +9,5 @@ class ChatterConfig(AppConfig):
     def ready(self):
         from .tracking import install
         install()
+        from .chatwebhooks import connect   # v1.67.26 Teams and Slack: company events posted to a channel
+        connect()

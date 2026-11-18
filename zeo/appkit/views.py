@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import packs as P
+from .engine import (DYN, dyn_defs, dyn_map, dyn_meta, dyn_raw, dyn_show)  # noqa: E402  v1.67.27
 from .engine import (REGISTRY, AppError, CompanyMember, In, action_ok, d, detail, field_of, fmeta, guard, jsonable, link_options,
                      need, other_app, ser, save, tables, user_name)
 
@@ -102,11 +103,12 @@ class AppInfoView(Base):
             t = ftype(fld)
             if t == 'bool':
                 v = f.b(n)
-            elif t == 'decimal':
-                v = f.n(n, fld.default)
+            elif t == 'decimal':   # v1.73.19 (item 289) an empty optional number is saved empty – it gave a server error ("NOT_PROVIDED")
+                v = f.n(n, None)
+                v = (None if fld.null else fld.get_default()) if v is None else v
             elif t == 'int':
                 v = f.i(n)
-                v = fld.default if v is None else v
+                v = (None if fld.null else fld.get_default()) if v is None else v
             elif t == 'json':
                 v = f.j(n)
             elif t == 'choice':
@@ -275,6 +277,26 @@ def reg_meta(r, request):
             'print_doc': _print_doc(r, request)}   # v1.67.7 (admin): the Print row action (company design)
 
 
+def reg_meta_dyn(r, request):
+    """v1.67.27: the register's metadata with its dynamic fields (CRM industry fields): on the form (each with its "when" and
+    section), as list columns when marked "show in list", as list filters when marked "filter"."""
+    m = _reg_meta(r, request)
+    for n in (getattr(r, 'choices_fn', None) or {}):   # a pick list worked out per company: no column / filter with one choice, no field without any
+        k = len(next((x.get('choices') or [] for x in m['form'] + m['cols'] + m['filters'] if x['name'] == n), []))
+        m['cols'] = [x for x in m['cols'] if x['name'] != n or k > 1]
+        m['filters'] = [x for x in m['filters'] if x['name'] != n or k > 1]
+        m['form'] = [x for x in m['form'] if x['name'] != n or k > 0]
+    defs = dyn_defs(r, request)
+    if defs:
+        m['form'] = m['form'] + [dyn_meta(x) for x in defs]
+        m['cols'] = m['cols'] + [dyn_meta(x) for x in defs if x.get('list')]
+        m['filters'] = m['filters'] + [dyn_meta(x) for x in defs if x.get('filter') and x.get('type') in ('choice', 'yesno')]
+    return m
+
+
+_reg_meta, reg_meta = reg_meta, reg_meta_dyn
+
+
 def _print_doc(r, request):
     try:
         from PrintTemplates.appdocs import print_doc_for
@@ -304,6 +326,21 @@ def filtered(r, request):
             if isinstance(fld, M.BooleanField):
                 v = v in ('1', 'true', 'yes')
             qs = qs.filter(**{flt: v})
+    if getattr(r, 'dyn', None):   # v1.67.27 dynamic fields as filters (?x_<code>=value)
+        for name, df in dyn_map(r, request).items():
+            v = q.get(name)
+            if v in (None, ''):
+                continue
+            key = f'{r.dyn_store}__{df["code"]}'
+            if df.get('type') == 'yesno':
+                qs = qs.filter(**{key: v in ('1', 'true', 'yes')})
+            elif df.get('type') in ('number', 'money'):
+                try:
+                    qs = qs.filter(**{key: float(v)})
+                except ValueError:
+                    pass
+            else:
+                qs = qs.filter(**{key: v})
     if q.get('parent'):
         fk, _, pid = q['parent'].partition(':')
         if fk in [n.name for n in r.model._meta.fields] and pid.isdigit():
@@ -389,8 +426,17 @@ class RegisterDetailView(Base):
         from django.db.models.deletion import ProtectedError
         try:
             obj.delete()
-        except ProtectedError:
-            raise AppError('This record is in use and cannot be deleted. Switch it off instead.')
+        except ProtectedError as e:
+            # v1.73.1 (1.73 screen rules): the same 409 "in use" answer as the check above – what uses it, and the active flag
+            # so the list offers "Make inactive" (before: a plain 400 "Switch it off instead")
+            from DataTools.usage import used_counts_answer
+            counts = {}
+            for o in list(getattr(e, 'protected_objects', None) or []):
+                k = str(o._meta.verbose_name_plural)
+                counts[k] = counts.get(k, 0) + 1
+            ans = used_counts_answer(str(obj), counts or {str(r.model._meta.verbose_name_plural): 0}, bool(active_field(r.model)))
+            ans.data['active_field'] = active_field(r.model)
+            return ans
         self.app.event(r.kind, pk, f'Deleted by {user_name(request.user)}', request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -532,6 +578,8 @@ class RegisterExportView(Base):
         r = get_reg(self.app, kind, request)
         qs = filtered(r, request)[:20000]
         cols = [fmeta(r, c) for c in tuple(dict.fromkeys(r.cols + getattr(r, 'export_extra', ()))) if not r.link_off(c)]
+        dm = dyn_map(r, request)   # v1.67.27: every dynamic field of the register in the export
+        cols += [dyn_meta(x) for x in dm.values()]
         wb = Workbook()
         ws = wb.active
         ws.title = r.plural[:30]
@@ -541,7 +589,8 @@ class RegisterExportView(Base):
             c.fill = PatternFill('solid', fgColor='334155')
         for x in qs:
             row = ser(r, x, request, [c['name'] for c in cols])
-            ws.append([row.get(c['name'] + '_label', row.get(c['name'])) if not isinstance(row.get(c['name']), list)
+            ws.append([(dyn_show(dm[c['name']], row.get(c['name'])) if c['name'] in dm and dm[c['name']].get('type') in ('yesno', 'date') else
+                        row.get(c['name'] + '_label', row.get(c['name']))) if not isinstance(row.get(c['name']), list)
                        else row.get(c['name'] + '_label', '') for c in cols])
         for i, c in enumerate(cols, 1):
             ws.column_dimensions[ws.cell(1, i).column_letter].width = max(12, min(40, len(c['label']) + 4))
@@ -584,6 +633,9 @@ def form_values(r, obj):
         elif hasattr(v, 'name') and isinstance(fld, M.FileField):
             continue
         out[n] = v
+    if getattr(r, 'dyn', None):   # v1.67.27 the dynamic fields are copied too
+        for k, v in dyn_raw(r, obj).items():
+            out[DYN + k] = v
     return out
 
 
@@ -594,6 +646,8 @@ def copy_values(r, obj):
         if n in d and n != getattr(r, 'child_of', None):
             d.pop(n)
     for n in list(d):
+        if n.startswith(DYN):   # v1.67.27 dynamic field: copied as it is
+            continue
         fld = field_of(r.model, n)
         if n == 'number' and r.number:
             d.pop(n)
@@ -655,7 +709,7 @@ class RegisterBulkView(Base):
                     raise AppError(f'{l} is required.', n)
         elif act == 'set':
             fld_name = str(d.get('field') or '')
-            need(fld_name in r.form, 'Choose a field of the form.')
+            need(fld_name in r.form or fld_name in dyn_map(r, request), 'Choose a field of the form.')   # v1.67.27 dynamic fields too
         elif act != 'delete':
             raise AppError('Unknown action.')
         for i in ids:

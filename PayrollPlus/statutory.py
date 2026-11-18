@@ -18,6 +18,7 @@ Q2 = Decimal('0.01')
 BASE_CATEGORIES = {
     'basic': ('basic',),
     'basic_housing_transport': ('basic', 'hra', 'housing_allowance', 'transport_allowance'),
+    'basic_housing': ('basic', 'hra', 'housing_allowance'),   # v1.70.0: GOSI contribution wage (no transport)
     'basic_da': ('basic', 'other_allowance'),   # dearness allowance is usually kept as "other allowance" named DA
     'gross': None,                               # every addition
 }
@@ -143,6 +144,14 @@ def compute(scheme, employee, rows=None, national=None):
     _bs = _branch_scheme(scheme, employee, rows, nat)   # v1.62.11 (item 229): ADPF instead of GPSSA / DIFC DEWS per branch
     if _bs is not None:
         return _bs
+    try:   # v1.70.0 (items 144 – 146): GOSI on basic + housing and the new-entrant rates, Bahrain SIO end of service, Oman savings
+        from .country170 import statutory_override
+        from .legal import _on as _o170
+        _c170 = statutory_override(scheme, employee, rows, nat, _o170(None))
+        if _c170 is not None:
+            return _c170
+    except ImportError:
+        pass
     if scheme.applies_to == 'nationals' and not nat or scheme.applies_to == 'expats' and nat:
         return Decimal('0'), Decimal('0'), Decimal('0')
     gross = base_amount(rows, 'gross')

@@ -2,6 +2,7 @@
 Leave requests → leave ledger and attendance calendar (pay slabs); payslips → encashments marked as paid (v1.10.0).
 The existing request model keeps moving the balance itself; these handlers add the ledger line and the pay effect.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import logging
 from datetime import date
 
@@ -19,10 +20,30 @@ LR = 'calendars.employee_leave_request'
 def _remember_status(sender, instance, **kwargs):
     old = sender.objects.filter(pk=instance.pk).values('status', 'approved_days', 'applied_days', 'number_of_days', 'start_date').first() if instance.pk else None
     instance._lp_old = old
+    if instance.status == 'approved' and (old or {}).get('status') != 'approved':
+        try:   # v1.73.8 – a type that takes the days over the balance as unpaid (more.exceed = lop)
+            from . import more
+            more.lop_on_approve(instance)
+        except Exception:
+            log.exception('v1.73.8 days over the balance for %s', instance.pk)
+    elif instance.pk and instance.status == 'approved' and (old or {}).get('status') == 'approved' and (old or {}).get('approved_days') == 0 \
+            and instance.approved_days:
+        try:   # v1.73.8 – saved again: calendars sets approved_days = applied days when it is 0; keep 0 (all unpaid)
+            from .more import lop_of
+            if lop_of(instance):
+                instance.approved_days = 0
+        except Exception:
+            pass
 
 
 @receiver(post_save, sender=LR)
 def _on_leave_saved(sender, instance, created, **kwargs):
+    if getattr(instance, '_lop_days', None) is not None and created:
+        try:   # v1.73.8 – a request approved when made: the unpaid days kept once it has an id
+            from django.apps import apps as _apps
+            _apps.get_model('LeavePolicy', 'LeaveRequestInfo').objects.update_or_create(request_id=instance.pk, defaults={'lop_days': instance._lop_days})
+        except Exception:
+            log.exception('v1.73.8 unpaid days of %s', instance.pk)
     old = getattr(instance, '_lp_old', None)
     was = (old or {}).get('status')
     now = instance.status
@@ -37,6 +58,10 @@ def _on_leave_saved(sender, instance, created, **kwargs):
             return
         if now == 'approved' and was != 'approved':
             days = float(instance.approved_days or instance.number_of_days or 0)
+            if instance.approved_days is not None and float(instance.approved_days) == 0:
+                from .more import lop_of
+                if lop_of(instance):
+                    days = 0.0   # v1.73.8 – nothing left in the balance: every day is unpaid
             engine.post(instance.employee_id, instance.leave_type_id, instance.start_date, 'taken', -days, ref=instance,
                         note=f'{instance.document_number} {instance.start_date:%d/%m/%Y}–{instance.end_date:%d/%m/%Y}')
             engine.sync_calendar(instance, approved=True)
@@ -48,8 +73,12 @@ def _on_leave_saved(sender, instance, created, **kwargs):
                 log.exception('leave salary in advance failed for %s', instance.pk)
         elif was == 'approved' and now != 'approved':
             days = float((old or {}).get('approved_days') or (old or {}).get('number_of_days') or 0)
+            if (old or {}).get('approved_days') is not None and float(old['approved_days']) == 0:
+                from .more import lop_of
+                if lop_of(instance):
+                    days = 0.0   # v1.73.8 – nothing was taken from the balance
             _sd = (old or {}).get('start_date') or instance.start_date   # v1.67.19: a future leave is given back on its own date
-            engine.post(instance.employee_id, instance.leave_type_id, max(date.today(), _sd) if _sd else date.today(), 'cancelled', days, ref=instance,
+            engine.post(instance.employee_id, instance.leave_type_id, max(_zt_today(), _sd) if _sd else _zt_today(), 'cancelled', days, ref=instance,
                         note=f'{instance.document_number} cancelled')
             engine.sync_calendar(instance, approved=False)
             engine.resync_year(instance)   # v1.62.2 (item 49): a cancelled request frees its steps for the later days
@@ -120,7 +149,7 @@ def _balance_ledger_guard(sender, instance, created, **kwargs):
             return
         kind = getattr(instance, '_lp_kind', None) or ('opening' if not lines.exists() else 'adjustment')
         note = getattr(instance, '_lp_note', None) or f'Balance changed outside the leave ledger: {old:g} → {new:g}'
-        Ledger.objects.create(employee_id=instance.employee_id, leave_type_id=instance.leave_type_id, date=date.today(), kind=kind,
+        Ledger.objects.create(employee_id=instance.employee_id, leave_type_id=instance.leave_type_id, date=_zt_today(), kind=kind,
                               days=gap, note=note[:255])
     except Exception:          # never block the save of the balance
         log.exception('leave balance ledger guard failed for %s', instance.pk)
@@ -192,7 +221,7 @@ def _v16211_encashment_before(sender, instance, **kwargs):
     try:
         from PayrollPlus import payctl
         br = apps.get_model('EmpManagement', 'emp_master').objects.filter(pk=old['employee_id']).values_list('emp_branch_id', flat=True).first()
-        for d in (old['approved_at'], date.today()):
+        for d in (old['approved_at'], _zt_today()):
             lk = payctl.locked_day(d, br) if d else None
             if lk is not None:
                 raise payctl.PeriodLocked(payctl.lock_text(lk))
@@ -224,9 +253,9 @@ def _v16211_encashment_after(sender, instance, created, **kwargs):
     days, amt = float(instance.encashment_days or 0), float(instance.encashment_amount or 0)
     if old['days_changed']:
         od = float(old['encashment_days'] or 0)
-        engine.post(old['employee_id'], old['leave_type_id'], date.today(), 'encashed', od, ref=instance, user_id=uid, move_balance=True,
+        engine.post(old['employee_id'], old['leave_type_id'], _zt_today(), 'encashed', od, ref=instance, user_id=uid, move_balance=True,
                     note=f'Encashment changed: {od:g} days – AED {float(old["encashment_amount"] or 0):,.2f} reversed')
-        engine.post(instance.employee_id, instance.leave_type_id, date.today(), 'encashed', -days, ref=instance, user_id=uid, move_balance=True,
+        engine.post(instance.employee_id, instance.leave_type_id, _zt_today(), 'encashed', -days, ref=instance, user_id=uid, move_balance=True,
                     note=f'Encashed {days:g} days – AED {amt:,.2f} (changed; paid with the next payroll)')
     else:   # only the amount: the days in the ledger stay, its line shows the new amount
         Ledger = engine._models()[3]

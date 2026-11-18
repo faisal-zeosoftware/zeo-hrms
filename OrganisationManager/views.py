@@ -1,3 +1,4 @@
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from zeo.report_files import report_file, report_rel  # v1.7.0: report files per company and report
 import logging
 logger = logging.getLogger(__name__)   # v1.40.1
@@ -857,6 +858,16 @@ class permissionviewset(viewsets.ModelViewSet):
             resp = Response(self._mine_compact(request))
         else:
             resp = super().list(request, *args, **kwargs)
+        try:   # v1.70.7: the caller's own row first – about 160 screens read "my rights" as the first row, and a company
+            # administrator gets every user's row here (for the rights screens): with another user's row first, the administrator
+            # was shown that user's rights (e.g. Settings › Form designer: "You do not have the right to see this page")
+            data0 = resp.data.get('results') if isinstance(resp.data, dict) else resp.data
+            if request.user.is_authenticated and isinstance(data0, list) and len(data0) > 1:
+                own = [r for r in data0 if str(r.get('profile')) == str(request.user.pk)]
+                if own and data0[0] is not own[0]:
+                    data0[:] = own + [r for r in data0 if str(r.get('profile')) != str(request.user.pk)]
+        except Exception:
+            pass
         try:
             user = request.user
             data = resp.data.get('results') if isinstance(resp.data, dict) else resp.data
@@ -1511,7 +1522,7 @@ class AssetRequestViewSet(viewsets.ModelViewSet):
                     f"No document numbering configuration found for branch {branch_id} and asset request."
                 )
 
-            current_date = timezone.now().date()
+            current_date = _zt_today()
 
             # ✅ Manual document validation
             if document_number:
@@ -1645,7 +1656,7 @@ class AssetNotificationsViewSet(viewsets.ModelViewSet):
         # Normal user → show request notifications assigned directly to them
         qs = AssetNotification.objects.filter(
             Q(recipient_user=user.id, is_deligate=False) |
-            Q(recipient_employee__users=user,is_deligate=False) |
+            Q(recipient_employee__users=user, is_deligate=False) & (Q(recipient_user__isnull=True) | Q(recipient_user=user.id)) |   # v1.73.1 (ESS test B19) not the approver's copy
             Q(deligate_user=user.id,is_deligate=True)
         ).distinct().order_by('-created_at')
 

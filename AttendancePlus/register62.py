@@ -11,6 +11,7 @@ GET  api/late-early/?view=waiting|pending|all&status=   late in / early out requ
 POST api/late-early/<id>/approve|reject/ {note}   the current level (calendars LateinEarlyoutApproval)
 How overtime hours, rates and pay are calculated is not changed here.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 import re
 from datetime import date, timedelta
 from decimal import Decimal
@@ -54,12 +55,12 @@ def _ot_hr(request):
 def _month(g):
     m = g.get('month') or ''
     if not m:   # v1.62.0 people: no month chosen = the last 31 days (a new month starts with an empty list otherwise)
-        return date.today() - timedelta(days=31), date.today()
+        return _zt_today() - timedelta(days=31), _zt_today()
     try:
         y, mo = [int(x) for x in m.split('-')[:2]]
         d0 = date(y, mo, 1)
     except Exception:
-        d0 = date.today().replace(day=1)
+        d0 = _zt_today().replace(day=1)
     d1 = (d0 + timedelta(days=32)).replace(day=1) - timedelta(days=1)
     return d0, d1
 
@@ -180,7 +181,7 @@ class OvertimeView(APIView):
             err['employee'] = [tr('Choose the employee.')]
         try:
             day = date.fromisoformat(str(d.get('date') or '')[:10])
-            if day > timezone.localdate():
+            if day > _zt_today():
                 err['date'] = [tr('Overtime cannot be entered for a future day.')]
         except ValueError:
             day = None
@@ -399,7 +400,7 @@ class LateEarlyView(APIView):
         if not reason:
             err['reason'] = [tr('Say why.')]
         R = M('calendars', 'LateinEarlyoutRequest')
-        if not err and R.objects.filter(employee=e, date=day, request_type=kind).exclude(status='REJECTED').exists():
+        if not err and R.objects.filter(employee=e, date=day, request_type=kind).exclude(status__in=('REJECTED', 'CANCELLED')).exists():   # v1.73.1: a withdrawn one does not count
             err['date'] = [tr('There is already a {0} request for this day.', tr(LE_LABEL[kind]).lower())]
         if err:
             return Response(err, status=400)
@@ -430,7 +431,7 @@ class LateEarlyStatsView(APIView):
 
     def get(self, request):
         rows = late_early_rows(request, {})
-        m0 = date.today().replace(day=1)
+        m0 = _zt_today().replace(day=1)
         return Response({'waiting': sum(1 for r in rows if r['waiting_for_me']), 'pending': sum(1 for r in rows if r['status'] == 'pending'),
                          'late_month': sum(1 for r in rows if r['type'] == 'LATE_IN' and r['date'] and r['date'] >= m0),
                          'early_month': sum(1 for r in rows if r['type'] == 'EARLY_OUT' and r['date'] and r['date'] >= m0)})
@@ -470,7 +471,7 @@ def _override_ranges(request, g):
     if str(g.get('employee') or '').isdigit():
         qs = qs.filter(employee_id=int(g['employee']))
     if g.get('when') == 'current':
-        qs = qs.filter(date__gte=date.today())
+        qs = qs.filter(date__gte=_zt_today())
     out, cur = [], None
     for o in qs:
         sid = o.override_shift_id
@@ -482,7 +483,7 @@ def _override_ranges(request, g):
         cur = {'employee_id': o.employee_id, 'employee_display': _person(o.employee), 'shift_id': sid,
                'shift': o.override_shift.name if sid and o.override_shift else tr('Day off'), 'from': o.date, 'to': o.date, 'days': 1, 'ids': [o.pk]}
         out.append(cur)
-    today = date.today()
+    today = _zt_today()
     for i, r in enumerate(out):
         r['id'] = r['ids'][0]   # the first day's row stands for the range (actions work on the whole range)
         r['period'] = r['from'].strftime('%d/%m/%Y') if r['from'] == r['to'] else f"{r['from'].strftime('%d/%m/%Y')} – {r['to'].strftime('%d/%m/%Y')}"
@@ -543,7 +544,7 @@ class OverridesView(APIView):
             if not (skip and day.weekday() >= 5):
                 ShiftOverride.objects.update_or_create(employee=e, date=day, defaults={'override_shift': sh, 'created_by': request.user})
                 n += 1
-                if day <= date.today():
+                if day <= _zt_today():
                     try:
                         E.recompute_day(e, day)
                     except Exception:
@@ -567,7 +568,7 @@ class OverrideActionView(APIView):
         rows = list(ShiftOverride.objects.filter(pk__in=rng['ids']).select_related('employee'))
         ShiftOverride.objects.filter(pk__in=rng['ids']).delete()
         for o in rows:
-            if o.date <= date.today():
+            if o.date <= _zt_today():
                 try:
                     E.recompute_day(o.employee, o.date)
                 except Exception:

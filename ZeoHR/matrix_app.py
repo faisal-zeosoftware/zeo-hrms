@@ -7,6 +7,7 @@ Rights
   own     the employee sees their own assignments and functional manager; the manager of an assignment sees it;
           a functional manager sees and gives their functional reviews
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from decimal import Decimal
 
 from django.db.models import Q
@@ -49,7 +50,7 @@ def asg_scope(qs, request):
 def asg_defaults(o, request):
     o.created_by = request.user
     if not o.start_date:
-        o.start_date = timezone.localdate()
+        o.start_date = _zt_today()
 
 
 def _pc(v):
@@ -92,7 +93,7 @@ def asg_after(o, request, old):
 
 
 def a_end(o, request, f):
-    end = f.dt('date') or timezone.localdate()
+    end = f.dt('date') or _zt_today()
     if end < o.start_date:
         raise AppError('The end date is before the start date.')
     o.end_date = end

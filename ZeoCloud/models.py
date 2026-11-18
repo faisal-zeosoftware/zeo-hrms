@@ -3,6 +3,7 @@
 Public schema (SHARED_APPS). A company that is not linked to an account (AccountCompany) has no limits: an own
 installation, or a company made before ZEO Cloud, works exactly as before.
 """
+from zeo.tz import today as _zt_today   # v1.73.16 the user's / company's day, not the server's UTC day
 from datetime import timedelta
 
 from django.conf import settings
@@ -156,7 +157,7 @@ class AccessNotice(models.Model):
 
 
 def today():
-    return timezone.localdate()
+    return _zt_today()
 
 
 def plus_days(d, n):

@@ -17,7 +17,8 @@ from django.db.models import Count, Q
 from zeo.appkit.engine import Act, App, AppError, Reg, ctx, d, emp_name, now, today, user_name
 
 from . import catalogue as CAT
-from .models import (AssetHandover, DisciplinaryCase, DocumentRenewal, ExitInterview, HREvent, HRFile, HRSequence, HRSettings, ProService, ROLES)
+from .models import (KBArticle,  # v1.67.26 knowledge base
+                     AssetHandover, DisciplinaryCase, DocumentRenewal, ExitInterview, HREvent, HRFile, HRSequence, HRSettings, ProService, ROLES)
 
 PAGE = '/main-sidebar/zeo-hr/'
 HR_CODES = {'change_emp_master', 'add_emp_master'}
@@ -881,3 +882,45 @@ def h_start_renewal(employee_id, doc_type, number='', expiry=None, user=None):
 
 
 app.hooks.update({'start_renewal': h_start_renewal})
+
+
+
+# ================================================================== v1.67.26 (pending item 1.62.12, item 236) HR knowledge base
+def kb_defaults(o, request):
+    o.created_by = request.user
+
+
+def kb_check(o, request, old):
+    if len((o.body or '').strip()) < 20:
+        raise AppError('Write the answer (at least a sentence).', 'body')
+    if o.review_on and o.review_on < today() and o.status == 'draft':
+        raise AppError('The review date is in the past.', 'review_on')
+
+
+def a_kb_publish(o, request, f):
+    o.status, o.published_at = 'published', now()
+    o.save(update_fields=['status', 'published_at'])
+    app.event('kb', o.pk, 'Published', request.user)
+
+
+def a_kb_archive(o, request, f):
+    o.status = 'archived'
+    o.save(update_fields=['status'])
+    app.event('kb', o.pk, 'Archived', request.user)
+
+
+def kb_extra(o, r):
+    n = o.helpful_yes + o.helpful_no
+    return {'views': o.views, 'helpful': round(100 * o.helpful_yes / n) if n else None, 'votes': n, 'page': '/main-sidebar/self-service/knowledge-base/' + str(o.pk)}
+
+
+app.reg(Reg('kb', KBArticle, 'Article', 'HR knowledge base', 'Helpdesk',
+            cols=('number', 'title', 'category', 'audience', 'language', 'status', 'views', 'updated_at'),
+            form=('title', 'category', 'summary', 'body', 'keywords', 'audience', 'language', 'pinned', 'review_on'),
+            number=('kb', 'KB'), manage=MANAGE, view=VIEW, search=('number', 'title', 'summary', 'keywords', 'body'), filters=('status', 'category', 'audience', 'language'),
+            title='title', subtitle='category', defaults=kb_defaults, check=kb_check, edit_when=lambda o: o.status != 'archived', deletable=True,
+            info=('status', 'views', 'helpful_yes', 'helpful_no', 'published_at'), extra=kb_extra,
+            actions=[Act('publish', 'Publish', a_kb_publish, lambda o, r: o.status in ('draft', 'archived') and hr(r), style='primary'),
+                     Act('archive', 'Archive', a_kb_archive, lambda o, r: o.status == 'published' and hr(r), style='danger')],
+            help='Answers HR writes once – policies, how-tos, forms. Employees search them in Self service › HR knowledge base; '
+                 'the articles that match a new helpdesk question are offered before the question is sent.'))

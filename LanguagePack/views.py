@@ -598,5 +598,5 @@ class ExportView(_Translator):
         buf = io.BytesIO()
         wb.save(buf)
         resp = HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        resp['Content-Disposition'] = f'attachment; filename="zeo-translations-{lang}.xlsx"'
+        resp['Content-Disposition'] = f'attachment; filename="zeo-books-translations-{lang}.xlsx"'
         return resp

@@ -17,6 +17,7 @@ urlpatterns = [
     path('api/imports/<int:pk>/undo/', V.ImportUndoView.as_view()),
     path('api/out-of-office/', V.OutOfOfficeView.as_view()),             # out of office
     path('api/out-of-office/<int:pk>/', V.OutOfOfficeView.as_view()),
+    path('api/company-email/', V.CompanyEmailView.as_view()),             # v1.79.5 e-mails of the company on / off
     path('api/out-of-office/settings/', V.OooSettingsView.as_view()),        # v1.62.11 (item 95)
     path('api/out-of-office/leave-choice/', V.OooLeaveChoiceView.as_view()),
     path('api/out-of-office/handed/', V.OooHandedView.as_view()),

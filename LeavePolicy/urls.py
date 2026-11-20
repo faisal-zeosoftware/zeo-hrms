@@ -21,6 +21,7 @@ urlpatterns = [
     path('api/categories/<int:pk>/', views.LeaveCategoryOneView.as_view()),
     path('api/coverage/', views.CoverageView.as_view()),                      # v1.62.1
     path('api/uae-setup/', views.UAESetupView.as_view()),
+    path('api/country-setup/', views.CountrySetupView.as_view()),   # v1.73.23 item 154
     path('api/accrual/', views.AccrualView.as_view()),
     path('api/year-end/', views.YearEndView.as_view()),
     path('api/ledger/', views.LedgerView.as_view()),

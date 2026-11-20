@@ -382,6 +382,11 @@ reg(Reg('chemicals', Chemical, 'Chemical', 'Chemicals and SDS', 'environment',
                  Act('reject', 'Reject', lambda o, r, f: MD.chem_reject(o, r, f), lambda o, r: o.status == 'review' and A.any_role(r, *HSE), NOTE, 'danger'),
                  Act('archive', 'Archive', lambda o, r, f: MD.chem_archive(o, r, f), lambda o, r: o.status in ('approved', 'rejected') and A.any_role(r, *HSE), NOTE)]))
 
+def _claim_check(o, request):   # v1.73.19 (item 289): a claim about nothing was saved from an empty form
+    if not (o.incident_id or o.claimant_employee_id or (o.claimant_name or '').strip() or o.contractor_id):
+        raise S.HSEError('Say what the claim is about: the incident, or the claimant (employee, name or contractor).', 'incident')
+
+
 # 13 – claims (restricted)
 reg(Reg('claims', Claim, 'Claim', 'Claims', 'actions',
         cols=('number', 'claim_type', 'incident', 'insurer', 'amount_claimed', 'approved_amount', 'paid_amount', 'status', 'next_action_on'),
@@ -390,7 +395,7 @@ reg(Reg('claims', Claim, 'Claim', 'Claims', 'actions',
         number='claim', manage=('claims_officer',), view=('hse_manager',), private=True, search=('number', 'insurer', 'policy_ref', 'claimant_name'),
         filters=('status', 'claim_type'), edit_when=lambda o: o.status not in ('closed',), subtitle='claim_type',
         defaults=lambda o, req: setattr(o, 'created_by', req.user),
-        help='Restricted: claims officer, HSE manager and senior management only.',
+        help='Restricted: claims officer, HSE manager and senior management only.', check=_claim_check,
         extra=lambda o, req: {'outstanding': float(MD.claim_outstanding(o))},
         actions=[Act('submit', 'Submitted to insurer', lambda o, r, f: MD.claim_submit(o, r, f), st('open'), (('submitted_on', 'Date', 'date', False),), 'primary'),
                  Act('decision', 'Record insurer decision', lambda o, r, f: MD.claim_decision(o, r, f), st('submitted', 'assessment', 'disputed'),
@@ -654,6 +659,10 @@ def assign(r, obj, f, request, creating):
             setattr(obj, n, v if v is not None else (fld.default if fld.default is not M.NOT_PROVIDED else None))
         elif t == 'decimal':
             v = f.n(n)
+            if v is not None and v < 0:   # v1.73.19 (item 289): Claims › Amount claimed / liability / deductible -5 were saved
+                from zeo.appkit.engine import _NONNEG, _SIGNED
+                if _NONNEG.search(f'{n} {label_of(fld)}') and not _SIGNED.search(f'{n} {label_of(fld)} {r.kind}'):
+                    raise S.HSEError(f'{label_of(fld)}: enter 0 or more.', n)
             setattr(obj, n, v if v is not None else (fld.default if fld.default is not M.NOT_PROVIDED else None))
         elif t == 'date':
             setattr(obj, n, f.dt(n))

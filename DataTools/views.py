@@ -63,7 +63,7 @@ def _rights_refusal(request, cls, path, schema, data, factory):
         from rest_framework.parsers import JSONParser
         from rest_framework.request import Request
         from AccessControl.access import ZeoAccess
-        raw = factory.post(f'{path}?schema={schema}', data, format='json')
+        raw = _share_ctx(request, factory.post(f'{path}?schema={schema}', data, format='json'))
         raw.tenant = getattr(request, 'tenant', None)
         req = Request(raw, parsers=[JSONParser()])
         req.user = request.user
@@ -676,6 +676,15 @@ class FieldsView(APIView):
 class ImportView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def _background(self, request, endpoint, rows, dry):
+        from . import import_jobs
+        total = int(request.data.get('total') or len(rows))
+        if total > import_jobs.MAX_JOB_ROWS:
+            return Response({'detail': tr('Import up to {0} rows at a time.', f'{import_jobs.MAX_JOB_ROWS:,}')}, status=status.HTTP_400_BAD_REQUEST)
+        extra = {k: request.data.get(k) for k in ('headers', 'mapping', 'file_name', 'label', 'page') if request.data.get(k) not in (None, '')}
+        job = import_jobs.start(request, endpoint, rows, dry, extra, more=bool(request.data.get('more')), total=total)
+        return Response({'job': import_jobs.public(job)}, status=status.HTTP_202_ACCEPTED)
+
     def post(self, request):
         endpoint = request.data.get('endpoint', '')
         rows = request.data.get('rows') or []
@@ -692,15 +701,25 @@ class ImportView(APIView):
             pass
         if not cls:
             from . import api_imports   # v1.67.17 lists of the Projects app: each row through the screen's own create
+            if api_imports.spec(path) and isinstance(rows, list) and rows and request.data.get('background'):   # v1.79.1 the lists of the app-kit apps too
+                return self._background(request, endpoint, rows, dry)
             if api_imports.spec(path) and isinstance(rows, list) and rows and len(rows) <= MAX_ROWS:
-                return Response(api_imports.run(request, path, rows, dry, request.query_params.get('schema', ''), APIRequestFactory()))
+                from zeo import throttles as _thr   # v1.79.1 the inner saves of the rows do not count against the user's requests a minute
+                _was = _thr.internal()
+                _thr.INTERNAL.on = True
+                try:
+                    return Response(api_imports.run(request, path, rows, dry, request.query_params.get('schema', ''), APIRequestFactory()))
+                finally:
+                    _thr.INTERNAL.on = _was
             return Response({'detail': tr('This list cannot be imported.')}, status=status.HTTP_400_BAD_REQUEST)
         if not isinstance(rows, list) or not rows:
             return Response({'detail': tr('The file has no rows.')}, status=status.HTTP_400_BAD_REQUEST)
-        if len(rows) > MAX_ROWS:
-            return Response({'detail': tr('Import up to {0} rows at a time.', MAX_ROWS)}, status=status.HTTP_400_BAD_REQUEST)
         if not _check_access.can_add(request, cls):
             return Response({'detail': tr('You do not have permission to add these records.')}, status=status.HTTP_403_FORBIDDEN)
+        if request.data.get('background'):   # v1.79.1 a large file: one job in the background, the window reads the count
+            return self._background(request, endpoint, rows, dry)
+        if len(rows) > MAX_ROWS:
+            return Response({'detail': tr('Import up to {0} rows at a time.', MAX_ROWS)}, status=status.HTTP_400_BAD_REQUEST)
         schema = request.query_params.get('schema', '')
         factory = APIRequestFactory()
         seen = {}
@@ -728,7 +747,12 @@ class ImportView(APIView):
             import contextlib
             _dep = contextlib.nullcontext()
         try:
-            with _dep:
+            from calendars.utils import type_memo as _type_memo   # v1.79.1 leave type facts once per import, not per employee
+        except Exception:   # noqa: BLE001
+            import contextlib
+            _type_memo = contextlib.nullcontext
+        try:
+            with _dep, _type_memo():
                 res = self._rows(request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen)
         finally:
             _thr.INTERNAL.on = _was
@@ -752,10 +776,22 @@ class ImportView(APIView):
 
     def _rows(self, request, rows, dry, cls, func, path, schema, factory, model, dup_fields, seen):
         results, ok = [], 0
+        from .import_jobs import row_done   # v1.79.1 the count of a background import ("1,240 of 5,000 rows")
+
+        class _Results(list):
+            def append(self, x):
+                super().append(x)
+                row_done(bool(x.get('ok')))
+        results = _Results()
         # v1.67.17: the check of a file whose rows point at earlier rows of the same file (employees and their "reports to"
         # manager, a parent department …) said "not found – add them first" for every such row, though the import (row by
         # row) finds them. In the check, a link to a record an earlier row of the file makes counts as found.
         self_links, in_file = [], set()
+        from .import_jobs import carry as _carry   # v1.79.1 a background job keeps the duplicates / links of the file across its parts
+        _c = _carry()
+        if _c is not None:
+            in_file = _c.setdefault('in_file', set())
+            seen = _c.setdefault('seen', seen)
         if dry and model is not None:
             try:
                 self_links = [f.name for f in model._meta.concrete_fields if f.is_relation and f.related_model is model]
@@ -873,7 +909,64 @@ class ImportView(APIView):
                 results.append({'row': i, 'ok': False, 'errors': _flatten(getattr(rb.resp, 'data', None) or 'Rejected')})
             except Exception as exc:  # keep going with the next row
                 results.append({'row': i, 'ok': False, 'errors': [str(exc)[:200]]})
-        return {'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': results}   # (per part)
+        return {'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': list(results)}   # (per part)
+
+
+class ImportJobView(APIView):
+    """v1.79.1 a background import: GET its count (and with ?results=1 the row results), POST …/stop/ or …/continue/."""
+    permission_classes = [IsAuthenticated]
+
+    def _job(self, request, token):
+        from . import import_jobs
+        job = import_jobs.get(token)
+        if not job:
+            return None, Response({'detail': tr('This import is no longer kept.')}, status=status.HTTP_404_NOT_FOUND)
+        if job.get('user_id') != request.user.pk and not getattr(request.user, 'is_superuser', False):
+            return None, Response({'detail': tr('Not found.')}, status=status.HTTP_404_NOT_FOUND)
+        return job, None
+
+    def get(self, request, token, action=None):
+        from . import import_jobs
+        job, bad = self._job(request, token)
+        if bad:
+            return bad
+        if action == 'file':   # the PDF of a long report, made in the background
+            import os
+            from django.http import FileResponse
+            from DashboardManagement.report_jobs import pdf_path
+            path = job.get('file_path') or pdf_path(job['schema'], token)   # an Excel / CSV export, else the PDF
+            if job.get('status') != 'done' or not os.path.exists(path):
+                return Response({'detail': tr('The file is not ready or no longer kept – make it again.')}, status=status.HTTP_404_NOT_FOUND)
+            ct = {'.pdf': 'application/pdf', '.csv': 'text/csv; charset=utf-8',
+                  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}.get(os.path.splitext(path)[1], 'application/octet-stream')
+            return FileResponse(open(path, 'rb'), as_attachment=request.query_params.get('download') == '1' or not path.endswith('.pdf'),
+                                filename=job.get('file') or os.path.basename(path), content_type=ct)
+        out = import_jobs.public(job)
+        if request.query_params.get('results') and out['status'] in ('done', 'stopped', 'failed', 'stalled'):
+            out['results'] = import_jobs.results(token)
+        return Response(out)
+
+    def post(self, request, token, action):
+        from . import import_jobs
+        job, bad = self._job(request, token)
+        if bad:
+            return bad
+        if action == 'stop':
+            import_jobs.request_stop(token)
+            return Response(import_jobs.public(job))
+        if action == 'rows':   # v1.79.1 the next piece of a large file (sent in pieces); the last one starts the job
+            try:
+                job = import_jobs.add_rows(token, request.data.get('rows') or [], last=bool(request.data.get('last')))
+            except ValueError as e:
+                return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(import_jobs.public(job))
+        if action == 'continue':
+            try:
+                job = import_jobs.resume(token)
+            except ValueError as e:
+                return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(import_jobs.public(job))
+        return Response({'detail': 'Unknown action.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class _Rollback(Exception):
@@ -886,8 +979,25 @@ def _has_files(data):
     return any(isinstance(v, File) for v in data.values())
 
 
+def _share_ctx(request, sub):
+    """v1.79.1: the inner request of a row uses the import's own rights context (user, rights, branches) – it was worked out again
+    for every row (≈0.1 s a row, a third of an employee import)."""
+    if request is None:
+        return sub
+    try:
+        from AccessControl.access import ctx
+        sub._zeo_ctx = ctx(request)
+    except Exception:   # noqa: BLE001
+        pass
+    return sub
+
+
 def _sub_request(factory, path, schema, data, request=None):
     """v1.67.17: rows with an attached file (file columns) go as multipart, the others as JSON as before."""
+    return _share_ctx(request, _sub_request_raw(factory, path, schema, data, request))
+
+
+def _sub_request_raw(factory, path, schema, data, request=None):
     from django.core.files.base import File
     host = {'HTTP_HOST': request.get_host()} if request is not None else {}
     if _has_files(data):

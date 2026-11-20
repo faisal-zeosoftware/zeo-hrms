@@ -118,6 +118,23 @@ def employees():
     return E.objects.filter(Q(is_active=True) | Q(is_active__isnull=True))
 
 
+def feat(key):
+    """v1.75.1 Settings › Features of HRMS: is the feature on (a company made before 1.75.1 has every feature on)"""
+    try:
+        from ZeoApps.hrfeatures import on
+        return on(key)
+    except Exception:   # noqa: BLE001
+        return True
+
+
+STEP_FEATURE = {'shifts': 'shifts'}   # v1.75.1 a step of a feature that is off is not needed (shown as "Not used")
+
+
+def step_needed(key):
+    f = STEP_FEATURE.get(key)
+    return not f or feat(f)
+
+
 def guide():
     return M('ZeoAdmin', 'SetupGuide').get()
 
@@ -193,9 +210,13 @@ def s_start():
             field('currency', 'Currency', (p.get('currency') or {}).get('code') or getattr(c, 'currency', ''), readonly=True),
             field('leave_year', 'Leave year starts', fy or 1, 'select', months),
             field('languages', 'Languages', 'English and Arabic', readonly=True, help='Each user chooses English or Arabic.'),
+            field('hr_features', 'HR features to start with', 'standard', 'select', _feature_presets(),
+                  help='A new company starts with the standard features only – no approval set-up, no shifts, no advanced payroll. '
+                       'Choose a preset to switch on more now, or switch features on one by one later in HR settings › HR features.'),
         ],
+        'features': _feature_rows(),
         'apps': apps_rows,
-        'links': [link('Apps', 'settings/apps'), link('Country settings', 'settings/country-settings')],
+        'links': [link('Apps', 'settings/apps'), link('Country settings', 'settings/country-settings'), link('HR features', 'settings/hr-features')],
         'actions': [{'key': 'country_defaults', 'label': tr('Apply the country defaults'), 'help': tr('Adds missing document types, leave types, statutory schemes and the weekend. Safe to run again.')}],
         'checks': [
             chk('country', p.get('pack') and (p.get('pack') != 'GEN' or getattr(c, 'country', None)), 'Choose the country of the company.', MS + 'settings/country-settings'),
@@ -205,7 +226,30 @@ def s_start():
     }
 
 
+def _feature_presets():
+    try:
+        from ZeoApps.hrfeatures import PRESETS
+        return [('standard', 'Standard features only')] + [(k, v[0]) for k, v in PRESETS.items()]
+    except Exception:   # noqa: BLE001
+        return [('standard', 'Standard features only')]
+
+
+def _feature_rows():
+    try:
+        from ZeoApps.hrfeatures import listing
+        return [{'key': f['key'], 'title': tr(f['label']), 'group': tr(f['group']), 'on': f['on'], 'help': tr(f['help'])} for f in listing()['features']]
+    except Exception:   # noqa: BLE001
+        return []
+
+
 def save_start(v, user):
+    if v.get('hr_features') and v['hr_features'] != 'standard':   # v1.75.1 a preset switches its features on (nothing is switched off)
+        try:
+            from ZeoApps.hrfeatures import PRESETS, save as _fsave
+            if v['hr_features'] in PRESETS:
+                _fsave({k: True for k in PRESETS[v['hr_features']][1]}, user)
+        except Exception:
+            log.exception('setup guide: HR features preset')
     try:
         from ZeoApps import services as S
         code, _ = S.company_industry()
@@ -681,6 +725,10 @@ def act_confirm_eid(v, user):
 
 # ---------------------------------------------------------------------- 7 shifts
 def s_shifts():
+    if not feat('shifts'):   # v1.75.1 the shift planner is off: nothing to set up here
+        return {'fills': ['Shift planner is off – everyone works the hours of step 6', 'Switch it on in HR settings › HR features when you work in shifts'],
+                'not_used': True, 'info': [tr('The shift planner is switched off (HR settings › HR features › Shift planner). Everyone works the default hours set in step 6.')],
+                'links': [link('HR features', 'settings/hr-features')], 'checks': []}
     S = M('calendars', 'Shift')
     rows = [[s.name, f"{s.start_time.strftime('%H:%M') if s.start_time else ''} – {s.end_time.strftime('%H:%M') if s.end_time else ''}",
              str(s.break_duration or '')] for s in S.objects.order_by('name')[:30]]
@@ -937,6 +985,29 @@ def s_approvals():
         no_mgr = _E.objects.filter(is_active=True, emp_reporting_manager__isnull=True).count()
     except Exception:
         no_mgr = 0
+    hier = feat('approvals')
+    if not hier:   # v1.75.1 no approval set-up: requests are approved as they are made
+        return {
+            'fills': ['No approval set-up: requests are approved as they are made', 'Switch on the approval hierarchy when managers should approve',
+                      'Payroll controls below still apply'],
+            'not_used': True,
+            'info': [tr('The approval hierarchy is off (HR settings › HR features). Leave, requests, late in / early out, resignations, loans, advances and air '
+                        'tickets are approved as they are made. Switch it on to have the reporting manager approve, then add levels as needed.')],
+            'approvals': rows,
+            'fields': [
+                field('segregation', 'Payroll: the preparer cannot approve', bool(s.segregation) if s else True, 'check'),
+                field('settlement_due_days', 'Final settlement due (days)', s.settlement_due_days if s else 14, 'number'),
+                field('wps_late_days', 'Salary paid by (day of the next month)', s.wps_late_days if s else 15, 'number'),
+            ],
+            'actions': [{'key': 'standard_chains', 'label': tr('Switch on the approval hierarchy'),
+                         'help': tr('The reporting manager approves every request type from now on; add levels in the approval screens.')}],
+            'links': [link('HR features', 'settings/hr-features'), link('Payroll controls', 'salary-options/payroll-controls')],
+            'checks': [
+                chk('no_chain', not refused, tr('Some request types have no set-up yet: {0} – use the button below or open HR settings › HR features.',
+                                                '; '.join(f'{k} ({", ".join(v)})' for k, v in refused)), None),
+                chk('segregation', not payroll_on() or (s and s.segregation), 'Payroll approver is not the preparer: switch on the control.', MS + 'salary-options/payroll-controls', 'warn'),
+            ],
+        }
     return {
         'fills': ['Suggested chains by company size', 'Delegation while an approver is on leave', 'Escalation days per request'],
         'approvals': rows,
@@ -961,6 +1032,11 @@ def s_approvals():
 
 def act_standard_chains(v, user):
     from .approval_defaults import ensure
+    if not feat('approvals'):   # v1.75.1 the button of a company without approval set-up switches the hierarchy on
+        from ZeoApps.hrfeatures import save as _fsave
+        _fsave({'approvals': True}, user)
+        added = ensure(user=user)
+        return tr('The approval hierarchy is on: the reporting manager approves every request type.') + (' ' + '; '.join(added) if added else '')
     added = ensure(user=user)
     return tr('Standard chains set up: {0}.', '; '.join(added)) if added else tr('Every request type already has a chain.')
 
@@ -1117,6 +1193,14 @@ def save_modules(v, user):
     pol['modules'] = sel
     g.policies = pol
     g.save(update_fields=['policies', 'updated_at'])
+    try:   # v1.75.1 a module switched on here switches its HR feature on (its menus appear)
+        from ZeoApps.hrfeatures import save as _fsave
+        fm = {'air_ticket': 'air_tickets', 'assets': 'hr_assets', 'recruitment': 'recruitment', 'performance': 'performance', 'training': 'learning'}
+        on = {fm[k]: True for k in sel if k in fm}
+        if on:
+            _fsave(on, user)
+    except Exception:
+        log.exception('setup guide: module features')
 
 
 # ---------------------------------------------------------------------- 14 communication
@@ -1160,7 +1244,7 @@ def act_test_mail(v, user):
     from django.core.mail import send_mail
     try:
         from django.conf import settings as dj
-        send_mail(tr('ZEO test e-mail'), tr('The e-mail of ZEO works. You can close this message.'), getattr(dj, 'DEFAULT_FROM_EMAIL', None), [to], fail_silently=False)
+        send_mail(tr('ZEO Books test e-mail'), tr('The e-mail of ZEO works. You can close this message.'), getattr(dj, 'DEFAULT_FROM_EMAIL', None), [to], fail_silently=False)
     except Exception as e:
         raise GuideError(tr('The e-mail could not be sent: {0}', str(e)[:160]))
     g = guide()
@@ -1197,7 +1281,7 @@ def s_golive():
     if getattr(g0, 'gate_on', False):
         from .setup_gate import step_ok
         for key, no, title, stage, can_skip, optional in STEPS:
-            if key != 'golive' and not step_ok(((g0.steps or {}).get(key) or {}).get('status'), can_skip):
+            if key != 'golive' and step_needed(key) and not step_ok(((g0.steps or {}).get(key) or {}).get('status'), can_skip):
                 out.append({'key': 'step_open', 'ok': False, 'level': 'block', 'step': key, 'step_no': no, 'link': None,
                             'text': tr('Not completed yet – open the step and choose Save and continue or Skip for now.') if can_skip
                             else tr('Not completed yet – open the step and choose Save and continue.')})
@@ -1275,7 +1359,9 @@ def overview(full=False):
     rows = []
     for key, no, title, stage, can_skip, optional in STEPS:
         r = {'key': key, 'no': no, 'name': tr(NAMES[key]), 'title': tr(title), 'stage': tr(stage), 'can_skip': can_skip, 'optional': optional,
-             'status': ((g.steps or {}).get(key) or {}).get('status', '')}
+             'status': ((g.steps or {}).get(key) or {}).get('status', ''), 'not_used': not step_needed(key)}
+        if r['not_used'] and not r['status']:   # v1.75.1 the step of a feature that is off counts as done ("Not used")
+            r['status'] = 'skipped'
         if full:
             try:
                 st = STATE[key]()

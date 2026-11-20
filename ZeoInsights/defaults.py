@@ -157,6 +157,21 @@ def ensure(owner):
     done = set(DashboardDefault.objects.values_list('key', flat=True))
     made = []
     for key, name, theme, cards in plan():
+        old = [d for d in CustomDashboard.objects.filter(name=name).order_by('id') if not (d.options or {}).get('default')]
+        if key not in done and old:
+            # v1.73.19 (item 9): the dashboards 1.73.5 made had no record – 1.73.6 made them all a second time ("HR overview" twice); the
+            # existing one is taken as the default instead
+            DashboardDefault.objects.create(key=key, dashboard_id=old[0].pk)
+            CustomDashboard.objects.filter(pk=old[0].pk).update(options={**(old[0].options or {}), 'default': key})
+            done.add(key)
+            continue
+        if key in done and old:
+            # the second copy made by 1.73.6: the old untouched copy (made before it, never edited after) is removed
+            cur = CustomDashboard.objects.filter(pk=DashboardDefault.objects.filter(key=key).values('dashboard_id')[:1]).first()
+            for d in old:
+                if cur is not None and d.pk != cur.pk and d.created_at < cur.created_at and d.updated_at and \
+                        (d.updated_at - d.created_at).total_seconds() < 5:
+                    d.delete()
         if key in done:
             continue
         with transaction.atomic():

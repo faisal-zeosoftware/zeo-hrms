@@ -67,7 +67,7 @@ if not SECRET_KEY:
 DEBUG = env_bool('ZEO_DEBUG', False)
 
 CORS_ALLOW_CREDENTIALS = True
-ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1','169.58.214.5'])
+ALLOWED_HOSTS = env_list('ZEO_ALLOWED_HOSTS', ['localhost', '127.0.0.1'])
 
 SHARED_APPS = [
     'django_tenants',
@@ -129,6 +129,12 @@ TENANT_APPS = [
     'ZeoMasters',        # v1.33.0 shared masters: accounts, products, units, tax codes, price books, payment terms (CRM now; Sales / Inventory later)
     'ZeoCRM',            # v1.21.0 CRM app (ZEO apps add-on 1.18.0): contacts, pipelines, opportunities, viewings, offers, listings
     'ZeoProperty',       # v1.21.0 Property app: buildings, units, owners, leases, sales, billing, cheques, tenant / owner / buyer portals
+    'ZeoInventory',      # v1.75.0 Inventory: warehouses, stock documents, costing, landed cost, stock journals
+    'ZeoLedger',         # v1.76.0 Accounting: the general ledger, invoices and bills, bank, VAT 201, corporate tax
+    'ZeoSales',          # v1.77.0 Sales: quotations, orders, deliveries, invoices, returns, commissions
+    'ZeoPurchase',       # v1.78.0 Purchase: requests, RFQs, orders, receipts, bills (three-way match), returns
+    'DocCapture',        # v1.79.4 Document capture: enquiries, customer POs, supplier quotes, requests → quotes, orders, RFQs, POs
+    'ZeoMfg',            # v1.79.0 Manufacturing: bills of materials, production orders, work centres, planning, costing
     'ZeoMaintenance',    # v1.21.0 Maintenance app: work orders, quotes, preventive plans, inspections
     'ZeoPeople',         # v1.36.0 People: benefits, e-signature, forms, surveys, recognition, chat, 360° reviews, development plans
     'ZeoInsights',       # v1.53.0 report builder and dashboard builder
@@ -171,9 +177,9 @@ SESSION_COOKIE_DOMAIN = '.zeo.com'
 SESSION_COOKIE_SECURE = True
 MEDIA_URL = '/media/'
 ZEO_MEDIA_LOGIN = env('ZEO_MEDIA_LOGIN', 'true').lower() not in ('0', 'false', 'no', 'off')   # v1.56.1: files need a login
-ZEO_MEDIA_ACCEL = env('ZEO_MEDIA_ACCEL', 'true' if DEBUG else 'true').lower() not in ('0', 'false', 'no', 'off')   # nginx sends the file
-MEDIA_ROOT = '/var/www/zeo-media/'
+ZEO_MEDIA_ACCEL = env('ZEO_MEDIA_ACCEL', 'false' if DEBUG else 'true').lower() not in ('0', 'false', 'no', 'off')   # nginx sends the file
 # MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
+MEDIA_ROOT = '/var/www/zeo-media/'
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -198,7 +204,7 @@ LOGGING = {
     },
 }
 
-CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200','http://169.58.214.5:4200'])  # the address(es) the Angular app is opened from
+CORS_ALLOWED_ORIGINS = env_list('ZEO_CORS_ORIGINS', ['http://localhost:4200'])  # the address(es) the Angular app is opened from
 # v1.25.0 the ZEO mobile app (Android: https://localhost, iPhone: capacitor://localhost) – always allowed
 CORS_ALLOWED_ORIGINS = list(CORS_ALLOWED_ORIGINS) + [o for o in ('https://localhost', 'capacitor://localhost', 'http://localhost') if o not in CORS_ALLOWED_ORIGINS]
 
@@ -210,6 +216,7 @@ CORS_ALLOW_HEADERS = [
     'x-zeo-location',    # v1.30.0 location level: the working location
     'x-zeo-locations',   # v1.30.0 location level: the ticked locations
     'x-zeo-app',         # v1.25.0 mobile app version
+    'x-zeo-progress',    # v1.75.1 the token of a payroll calculation's progress
     'x-kiosk-token',     # v1.49.0 the attendance kiosk page when the API is on another host
     'x-kiosk-session',   # v1.51.0 self-service on the kiosk
     'x-zeo-idle',        # v1.62.0 seconds since the person last used the app (idle sign-out)
@@ -522,8 +529,7 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'aparnaudhayan03@gmail.com'
 EMAIL_HOST_PASSWORD = 'ruuh gtwd yzaz yeaw'
-
-DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'webmaster@localhost')
+DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'ZEO Books <notifications@zeosoftware.com>')   # v1.79.5
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
 # v1.22.3: every e-mail goes through the guard – a neutralized company (test copy) sends none
@@ -557,7 +563,9 @@ MIDDLEWARE.insert(MIDDLEWARE.index('django.middleware.security.SecurityMiddlewar
 MIDDLEWARE.insert(MIDDLEWARE.index('ZeoCloud.netguard.IPAllowMiddleware') + 1, 'ZeoCloud.geo.CountryMiddleware')
 MIDDLEWARE.append('zeo.exportguard.ExportGuardMiddleware')
 MIDDLEWARE.append('ZeoCloud.stepup.StepUpMiddleware')
+MIDDLEWARE.append('DataTools.request_jobs.BackgroundUploadMiddleware')   # v1.79.1 large uploads of the screens with their own import: in the background
 MIDDLEWARE.append('ZeoAdmin.setup_gate.SetupGateMiddleware')
+MIDDLEWARE.append('PayrollPlus.run_progress.ProgressMiddleware')   # v1.75.1 payroll calculation progress (X-Zeo-Progress)
 MIDDLEWARE.append('ZeoApps.appsetup.AppSetupGateMiddleware')   # v1.67.6 (setup) item 5 the setup wizard of every app   # v1.62.1 a new company finishes the required setup steps before HR transactions
 # v1.62.0 uploads: a real-type check of every file; ClamAV when installed (ZEO_CLAMAV=auto | off | the clamd socket path)
 ZEO_CLAMAV = env('ZEO_CLAMAV', 'auto')

@@ -66,15 +66,20 @@ def plan_json(p):
 
 # v1.67.3 (apps) HR is an app of its own (free) – a company can be made without it; `needs` = what the app brings with it
 SIGNUP_KEYS = ['hrms'] + APP_KEYS
-APPS_INFO = [
-    ('hrms', 'HR', 'Leave, attendance, documents, letters, self service, expenses and talent (included in every plan)'),
-    ('payroll', 'Payroll', 'Salaries, payslips, WPS, gratuity, loans and final settlement'),
+APPS_INFO = [   # v1.79.5 (ZEO Books): ERP first, then Operations, then HR and payroll
+    ('accounting', 'Accounting', 'General ledger, invoices and bills, receipts and payments, bank, VAT 201, corporate tax'),
+    ('sales', 'Sales', 'Quotations, sales orders, deliveries, invoices, returns and commissions'),
+    ('purchase', 'Purchase', 'Requests, quotations, purchase orders, receipts and supplier bills'),
+    ('inventory', 'Inventory', 'Warehouses, stock documents, costing, landed cost and stock journals'),
+    ('manufacturing', 'Manufacturing', 'Bills of materials, production orders, work centres, costs and planning'),
     ('projects', 'Projects', 'Projects, tasks, timesheets, tickets with SLA, AMC'),
     ('crm', 'CRM', 'Contacts, pipelines, opportunities, activities'),
     ('property', 'Property', 'Buildings, units, leases, billing, cheques'),
     ('maintenance', 'Maintenance', 'Work orders, inspections, preventive plans'),
     ('assets', 'Asset Management', 'Asset register, QR labels, check-out, physical counts, depreciation'),
     ('hse', 'HSE', 'Risk, permits, incidents, inspections, audits'),
+    ('hrms', 'HR', 'Leave, attendance, documents, letters, self service, expenses and talent (included in every plan)'),
+    ('payroll', 'Payroll', 'Salaries, payslips, WPS, gratuity, loans and final settlement'),
 ]
 
 

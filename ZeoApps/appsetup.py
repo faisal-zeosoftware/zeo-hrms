@@ -32,7 +32,7 @@ from django.utils import timezone
 
 from .services import tr_ as tr
 
-APPS_WITH_WIZARD = ('projects', 'crm', 'property', 'maintenance', 'assets', 'people', 'hse')
+APPS_WITH_WIZARD = ('projects', 'crm', 'property', 'maintenance', 'assets', 'people', 'hse', 'inventory', 'accounting', 'sales', 'purchase', 'manufacturing')
 STEPS = [
     # key, title, can skip, auto check
     ('industry', 'Industry and starting data', False),
@@ -52,11 +52,16 @@ MASTERS = {
     'assets': (['ZeoAssets.Category', 'ZeoAssets.Location'], 'asset categories and locations', '/main-sidebar/zeo-assets/r/category'),
     'people': (['ZeoPeople.BenefitPlan'], 'a benefit plan', '/main-sidebar/zeo-people/r/plan'),
     'hse': (['ZeoHSE.Site'], 'a site', '/main-sidebar/zeo-hse/setup'),
+    'inventory': (['ZeoInventory.Warehouse'], 'a warehouse', '/main-sidebar/zeo-inventory/r/warehouse'),   # v1.75.0
+    'accounting': (['ZeoLedger.GLAccount'], 'a chart of accounts', '/main-sidebar/zeo-ledger/r/account'),   # v1.76.0
+    'sales': (['ZeoSales.Team'], 'a sales team', '/main-sidebar/zeo-sales/r/team'),   # v1.77.0
+    'purchase': (['ZeoMasters.Partner'], 'a supplier', '/main-sidebar/zeo-masters/r/partner'),   # v1.78.0
+    'manufacturing': (['ZeoMfg.Bom'], 'a bill of materials', '/main-sidebar/zeo-manufacturing/r/bom'),   # v1.79.0
 }
-POSTS_TO_ACCOUNTS = ('property', 'assets')
+POSTS_TO_ACCOUNTS = ('property', 'assets', 'inventory')
 ROLE_PREFIX = {'projects': ('zp_',), 'crm': ('crm_',), 'property': ('prop_',), 'maintenance': ('mnt_',), 'assets': ('am_', 'asset'),
-               'people': ('ppl_',), 'hse': ('hse_',)}
-SLUG = {'crm': 'zeo-crm', 'property': 'zeo-property', 'maintenance': 'zeo-maintenance', 'assets': 'zeo-assets', 'people': 'zeo-people'}
+               'people': ('ppl_',), 'hse': ('hse_',), 'inventory': ('inv_',), 'accounting': ('gl_',), 'sales': ('sal_',), 'purchase': ('pur_',), 'manufacturing': ('mfg_',)}
+SLUG = {'crm': 'zeo-crm', 'property': 'zeo-property', 'maintenance': 'zeo-maintenance', 'assets': 'zeo-assets', 'people': 'zeo-people', 'inventory': 'zeo-inventory', 'accounting': 'zeo-ledger', 'sales': 'zeo-sales', 'purchase': 'zeo-purchase', 'manufacturing': 'zeo-manufacturing'}
 CACHE = 'zeo:appsetup:{}:{}'
 
 

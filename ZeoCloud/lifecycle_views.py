@@ -112,7 +112,7 @@ class DeletedBackupView(APIView):
                 os.remove(tmp)   # the open file stays readable until the response is sent
             except OSError:
                 pass
-        name = d.get('n') or 'zeo-backup.zip'
+        name = d.get('n') or 'zeo-books-backup.zip'
         return FileResponse(fh, as_attachment=True, filename=name, content_type='application/zip')
 
 

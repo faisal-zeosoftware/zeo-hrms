@@ -34,3 +34,11 @@ def month_end_provisions(schema=None):
 def resume_loans(schema=None):
     from .loans import resume_due
     return _each(resume_due, 'PayrollPlus_loanevent', schema)
+
+
+@shared_task(name='PayrollPlus.tasks.calculate_run_task', acks_late=False)
+def calculate_run_task(schema, run_id, token, who=''):
+    """v1.75.1 a payroll run calculated in the background (PayrollPlus/run_background.py)."""
+    from .run_background import run_job
+    run_job(schema, run_id, token, who)
+    return run_id

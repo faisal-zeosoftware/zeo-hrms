@@ -416,6 +416,11 @@ def is_uae_national(e):
 
 
 def quota(employees=None):
+    """v1.73.23 (item 157): UAE – Emiratis in skilled jobs (MOHRE skill levels); the other packs – the company's own nationals
+    against every active employee (Saudisation, Qatarisation, Omanisation, Bahrainisation, Kuwaitisation). 'skilled' is then the
+    workforce counted (the key is kept for the screens and reports that read it)."""
+    from .nationalisation import programme
+    prog = programme()
     S = M('PayrollExtras', 'EmiratisationSettings').objects.order_by('id').first() or M('PayrollExtras', 'EmiratisationSettings')()
     P = {p.employee_id: p for p in M('PayrollExtras', 'EmiratisationProfile').objects.all()}
     levels = {int(x) for x in str(S.skilled_levels or '').replace(' ', '').split(',') if x.isdigit()}
@@ -433,6 +438,11 @@ def quota(employees=None):
                 nafis.append(e)
             if p and p.salary_support:
                 support.append(e)
+        if prog['basis'] != 'skilled':
+            skilled.append(e)
+            if nat and (p is None or p.counts_for_quota):
+                nat_sk.append(e)
+            continue
         if lvl == 0:
             unset.append(e)
             continue
@@ -442,7 +452,7 @@ def quota(employees=None):
                 nat_sk.append(e)
     target = Decimal(str(S.target_pct or 0))
     need = math.ceil(len(skilled) * target / 100) if target > 0 else 0
-    if 20 <= total < 50 and S.min_nationals:
+    if prog['country'] == 'AE' and 20 <= total < 50 and S.min_nationals:
         need = max(need, int(S.min_nationals))
     gap = max(need - len(nat_sk), 0)
     fine_m = q2(S.fine_per_head_month) * gap
@@ -451,7 +461,7 @@ def quota(employees=None):
             'exposure_month': float(fine_m), 'exposure_year': float(fine_m * 12), 'period_label': S.period_label,
             'deadline': S.deadline.isoformat() if S.deadline else '', 'nafis_registered': len(nafis), 'salary_support': len(support),
             'share_pct': float((Decimal(len(nat_sk)) * 100 / len(skilled)).quantize(Q2)) if skilled else 0.0, 'min_nationals': S.min_nationals,
-            'skilled_levels': S.skilled_levels, 'note': S.note}
+            'skilled_levels': S.skilled_levels, 'note': S.note, 'basis': prog['basis'], 'programme': prog['programme']}
 
 
 # ------------------------------------------------------------------ 37 bulk advance

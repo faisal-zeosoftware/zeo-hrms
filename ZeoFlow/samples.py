@@ -2,6 +2,27 @@
 from . import registry as R
 
 SAMPLES = [
+    # v1.75.0 Inventory: approvals and notifications
+    {'name': 'Large stock adjustment or write-off – tell the inventory manager', 'module': 'inventory', 'model': 'ZeoInventory.stockdoc', 'trigger': 'field_changed',
+     'trigger_config': {'field': 'status'},
+     'conditions': {'op': 'and', 'items': [{'field': 'status', 'operator': 'changed_to', 'value': 'posted'},
+                                           {'field': 'kind', 'operator': 'in', 'value': ['adjustment', 'scrap']},
+                                           {'field': 'total_value', 'operator': 'gt', 'value': 5000}]},
+     'description': 'An adjustment or scrap above 5,000 is posted: the inventory manager is notified (set the approval limit in Inventory › Setup).',
+     'actions': [{'type': 'notify', 'to': [{'type': 'role', 'value': 'Inventory manager'}], 'title': 'Large stock adjustment',
+                  'message': '{{ record.number }} ({{ record.kind }}) posted for {{ record.total_value }} in {{ record.warehouse }}.'}]},
+    {'name': 'Transfer overdue in transit', 'module': 'inventory', 'model': 'ZeoInventory.stockdoc', 'trigger': 'date',
+     'trigger_config': {'date_field': 'expected_date', 'when': 'after', 'offset_days': 1},
+     'conditions': {'op': 'and', 'items': [{'field': 'transit_status', 'operator': 'in', 'value': ['transit', 'partly']}]},
+     'description': 'A two-step transfer not received a day after its expected date: the storekeepers are reminded.',
+     'actions': [{'type': 'notify', 'to': [{'type': 'role', 'value': 'Storekeeper'}], 'title': 'Transfer overdue',
+                  'message': '{{ record.number }} from {{ record.warehouse }} to {{ record.to_warehouse }} was expected on {{ record.expected_date }}.'}]},
+    {'name': 'Lot expires in 30 days', 'module': 'inventory', 'model': 'ZeoInventory.lotrecord', 'trigger': 'date',
+     'trigger_config': {'date_field': 'expiry', 'when': 'before', 'offset_days': 30},
+     'conditions': {'op': 'and', 'items': [{'field': 'status', 'operator': 'eq', 'value': 'available'}]},
+     'description': 'A month before a lot expires: the inventory manager and the storekeepers are told (sell first, move, or return).',
+     'actions': [{'type': 'notify', 'to': [{'type': 'role', 'value': 'Inventory manager'}, {'type': 'role', 'value': 'Storekeeper'}], 'title': 'Lot expiring',
+                  'message': '{{ record.product }} lot {{ record.lot }}{{ record.serial }} expires on {{ record.expiry }}.'}]},
     {'name': 'Welcome a new employee', 'module': 'hrms', 'model': 'EmpManagement.emp_master', 'trigger': 'created',
      'description': 'When an employee is created: welcome e-mail to the employee, onboarding task for HR.',
      'actions': [

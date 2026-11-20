@@ -426,8 +426,17 @@ class PrintView(Base):
                 return bad('Only the people who design the documents can print with another template.', 403)
             t = PrintTemplate.objects.filter(pk=request.query_params['template'], doc_type=doc_type).first()
         lang = request.query_params.get('lang') or None
+        if lang is None and getattr(obj, 'language', None) in ('en', 'ar'):
+            lang = obj.language   # v1.73.19 (item 8): a letter asked for in Arabic printed with the English design (Arabic text, English table)
         if t is None:
-            t = S.default_for(doc_type, C.branch_of(doc_type, obj), lang) or S.default_for(doc_type, C.branch_of(doc_type, obj))
+            t = S.default_for(doc_type, C.branch_of(doc_type, obj), lang)
+        if t is None and lang == 'ar':
+            # v1.73.19 (item 8): "Print in Arabic" printed the English default when no Arabic default was chosen – the Arabic or the
+            # bilingual sample of the document now
+            t = (PrintTemplate.objects.filter(doc_type=doc_type, is_sample=True, sample_key='arabic').first()
+                 or PrintTemplate.objects.filter(doc_type=doc_type, is_sample=True, language__in=('ar', 'bi')).order_by('id').first())
+        if t is None:
+            t = S.default_for(doc_type, C.branch_of(doc_type, obj))
         if t is None:   # no default chosen yet: the Classic sample of the language
             t = PrintTemplate.objects.filter(doc_type=doc_type, is_sample=True, sample_key='arabic' if lang == 'ar' else 'classic').first() \
                 or PrintTemplate.objects.filter(doc_type=doc_type, is_sample=True, sample_key='classic').first()

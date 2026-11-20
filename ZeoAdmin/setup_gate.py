@@ -92,7 +92,11 @@ def _compute():
     if g is None or not g.gate_on or not _hr_on():   # v1.67.3 (apps) a company without HR: no HR setup gate
         return {'enforced': False, 'allow': bool(g and g.gate_allow), 'open': [], 'blocked': False}
     steps = g.steps or {}
-    open_ = [[k, no] for k, no, _n, can_skip in required() if not step_ok((steps.get(k) or {}).get('status'), can_skip)]
+    try:   # v1.75.1 a step of a feature that is off (Shift planner) is not required
+        from .setup_guide import step_needed
+    except Exception:   # noqa: BLE001
+        step_needed = lambda k: True   # noqa: E731
+    open_ = [[k, no] for k, no, _n, can_skip in required() if step_needed(k) and not step_ok((steps.get(k) or {}).get('status'), can_skip)]
     return {'enforced': True, 'allow': bool(g.gate_allow), 'open': open_, 'blocked': bool(open_) and not g.gate_allow}
 
 

@@ -207,6 +207,14 @@ def ceo_summary(request):
         for b_ in apps.get_model('calendars', 'emp_leave_balance').objects.filter(employee_id__in=all_emps, leave_type__leave_category__in=__import__('LeavePolicy.categories', fromlist=['x']).keys_like('annual')).values('employee_id', 'balance'):
             bal[b_['employee_id']] += float(b_['balance'] or 0)
         leave_liab = sum(basic.get(i, 0) * 12 / 365 * bal.get(i, 0) for i in all_emps)
+        try:   # v1.73.19 (item 9): the totals of the reports the tile opens (gratuity base = the categories ticked, unpaid days, nationals,
+            # last working day …) – the tile's own short sum was up to 17 % off the Gratuity report it opens
+            from .overview import Calc as _Calc
+            _cc = _Calc(request)
+            grat_total = round(sum(float(r.get('amount') or 0) for r in _cc.rows('gratuity')), 2)
+            leave_liab = round(sum(float(r.get('liability') or 0) for r in _cc.rows('leave-liability')), 2)
+        except Exception:   # noqa: BLE001
+            logger.exception('liabilities from the reports')
         out['sections']['payroll'] = {'months': [dict(m, month=None) for m in months]}
         out['sections']['labour_cost'] = {'latest': dict(last, month=None) if last else None, 'gratuity_liability': round(grat_total, 2),
                                           'leave_liability': round(leave_liab, 2), 'per_employee': last['per_employee'] if last else 0,

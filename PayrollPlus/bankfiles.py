@@ -321,13 +321,51 @@ def _now(tenant):
     return datetime.datetime.now(tz=tz)
 
 
+def wps_by():
+    """v1.73.24: what makes the WPS establishment of an employee – 'branch' (the working branch, as before) or 'visa' (the visa
+    branch, Employee › Visa location; the working branch when no visa branch is entered). Payroll › Setup › Payroll controls."""
+    try:
+        from ZeoApps.models import CompanyOption
+        o = CompanyOption.objects.filter(key='wps_by').first()
+        return 'visa' if o is not None and (o.value or {}).get('by') == 'visa' else 'branch'
+    except Exception:   # noqa: BLE001
+        return 'branch'
+
+
+def set_wps_by(v):
+    from ZeoApps.models import CompanyOption
+    CompanyOption.objects.update_or_create(key='wps_by', defaults={'value': {'by': 'visa' if v == 'visa' else 'branch'}})
+
+
+def wps_branch_q(ids, prefix='employee__', by=None):
+    """records of employees whose WPS branch is one of ids (by the setting above)"""
+    ids = [int(x) for x in ids or []]
+    if (by or wps_by()) == 'visa':
+        return Q(**{f'{prefix}visa_location__in': ids}) | Q(**{f'{prefix}visa_location__isnull': True, f'{prefix}emp_branch_id__in': ids})
+    return Q(**{f'{prefix}emp_branch_id__in': ids})
+
+
+def visa_branch_q(ids, prefix=''):
+    """v1.73.24 – the visa branch filter of reports and files: the employee's visa branch, or the working branch when none is entered"""
+    ids = [int(x) for x in ids or []]
+    return Q(**{f'{prefix}visa_location__in': ids}) | Q(**{f'{prefix}visa_location__isnull': True, f'{prefix}emp_branch_id__in': ids})
+
+
+def visa_employee_ids(run, visa_ids):
+    """the employees of a run's payslips whose visa branch (else working branch) is one of visa_ids"""
+    return list(run.payslips.filter(visa_branch_q(visa_ids, 'employee__')).values_list('employee_id', flat=True).distinct())
+
+
 def establishment_groups(run, employer, routing):
     """v1.67.19: the WPS establishments of a run – branches grouped by employer ID and routing code (own values per branch in
     Payroll controls, else the company's). Each: {key, employer_id, routing_code, branch_ids, branches}."""
     try:
-        ids = list(run.branch.values_list('pk', flat=True))
-        if not ids:   # a run of every branch: the branches of its employees
-            ids = list(run.payslips.values_list('employee__emp_branch_id', flat=True).distinct())
+        if wps_by() == 'visa':   # v1.73.24: the visa branches of the run's employees (the working branch when none is entered)
+            ids = sorted({v or b for v, b in run.payslips.values_list('employee__visa_location_id', 'employee__emp_branch_id')} - {None})
+        else:
+            ids = list(run.branch.values_list('pk', flat=True))
+            if not ids:   # a run of every branch: the branches of its employees
+                ids = list(run.payslips.values_list('employee__emp_branch_id', flat=True).distinct())
         ids = [i for i in ids if i]
         BWs = {x.branch_id: x for x in M('PayrollPlus', 'BranchWPS').objects.filter(branch_id__in=ids)}
         est = {}

@@ -181,7 +181,7 @@ def tell_employee(emp_id, number, by=None):
                 f'the account ending {last4 or "(none)"}.\n\nIf you did not ask for this change, contact HR at once.')
         to = e.emp_personal_email or e.emp_company_email
         if to:
-            send_mail('ZEO: your bank details were changed', text, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [to], fail_silently=True)
+            send_mail('ZEO Books: your bank details were changed', text, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [to], fail_silently=True)
         if e.users_id:
             from Chatter.models import InboxItem
             InboxItem.objects.create(user_id=e.users_id, kind='message', title='Your bank details were changed',

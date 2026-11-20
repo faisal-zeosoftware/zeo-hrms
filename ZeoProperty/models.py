@@ -1099,3 +1099,6 @@ class PurchaseOrder(models.Model):
 
     class Meta:
         ordering = ['-id']
+
+    def __str__(self):   # v1.73.21 the order number in lists, the inbox and Home (was "PurchaseOrder object (14)")
+        return f"{self.number or 'PO'} – {self.description}"[:120]

@@ -870,6 +870,35 @@ from .models import (
 )
 
 
+# v1.79.1: while a file of employees is imported, the facts of a leave type that do not depend on the employee (the older
+# copy of the same name, its gender, its applicability rows) are looked up once per type, not once per employee and type
+# (22 types × 8 queries for every employee made the import of 1,000 employees take minutes). Only inside type_memo().
+import threading as _threading
+import contextlib as _contextlib
+_TYPE_MEMO = _threading.local()
+
+
+@_contextlib.contextmanager
+def type_memo():
+    outer = getattr(_TYPE_MEMO, 'd', None)
+    if outer is None:
+        _TYPE_MEMO.d = {}
+    try:
+        yield
+    finally:
+        if outer is None:
+            _TYPE_MEMO.d = None
+
+
+def _memo(key, fn):
+    d = getattr(_TYPE_MEMO, 'd', None)
+    if d is None:
+        return fn()
+    if key not in d:
+        d[key] = fn()
+    return d[key]
+
+
 def other_branch_copy(employee, leave_type_instance):
     """v1.67.5 (bugs) L2: True when the leave type belongs to another branch and the employee's own branch has its copy (same
     code or same name) – the employee uses that copy. Every employee got a balance row for every branch's copy, so a company
@@ -934,12 +963,11 @@ def is_leave_type_applicable(employee, leave_type_instance):
     """
     # v1.67.5 (bugs) L2 / L5: another branch's copy of a type the employee's branch has, and a type for the other gender
     # (maternity leave for a man), are not applicable – no balance row is made for them
-    if other_branch_copy(employee, leave_type_instance) or duplicate_of(leave_type_instance) is not None:
+    _lt = leave_type_instance.pk
+    if _memo(('obc', _lt, getattr(employee, 'emp_branch_id_id', None)), lambda: other_branch_copy(employee, leave_type_instance)) \
+            or _memo(('dup', _lt), lambda: duplicate_of(leave_type_instance)) is not None:
         return False
-    if not applicablity_critirea.objects.filter(leave_type=leave_type_instance).exists() and not gender_allows(employee, leave_type_instance):
-        return False
-
-    criteria_list = (
+    criteria_list = _memo(('crit', _lt), lambda: list(
         applicablity_critirea.objects
         .filter(leave_type=leave_type_instance)
         .prefetch_related(
@@ -948,13 +976,17 @@ def is_leave_type_applicable(employee, leave_type_instance):
             'designation',
             'role'
         )
-    )
+    ))
+    if not criteria_list:
+        g = _memo(('gender', _lt), lambda: leave_gender(leave_type_instance))
+        if g is not None and (getattr(employee, 'emp_gender', None) or '').upper()[:1] != g:
+            return False
 
     # ------------------------------------------
     # No criteria = applicable to everyone
     # ------------------------------------------
 
-    if not criteria_list.exists():
+    if not criteria_list:
         return True
 
     # ------------------------------------------

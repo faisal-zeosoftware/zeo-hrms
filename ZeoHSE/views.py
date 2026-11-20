@@ -1685,9 +1685,11 @@ class HandoverView(Base):
         return Response({'on': L.on('handover'), 'results': [L.handover_row(h) for h in qs[:200]]})
 
     @guard
-    def post(self, request, pk):
+    def post(self, request, pk=None):
         A.need(A.is_manager(request) or A.is_admin(request), 'Only the HSE manager handles handovers.')
         from .models import Handover
+        if pk is None:   # v1.73.25 (rights check): POST without a handover gave a server error
+            raise S.HSEError('Choose the handover.', status=404)
         h = get_or_404(Handover, pk)
         f = In(request)
         if f.b('nothing'):

@@ -171,7 +171,7 @@ def post(event, title, text, now=False, branch=None):
 
 def test(branch=None):
     from SelfService.letters import company_name
-    out = post('test', _tr('ZEO HRMS – test message'), _tr('{0}: this channel will get the events ticked in Settings › Integrations › Teams and Slack.', company_name()), now=True,
+    out = post('test', _tr('ZEO Books – test message'), _tr('{0}: this channel will get the events ticked in Settings › Integrations › Teams and Slack.', company_name()), now=True,
                branch=branch)
     if not out:
         raise ValueError(_tr('Save a Slack or Teams address first.'))

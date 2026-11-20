@@ -123,7 +123,7 @@ def emp_row(e):
 class IndexView(V1):
     def get(self, request):
         base = '/api/v1/'
-        return Response({'name': 'ZEO HRMS API', 'version': VERSION, 'key': self.key.name, 'scopes': self.key.scopes or [],
+        return Response({'name': 'ZEO Books API', 'version': VERSION, 'key': self.key.name, 'scopes': self.key.scopes or [],
                          'all_scopes': [{'scope': s, 'meaning': m} for s, m in scopes_on()],
                          'endpoints': [{'path': base + p, 'methods': ms, 'scope': sc} for p, ms, sc in (
                              ('employees/', ['GET'], 'employees:read'), ('employees/<id>/', ['GET'], 'employees:read'),

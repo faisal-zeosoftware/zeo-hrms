@@ -106,14 +106,27 @@ def r_emiratisation(run):
     for e in emps.values():
         p = P.get(e.pk)
         nat = S.is_uae_national(e)
-        rows.append({**R.emp_cols(e), 'national': 'Yes' if nat else 'No', 'skill_level': p.skill_level if p else 0,
+        rows.append({**R.emp_cols(e), '_eid': e.pk, 'national': 'Yes' if nat else 'No', 'skill_level': p.skill_level if p else 0,
                      'nafis': 'Yes' if p and p.nafis_registered else 'No', 'nafis_no': p.nafis_no if p else '', 'support': 'Yes' if p and p.salary_support else 'No',
                      'support_until': p.support_until.isoformat() if p and p.support_until else '', **R.src(p or e)})
     q = S.quota(list(emps.values()))
-    cols = R.EMP_COLS + [('national', 'UAE national', 'text'), ('skill_level', 'Skill level', 'number'), ('nafis', 'Nafis registered', 'text'),
-                         ('nafis_no', 'Nafis no.', 'text'), ('support', 'Salary support', 'text'), ('support_until', 'Support until', 'date')]
-    return cols, rows, {'notes': [f"Skilled workforce {q['skilled']}, Emiratis in skilled jobs {q['nationals_skilled']} ({q['share_pct']} %), target "
-                                  f"{q['target_pct']} % = {q['required']}, still to hire {q['gap']}; contribution AED {q['exposure_month']:,.2f} a month."]}
+    from .nationalisation import programme
+    from Translations.i18n import tr
+    prog = programme()
+    if prog['country'] == 'AE':
+        cols = R.EMP_COLS + [('national', 'UAE national', 'text'), ('skill_level', 'Skill level', 'number'), ('nafis', 'Nafis registered', 'text'),
+                             ('nafis_no', 'Nafis no.', 'text'), ('support', 'Salary support', 'text'), ('support_until', 'Support until', 'date')]
+        notes = [f"Skilled workforce {q['skilled']}, Emiratis in skilled jobs {q['nationals_skilled']} ({q['share_pct']} %), target "
+                 f"{q['target_pct']} % = {q['required']}, still to hire {q['gap']}; contribution AED {q['exposure_month']:,.2f} a month."]
+    else:   # v1.73.23 (item 157): the country's own programme, nationals against the whole workforce
+        for r in rows:
+            r['counts'] = 'Yes' if (P.get(r.get('_eid')) is None or P[r['_eid']].counts_for_quota) else 'No'
+        cols = R.EMP_COLS + [('national', prog['national'], 'text'), ('counts', 'Counts for the quota', 'text')]
+        notes = [tr('{0}: workforce counted {1}, {2} {3} ({4} %), target {5} % = {6}, still to hire {7}.', tr(prog['programme']), q['skilled'],
+                    tr(prog['nationals']), q['nationals_skilled'], q['share_pct'], q['target_pct'], q['required'], q['gap'])]
+    if prog.get('air_ticket'):
+        notes.append(tr('Return ticket ({0}): {1}', prog['air_ticket']['law'], tr(prog['air_ticket']['text'])))
+    return cols, rows, {'notes': notes}
 
 
 def r_ctc(run):

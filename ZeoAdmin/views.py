@@ -457,6 +457,29 @@ class OutOfOfficeView(Base):
         return Response({'returned': n})
 
 
+class CompanyEmailView(Base):
+    """v1.79.5 Settings › E-mail configuration › "Send e-mails from this company" (CompanyOption 'company_email').
+    Off: no notification, approval, report or message e-mails leave the company (sign-in, password, invitation and
+    security e-mails still go). A new company starts with it off; a company made before 1.79.5 keeps sending."""
+    def _can(self):
+        return self.admin or bool(self.c and self.c.codes & {'change_emailconfiguration', 'add_emailconfiguration'})
+
+    def get(self, request):
+        from zeo.mailguard import is_mail_off
+        return Response({'on': not is_mail_off(), 'can_edit': self._can()})
+
+    def put(self, request):
+        if not self._can():
+            return bad(tr('You do not have permission to do this.'), 403)
+        from django.db import connection
+        from ZeoApps.models import CompanyOption
+        from zeo.mailguard import forget, is_mail_off
+        on = bool(request.data.get('on'))
+        CompanyOption.objects.update_or_create(key='company_email', defaults={'value': {'on': on, 'by': request.user.pk}})
+        forget(connection.schema_name)
+        return Response({'on': not is_mail_off(), 'can_edit': True})
+
+
 class OooSettingsView(Base):
     """v1.62.11 (item 95) Settings › Out of office rules (CompanyOption 'ooo_auto')."""
     def get(self, request):
@@ -940,7 +963,7 @@ class SetupGuideTemplateView(Base):
         except GT.TemplateError as e:
             return bad(str(e), 404)
         r = HttpResponse(data, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        r['Content-Disposition'] = f'attachment; filename="zeo-setup-{kind}.xlsx"'
+        r['Content-Disposition'] = f'attachment; filename="zeo-books-setup-{kind}.xlsx"'
         return r
 
     def post(self, request, kind):
@@ -1171,7 +1194,7 @@ class AccessSlipsView(Base):
         cache.delete(f'zeo:slips:{key}')
         pdf = G.slip_pdf(d['slips'])
         r = HttpResponse(pdf, content_type='application/pdf')
-        r['Content-Disposition'] = 'inline; filename="zeo-activation-slips.pdf"'
+        r['Content-Disposition'] = 'inline; filename="zeo-books-activation-slips.pdf"'
         r['Cache-Control'] = 'no-store'
         return r
 

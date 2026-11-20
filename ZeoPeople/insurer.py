@@ -193,7 +193,7 @@ def as_xlsx(rs, plan, on, since=None):
     ws.freeze_panes = 'A2'
     info = wb.create_sheet('About')
     for row in (('Plan', plan.name), ('Insurer', plan.provider), ('Policy no.', plan.policy_no), ('Members on', on.isoformat()),
-                ('Changes since', since.isoformat() if since else '–'), ('Members', len(rs)), ('Made by', 'ZEO HRMS')):
+                ('Changes since', since.isoformat() if since else '–'), ('Members', len(rs)), ('Made by', 'ZEO Books')):
         info.append(row)
     buf = io.BytesIO()
     wb.save(buf)

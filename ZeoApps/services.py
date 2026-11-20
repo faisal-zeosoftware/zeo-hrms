@@ -31,19 +31,25 @@ log = logging.getLogger(__name__)
 
 # key, Django app label, title, icon, what it is for, kind, launcher landing page
 APPS = [
-    ('hrms', 'EmpManagement', 'HR', 'groups', 'People, leave, attendance, documents, letters, self service, expenses, assets and talent', 'core', '/main-sidebar/home'),
-    # v1.23.0: Payroll is its own app; with HR it is the same menu as ZEO HRMS before
-    ('payroll', 'PayrollManagement', 'Payroll', 'payments', 'Salaries, payslips, WPS, gratuity, loans and final settlement', 'core', '/main-sidebar/salary-options/pay-roll'),
+    # v1.79.5: ZEO Books order – ERP first (Accounting, Sales, Purchase, Inventory, Manufacturing), then Operations, then HR and payroll
+    ('accounting', 'ZeoLedger', 'Accounting', 'account_balance', 'General ledger, customer invoices and supplier bills, receipts and payments, post-dated cheques, bank reconciliation, VAT 201, corporate tax and the journals of the other apps', 'kit', '/main-sidebar/zeo-ledger/home'),   # v1.76.0
+    ('sales', 'ZeoSales', 'Sales', 'point_of_sale', 'Quotations and sales orders, price rules, credit control, deliveries, invoices, down payments, returns and commissions', 'kit', '/main-sidebar/zeo-sales/home'),   # v1.77.0
+    ('purchase', 'ZeoPurchase', 'Purchase', 'shopping_cart', 'Purchase requests, requests for quotation, purchase orders with approvals, receipts, supplier bills with the three-way match and supplier returns', 'kit', '/main-sidebar/zeo-purchase/home'),   # v1.78.0
+    ('inventory', 'ZeoInventory', 'Inventory', 'warehouse', 'Warehouses, stock documents, costing (average, FIFO, standard, lot, serial), landed cost, stock journals and the closing stock JV', 'kit', '/main-sidebar/zeo-inventory/home'),   # v1.75.0
+    ('manufacturing', 'ZeoMfg', 'Manufacturing', 'precision_manufacturing', 'Bills of materials, production orders, work centres and operations, issue and output through Inventory, production costs and variances, planning', 'kit', '/main-sidebar/zeo-manufacturing/home'),   # v1.79.0
     ('projects', 'ZeoProjects', 'Projects', 'account_tree', 'Support tickets with SLA, customers and AMC contracts, project delivery', 'core', '/main-sidebar/zeo-projects/dashboard'),
     ('crm', 'ZeoCRM', 'CRM', 'handshake', 'Leads, accounts, contacts, pipelines, opportunities, quotations, sales orders, targets and forecast', 'kit', '/main-sidebar/zeo-crm/home'),
     ('property', 'ZeoProperty', 'Property', 'apartment', 'Buildings, units, owners, leases, sales, billing, cheques and portals', 'kit', '/main-sidebar/zeo-property/home'),
     ('maintenance', 'ZeoMaintenance', 'Maintenance', 'build', 'Work orders, quotes, preventive plans, assets and inspections', 'kit', '/main-sidebar/zeo-maintenance/home'),
     ('assets', 'ZeoAssets', 'Asset Management', 'inventory_2', 'Asset register shared with HR, QR labels and scanning, check-out, reservations, physical counts and depreciation', 'kit', '/main-sidebar/zeo-assets/home'),
-    ('people', 'ZeoPeople', 'People', 'diversity_3', 'Part of HRMS (v1.38.1): benefits, e-signature, forms, surveys, recognition and rewards, chat, 360° reviews and development plans – switch off to hide these HR pages', 'kit', '/main-sidebar/zeo-people/home'),
     ('hse', 'ZeoHSE', 'HSE', 'health_and_safety', 'Risk, permits to work, incidents, inspections, audits and corrective actions', 'hse', '/main-sidebar/zeo-hse/home'),
+    ('hrms', 'EmpManagement', 'HR', 'groups', 'People, leave, attendance, documents, letters, self service, expenses, assets and talent', 'core', '/main-sidebar/home'),
+    # v1.23.0: Payroll is its own app; with HR it is the same menu as ZEO HRMS before
+    ('payroll', 'PayrollManagement', 'Payroll', 'payments', 'Salaries, payslips, WPS, gratuity, loans and final settlement', 'core', '/main-sidebar/salary-options/pay-roll'),
+    ('people', 'ZeoPeople', 'People', 'diversity_3', 'Part of HRMS (v1.38.1): benefits, e-signature, forms, surveys, recognition and rewards, chat, 360° reviews and development plans – switch off to hide these HR pages', 'kit', '/main-sidebar/zeo-people/home'),
 ]
 KEYS = [a[0] for a in APPS]
-KIT_KEYS = ('crm', 'property', 'maintenance', 'assets', 'people')   # apps on the app kit (zeo.appkit)
+KIT_KEYS = ('crm', 'property', 'maintenance', 'assets', 'people', 'inventory', 'accounting', 'sales', 'purchase', 'manufacturing')   # apps on the app kit (zeo.appkit)
 CORE = ('hrms', 'projects', 'payroll')   # state in ZeoApps.AppState
 BY_KEY = {a[0]: a for a in APPS}
 BY_LABEL = {a[1]: a[0] for a in APPS}
@@ -63,6 +69,11 @@ DEPENDS = {
     'assets': [],
     'people': ['hrms'],
     'hse': [],
+    'inventory': [],   # v1.75.0 items and partners are the company core
+    'accounting': [],   # v1.76.0 partners, items and payment terms are the company core
+    'sales': [],   # v1.77.0 works alone; deliveries with Inventory, invoices with Accounting when they are on
+    'purchase': [],   # v1.78.0 works alone; receipts with Inventory, bills with Accounting when they are on
+    'manufacturing': ['inventory'],   # v1.79.0 the materials and the output are stock
 }
 CORE_TEXT = ('Always on, not an app: company, branches, departments, designations, users and rights, business partners, items, '
              'locations and the employee directory.')
@@ -329,7 +340,7 @@ def links_of(key):
 
 
 # ------------------------------------------------------------------ role groups (Settings → Permission groups)
-ROLE_PREFIX = {'projects': 'Projects – ', 'crm': 'CRM – ', 'property': 'Property – ', 'maintenance': 'Maintenance – ', 'assets': 'Asset Management – ', 'people': 'People – ', 'hse': 'HSE – '}
+ROLE_PREFIX = {'projects': 'Projects – ', 'crm': 'CRM – ', 'property': 'Property – ', 'maintenance': 'Maintenance – ', 'assets': 'Asset Management – ', 'people': 'People – ', 'hse': 'HSE – ', 'inventory': 'Inventory – ', 'accounting': 'Accounting – ', 'sales': 'Sales – ', 'purchase': 'Purchase – ', 'manufacturing': 'Manufacturing – '}
 
 
 # v1.67.19 (apps): which app a Django app's records belong to (not listed: the company core – shared by every app)
@@ -339,7 +350,7 @@ APP_OF_LABEL = {**{k: 'hrms' for k in ('EmpManagement', 'calendars', 'LeavePolic
                 'PayrollManagement': 'payroll', 'PayrollPlus': 'payroll',
                 'ZeoProjects': 'projects', 'ProjectManagement': 'projects', 'ProjectControl': 'projects',
                 'ZeoCRM': 'crm', 'ZeoProperty': 'property', 'ZeoMaintenance': 'maintenance', 'ZeoAssets': 'assets',
-                'ZeoPeople': 'people', 'ZeoHSE': 'hse'}
+                'ZeoPeople': 'people', 'ZeoHSE': 'hse', 'ZeoInventory': 'inventory', 'ZeoLedger': 'accounting', 'ZeoSales': 'sales', 'ZeoPurchase': 'purchase', 'ZeoMfg': 'manufacturing'}
 # models of the core apps that belong to one app
 APP_OF_MODEL = {'OrganisationManager.assetapproval': 'hrms', 'OrganisationManager.assetapprovallevel': 'hrms',
                 'OrganisationManager.assetrequest': 'hrms', 'OrganisationManager.companypolicy': 'hrms', 'OrganisationManager.assetemailtemplate': 'hrms',
@@ -686,6 +697,17 @@ def setup_new_company(tenant, keys, user=None, progress=None):
     done, failed = [], {}
     with schema_context(tenant.schema_name):
         set_core_default(keys, getattr(tenant, 'industry_type', '') or '')
+        try:   # v1.75.1 (#155, approved 19 Nov): a new company starts with the standard HR features only – no approval set-up
+            from .hrfeatures import start_new_company, to_no_approval
+            start_new_company()
+            to_no_approval()
+        except Exception:
+            log.exception('HR features of %s', tenant.schema_name)
+        try:   # v1.79.5: a new company sends no e-mails until an administrator switches them on (Settings › E-mail configuration)
+            from .models import CompanyOption
+            CompanyOption.objects.update_or_create(key='company_email', defaults={'value': {'on': False}})
+        except Exception:
+            log.exception('e-mail switch of %s', tenant.schema_name)
         try:   # v1.67.8 (fixes) item 6: a copy of the template carries its automatic one-year end dates – a new company has none
             from .enddates import clear as _clear_end_dates
             _clear_end_dates(apply=True)

@@ -125,7 +125,7 @@ def check(action, params, ctx):
         user = _user_of(who)
         if user is None:
             raise ActionRefused(_tr('notify: the person has no ZEO login.'))
-        return {'user_id': user.pk, 'title': str(p.get('title') or '')[:120] or 'ZEO', 'message': str(p.get('message') or '')[:255]}
+        return {'user_id': user.pk, 'title': str(p.get('title') or '')[:120] or 'ZEO Books', 'message': str(p.get('message') or '')[:255]}
     if action == 'create_task':
         user = _user_of(p.get('assign_to'))
         if user is None:

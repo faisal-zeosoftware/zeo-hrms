@@ -109,6 +109,8 @@ def request_rows(request, g):
         total = max([a.level for a in st] + [1])
         days = r.approved_days or r.applied_days or r.number_of_days
         b = bal.get((r.employee_id, r.leave_type_id))
+        if b is not None:   # v1.73.24 (bug): the balance was sent unrounded (Balance after 15.869999999999997)
+            b = round(float(b), 2)
         _nb_key = (r.employee_id, r.leave_type_id)
         if _nb_key not in _nobal:
             from . import engine as _eng

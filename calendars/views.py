@@ -216,6 +216,8 @@ class LvEmailTemplateviewset(viewsets.ModelViewSet):
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_gender }}',
                 '{{ emp_date_of_birth }}',
                 '{{ emp_personal_email }}',
@@ -254,7 +256,7 @@ class LvApprovalNotifyviewset(viewsets.ModelViewSet):
         user = self.request.user
 
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return LvApprovalNotify.objects.all().order_by('-created_at')
 
         # Normal user → show request notifications assigned directly to them
@@ -2294,6 +2296,13 @@ class LvApprovalViewset(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def grouped_approvals(self, request):
         approvals = LeaveApproval.objects.select_related('leave_request', 'compensatory_request', 'approver').order_by('leave_request', 'level')
+        if not request.user.is_superuser:
+            # v1.73.19 (item 5): the steps of the requests the user approves (or was delegated) – it listed every approval of the company
+            from AccessControl.access import ctx as _ctx
+            if not getattr(_ctx(request), 'admin', False):
+                mine = LeaveApproval.objects.filter(Q(approver=request.user) | Q(deligate_to=request.user, is_deligate=True))
+                approvals = approvals.filter(Q(leave_request_id__in=mine.exclude(leave_request__isnull=True).values('leave_request_id'))
+                                             | Q(compensatory_request_id__in=mine.exclude(compensatory_request__isnull=True).values('compensatory_request_id')))
 
         # Group approvals by leave_request or compensatory_request
         grouped_approvals = defaultdict(list)
@@ -3965,6 +3974,8 @@ class LatinEarlyoutEmailTemplateViewset(viewsets.ModelViewSet):
             'employee': [
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_branch_name }}',
                 '{{ emp_department_name }}',
                 '{{ emp_designation_name }}',
@@ -4003,7 +4014,7 @@ class LateinEarlyRequestNotificationViewset(viewsets.ModelViewSet):
         user = self.request.user
 
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return LateinEarlyRequestNotification.objects.all().order_by('-created_at')
 
         # Normal user → show request notifications assigned directly to them

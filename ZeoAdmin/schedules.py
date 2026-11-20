@@ -174,7 +174,7 @@ def send(s, now=None):
         subject = f"{data['title']}" + (f" ({per['from']} – {per['to']})" if per else f' ({_zt_today():%d/%m/%Y})')
         body = (f"{data['title']}\n{data.get('description') or ''}\n\n{data['count']} rows – the report is attached ({ext.upper()}).\n"
                 + ''.join(f"\n{c['label']}: {data['totals'][c['key']]:,}" for c in data['columns'] if c['key'] in (data.get('totals') or {}))
-                + f"\n\nScheduled report \"{s.name}\" from ZEO HRMS ({s.get_frequency_display().lower()}).")
+                + f"\n\nScheduled report \"{s.name}\" from ZEO Books ({s.get_frequency_display().lower()}).")
         conn, sender = mail_connection()
         msg = EmailMessage(subject=subject, body=body, from_email=sender, to=list(s.recipients), connection=conn)
         msg.attach(f"{s.report}-{_zt_today().isoformat()}.{ext}", content, mime)

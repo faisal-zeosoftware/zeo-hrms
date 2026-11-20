@@ -20,6 +20,9 @@ def get_employee_context(employee):
     """
     return {
         'emp_first_name': employee.emp_first_name,
+        'emp_last_name': getattr(employee, 'emp_last_name', '') or '',   # v1.73.19 (item 7): offered on the template screens
+        'emp_code': getattr(employee, 'emp_code', '') or '',
+        'employee_name': ' '.join(x for x in (employee.emp_first_name, getattr(employee, 'emp_last_name', '')) if x),   # the screens' example placeholder
         'emp_gender': employee.emp_gender,
         'emp_date_of_birth': employee.emp_date_of_birth,
         'emp_personal_email': employee.emp_personal_email,
@@ -29,6 +32,94 @@ def get_employee_context(employee):
         'emp_designation_name': employee.emp_desgntn_id,
         'emp_joined_date': getattr(employee, 'emp_joined_date', None),
     }
+
+
+def _person_name(user, employee):
+    """The reader's name for {{ recipient_name }}: the user's name, else his employee record, else the login name."""
+    if user is not None:
+        n = ' '.join(x for x in (getattr(user, 'first_name', ''), getattr(user, 'last_name', '')) if x).strip()
+        if not n:
+            try:
+                from .models import emp_master
+                e = emp_master.objects.filter(users=user).first()
+                n = ' '.join(x for x in (e.emp_first_name, e.emp_last_name) if x) if e else ''
+            except Exception:   # noqa: BLE001
+                n = ''
+        return n or user.get_username()
+    if employee is not None:
+        return ' '.join(x for x in (employee.emp_first_name, getattr(employee, 'emp_last_name', '')) if x)
+    return ''
+
+
+def _pick_template(model, template_type, employee):
+    """v1.73.19 (item 7): the template of this type for the employee – the one whose branch / department / category / designation
+    match best (a template with none of them fits everybody); before, two templates of a type (one per branch) stopped every e-mail
+    of that type ("Multiple templates found")."""
+    f = 'template_type' if any(x.name == 'template_type' for x in model._meta.fields) else 'template_name'
+    rows = list(model.objects.filter(**{f: template_type}).order_by('-id'))
+    if not rows:
+        return None
+    if len(rows) == 1 or employee is None:
+        return rows[0]
+    want = {'branch': getattr(employee, 'emp_branch_id_id', None), 'Department': getattr(employee, 'emp_dept_id_id', None),
+            'Category': getattr(employee, 'emp_ctgry_id_id', None), 'Designation': getattr(employee, 'emp_desgntn_id_id', None)}
+    best, score = None, -1
+    for t in rows:
+        sc, ok = 0, True
+        for rel, val in want.items():
+            if not hasattr(t, rel):
+                continue
+            ids = set(getattr(t, rel).values_list('pk', flat=True))
+            if ids:
+                if val in ids:
+                    sc += 1
+                else:
+                    ok = False
+                    break
+        if ok and sc > score:
+            best, score = t, sc
+    return best or rows[0]
+
+
+def _fill_context(context, employee, message):
+    """v1.73.19 (item 7): every placeholder the template screens offer has its value – {{ doc_number }}, {{ request_type }},
+    {{ reason }}, {{ emp_last_name }} … were empty in most e-mails (the senders passed other names or nothing)."""
+    import re
+    if employee is not None:
+        for k, v in get_employee_context(employee).items():
+            context.setdefault(k, v)
+    if not context.get('doc_number'):
+        context['doc_number'] = context.get('document_number') or (re.search(r'Document No:?\s*([\w./-]+)', message or '') or [None, ''])[1]
+    context.setdefault('document_number', context.get('doc_number'))
+    if not context.get('request_type'):
+        req = context.get('request')
+        context['request_type'] = (str(req).split('-', 1)[1] if isinstance(req, str) and '-' in req else '') or ''
+    if context.get('doc_number') and not (context.get('reason') and context.get('request_type')):
+        try:   # the request itself (its reason / type), found by its document number
+            from django.apps import apps as _apps
+            from DashboardManagement.services import REQUESTS
+            for key, label, rm, *_ in REQUESTS:
+                try:
+                    R = _apps.get_model(rm)
+                except LookupError:
+                    continue
+                if not any(x.name == 'document_number' for x in R._meta.fields):
+                    continue
+                r = R.objects.filter(document_number=context['doc_number']).first()
+                if r is None:
+                    continue
+                context.setdefault('reason', getattr(r, 'reason', None) or getattr(r, 'reason_for_leaving', None) or '')
+                if not context.get('reason'):
+                    context['reason'] = getattr(r, 'reason', None) or getattr(r, 'reason_for_leaving', None) or ''
+                if not context.get('request_type'):
+                    t = getattr(r, 'leave_type', None) or getattr(r, 'request_type', None) or getattr(r, 'loan_type', None) or getattr(r, 'asset_type', None)
+                    context['request_type'] = getattr(t, 'name', None) or getattr(t, 'type_name', None) or (str(t) if t else label)
+                break
+        except Exception:   # noqa: BLE001
+            pass
+    context.setdefault('reason', '')
+    context.setdefault('message', message or '')
+    return context
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +145,21 @@ def send_notification_email(
 
     if context is None:
         context = {}
+    if user is None and employee is not None:
+        # v1.73.19 (items 5, 11): a notice to the employee (request approved / rejected) of a request he sent in self service had no
+        # user (created_by is empty): it reached no bell and no phone – it goes to the employee's own login
+        try:
+            u = getattr(employee, 'users', None)
+            if u is not None and u.is_active:
+                user = u
+        except Exception:   # noqa: BLE001
+            pass
+    try:   # v1.73.19 (item 5): no "waiting for your approval" for a step approved with the person's decision on an earlier level
+        from AccessControl.approvals import quiet
+        if user is not None and title in ('Request Created', '') and 'approv' in (message or '').lower() and quiet(getattr(user, 'pk', None)):
+            return {'status': 'skipped', 'message': 'approved on an earlier level by the same person'}
+    except Exception:   # noqa: BLE001
+        pass
 
     # Default models if not passed
     from .models import EmailTemplate, RequestNotification, EmailConfiguration
@@ -136,24 +242,11 @@ def send_notification_email(
         logger.warning(f"Global inbox creation failed: {e}")
 
     # email setup
-    try:
-
-        email_template = email_template_model.objects.get(
-            template_type=template_type
-        )
-
-    except email_template_model.DoesNotExist:
-
+    email_template = _pick_template(email_template_model, template_type, employee)   # v1.73.19 (item 7)
+    if email_template is None:
         return {
             "status": "warning",
             "message": f"No template found for '{template_type}'."
-        }
-
-    except email_template_model.MultipleObjectsReturned:
-
-        return {
-            "status": "error",
-            "message": f"Multiple templates found for '{template_type}'."
         }
 
     subject = email_template.subject
@@ -165,17 +258,14 @@ def send_notification_email(
         except Exception as e:
             logger.warning(f"E-mail template language skipped: {e}")
 
+    _fill_context(context, employee, message)   # v1.73.19 (item 7): the placeholders the template screens offer
     template = Template(body_text)
+    try:   # v1.73.19 (item 7): placeholders in the subject were sent as typed ("{{ doc_number }}")
+        subject = Template(subject).render(Context({**context, 'recipient_name': _person_name(user, employee)})).replace('\n', ' ').strip()
+    except Exception:   # noqa: BLE001
+        pass
 
-    recipient_name = (
-        user.get_username()
-        if user
-        else (
-            employee.emp_first_name
-            if employee
-            else ""
-        )
-    )
+    recipient_name = _person_name(user, employee)   # v1.73.19 (item 7): the name, not the login name
 
     context.update({
         'recipient_name': recipient_name
@@ -609,3 +699,50 @@ def schedule_escalation(approval, level_rule):
         schema_name = connection.schema_name
         escalate_approval_task.apply_async((approval.id, schema_name), countdown=total_seconds)
         print(f"🕒 Escalation task scheduled for approval {approval.id} after {total_seconds} seconds.")
+
+
+def template_scope_clash(qs, attrs, instance=None):
+    """v1.73.19 (item 7): a second template of one type is allowed for other branches (the template screens let HR choose branches;
+    the e-mail takes the template of the employee's branch). It clashes when the branches overlap or both are for every branch."""
+    if not qs.exists():
+        return False
+    new = attrs.get('branch', None)
+    if new is None and instance is not None and hasattr(instance, 'branch'):
+        new = list(instance.branch.all())
+    new_ids = {getattr(b, 'pk', b) for b in (new or [])}
+    for t in qs:
+        if not hasattr(t, 'branch'):
+            return True
+        ids = set(t.branch.values_list('pk', flat=True))
+        if not ids or not new_ids or ids & new_ids:
+            return True
+    return False
+
+
+def push_bell(user, message, title='', branch=None, notification_type='general', source=None):
+    """v1.73.19 (item 11): a notice written straight into a module's notification table (e.g. "leave rejected") also goes to the
+    person's bell inbox (top bar and phone), as send_notification_email does."""
+    if user is None or not getattr(user, 'is_active', True):
+        return
+    try:
+        from UserManagement.models import UserNotificationInbox
+        schema = db_connection.schema_name
+        with schema_context('public'):
+            UserNotificationInbox.objects.create(user=user, branch_id=getattr(branch, 'id', None), branch_name=getattr(branch, 'branch_name', None),
+                                                 schema_name=schema, notification_type=notification_type, title=title, message=message,
+                                                 source_model=type(source).__name__ if source is not None else '', source_id=getattr(source, 'pk', None))
+    except Exception as e:   # noqa: BLE001
+        logger.warning(f"bell inbox not written: {e}")
+
+
+def approver_msg(kind, what, emp, doc):
+    """v1.73.21 (item 3) the notice to the person who decides: "A loan request Personal loan of Bikash Thapa (Document No: X) is
+    waiting for your approval." – was "Your LoanRequest …" / "A GeneralRequest …(Document No" as if the approver had asked."""
+    name = ''
+    if emp is not None:
+        name = ' '.join(x for x in [str(getattr(emp, 'emp_first_name', '') or ''), str(getattr(emp, 'emp_last_name', '') or '')] if x).strip()
+    if kind == 'resignation request' and str(what or '').strip().lower() == 'resignation':
+        what = None   # "A resignation request resignation of …"
+    out = ('An ' if kind[:1] in 'aeiou' else 'A ') + kind + (f" {what}" if what not in (None, '') else '') + (f" of {name}" if name else '')
+    out += (f" (Document No: {doc})" if doc else '') + " is waiting for your approval."
+    return out

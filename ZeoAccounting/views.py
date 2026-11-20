@@ -548,10 +548,10 @@ class ExportView(Base):
             raise S.Refused('No journals to export.')
         if request.query_params.get('type') == 'csv':
             resp = HttpResponse(S.export_csv(bs), content_type='text/csv')
-            resp['Content-Disposition'] = f'attachment; filename="zeo-journals-{_zt_today():%Y%m%d}.csv"'
+            resp['Content-Disposition'] = f'attachment; filename="zeo-books-journals-{_zt_today():%Y%m%d}.csv"'
         else:
             resp = HttpResponse(S.export_xlsx(bs), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-            resp['Content-Disposition'] = f'attachment; filename="zeo-journals-{_zt_today():%Y%m%d}.xlsx"'
+            resp['Content-Disposition'] = f'attachment; filename="zeo-books-journals-{_zt_today():%Y%m%d}.xlsx"'
         for b in bs:
             S.logit(b, 'export', True, request.query_params.get('type', 'xlsx'), request.user)
         return resp

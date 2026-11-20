@@ -354,6 +354,15 @@ def is_ae(schema_name=None):
     return pack_code(schema_name) == 'AE'
 
 
+def _country_leave(pack):
+    """v1.73.23: the pack has a standard leave setup (LeavePolicy/country_setup.py)."""
+    try:
+        from LeavePolicy.country_setup import country_of
+        return country_of(pack) is not None
+    except Exception:   # noqa: BLE001  (the leave policy app not installed)
+        return False
+
+
 def is_national(nationality_name, schema_name=None):
     """A national of the pack's country. AE: 'Emirati' / 'UAE' / 'United Arab Emirates' (the rule the reports always used)."""
     n = str(nationality_name or '').strip().upper()
@@ -711,6 +720,17 @@ def apply_defaults(user=None, schema_name=None):
                     added.append({'kind': 'Leave type', 'name': n, 'detail': 'UAE Labour Law'})
                 if not res.get('created_leave_types'):
                     kept.append({'kind': 'Leave types', 'name': 'UAE standard leave types', 'detail': 'already there'})
+            elif _country_leave(p['pack']):
+                # v1.73.23 (item 154): SA / QA / OM / BH / KW / IN – the leave types of the country's labour law and the policy
+                # "Standard staff (<country>)"; adds only what is missing (types matched by name), like the UAE set
+                from LeavePolicy import country_setup as _cls
+                res = _cls.load(p['pack'], user)
+                for n in res.get('created_leave_types', []):
+                    added.append({'kind': 'Leave type', 'name': n, 'detail': _cls.COUNTRIES[p['pack']]['law']})
+                for n in res.get('created_policies', []):
+                    added.append({'kind': 'Leave policy', 'name': n, 'detail': 'labour-law minimums – Leave › Policies'})
+                if not res.get('created_leave_types'):
+                    kept.append({'kind': 'Leave types', 'name': f'{_cls.COUNTRIES[p["pack"]]["country"]} standard leave types', 'detail': 'already there'})
             elif LT.objects.exists():
                 kept.append({'kind': 'Leave types', 'name': f'{LT.objects.count()} leave types', 'detail': 'the company has leave types – not changed'})
             else:

@@ -213,6 +213,10 @@ class Run:
                     self.date_from, self.date_to = prev.replace(day=1), prev
             elif default == 'year':
                 self.date_from, self.date_to = today.replace(month=1, day=1), today.replace(month=12, day=31)
+            elif default == 'quarter':   # v1.76.0 VAT 201: the calendar quarter
+                qm = 3 * ((today.month - 1) // 3) + 1
+                self.date_from = today.replace(month=qm, day=1)
+                self.date_to = month_end(today.replace(month=qm + 2, day=1))
             elif default == 'next90':
                 self.date_from, self.date_to = today, today + timedelta(days=90)
             elif default == 'next30':
@@ -229,6 +233,10 @@ class Run:
                                         'emp_reporting_manager')
         if self.branches is not None:
             qs = qs.filter(emp_branch_id__in=self.branches)
+        # v1.73.24: ?visa_branch=1,2 – employees whose visa branch (Employee › Visa location; the working branch when none) is one of them
+        self.visa_branches = [int(x) for x in re.findall(r'\d+', q.get('visa_branch', '') or '')] or None
+        if self.visa_branches:
+            qs = qs.filter(Q(visa_location__in=self.visa_branches) | Q(visa_location__isnull=True, emp_branch_id__in=self.visa_branches))
         # v1.31.1 location level: ?location=1,2 (within the user's locations) or the switcher's selection; employees of those
         # locations (and employees without a location) – the same rule as the lists; a Location column on every employee row
         self.locations = None
@@ -527,7 +535,7 @@ def r_leave_balance(run):
         from LeavePolicy.models import LeaveLedger
         for l in LeaveLedger.objects.filter(date__gte=year_start, kind__in=('accrual', 'reset', 'encashed')).values('employee_id', 'leave_type_id', 'kind', 'days'):
             (encashed if l['kind'] == 'encashed' else earned)[(l['employee_id'], l['leave_type_id'])] += abs(l['days']) if l['kind'] == 'encashed' else l['days']
-    pol = {}
+    pol, lines_of = {}, {}
     for b in qs:
         if not _eligible(b.employee, b.leave_type):
             continue
@@ -536,7 +544,14 @@ def r_leave_balance(run):
             if b.employee_id not in pol:
                 pol[b.employee_id] = eng.policy_for(b.employee)
             p = pol[b.employee_id]
-            line = p.lines.filter(leave_type_id=b.leave_type_id).first() if p else None
+            line = None
+            if p is not None:   # v1.73.19 (item 9): also the branch copy of a policy's type (Annual / Sick / Casual of a second branch were left out)
+                if b.employee_id not in lines_of:
+                    m = {l.leave_type_id: l for l in eng.emp_lines(b.employee, p)}
+                    for l in eng.policy_lines(p):
+                        m.setdefault(l.leave_type_id, l)
+                    lines_of[b.employee_id] = m
+                line = lines_of[b.employee_id].get(b.leave_type_id)
             if p is not None and line is None:
                 continue          # not a leave type of the employee's policy
             if line is not None and line.accrual in ('per_event', 'none'):
@@ -1987,6 +2002,16 @@ class _Reports(dict):
                 import logging as _lg
                 _lg.getLogger(__name__).exception('developer report %s', key)
             return None
+        if isinstance(key, str) and key.startswith('gl-fr-'):   # v1.79.4 Accounting: statements of the financial report designer
+            try:
+                from django.apps import apps as _apps
+                if _apps.is_installed('ZeoLedger'):
+                    from ZeoLedger.designer import spec as _fr_spec
+                    return _fr_spec(key)
+            except Exception:
+                import logging as _lg
+                _lg.getLogger(__name__).exception('designed statement %s', key)
+            return None
         if isinstance(key, str) and key.startswith('c-'):
             try:
                 from ZeoInsights.builder import spec
@@ -2014,6 +2039,16 @@ class _Reports(dict):
         return dict.__contains__(self, key) or self._custom(key) is not None
 
 
+def r_in_bonus(run):   # v1.73.22 (item 153) India
+    from PayrollPlus.india import report_bonus
+    return report_bonus(run)
+
+
+def r_in_min_wage(run):   # v1.73.22 (item 153) India
+    from PayrollPlus.india import report_min_wage
+    return report_min_wage(run)
+
+
 REPORTS = _Reports({
     'employees': ('Employees', 'People', 'Every employee with personal, job and contact details, including the form designer fields.', r_employees, None, ['view_report', 'view_emp_master']),
     'departments': ('Departments', 'People', 'Departments with their branches and number of employees.', r_departments, None, ['view_dept_report', 'view_dept_master']),
@@ -2037,6 +2072,8 @@ REPORTS = _Reports({
     'wps': ('WPS salary file data', 'Payroll', 'Salary lines in the WPS SIF (EDR) order, with a check for missing Person ID or IBAN.', r_wps, 'month', ['view_payslip', 'view_payrollrun']),
     'salary': ('Salary by employee', 'Payroll', 'Current monthly salary components per employee.', r_salary, None, ['view_employeesalarystructure', 'view_payslip']),
     'salary-revisions': ('Salary revisions', 'Payroll', 'Every salary change with old and new amount.', r_salary_revisions, 'year', ['view_salaryrevisionhistory', 'view_employeesalarystructure']),
+    'in-bonus': ('Statutory bonus (India)', 'Payroll', 'Bonus of the accounting year per employee: bonus wage (basic + DA up to ₹ 7,000 or the state minimum wage), days worked, the bonus at the company rate and the 8.33 % minimum, the last day to pay.', r_in_bonus, None, ['view_payslip', 'view_payrollrun']),
+    'in-min-wage': ('Minimum wage check (India)', 'Payroll', 'Employees whose basic + DA is below the minimum wage of their branch state.', r_in_min_wage, None, ['view_employeesalarystructure', 'view_payslip']),
     'gratuity': ('Gratuity accrual', 'Payroll', 'End-of-service gratuity accrued up to the “as of” date, by the country rule set (UAE: 21 / 30 days’ basic per year, capped at 2 years’ pay); unpaid leave and absence are not service.', r_gratuity, None, ['view_employeesalarystructure', 'view_payslip']),
     'leave-liability': ('Leave liability', 'Payroll', 'Value of unused annual leave: balance × daily basic.', r_leave_liability, None, ['view_employeesalarystructure', 'view_payslip']),
     'loans': ('Loans outstanding', 'Payroll', 'Loans with amount, repaid, outstanding and instalments left.', r_loans, None, ['view_loanapplication']),
@@ -2127,6 +2164,30 @@ def _org_extend(request, key, cols, rows):
     return cols, rows
 
 
+def _visa_options(run, key, section):
+    """v1.73.24: the visa branch filter of the payroll / salary reports – the branches the user may see (None = no filter on
+    this report)."""
+    if not is_salary_report(key, section):
+        return None
+    Br = M('OrganisationManager', 'brnch_mstr')
+    qs = Br.objects.order_by('branch_name')
+    if run.c.branches is not None:
+        qs = qs.filter(pk__in=run.c.branches)
+    return [{'id': b.pk, 'name': b.branch_name} for b in qs]
+
+
+SALARY_EXTRA = {'leave-encashment', 'overtime', 'overtime-summary', 'exits', 'final-settlements', 'asset-recovery'}
+
+
+def is_salary_report(key, section=None):
+    """v1.73.24: payroll and salary reports – the Payroll section, plus the reports of other sections about pay (leave
+    encashment, overtime, end of service / final settlements, recoveries) – get the visa branch filter"""
+    spec = REPORTS.get(key)
+    if spec is None:
+        return False
+    return (section or spec[1]) == 'Payroll' or key in SALARY_EXTRA
+
+
 def _allowed(c, codes):
     if list(codes or []) == ['*']:   # v1.74.0 ZEO Developer reports check their own "who" when they run
         return True
@@ -2159,6 +2220,14 @@ class ReportListView(APIView):
         except Exception:
             import logging as _lg
             _lg.getLogger(__name__).exception('custom reports list')
+        try:   # v1.79.4 Accounting: the statements of the financial report designer
+            from django.apps import apps as _apps
+            if _apps.is_installed('ZeoLedger') and 'gl-trial-balance' not in hidden:
+                from ZeoLedger.designer import listing as _fr_listing
+                out += _fr_listing(request, c)
+        except Exception:
+            import logging as _lg
+            _lg.getLogger(__name__).exception('designed statements list')
         try:   # v1.74.0 ZEO Developer: the reports of custom modules
             from django.apps import apps as _apps
             if _apps.is_installed('ZeoDeveloper'):
@@ -2174,12 +2243,17 @@ class ReportListView(APIView):
 COUNTRY_FEATURE_REPORTS = {'wps': 'wps_sif'}
 
 
+COUNTRY_PACK_REPORTS = {'in-bonus': 'IN', 'in-min-wage': 'IN'}   # v1.73.22 only for a company on that country pack
+
+
 def _country_hidden():
     try:
-        from CountryPack.services import feature
-        return {k for k, f in COUNTRY_FEATURE_REPORTS.items() if not feature(f)}
+        from CountryPack.services import feature, pack_code
+        out = {k for k, f in COUNTRY_FEATURE_REPORTS.items() if not feature(f)}
+        pk = pack_code()
+        return out | {k for k, p in COUNTRY_PACK_REPORTS.items() if p != pk}
     except Exception:
-        return set()
+        return set(COUNTRY_PACK_REPORTS)
 
 
 def _country_list(out):
@@ -2236,6 +2310,10 @@ class ReportView(APIView):
         if key in _country_hidden():
             from CountryPack.services import WPS_SIF_OFF
             return Response({'detail': WPS_SIF_OFF}, status=status.HTTP_400_BAD_REQUEST)
+        from DataTools.request_jobs import report_in_background   # v1.79.2 a long report: in the background after 20 s
+        bg = report_in_background(request, title)
+        if bg is not None:
+            return bg
         run = Run(request, {'period': period})
         if (run.date_from and run.date_to) and run.date_to < run.date_from:
             return Response({'detail': 'The end date is before the start date.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -2265,22 +2343,35 @@ class ReportView(APIView):
         # v1.62.0 reports: presentation hints (dates, Yes / No, people's names, status words, main totals, chart …) – figures unchanged
         from .report_present import present, title_of
         columns, totals, ui = present(key, columns, rows, totals, request)
+        if extra.get('tree'):   # v1.79.6 a report that opens as a tree: grouped by these columns in the report's order
+            ui = {**ui, 'tree': [k for k in extra['tree'] if any(c['key'] == k for c in columns)]}
         filters = [f for f in (extra.get('filters') or []) if any(c['key'] == f for c in columns)]
         filters = [f for f in filters if 1 < len({str(r.get(f) or '') for r in rows} - {''}) < max(2, len(rows))]   # v1.62.0 reports: no "Number" / empty filters
         for f, _v in (ui.get('default_filters') or {}).items():
             if f not in filters and any(c['key'] == f for c in columns):
                 filters.append(f)
-        return Response(_lang_report(_country_report({'key': key, 'title': title_of(key, title), 'section': section, 'description': description, 'period': shown,
+        out = _lang_report(_country_report({'key': key, 'title': title_of(key, title), 'section': section, 'description': description, 'period': shown,
                                           'has_period': period is not None, 'as_of': run_as_of(request) if key in AS_OF_REPORTS else None,   # v1.20.2
                                           'columns': columns, 'rows': rows, 'totals': totals, 'count': len(rows),
                                           'location': run.locations,   # v1.31.1 location level: the locations the report was run for
+                                          'visa_branch': run.visa_branches,   # v1.73.24
+                                          'visa_branches': _visa_options(run, key, section),
                                           'notes': [n for n in (extra.get('notes') or []) if n],
+                                          'options': extra.get('options') or None,   # v1.79.3 report options (buttons): [{key, label, value, choices}]
+                                          'subtitle': extra.get('subtitle') or None,   # v1.79.4 designed statements: the line under the title
+                                          'basis': extra.get('basis') or None,         # v1.79.4 designed statements: period / position
                                           'filters': filters, 'ui': ui,
                                           'col_mode': (('item' if request.query_params.get('cols') == 'item' else 'category')
                                                        if key in COL_MODE_REPORTS or key in LEAVE_MERGE else None),
-                                          'col_labels': ['Leave category', 'Leave type'] if key in LEAVE_MERGE else ['Payroll category', 'Salary item']}), request))   # v1.16.0 filter row; v1.73.7 columns by category / item
+                                          'col_labels': ['Leave category', 'Leave type'] if key in LEAVE_MERGE else ['Payroll category', 'Salary item']}), request)   # v1.16.0 filter row; v1.73.7 columns by category / item
+        # v1.79.1 a very long report (the screen asks with paged=1) stays on the server; the screen reads it a page at a time
+        if request.query_params.get('paged') == '1' and len(out.get('rows') or []) > PAGED_ROWS:
+            from .report_store import keep
+            out = keep(request, key, out)
+        return Response(out)
 
 
+PAGED_ROWS = 20000   # v1.79.1 (report_store.py)
 AS_OF_REPORTS = ('gratuity',)   # v1.20.2: snapshot reports that can be run as of a date (e.g. the last month end)
 
 
@@ -2314,6 +2405,9 @@ class ReportEmailView(APIView):
         spec, data = _run_report(request, key)
         if spec is None:
             return data
+        if len(data.get('rows') or []) > PAGED_ROWS:   # v1.79.1 a very long report is not e-mailed (the file would be far too large for e-mail)
+            return Response({'detail': f"The report has {len(data['rows']):,} rows – too many for an e-mail. Use Excel or CSV (every row) instead, or narrow the report."},
+                            status=status.HTTP_400_BAD_REQUEST)
         to = (request.user.email or '').strip()
         if not to:
             return Response({'detail': 'Your user has no e-mail address. Add one in Users first.'}, status=status.HTTP_400_BAD_REQUEST)

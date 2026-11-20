@@ -353,7 +353,31 @@ def _flex_date(d):
     raise ValueError(s)
 
 
-def import_punches(rows, commit=False, user_id=None, allowed_ids=None):
+def import_punches(rows, commit=False, user_id=None, allowed_ids=None, on_row=None, on_day=None):
+    """v1.79.1: inside the run memo (PayrollManagement.perf) – the shift plan, rules and calendars are read once, not for every
+    punch (an import adds punches; it changes none of these); on_row(i) is called after every row (the background count)."""
+    try:
+        from PayrollManagement.perf import payroll_cache
+    except Exception:   # noqa: BLE001
+        import contextlib
+        payroll_cache = contextlib.nullcontext
+    days = [] if on_day is not None else None
+    with payroll_cache():
+        out = _import_punches(rows, commit, user_id, allowed_ids, on_row, days)
+    if days:   # v1.79.1 the import is a background job: the days are worked out in it (after the memo – they read the new punches), with the count
+        todo = sorted(days)
+        for i, (emp_id, day) in enumerate(todo, 1):
+            try:
+                E.recompute_day(emp_id, day)
+            except Exception:
+                log.exception('recompute %s %s', emp_id, day)
+            on_day(i, len(todo))
+        if out:
+            out[0]['note'] = f'{len(todo):,} employee-days recalculated.'
+    return out
+
+
+def _import_punches(rows, commit=False, user_id=None, allowed_ids=None, on_row=None, days=None):
     from EmpManagement.models import emp_master
     rows = expand_daily(rows)   # v1.26.0
     emps = {c.upper(): e for c, e in ((x.emp_code, x) for x in emp_master.objects.all().only('id', 'emp_code', 'emp_branch_id'))}
@@ -401,6 +425,11 @@ def import_punches(rows, commit=False, user_id=None, allowed_ids=None):
             touched.add((e.id, p.work_date))
             res['status'] = 'imported' if created else 'duplicate'
         out.append(res)
+        if on_row is not None:
+            on_row(res)
+    if days is not None:   # v1.79.1 worked out by import_punches, in the job
+        days.extend(touched)
+        return out
     if len(touched) > 300:   # v1.26.0: a month for a whole company – recalculate the days in the background
         import threading
         from django.db import close_old_connections, connection as _c

@@ -298,8 +298,17 @@ def _run_rows(runs, kinds):
             'pending_approvals': st.get('pending', 0), 'confirmed': st.get('confirmed', 0), 'rejected': st.get('rejected', 0),
             'stage': current, 'stage_label': next((lab for k, lab in [(s['key'], s['label']) for s in steps] if k == current), tr('Completed')),
             'steps': steps, 'wps': wps, 'journal': jn, 'stage_text': _stage_text(current, st),
+            'calculating': _calculating(r.pk),   # v1.75.1 the background calculation's progress while it runs
         })
     return rows
+
+
+def _calculating(run_id):
+    try:
+        from .run_background import is_calculating
+        return is_calculating(run_id)
+    except Exception:   # noqa: BLE001
+        return None
 
 
 class WorkspaceRunsView(_RunBase):
@@ -318,7 +327,17 @@ class WorkspaceRunsView(_RunBase):
             rows = [x for x in rows if x['year'] == int(y)]
         years = sorted({r.year for r in self.visible_runs()} | {_zt_today().year}, reverse=True)
         return Response({'runs': rows, 'years': years, 'can_add': self.can({'add_payrollrun'}),
-                         'segregation': S.settings().segregation, 'options': self._options() if self.can({'add_payrollrun'}) else {}})
+                         'segregation': S.settings().segregation, 'options': self._options() if self.can({'add_payrollrun'}) else {},
+                         **self._visa()})   # v1.73.24
+
+    def _visa(self):
+        """v1.73.24: the WPS screen's visa branch filter – the user's branches – and what makes a WPS establishment"""
+        from .bankfiles import wps_by
+        Br = M('OrganisationManager', 'brnch_mstr')
+        qs = Br.objects.order_by('branch_name')
+        if self.c.branches is not None:
+            qs = qs.filter(pk__in=self.c.branches)
+        return {'visa_branches': [{'id': b.pk, 'name': b.branch_name} for b in qs], 'wps_by': wps_by()}
 
     def _options(self):
         Br, D = M('OrganisationManager', 'brnch_mstr'), M('OrganisationManager', 'dept_master')
@@ -550,6 +569,14 @@ class WorkspaceRunView(_RunBase):
                       and a.request.confirm_status]
 
         actions = self._actions(run, row, slips, audit, gate_state, gate_msg, my_pending)
+        # v1.75.1: nothing can be done while the run is calculated in the background; employees still without a payslip
+        # (a stopped calculation) → "Continue calculation"
+        missing = 0
+        if row.get('calculating'):
+            actions = []
+        elif str(run.status or '').lower() in ('pending', 'processed'):
+            missing = run.employees.exclude(pk__in=P.objects.filter(payroll_run=run).values('employee_id')).count()
+        row['missing_payslips'] = missing
         ctl = S.control_for(run)
         control = S.run_control_row(run)
         control['payment_ref'] = ctl.payment_ref if ctl else ''
@@ -729,7 +756,11 @@ class WorkspaceRecalcView(WorkspaceRunView):
             raise S.Refused(tr('You do not have the right to recalculate this payroll.'), status=403)
         run = self._run(pk)
         from .run_recalc import recalculate
-        out = recalculate(run, request.user)
+        from . import run_background as _bg
+        out = recalculate(run, request.user, background=_bg.truthy(request.data.get('background')),
+                          token=request.headers.get('X-Zeo-Progress'))
+        if out.get('background'):   # v1.75.1 calculated in the background – logged when the run is opened again
+            return Response(out)
         RL = M('Chatter', 'RecordLog')
         u = request.user
         h = out['history'][0] if out['history'] else {}

@@ -17,13 +17,15 @@ MODULES = {
     'assets': ['ZeoAssets'],
     'people': ['ZeoPeople'],
     'hse': ['ZeoHSE'],
+    'inventory': ['ZeoInventory'],                                                                   # v1.75.0
     'settings': ['UserManagement', 'Chatter'],
 }
 MODULE_LABELS = {'hrms': 'HR', 'payroll': 'Payroll', 'projects': 'Projects', 'crm': 'CRM', 'property': 'Property',
-                 'maintenance': 'Maintenance', 'assets': 'Asset Management', 'people': 'People', 'hse': 'HSE', 'settings': 'Company & users'}
+                 'maintenance': 'Maintenance', 'assets': 'Asset Management', 'people': 'People', 'hse': 'HSE', 'inventory': 'Inventory', 'settings': 'Company & users'}
 SKIP_WORDS = ('log', 'template', 'notification', 'token', 'history', 'snapshot', 'setting', 'layout', 'udf', 'customfield', 'extra', 'comment', 'announcementview', 'clock', 'critirea', 'attachment',
               'fieldvalue', 'fielddef', 'bulkupload', 'emailconfiguration', 'through', 'cache', 'permission', 'inbox', 'auditlog', 'audittrail',
               'sequence', 'filestore', 'crmevent', 'maintevent', 'hseevent', 'peopleevent', 'propertyevent', 'assetevent', 'ticketevent',   # v1.38.0 housekeeping rows
+              'invevent', 'invfile', 'invsequence', 'stockvalue', 'costlayer', 'costapplication',   # v1.75.0 Inventory ledger internals
               'crmfile', 'maintfile', 'hsefile', 'peoplefile', 'propertyfile', 'assetfile', 'ticketfile', 'taskfile')
 # v1.38.0: 'audit' alone hid the asset counts (ZeoAssets.Audit) and HSE audits; only audit logs / trails are skipped
 KEEP_MODELS = {'ZeoAssets.Audit', 'ZeoHSE.Audit', 'ZeoHSE.AuditFinding'}

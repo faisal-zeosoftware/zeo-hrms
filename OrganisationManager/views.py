@@ -1609,6 +1609,8 @@ class AssetEmailTemplateViewset(viewsets.ModelViewSet):
                 '{{ status }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_gender }}',
                 '{{ emp_date_of_birth }}',
                 '{{ emp_personal_email }}',
@@ -1651,7 +1653,7 @@ class AssetNotificationsViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return AssetNotification.objects.all().order_by('-created_at')
         # Normal user → show request notifications assigned directly to them
         qs = AssetNotification.objects.filter(

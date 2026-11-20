@@ -1,4 +1,5 @@
 from django.urls import path
+from .report_store import ReportPageView   # v1.79.1
 
 from .assistant import AssistantView
 from .records import RecordView
@@ -23,6 +24,8 @@ urlpatterns = [
     path('api/layout/<str:name>/', LayoutView.as_view(), name='dashboard-layout'),   # v1.16.0
     path('api/home/', HomeView.as_view(), name='dashboard-home'),   # v1.17.0
     path('api/reports/', ReportListView.as_view(), name='report-list'),
+    path('api/reports/page/<str:token>/', ReportPageView.as_view(), name='report-page'),   # v1.79.1 a very long report, a page at a time
+    path('api/reports/page/<str:token>/<str:action>/', ReportPageView.as_view(), name='report-page-export'),
     path('api/reports/<slug:key>/', ReportView.as_view(), name='report-run'),
     path('api/reports/<slug:key>/email/', ReportEmailView.as_view(), name='report-email'),
     path('api/reports/<slug:key>/pdf/', ReportPdfView.as_view(), name='report-pdf'),   # v1.69.0 printed reports

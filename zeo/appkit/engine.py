@@ -755,6 +755,7 @@ class App:
         a = self
         return [
             path('api/app/', V.AppInfoView.as_view(app=a)),
+            path('api/features/', V.FeaturesView.as_view(app=a)),   # v1.75.0 Settings › Features
             path('api/activate/', V.ActivateView.as_view(app=a)),
             path('api/pack/', V.PackView.as_view(app=a)),
             path('api/pack/review/', V.ReviewView.as_view(app=a)),
@@ -834,6 +835,10 @@ class Reg:
         return self.create == 'all' or self.manages(request) or (self.create not in ('manage', 'all', 'none') and self.app.any(request, *self.create))
 
     def can_open(self, request):
+        if getattr(self.app, 'features', None):   # v1.75.0 a screen of a feature switched off is not shown
+            from . import features as FT
+            if self.kind in FT.hidden_regs(self.app):
+                return False
         return self.views_all(request) or self.can_create(request) or bool(self.own) or self.public is not None
 
     def scope(self, request):
@@ -873,6 +878,10 @@ class Reg:
         return self.manages(request) if self.can_restricted is None else self.can_restricted(request, obj)
 
     def link_off(self, name):
+        if getattr(self.app, 'features', None):   # v1.75.0 a field of a feature switched off (Settings › Features)
+            from . import features as FT
+            if name in FT.hidden_fields(self.app, self.kind):
+                return True
         if name not in self.links:
             return False
         p = OPTION_PROVIDERS.get(self.links[name])
@@ -1297,7 +1306,7 @@ def detail(r, obj, request):
         if not r.manages(request):
             qs = qs.filter(pk__in=cr.scope(request).values('pk'))
         out['children'].append({'label': label, 'kind': ck, 'fk': fk, 'cols': [fmeta(cr, c) for c in cr.cols if not cr.link_off(c)],
-                                'rows': [ser(cr, x, request) for x in qs[:300]],
+                                'rows': [ser(cr, x, request) for x in qs[:300]], 'count': qs.count(),   # v1.79.3 the screen loads the rest ("Show more")
                                 'can_add': (cr.can_create(request) or r.can_edit(obj, request)) and cr.create != 'none'})
     out['history'] = r.app.history(r.kind, obj.pk)
     out['files'] = r.app.files(r.kind, obj.pk) if r.files else []

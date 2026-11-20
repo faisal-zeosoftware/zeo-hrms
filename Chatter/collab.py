@@ -270,7 +270,8 @@ def deliver(m, author, extra_emails=()):
     mentioned = set(m.mentions or [])
     # mentioned users follow the record
     U = user_model()
-    for u in U.objects.filter(pk__in=mentioned, is_active=True):
+    # v1.73.19 (item 6): only users of this company – an @mention by user id reached (and e-mailed the text to) a user of another company
+    for u in U.objects.filter(pk__in=mentioned, is_active=True, tenants__schema_name=connection.schema_name):
         follow(m.model, m.object_id, user=u, reason='mentioned', label=m.record_label, page=m.page, force=True)
         if author is None or u.pk != author.pk:
             notify(u, 'mention', m, f'{who} mentioned you on {label}', text, who)

@@ -1,10 +1,34 @@
 {
  "suites": [
   {
-   "key": "hrms",
-   "label": "HRMS",
-   "icon": "groups",
-   "hint": "People, time, pay, assets and talent"
+   "key": "accounting",
+   "label": "Accounting",
+   "icon": "account_balance",
+   "hint": "Ledger, invoices and bills, bank, VAT 201, corporate tax"
+  },
+  {
+   "key": "sales",
+   "label": "Sales",
+   "icon": "point_of_sale",
+   "hint": "Quotations, orders, deliveries, invoices, returns, commissions"
+  },
+  {
+   "key": "purchase",
+   "label": "Purchase",
+   "icon": "shopping_cart",
+   "hint": "Requests, quotations, purchase orders, receipts, supplier bills, returns"
+  },
+  {
+   "key": "inventory",
+   "label": "Inventory",
+   "icon": "warehouse",
+   "hint": "Warehouses, stock, costing, landed cost, stock journals"
+  },
+  {
+   "key": "manufacturing",
+   "label": "Manufacturing",
+   "icon": "precision_manufacturing",
+   "hint": "Bills of materials, production orders, work centres, planning, costs"
   },
   {
    "key": "projects",
@@ -41,6 +65,12 @@
    "label": "HSE",
    "icon": "health_and_safety",
    "hint": "Risk, permits, incidents, inspections, CAPA"
+  },
+  {
+   "key": "hrms",
+   "label": "HR and payroll",
+   "icon": "groups",
+   "hint": "People, time, pay, assets and talent"
   },
   {
    "key": "settings",
@@ -269,7 +299,7 @@
          "link": "/main-sidebar/self-service/air-ticket",
          "hint": "",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         }
        ]
       },
@@ -281,28 +311,28 @@
          "link": "/main-sidebar/performance-options/goal-setting",
          "hint": "",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.performance"
         },
         {
          "label": "Mid-year check-in",
          "link": "/main-sidebar/performance-options/check-in",
          "hint": "",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.performance"
         },
         {
          "label": "Self appraisal / acknowledge rating",
          "link": "/main-sidebar/performance-options/self-appraisal",
          "hint": "",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.performance"
         },
         {
          "label": "My learning",
          "link": "/main-sidebar/learning-options/my-learning",
          "hint": "",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.learning"
         }
        ]
       },
@@ -321,7 +351,7 @@
          "link": "/main-sidebar/self-service/complaints",
          "hint": "",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.complaints"
         }
        ]
       },
@@ -564,7 +594,7 @@
          "perms": [
           "handle_grievance"
          ],
-         "country": ""
+         "country": "feat:hrms.complaints"
         },
         {
          "label": "Announcement read receipts",
@@ -574,7 +604,7 @@
           "view_announcement",
           "view_announcementview"
          ],
-         "country": ""
+         "country": "feat:hrms.complaints"
         },
         {
          "label": "Self-service settings",
@@ -634,7 +664,7 @@
          "perms": [
           "view_emp_customfield"
          ],
-         "country": ""
+         "country": "feat:hrms.custom_forms"
         },
         {
          "label": "Resignation levels",
@@ -643,7 +673,7 @@
          "perms": [
           "view_resignationapprovallevel"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Gratuity table",
@@ -725,14 +755,14 @@
          "link": "/main-sidebar/automation/approvals",
          "hint": "Approval requests of the automation rules (any app)",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.custom_forms"
         },
         {
          "label": "Custom modules",
          "link": "/main-sidebar/custom",
          "hint": "The registers your company designed (vehicle requests, access requests …)",
          "perms": [],
-         "country": ""
+         "country": "feat:hrms.custom_forms"
         }
        ]
       },
@@ -764,7 +794,7 @@
          "perms": [
           "view_approvallevel"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Doc. approval levels",
@@ -773,7 +803,7 @@
          "perms": [
           "view_documentapprovallevel"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Escalation",
@@ -782,7 +812,7 @@
          "perms": [
           "view_genrl_escalation"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         }
        ]
       }
@@ -866,7 +896,7 @@
          "perms": [
           "view_attendance"
          ],
-         "country": ""
+         "country": "feat:hrms.devices"
         },
         {
          "label": "Import punches",
@@ -893,7 +923,7 @@
          "perms": [
           "view_attendancerecheck"
          ],
-         "country": ""
+         "country": "feat:hrms.att_rules"
         },
         {
          "label": "Overtime",
@@ -940,7 +970,7 @@
          "perms": [
           "change_attendance"
          ],
-         "country": ""
+         "country": "feat:hrms.devices"
         },
         {
          "label": "Kiosks",
@@ -949,7 +979,7 @@
          "perms": [
           "change_attendance"
          ],
-         "country": ""
+         "country": "feat:hrms.devices"
         },
         {
          "label": "Kiosk PINs",
@@ -958,7 +988,7 @@
          "perms": [
           "change_attendance"
          ],
-         "country": ""
+         "country": "feat:hrms.devices"
         },
         {
          "label": "Overtime law and reasons",
@@ -985,7 +1015,7 @@
          "perms": [
           "change_attendance"
          ],
-         "country": ""
+         "country": "feat:hrms.mobile_punch"
         },
         {
          "label": "Round-off policy",
@@ -994,7 +1024,7 @@
          "perms": [
           "view_attendancepolicy"
          ],
-         "country": ""
+         "country": "feat:hrms.att_rules"
         },
         {
          "label": "Late coming policy",
@@ -1039,7 +1069,7 @@
          "perms": [
           "view_lateinearlyoutapprovallevel"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Geo fence",
@@ -1048,7 +1078,7 @@
          "perms": [
           "view_branchgeofence"
          ],
-         "country": ""
+         "country": "feat:hrms.mobile_punch"
         },
         {
          "label": "Punch map",
@@ -1059,7 +1089,7 @@
           "view_attendance_list",
           "change_attendance"
          ],
-         "country": ""
+         "country": "feat:hrms.mobile_punch"
         },
         {
          "label": "Face register",
@@ -1068,7 +1098,7 @@
          "perms": [
           "view_attendance_faceregister"
          ],
-         "country": ""
+         "country": "feat:hrms.mobile_punch"
         }
        ]
       }
@@ -1079,7 +1109,7 @@
      "label": "Shift planner",
      "link": "/main-sidebar/shift-planner",
      "perms": [],
-     "country": "",
+     "country": "feat:hrms.shifts",
      "sections": [
       {
        "title": "Shift planner",
@@ -1245,7 +1275,7 @@
          "perms": [
           "view_compensatoryleaverequest"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_leave"
         },
         {
          "label": "Compensatory work requests",
@@ -1254,7 +1284,7 @@
          "perms": [
           "view_compensatoryleaverequest"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_leave"
         },
         {
          "label": "Return from leave",
@@ -1335,7 +1365,7 @@
           "view_leavepolicy",
           "change_emp_leave_balance"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_leave"
         },
         {
          "label": "Leave policies (UAE)",
@@ -1355,7 +1385,7 @@
           "view_leave_type",
           "view_leavepolicy"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_leave"
         },
         {
          "label": "Leave rules",
@@ -1365,7 +1395,7 @@
           "view_leave_type",
           "view_leavepolicy"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_leave"
         },
         {
          "label": "Leave types",
@@ -1384,7 +1414,7 @@
           "view_leave_type",
           "view_leavepolicy"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_leave"
         },
         {
          "label": "Approval levels",
@@ -1393,7 +1423,7 @@
          "perms": [
           "view_leaveapprovallevels"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Escalation",
@@ -1402,7 +1432,7 @@
          "perms": [
           "view_leave_escalation"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         }
        ]
       }
@@ -1453,7 +1483,7 @@
           "view_payrollrun",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Payslip approvals",
@@ -1474,7 +1504,7 @@
           "add_payrollrun",
           "change_payrollrun"
          ],
-         "country": "pay:cycles"
+         "country": "pay:cycles,feat:hrms.adv_payroll"
         },
         {
          "label": "Off-cycle runs",
@@ -1485,7 +1515,7 @@
           "add_payrollrun",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Arrears",
@@ -1496,7 +1526,7 @@
           "add_payrollrun",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "WPS file",
@@ -1529,7 +1559,7 @@
           "view_payrollrun",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "File layouts",
@@ -1541,7 +1571,7 @@
           "view_payrollrun",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Hold / release salary",
@@ -1598,7 +1628,7 @@
           "change_payrollrun",
           "manage_payrollextras"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Accrue now – pay later",
@@ -1610,7 +1640,7 @@
           "view_salarycomponent",
           "change_salarycomponent"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Cost allocation",
@@ -1620,7 +1650,7 @@
           "view_payrollrun",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         }
        ]
       },
@@ -1653,7 +1683,7 @@
          "perms": [
           "change_employeesalarystructure"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Re-hire",
@@ -1663,7 +1693,7 @@
           "change_emp_master",
           "add_emp_master"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Pay date and loan limit",
@@ -1683,7 +1713,7 @@
           "add_payrollrun",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Loans – balances and schedule",
@@ -1705,7 +1735,7 @@
           "view_employeesalarystructure",
           "change_employeesalarystructure"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Salary splits",
@@ -1717,7 +1747,7 @@
           "change_emp_master",
           "view_employeesalarystructure"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Payroll health check",
@@ -1728,7 +1758,7 @@
           "view_payrollrun",
           "add_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Payroll rules",
@@ -1737,7 +1767,7 @@
          "perms": [
           "view_paystructure"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         }
        ]
       },
@@ -1780,7 +1810,7 @@
          "perms": [
           "view_payslipcommonworkflow"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Approval rules",
@@ -1795,7 +1825,7 @@
           "view_advancecommonworkflow",
           "view_advsalary_escalation"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Notifications",
@@ -1808,7 +1838,7 @@
           "view_loanemailtemplate",
           "view_advancesalaryemailtemplate"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Payroll controls",
@@ -1819,7 +1849,7 @@
           "view_payrollplussettings",
           "change_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.adv_payroll"
         },
         {
          "label": "Statutory schemes",
@@ -1829,7 +1859,7 @@
           "view_salarycomponent",
           "change_payrollplussettings"
          ],
-         "country": ""
+         "country": "feat:hrms.statutory"
         },
         {
          "label": "Legal rates",
@@ -1850,7 +1880,7 @@
           "change_payrollplussettings",
           "view_payrollrun"
          ],
-         "country": ""
+         "country": "feat:hrms.statutory"
         },
         {
          "label": "End of service settings",
@@ -1962,7 +1992,7 @@
          "perms": [
           "view_airticketrequest"
          ],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         },
         {
          "label": "Air ticket approvals",
@@ -1972,7 +2002,7 @@
           "view_airticketapproval",
           "approver_airticketapproval"
          ],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         },
         {
          "label": "Air ticket allocation",
@@ -1981,7 +2011,7 @@
          "perms": [
           "view_airticketallocation"
          ],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         }
        ]
       },
@@ -2004,7 +2034,7 @@
          "perms": [
           "view_loancommonworkflow"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.approvals"
         },
         {
          "label": "Escalation",
@@ -2013,7 +2043,7 @@
          "perms": [
           "view_loan_escalation"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.approvals"
         }
        ]
       },
@@ -2027,7 +2057,7 @@
          "perms": [
           "view_advancecommonworkflow"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Escalation",
@@ -2036,7 +2066,7 @@
          "perms": [
           "view_advsalary_escalation"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         }
        ]
       },
@@ -2050,7 +2080,7 @@
          "perms": [
           "view_airticketpolicy"
          ],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         },
         {
          "label": "Rules",
@@ -2059,7 +2089,7 @@
          "perms": [
           "view_airticketrule"
          ],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         },
         {
          "label": "Air ticket settings",
@@ -2070,7 +2100,7 @@
           "change_airticketpolicy",
           "view_airticketallocation"
          ],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         },
         {
          "label": "Approval levels",
@@ -2079,7 +2109,7 @@
          "perms": [
           "view_airticketworkflow"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Escalation",
@@ -2088,7 +2118,7 @@
          "perms": [
           "view_airticket_escalation"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         }
        ]
       }
@@ -2105,7 +2135,7 @@
      "label": "Assets",
      "link": "/main-sidebar/asset-plus",
      "perms": [],
-     "country": "",
+     "country": "feat:hrms.hr_assets",
      "sections": [
       {
        "title": "My assets",
@@ -2345,7 +2375,7 @@
      "label": "AI assistants",
      "link": "",
      "perms": [],
-     "country": "",
+     "country": "feat:hrms.ai",
      "sections": [
       {
        "title": "Assistants",
@@ -2443,7 +2473,7 @@
       "view_goalsheet",
       "view_appraisaltemplate"
      ],
-     "country": "",
+     "country": "feat:hrms.performance",
      "sections": []
     },
     {
@@ -2455,7 +2485,7 @@
       "view_jobopening",
       "view_candidate"
      ],
-     "country": "",
+     "country": "feat:hrms.recruitment",
      "sections": []
     },
     {
@@ -2463,7 +2493,7 @@
      "label": "Learning",
      "link": "/main-sidebar/learning-options",
      "perms": [],
-     "country": "",
+     "country": "feat:hrms.learning",
      "sections": []
     }
    ]
@@ -2688,7 +2718,7 @@
      "label": "HR operations",
      "link": "",
      "perms": [],
-     "country": "",
+     "country": "feat:hrms.hr_ops",
      "sections": [
       {
        "title": "Overview",
@@ -3258,7 +3288,7 @@
           "view_rosterperiod",
           "view_shift"
          ],
-         "country": ""
+         "country": "feat:hrms.shifts"
         },
         {
          "label": "Shift requests",
@@ -3268,7 +3298,7 @@
           "view_shiftrequest",
           "view_shift"
          ],
-         "country": ""
+         "country": "feat:hrms.shifts"
         },
         {
          "label": "Daily leave status",
@@ -3451,7 +3481,7 @@
           "view_airticketallocation",
           "view_airticketrequest"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.air_tickets"
         },
         {
          "label": "Allowance register",
@@ -3514,6 +3544,26 @@
          "country": "app:payroll"
         },
         {
+         "label": "Statutory bonus (India)",
+         "link": "/main-sidebar/report-options/r/in-bonus",
+         "hint": "",
+         "perms": [
+          "view_payslip",
+          "view_payrollrun"
+         ],
+         "country": "app:payroll,pack:IN"
+        },
+        {
+         "label": "Minimum wage check (India)",
+         "link": "/main-sidebar/report-options/r/in-min-wage",
+         "hint": "",
+         "perms": [
+          "view_employeesalarystructure",
+          "view_payslip"
+         ],
+         "country": "app:payroll,pack:IN"
+        },
+        {
          "label": "WPS payment status",
          "link": "/main-sidebar/report-options/r/wps-status",
          "hint": "",
@@ -3560,7 +3610,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.statutory"
         },
         {
          "label": "Payroll liability summary",
@@ -3600,7 +3650,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.statutory"
         },
         {
          "label": "ADPF pension contributions",
@@ -3610,7 +3660,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.statutory"
         },
         {
          "label": "Salary bands",
@@ -3630,7 +3680,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.variable_pay"
         },
         {
          "label": "Retention bonuses",
@@ -3640,7 +3690,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.variable_pay"
         },
         {
          "label": "Service charge shares",
@@ -3650,7 +3700,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.variable_pay"
         },
         {
          "label": "ILOE unemployment insurance",
@@ -3660,7 +3710,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.statutory"
         },
         {
          "label": "Emiratisation and Nafis",
@@ -3670,7 +3720,7 @@
           "view_payslip",
           "view_payrollrun"
          ],
-         "country": "app:payroll"
+         "country": "app:payroll,feat:hrms.statutory"
         },
         {
          "label": "Cost to company",
@@ -3725,7 +3775,7 @@
           "view_assettransactionreport",
           "view_assetallocation"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         },
         {
          "label": "Asset register",
@@ -3734,7 +3784,7 @@
          "perms": [
           "view_asset"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         },
         {
          "label": "Maintenance due",
@@ -3743,7 +3793,7 @@
          "perms": [
           "view_asset"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         },
         {
          "label": "Asset verification due",
@@ -3752,7 +3802,7 @@
          "perms": [
           "view_asset"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         },
         {
          "label": "Assets by employee",
@@ -3761,7 +3811,7 @@
          "perms": [
           "view_asset"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         },
         {
          "label": "Damage and loss recovery",
@@ -3770,7 +3820,7 @@
          "perms": [
           "view_asset"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         },
         {
          "label": "Disposals – gain / loss",
@@ -3779,7 +3829,7 @@
          "perms": [
           "view_asset"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         }
        ]
       },
@@ -3794,7 +3844,7 @@
           "view_goalsheet",
           "view_appraisaloutcome"
          ],
-         "country": ""
+         "country": "feat:hrms.performance"
         },
         {
          "label": "Recruitment pipeline",
@@ -3804,7 +3854,7 @@
           "view_jobopening",
           "view_application"
          ],
-         "country": ""
+         "country": "feat:hrms.recruitment"
         },
         {
          "label": "Training",
@@ -3814,7 +3864,7 @@
           "view_nomination",
           "view_trainingsession"
          ],
-         "country": ""
+         "country": "feat:hrms.learning"
         },
         {
          "label": "Certificates and expiry",
@@ -3823,7 +3873,7 @@
          "perms": [
           "view_certificate"
          ],
-         "country": ""
+         "country": "feat:hrms.learning"
         },
         {
          "label": "Candidates",
@@ -3833,7 +3883,7 @@
           "view_candidate",
           "view_application"
          ],
-         "country": ""
+         "country": "feat:hrms.recruitment"
         },
         {
          "label": "Time to hire",
@@ -3844,7 +3894,7 @@
           "view_offer",
           "view_jobopening"
          ],
-         "country": ""
+         "country": "feat:hrms.recruitment"
         },
         {
          "label": "Time to fill",
@@ -3854,7 +3904,7 @@
           "view_jobopening",
           "view_manpowerrequisition"
          ],
-         "country": ""
+         "country": "feat:hrms.recruitment"
         },
         {
          "label": "Cost per hire",
@@ -3864,7 +3914,7 @@
           "view_jobopening",
           "view_offer"
          ],
-         "country": ""
+         "country": "feat:hrms.recruitment"
         },
         {
          "label": "Source effectiveness",
@@ -3874,7 +3924,7 @@
           "view_candidate",
           "view_application"
          ],
-         "country": ""
+         "country": "feat:hrms.recruitment"
         },
         {
          "label": "KPI report",
@@ -3884,7 +3934,7 @@
           "view_goalsheet",
           "view_kpi"
          ],
-         "country": ""
+         "country": "feat:hrms.performance"
         },
         {
          "label": "Goal achievement",
@@ -3893,7 +3943,7 @@
          "perms": [
           "view_goalsheet"
          ],
-         "country": ""
+         "country": "feat:hrms.performance"
         },
         {
          "label": "Nine-box grid",
@@ -3902,7 +3952,7 @@
          "perms": [
           "view_goalsheet"
          ],
-         "country": ""
+         "country": "feat:hrms.performance"
         },
         {
          "label": "Learning progress",
@@ -3911,7 +3961,7 @@
          "perms": [
           "view_course"
          ],
-         "country": ""
+         "country": "feat:hrms.learning"
         },
         {
          "label": "Training ratings",
@@ -3920,7 +3970,7 @@
          "perms": [
           "view_course"
          ],
-         "country": ""
+         "country": "feat:hrms.learning"
         },
         {
          "label": "HR helpdesk SLA",
@@ -3929,7 +3979,7 @@
          "perms": [
           "view_hrticket"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_ops"
         },
         {
          "label": "HR helpdesk trends",
@@ -3938,7 +3988,7 @@
          "perms": [
           "view_hrticket"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_ops"
         },
         {
          "label": "Department performance",
@@ -4075,7 +4125,7 @@
          "perms": [
           "view_report"
          ],
-         "country": ""
+         "country": "feat:hrms.report_builder"
         },
         {
          "label": "Dashboards",
@@ -4084,7 +4134,7 @@
          "perms": [
           "view_report"
          ],
-         "country": ""
+         "country": "feat:hrms.report_builder"
         },
         {
          "label": "Scheduled reports",
@@ -4093,7 +4143,7 @@
          "perms": [
           "view_report"
          ],
-         "country": ""
+         "country": "feat:hrms.report_builder"
         }
        ]
       }
@@ -4109,6 +4159,17 @@
       {
        "title": "Approvals and notifications",
        "items": [
+        {
+         "label": "HR features",
+         "link": "/main-sidebar/settings/hr-features",
+         "hint": "Switch on the advanced HR features: approval hierarchy, devices, shifts, advanced payroll …",
+         "perms": [
+          "change_companyoption",
+          "add_companyoption",
+          "change_emp_master"
+         ],
+         "country": ""
+        },
         {
          "label": "Approval rules",
          "link": "/main-sidebar/automation/app/hrms/approvals",
@@ -4128,7 +4189,7 @@
           "view_assetapprovallevel",
           "view_asset_escalation"
          ],
-         "country": ""
+         "country": "feat:hrms.approvals"
         },
         {
          "label": "Notifications",
@@ -4239,7 +4300,7 @@
          "perms": [
           "view_airticketemailtemplate"
          ],
-         "country": ""
+         "country": "feat:hrms.air_tickets"
         },
         {
          "label": "Asset request",
@@ -4248,7 +4309,7 @@
          "perms": [
           "view_assetemailtemplate"
          ],
-         "country": ""
+         "country": "feat:hrms.hr_assets"
         },
         {
          "label": "Resignation",
@@ -8173,6 +8234,2726 @@
           "view_workflow",
           "change_workflow",
           "view_flowtemplate"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Inventory",
+   "suite": "inventory",
+   "apps": [
+    {
+     "key": "iv-home",
+     "label": "Inventory home",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Overview",
+       "items": [
+        {
+         "label": "Inventory home",
+         "link": "/main-sidebar/zeo-inventory/home",
+         "hint": "Stock value, reorder, drafts, stock ↔ GL",
+         "perms": [],
+         "country": ""
+        },
+        {
+         "label": "Scan and print",
+         "link": "/main-sidebar/zeo-inventory/scan",
+         "hint": "Look up a barcode / QR / lot / bin; labels and printed documents",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Opening stock from Excel",
+         "link": "/main-sidebar/zeo-inventory/import",
+         "hint": "",
+         "perms": [
+          "inv_manager"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "iv-stock",
+     "label": "Stock",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Stock",
+       "items": [
+        {
+         "label": "Stock documents",
+         "link": "/main-sidebar/zeo-inventory/r/doc",
+         "hint": "Receipts, deliveries, transfers, adjustments, counts, scrap, returns",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Goods receipts",
+         "link": "/main-sidebar/zeo-inventory/r/doc?kind=receipt",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Deliveries",
+         "link": "/main-sidebar/zeo-inventory/r/doc?kind=delivery",
+         "hint": "With ship-to, driver and proof of delivery",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Transfers",
+         "link": "/main-sidebar/zeo-inventory/r/doc?kind=transfer",
+         "hint": "One step, or ship and receive (in transit)",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Stock adjustments",
+         "link": "/main-sidebar/zeo-inventory/r/doc?kind=adjustment",
+         "hint": "Quantity, cost or both – increase or decrease (as Sage 300)",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Stock counts",
+         "link": "/main-sidebar/zeo-inventory/r/doc?kind=count",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Drop ships",
+         "link": "/main-sidebar/zeo-inventory/r/doc?kind=dropship",
+         "hint": "Supplier delivers straight to the customer",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.dropship"
+        },
+        {
+         "label": "Reservations",
+         "link": "/main-sidebar/zeo-inventory/r/reservation",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      },
+      {
+       "title": "Planning and control",
+       "items": [
+        {
+         "label": "Reorder rules",
+         "link": "/main-sidebar/zeo-inventory/r/reorder",
+         "hint": "Reorder point, maximum, lead time, safety stock – \"Order now\"",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.reorder"
+        },
+        {
+         "label": "Count plans",
+         "link": "/main-sidebar/zeo-inventory/r/countplan",
+         "hint": "Blind and cycle counts, recount tolerance, approval",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.count_plans"
+        },
+        {
+         "label": "Material requisitions",
+         "link": "/main-sidebar/zeo-inventory/r/requisition",
+         "hint": "Requests from departments and projects – approve, issue",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.requisitions"
+        },
+        {
+         "label": "Lots and serial numbers",
+         "link": "/main-sidebar/zeo-inventory/r/lot",
+         "hint": "Expiry, quality status, trace, recall",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.lots"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "iv-costing",
+     "label": "Costing",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Costing and accounts",
+       "items": [
+        {
+         "label": "Landed costs",
+         "link": "/main-sidebar/zeo-inventory/r/landed",
+         "hint": "Freight, duty, insurance on goods received",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Period close",
+         "link": "/main-sidebar/zeo-inventory/r/close",
+         "hint": "Cost adjustment, provision, post, close (perpetual)",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Closing stock JV",
+         "link": "/main-sidebar/zeo-inventory/r/closing",
+         "hint": "Month-end stock value (periodic)",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": "feat:inventory.periodic"
+        },
+        {
+         "label": "Standard costs",
+         "link": "/main-sidebar/zeo-inventory/r/standard",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": "feat:inventory.standard_cost"
+        },
+        {
+         "label": "Consignment prices",
+         "link": "/main-sidebar/zeo-inventory/r/consign_price",
+         "hint": "Agreed prices of supplier stock",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": "feat:inventory.consignment"
+        },
+        {
+         "label": "Consignment settlements",
+         "link": "/main-sidebar/zeo-inventory/r/consignment",
+         "hint": "What we used of the supplier's stock – owed to him",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": "feat:inventory.consignment"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "iv-reports",
+     "label": "Reports",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Value and ledger",
+       "items": [
+        {
+         "label": "Stock on hand and value",
+         "link": "/main-sidebar/report-options/r/inv-valuation",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Stock value by document date",
+         "link": "/main-sidebar/report-options/r/inv-valuation-doc",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Stock ageing",
+         "link": "/main-sidebar/report-options/r/inv-ageing",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Stock ledger",
+         "link": "/main-sidebar/report-options/r/inv-ledger",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Stock movement summary",
+         "link": "/main-sidebar/report-options/r/inv-movement",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Inventory ↔ GL reconciliation",
+         "link": "/main-sidebar/report-options/r/inv-reconciliation",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Clearing accounts",
+         "link": "/main-sidebar/report-options/r/inv-clearing",
+         "hint": "GRNI, in transit, landed cost clearing / accrual",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Integrity check",
+         "link": "/main-sidebar/report-options/r/inv-integrity",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Inventory provision",
+         "link": "/main-sidebar/report-options/r/inv-provision",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": "feat:inventory.provision"
+        }
+       ]
+      },
+      {
+       "title": "Operations",
+       "items": [
+        {
+         "label": "Reorder list",
+         "link": "/main-sidebar/report-options/r/inv-reorder",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "ABC analysis",
+         "link": "/main-sidebar/report-options/r/inv-abc",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Inventory KPIs",
+         "link": "/main-sidebar/report-options/r/inv-kpi",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Lots and expiry",
+         "link": "/main-sidebar/report-options/r/inv-lots",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.lots"
+        },
+        {
+         "label": "Goods in transit",
+         "link": "/main-sidebar/report-options/r/inv-transit",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.two_step"
+        },
+        {
+         "label": "Delivery route list",
+         "link": "/main-sidebar/report-options/r/inv-deliveries",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Count variances",
+         "link": "/main-sidebar/report-options/r/inv-count",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Negative stock and corrections",
+         "link": "/main-sidebar/report-options/r/inv-negative",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Back-dated postings",
+         "link": "/main-sidebar/report-options/r/inv-backdated",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Consignment stock",
+         "link": "/main-sidebar/report-options/r/inv-consignment",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.consignment"
+        },
+        {
+         "label": "Returnable packaging",
+         "link": "/main-sidebar/report-options/r/inv-returnable",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.packaging"
+        }
+       ]
+      },
+      {
+       "title": "Registers",
+       "items": [
+        {
+         "label": "Stock documents",
+         "link": "/main-sidebar/report-options/r/inv-doc",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Landed costs",
+         "link": "/main-sidebar/report-options/r/inv-landed",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "iv-setup",
+     "label": "Setup",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Warehouses",
+       "items": [
+        {
+         "label": "Warehouses",
+         "link": "/main-sidebar/zeo-inventory/r/warehouse",
+         "hint": "Removal strategy, negative stock, storekeepers",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Operation types",
+         "link": "/main-sidebar/zeo-inventory/r/operation",
+         "hint": "Receipts, deliveries, transfers … per warehouse – numbers, default bins, returns",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.operations"
+        },
+        {
+         "label": "Bins",
+         "link": "/main-sidebar/zeo-inventory/r/bin",
+         "hint": "Zone, aisle, rack, shelf and bin type",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.bins"
+        },
+        {
+         "label": "Put-away rules",
+         "link": "/main-sidebar/zeo-inventory/r/putaway",
+         "hint": "Where goods coming in are put",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.bins"
+        },
+        {
+         "label": "Packing rules",
+         "link": "/main-sidebar/zeo-inventory/r/packing",
+         "hint": "Boxes, pallets, tape used up by deliveries",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.packaging"
+        }
+       ]
+      },
+      {
+       "title": "Items",
+       "items": [
+        {
+         "label": "Items",
+         "link": "/main-sidebar/zeo-masters/r/item",
+         "hint": "The shared item master",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Item stock settings",
+         "link": "/main-sidebar/zeo-inventory/r/item",
+         "hint": "Method, lots / serials, account set, reorder point, tags",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Item units and packaging",
+         "link": "/main-sidebar/zeo-inventory/r/item_unit",
+         "hint": "Cartons, pallets: conversion, barcode, dimensions",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.uom"
+        },
+        {
+         "label": "Unit rounding",
+         "link": "/main-sidebar/zeo-inventory/r/unit",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.uom"
+        },
+        {
+         "label": "Attributes",
+         "link": "/main-sidebar/zeo-inventory/r/attribute",
+         "hint": "Brand, voltage, grade, size, colour",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.attributes"
+        },
+        {
+         "label": "Category attributes",
+         "link": "/main-sidebar/zeo-inventory/r/cat_attribute",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.attributes"
+        },
+        {
+         "label": "Item attributes",
+         "link": "/main-sidebar/zeo-inventory/r/item_attribute",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.attributes"
+        },
+        {
+         "label": "Items with variants",
+         "link": "/main-sidebar/zeo-inventory/r/template",
+         "hint": "Sizes and colours – make the variants",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.variants"
+        },
+        {
+         "label": "Related items",
+         "link": "/main-sidebar/zeo-inventory/r/link",
+         "hint": "Optional, accessories, alternatives, spare parts, up-sell",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.related"
+        },
+        {
+         "label": "Kits",
+         "link": "/main-sidebar/zeo-inventory/r/kit",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": "feat:inventory.kits"
+        },
+        {
+         "label": "Tags",
+         "link": "/main-sidebar/zeo-inventory/r/tag",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      },
+      {
+       "title": "Accounts and set-up",
+       "items": [
+        {
+         "label": "Account sets",
+         "link": "/main-sidebar/zeo-inventory/r/accounts",
+         "hint": "Inventory-side GL accounts (as Sage 300), warehouse overrides, production sets",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Category accounts",
+         "link": "/main-sidebar/zeo-inventory/r/cat_accounts",
+         "hint": "Sales-side accounts per item category",
+         "perms": [
+          "inv_manager",
+          "inv_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Reasons",
+         "link": "/main-sidebar/zeo-inventory/r/reason",
+         "hint": "",
+         "perms": [
+          "inv_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Business partners",
+         "link": "/main-sidebar/zeo-masters/r/partner",
+         "hint": "",
+         "perms": [
+          "inv_manager",
+          "inv_storekeeper",
+          "inv_accountant",
+          "inv_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Features",
+         "link": "/main-sidebar/zeo-inventory/setup/features",
+         "hint": "Standard features on; switch on lots, bins, variants, consignment …",
+         "perms": [
+          "inv_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Inventory setup",
+         "link": "/main-sidebar/zeo-inventory/setup",
+         "hint": "Perpetual or periodic, costing, decimals, negative stock, close",
+         "perms": [
+          "inv_manager"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Manufacturing",
+   "suite": "manufacturing",
+   "apps": [
+    {
+     "key": "mf-home",
+     "label": "Manufacturing home",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Overview",
+       "items": [
+        {
+         "label": "Manufacturing home",
+         "link": "/main-sidebar/zeo-manufacturing/home",
+         "hint": "In production, to release, late, to close, work in progress, work centre load",
+         "perms": [],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "mf-orders",
+     "label": "Production",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Production",
+       "items": [
+        {
+         "label": "Production orders",
+         "link": "/main-sidebar/zeo-manufacturing/r/order",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "To release",
+         "link": "/main-sidebar/zeo-manufacturing/r/order?status=draft",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "In production",
+         "link": "/main-sidebar/zeo-manufacturing/r/order?status=in_progress",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Done – to close",
+         "link": "/main-sidebar/zeo-manufacturing/r/order?status=done",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Shop floor",
+         "link": "/main-sidebar/zeo-manufacturing/r/movement",
+         "hint": "Materials issued, time, output, scrap, closing",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Planning",
+         "link": "/main-sidebar/zeo-manufacturing/r/plan",
+         "hint": "What to make and what to buy",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": "feat:manufacturing.planning"
+        }
+       ]
+      },
+      {
+       "title": "Engineering",
+       "items": [
+        {
+         "label": "Bills of materials",
+         "link": "/main-sidebar/zeo-manufacturing/r/bom",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Work centres",
+         "link": "/main-sidebar/zeo-manufacturing/r/workcentre",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": "feat:manufacturing.routing"
+        },
+        {
+         "label": "Items",
+         "link": "/main-sidebar/zeo-masters/r/item",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "mf-reports",
+     "label": "Reports",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Manufacturing",
+       "items": [
+        {
+         "label": "Production by item",
+         "link": "/main-sidebar/report-options/r/mfg-by-item",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Cost of production orders",
+         "link": "/main-sidebar/report-options/r/mfg-costs",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Production variances",
+         "link": "/main-sidebar/report-options/r/mfg-variances",
+         "hint": "",
+         "perms": [
+          "mfg_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Work in progress",
+         "link": "/main-sidebar/report-options/r/mfg-wip",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Work centre load",
+         "link": "/main-sidebar/report-options/r/mfg-load",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": "feat:manufacturing.routing"
+        },
+        {
+         "label": "Material usage",
+         "link": "/main-sidebar/report-options/r/mfg-usage",
+         "hint": "",
+         "perms": [
+          "mfg_manager",
+          "mfg_planner",
+          "mfg_operator",
+          "mfg_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "mf-setup",
+     "label": "Setup",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Manufacturing",
+       "items": [
+        {
+         "label": "Features",
+         "link": "/main-sidebar/zeo-manufacturing/setup/features",
+         "hint": "Standard features on; switch on operations, planning, make to order, scrap …",
+         "perms": [
+          "mfg_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Manufacturing setup",
+         "link": "/main-sidebar/zeo-manufacturing/setup",
+         "hint": "Warehouse, backflush, over-production, GL accounts of absorption and variance, planning horizon",
+         "perms": [
+          "mfg_manager"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Purchase",
+   "suite": "purchase",
+   "apps": [
+    {
+     "key": "pu-home",
+     "label": "Purchase home",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Overview",
+       "items": [
+        {
+         "label": "Purchase home",
+         "link": "/main-sidebar/zeo-purchase/home",
+         "hint": "Purchases this month, approvals, to receive, late, received not billed",
+         "perms": [],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "pu-orders",
+     "label": "Orders",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Buying",
+       "items": [
+        {
+         "label": "Purchase requests",
+         "link": "/main-sidebar/zeo-purchase/r/request",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": "feat:purchase.requests"
+        },
+        {
+         "label": "Requests for quotation",
+         "link": "/main-sidebar/zeo-purchase/r/rfq",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": "feat:purchase.rfq"
+        },
+        {
+         "label": "Purchase orders",
+         "link": "/main-sidebar/zeo-purchase/r/order",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "From a supplier quote",
+         "link": "/main-sidebar/zeo-purchase/capture/purchase_quote",
+         "hint": "Upload the supplier's quotation → draft PO or quote on an RFQ (v1.79.4)",
+         "perms": [
+          "pur_manager",
+          "pur_buyer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "From a request or list",
+         "link": "/main-sidebar/zeo-purchase/capture/purchase_request",
+         "hint": "A site's list or e-mail → purchase request, RFQ or PO (v1.79.4)",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Waiting for approval",
+         "link": "/main-sidebar/zeo-purchase/r/order?status=approval",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": "feat:purchase.approvals"
+        },
+        {
+         "label": "Suppliers",
+         "link": "/main-sidebar/zeo-masters/r/partner",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      },
+      {
+       "title": "Receiving and billing",
+       "items": [
+        {
+         "label": "To receive",
+         "link": "/main-sidebar/zeo-purchase/r/order?status=approved",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Receipts",
+         "link": "/main-sidebar/zeo-purchase/r/receipt",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Supplier bills",
+         "link": "/main-sidebar/zeo-purchase/r/bill",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Supplier returns",
+         "link": "/main-sidebar/zeo-purchase/r/return",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": "feat:purchase.returns"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "pu-reports",
+     "label": "Reports",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Purchase",
+       "items": [
+        {
+         "label": "Purchases by supplier",
+         "link": "/main-sidebar/report-options/r/pur-by-supplier",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Purchases by item",
+         "link": "/main-sidebar/report-options/r/pur-by-item",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Purchases by month",
+         "link": "/main-sidebar/report-options/r/pur-by-month",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Open orders to receive",
+         "link": "/main-sidebar/report-options/r/pur-to-receive",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Received, not billed",
+         "link": "/main-sidebar/report-options/r/pur-grni",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Bills that did not match",
+         "link": "/main-sidebar/report-options/r/pur-mismatch",
+         "hint": "",
+         "perms": [
+          "pur_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Supplier performance",
+         "link": "/main-sidebar/report-options/r/pur-performance",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "pu-setup",
+     "label": "Setup",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Buying",
+       "items": [
+        {
+         "label": "Supplier prices",
+         "link": "/main-sidebar/zeo-purchase/r/supplier_price",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": "feat:purchase.supplier_prices"
+        },
+        {
+         "label": "Upload a supplier price list",
+         "link": "/main-sidebar/zeo-purchase/capture/price_list",
+         "hint": "Excel, PDF, CSV or e-mail → supplier prices, with history (v1.79.6)",
+         "perms": [
+          "pur_manager"
+         ],
+         "country": "feat:purchase.supplier_prices"
+        },
+        {
+         "label": "Payment terms",
+         "link": "/main-sidebar/zeo-purchase/r/payment_term",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Items",
+         "link": "/main-sidebar/zeo-masters/r/item",
+         "hint": "",
+         "perms": [
+          "pur_manager",
+          "pur_buyer",
+          "pur_requester",
+          "pur_ap",
+          "pur_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Features",
+         "link": "/main-sidebar/zeo-purchase/setup/features",
+         "hint": "Standard features on; switch on requests, quotations, approvals, tolerances …",
+         "perms": [
+          "pur_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Purchase setup",
+         "link": "/main-sidebar/zeo-purchase/setup",
+         "hint": "Bill policy, match tolerances, approval amounts, default warehouse",
+         "perms": [
+          "pur_manager"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Sales",
+   "suite": "sales",
+   "apps": [
+    {
+     "key": "sl-home",
+     "label": "Sales home",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Overview",
+       "items": [
+        {
+         "label": "Sales home",
+         "link": "/main-sidebar/zeo-sales/home",
+         "hint": "Sales this month, quotations, to deliver, to invoice, approvals",
+         "perms": [],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "sl-orders",
+     "label": "Orders",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Selling",
+       "items": [
+        {
+         "label": "Quotations",
+         "link": "/main-sidebar/zeo-sales/r/order?status=quote",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Quotation from an enquiry",
+         "link": "/main-sidebar/zeo-sales/capture/sales_quote",
+         "hint": "Upload or paste the customer's e-mail, PDF, Excel or photo (v1.79.4)",
+         "perms": [
+          "sal_manager",
+          "sal_user"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Order from a customer PO",
+         "link": "/main-sidebar/zeo-sales/capture/sales_order",
+         "hint": "Upload the customer's LPO – matched and confirmed (v1.79.4)",
+         "perms": [
+          "sal_manager",
+          "sal_user"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Sales orders",
+         "link": "/main-sidebar/zeo-sales/r/order?status=confirmed",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "All quotations and orders",
+         "link": "/main-sidebar/zeo-sales/r/order",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Waiting for approval",
+         "link": "/main-sidebar/zeo-sales/r/order?status=approval",
+         "hint": "",
+         "perms": [
+          "sal_manager"
+         ],
+         "country": "feat:sales.approvals"
+        },
+        {
+         "label": "On credit hold",
+         "link": "/main-sidebar/zeo-sales/r/order?status=hold",
+         "hint": "",
+         "perms": [
+          "sal_manager"
+         ],
+         "country": "feat:sales.credit"
+        },
+        {
+         "label": "Customers",
+         "link": "/main-sidebar/zeo-masters/r/partner",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      },
+      {
+       "title": "Fulfilment and billing",
+       "items": [
+        {
+         "label": "Deliveries",
+         "link": "/main-sidebar/zeo-sales/r/delivery",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Sales invoices",
+         "link": "/main-sidebar/zeo-sales/r/invoice",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Customer returns",
+         "link": "/main-sidebar/zeo-sales/r/return",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": "feat:sales.returns"
+        },
+        {
+         "label": "Commissions",
+         "link": "/main-sidebar/zeo-sales/r/commission",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": "feat:sales.commissions"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "sl-reports",
+     "label": "Reports",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Sales",
+       "items": [
+        {
+         "label": "Sales by customer",
+         "link": "/main-sidebar/report-options/r/sal-by-customer",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Sales by item",
+         "link": "/main-sidebar/report-options/r/sal-by-item",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Sales by salesperson",
+         "link": "/main-sidebar/report-options/r/sal-by-salesperson",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Sales by month",
+         "link": "/main-sidebar/report-options/r/sal-by-month",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Backorders",
+         "link": "/main-sidebar/report-options/r/sal-backorders",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Delivered, not invoiced",
+         "link": "/main-sidebar/report-options/r/sal-to-invoice",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Quotation conversion",
+         "link": "/main-sidebar/report-options/r/sal-conversion",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Commissions",
+         "link": "/main-sidebar/report-options/r/sal-commissions",
+         "hint": "",
+         "perms": [
+          "sal_manager"
+         ],
+         "country": "feat:sales.commissions"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "sl-setup",
+     "label": "Setup",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Selling",
+       "items": [
+        {
+         "label": "Price rules and promotions",
+         "link": "/main-sidebar/zeo-sales/r/rule",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": "feat:sales.price_rules"
+        },
+        {
+         "label": "Price books",
+         "link": "/main-sidebar/zeo-sales/r/price_book",
+         "hint": "The shared price lists of Masters",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Payment terms",
+         "link": "/main-sidebar/zeo-sales/r/payment_term",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Items",
+         "link": "/main-sidebar/zeo-masters/r/item",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Sales teams",
+         "link": "/main-sidebar/zeo-sales/r/team",
+         "hint": "",
+         "perms": [
+          "sal_manager",
+          "sal_user",
+          "sal_billing",
+          "sal_viewer"
+         ],
+         "country": "feat:sales.commissions"
+        },
+        {
+         "label": "Features",
+         "link": "/main-sidebar/zeo-sales/setup/features",
+         "hint": "Standard features on; switch on price rules, approvals, credit control, returns …",
+         "perms": [
+          "sal_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Sales setup",
+         "link": "/main-sidebar/zeo-sales/setup",
+         "hint": "Invoicing policy, credit control, approvals, default warehouse, commissions",
+         "perms": [
+          "sal_manager"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "Accounting",
+   "suite": "accounting",
+   "apps": [
+    {
+     "key": "gl-home",
+     "label": "Accounting home",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Overview",
+       "items": [
+        {
+         "label": "Accounting home",
+         "link": "/main-sidebar/zeo-ledger/home",
+         "hint": "Cash and bank, customers and suppliers, profit, VAT this period",
+         "perms": [],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "gl-sales",
+     "label": "Customers",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Customers",
+       "items": [
+        {
+         "label": "Customer invoices",
+         "link": "/main-sidebar/zeo-ledger/r/doc?kind=invoice",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Credit notes",
+         "link": "/main-sidebar/zeo-ledger/r/doc?kind=credit",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Receipts",
+         "link": "/main-sidebar/zeo-ledger/r/payment?kind=receipt",
+         "hint": "Allocated to invoices; post-dated cheques",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Customers",
+         "link": "/main-sidebar/zeo-masters/r/partner",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer",
+          "mst_manager",
+          "mst_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Customer ageing",
+         "link": "/main-sidebar/report-options/r/gl-ar-ageing",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Customer ledger",
+         "link": "/main-sidebar/report-options/r/gl-customer-ledger",
+         "hint": "Every transaction of a customer with the running balance",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Customer statement",
+         "link": "/main-sidebar/report-options/r/gl-customer-statement",
+         "hint": "Open invoices with the post-dated cheques received and the net balance",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "gl-purchases",
+     "label": "Suppliers",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Suppliers",
+       "items": [
+        {
+         "label": "Supplier bills",
+         "link": "/main-sidebar/zeo-ledger/r/doc?kind=bill",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Debit notes",
+         "link": "/main-sidebar/zeo-ledger/r/doc?kind=debit",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Payments",
+         "link": "/main-sidebar/zeo-ledger/r/payment?kind=payment",
+         "hint": "Allocated to bills; post-dated cheques issued",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Supplier ageing",
+         "link": "/main-sidebar/report-options/r/gl-ap-ageing",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Supplier ledger",
+         "link": "/main-sidebar/report-options/r/gl-supplier-ledger",
+         "hint": "Every transaction of a supplier with the running balance",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Supplier statement",
+         "link": "/main-sidebar/report-options/r/gl-supplier-statement",
+         "hint": "Open bills with the post-dated cheques issued and the net balance",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "gl-bank",
+     "label": "Bank and cash",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Bank and cash",
+       "items": [
+        {
+         "label": "All receipts and payments",
+         "link": "/main-sidebar/zeo-ledger/r/payment",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Post-dated cheques",
+         "link": "/main-sidebar/zeo-ledger/r/payment?status=pdc",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.pdc"
+        },
+        {
+         "label": "Transfers between accounts",
+         "link": "/main-sidebar/zeo-ledger/r/payment?kind=transfer",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Bank statements",
+         "link": "/main-sidebar/zeo-ledger/r/statement",
+         "hint": "Match automatically, book charges",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": "feat:accounting.bank_rec"
+        },
+        {
+         "label": "Bank reconciliation",
+         "link": "/main-sidebar/report-options/r/gl-bank-rec",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "gl-books",
+     "label": "Books",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Books",
+       "items": [
+        {
+         "label": "Journal entries",
+         "link": "/main-sidebar/zeo-ledger/r/entry",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Recurring entries",
+         "link": "/main-sidebar/zeo-ledger/r/recurring",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": "feat:accounting.recurring"
+        },
+        {
+         "label": "Journals from other apps",
+         "link": "/main-sidebar/zeo-ledger/r/journal?kind=outbox",
+         "hint": "Payroll, inventory, property … waiting to be posted",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        }
+       ]
+      },
+      {
+       "title": "Tax",
+       "items": [
+        {
+         "label": "VAT returns",
+         "link": "/main-sidebar/zeo-ledger/r/vat",
+         "hint": "VAT 201 by emirate; file and clear",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Corporate tax",
+         "link": "/main-sidebar/zeo-ledger/r/ct",
+         "hint": "9 % above AED 375,000; small business relief",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": "feat:accounting.corporate_tax"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "gl-reports",
+     "label": "Reports",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Financial statements",
+       "items": [
+        {
+         "label": "Trial balance",
+         "link": "/main-sidebar/report-options/r/gl-trial-balance",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Profit and loss",
+         "link": "/main-sidebar/report-options/r/gl-profit-loss",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Balance sheet",
+         "link": "/main-sidebar/report-options/r/gl-balance-sheet",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Cash flow",
+         "link": "/main-sidebar/report-options/r/gl-cash-flow",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "General ledger",
+         "link": "/main-sidebar/report-options/r/gl-general-ledger",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Journal register",
+         "link": "/main-sidebar/report-options/r/gl-journals",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Budget against actual",
+         "link": "/main-sidebar/report-options/r/gl-budget",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.budgets"
+        }
+       ]
+      },
+      {
+       "title": "Analysis",
+       "items": [
+        {
+         "label": "Profit and loss by month",
+         "link": "/main-sidebar/report-options/r/gl-pl-monthly",
+         "hint": "A column for each month and the total",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Profit and loss – compared with last year",
+         "link": "/main-sidebar/report-options/r/gl-pl-compare",
+         "hint": "Change and change %",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "This year against last year – month, quarter, half year",
+         "link": "/main-sidebar/report-options/r/gl-pl-variance",
+         "hint": "Variance and variance % month-wise",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Balance sheet – compared with last year",
+         "link": "/main-sidebar/report-options/r/gl-bs-compare",
+         "hint": "At a date and one year earlier",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Profit and loss by cost centre",
+         "link": "/main-sidebar/report-options/r/gl-pl-cost-centre",
+         "hint": "A column for each cost centre and the total",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.cost_centres"
+        },
+        {
+         "label": "Profit and loss by branch",
+         "link": "/main-sidebar/report-options/r/gl-pl-branch",
+         "hint": "A column for each branch and the total",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "This year against last year by cost centre",
+         "link": "/main-sidebar/report-options/r/gl-pl-variance-cc",
+         "hint": "Month, quarter, half year with variance per cost centre",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.cost_centres"
+        },
+        {
+         "label": "This year against last year by branch",
+         "link": "/main-sidebar/report-options/r/gl-pl-variance-branch",
+         "hint": "Month, quarter, half year with variance per branch",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Trial balance by account group",
+         "link": "/main-sidebar/report-options/r/gl-tb-group",
+         "hint": "Tree: type › account group › account",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Profit and loss – account group tree",
+         "link": "/main-sidebar/report-options/r/gl-pl-tree",
+         "hint": "Income / expenses › account group › account",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Balance sheet – account group tree",
+         "link": "/main-sidebar/report-options/r/gl-bs-tree",
+         "hint": "Assets / liabilities / equity › account group › account",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Trial balance – account group summary",
+         "link": "/main-sidebar/report-options/r/gl-tb-group-summary",
+         "hint": "One line per account group",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Budget against actual by month",
+         "link": "/main-sidebar/report-options/r/gl-budget-monthly",
+         "hint": "Per account, cost centre and month; by branch",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.budgets"
+        },
+        {
+         "label": "Financial ratios",
+         "link": "/main-sidebar/report-options/r/gl-ratios",
+         "hint": "Liquidity, profitability, leverage, efficiency",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      },
+      {
+       "title": "Designed statements",
+       "items": [
+        {
+         "label": "Financial report designer",
+         "link": "/main-sidebar/zeo-ledger/r/finreport",
+         "hint": "Statements laid out to the customer's requirement – open a design, then \"Open the report\"",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        }
+       ]
+      },
+      {
+       "title": "Tax and checks",
+       "items": [
+        {
+         "label": "VAT 201",
+         "link": "/main-sidebar/report-options/r/gl-vat201",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "VAT audit file",
+         "link": "/main-sidebar/report-options/r/gl-vat-audit",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Corporate tax computation",
+         "link": "/main-sidebar/report-options/r/gl-corporate-tax",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": "feat:accounting.corporate_tax"
+        },
+        {
+         "label": "Books integrity check",
+         "link": "/main-sidebar/report-options/r/gl-integrity",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "gl-setup",
+     "label": "Setup",
+     "link": "",
+     "perms": [],
+     "country": "",
+     "sections": [
+      {
+       "title": "Ledger",
+       "items": [
+        {
+         "label": "Chart of accounts",
+         "link": "/main-sidebar/zeo-ledger/r/account",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Journals and bank accounts",
+         "link": "/main-sidebar/zeo-ledger/r/journal",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Taxes (VAT)",
+         "link": "/main-sidebar/zeo-ledger/r/tax",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Cost centres",
+         "link": "/main-sidebar/zeo-ledger/r/costcentre",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.cost_centres"
+        },
+        {
+         "label": "Budgets",
+         "link": "/main-sidebar/zeo-ledger/r/budget",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.budgets"
+        },
+        {
+         "label": "Financial report designer",
+         "link": "/main-sidebar/zeo-ledger/r/finreport",
+         "hint": "",
+         "perms": [
+          "gl_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Exchange rates",
+         "link": "/main-sidebar/zeo-ledger/r/fxrate",
+         "hint": "",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": "feat:accounting.multi_currency"
+        },
+        {
+         "label": "Financial years and periods",
+         "link": "/main-sidebar/zeo-ledger/r/year",
+         "hint": "Year start, period dates, module locks, year end, reopen",
+         "perms": [
+          "gl_manager",
+          "gl_accountant",
+          "gl_ar",
+          "gl_ap",
+          "gl_viewer"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Posting rights by user",
+         "link": "/main-sidebar/zeo-ledger/r/postright",
+         "hint": "Locked periods, periods back and ahead, date range, modules (v1.79.3)",
+         "perms": [
+          "gl_manager",
+          "gl_accountant"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Features",
+         "link": "/main-sidebar/zeo-ledger/setup/features",
+         "hint": "Standard features on; switch on currencies, PDC, bank reconciliation, budgets …",
+         "perms": [
+          "gl_manager"
+         ],
+         "country": ""
+        },
+        {
+         "label": "Accounting setup",
+         "link": "/main-sidebar/zeo-ledger/setup",
+         "hint": "Currency, year start, VAT, TRN, lock date, account roles",
+         "perms": [
+          "gl_manager"
          ],
          "country": ""
         }

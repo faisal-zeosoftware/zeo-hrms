@@ -334,7 +334,7 @@ def overview(request):
         kp[0]['tone'] = 'bad' if kp[0]['value'] else ''
         kp[1]['tone'] = 'warn' if kp[1]['value'] else ''
         nxt = [r for r in rows if r['status'] in ('Within 30 days', 'In 31–60 days')][:5]
-        items = [{'label': f"{r['document']} · {r['employee']}", 'value': r['expiry'].isoformat() if hasattr(r.get('expiry'), 'isoformat') else '',
+        items = [{'label': f"{_doc_word(r['document'])} · {r['employee']}", 'value': r['expiry'].isoformat() if hasattr(r.get('expiry'), 'isoformat') else '',
                   'date': r['expiry'], 'timed': False, 'link': (rec_link(r) or rpt('expiry-all', {'employee': r['employee']}))} for r in nxt]
         card('documents', 'Documents and visas', 'badge', rpt('expiry-all', {'status': 'Expired|Within 30 days|In 31–60 days|In 61–90 days'}), kp, items,
              'Next to expire', timed=False, app='sub-sidebar/document-expired')
@@ -628,3 +628,12 @@ def my_space(request):
         return {'employee': None}
     keep = ('employee', 'leave_balances', 'next_leave', 'payslip', 'loans', 'air_ticket', 'assets', 'documents', 'requests', 'performance', 'training')
     return {k: d.get(k) for k in keep}
+
+
+def _doc_word(text):
+    """v1.73.21 a seeded document type ("Emirates ID", "Passport") in the reader's language – the pack term when the name is one."""
+    try:
+        from Translations.i18n import tr as _t
+        return _t(text) if text else text
+    except Exception:   # noqa: BLE001
+        return text

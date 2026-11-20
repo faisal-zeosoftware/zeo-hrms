@@ -46,9 +46,15 @@ def _totals(run):
     return qs.count(), net
 
 
-def recalculate(run, user):
+def recalculate(run, user, background=False, token=None):
     """→ {'id', 'payslips', 'net', 'history'}; raises Refused with the reason."""
     P = M('PayrollManagement', 'Payslip')
+    try:   # v1.75.1 not while it is being calculated
+        from .run_background import is_calculating
+        if is_calculating(run.pk):
+            raise Refused(_tr('This payroll is still being calculated. Wait until it is finished.'), status=409)
+    except ImportError:
+        pass
     st = str(run.status or '').lower()
     if st not in ('pending', 'processed'):
         raise Refused(_tr('Only a run that is not approved or paid can be recalculated.'), status=409)
@@ -84,7 +90,19 @@ def recalculate(run, user):
         PR.objects.filter(pk=run.pk).update(status='pending')
         run.refresh_from_db()
         run.employees.clear()   # post_clear – the m2m handler only acts on post_add
-        run.employees.add(*sorted(ids))   # post_add → the payroll is calculated (PayrollManagement.signals.payrollrun_m2m_changed)
+        # v1.75.1: a large run is calculated again in the background (run_background) – progress on the page
+        _bg = None
+        try:
+            from . import run_background as _bg
+        except ImportError:
+            _bg = None
+        if _bg is not None and _bg.wanted(background, len(ids)):
+            with _bg.deferred():
+                run.employees.add(*sorted(ids))
+            token = _bg.start(run, token, user, n_employees=len(ids))
+        else:
+            _bg = None
+            run.employees.add(*sorted(ids))   # post_add → the payroll is calculated (PayrollManagement.signals.payrollrun_m2m_changed)
         RC = M('PayrollPlus', 'RunControl')
         RC.objects.filter(run_id=run.pk).update(prepared_by_id=getattr(user, 'pk', None), prepared_at=timezone.now(),
                                                 approved_by_id=None, approved_at=None)
@@ -97,7 +115,10 @@ def recalculate(run, user):
                       'by_name': (user.get_full_name() or user.username) if user is not None else '',
                       'payslips_before': before_n, 'payslips_after': after_n, 'net_before': str(before_net), 'net_after': str(after_net)})
         M('ZeoApps', 'CompanyOption').objects.update_or_create(key=KEY.format(run.pk), defaults={'value': {'items': items[-50:]}})
-    return {'id': run.pk, 'status': run.status, 'payslips': after_n, 'net': str(after_net), 'history': history_rows(run.pk)}
+    out = {'id': run.pk, 'status': run.status, 'payslips': after_n, 'net': str(after_net), 'history': history_rows(run.pk)}
+    if _bg is not None:
+        out.update({'background': True, 'progress_token': token, 'payslips': 0})
+    return out
 
 
 def history_rows(run_id):

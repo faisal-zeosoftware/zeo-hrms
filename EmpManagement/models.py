@@ -29,11 +29,30 @@ from django.core.validators import RegexValidator
 import logging
 logger = logging.getLogger((__name__))
 from .utils import send_notification_email,get_employee_context,schedule_escalation
+from .utils import approver_msg as _approver_msg   # v1.73.21 (item 3)
 from django.db import transaction
 
 
 
 #EmpManagement
+def _zt_step_user(user, employee):
+    """v1.73.19 (item 5): the person who decides a level – the named approver, else branch HR → company HR → administrator."""
+    try:
+        from LeavePolicy.approvers import pick
+        return pick(user, employee)[0]
+    except Exception:   # noqa: BLE001
+        return user
+
+
+def _zt_fl(level, employee):
+    """v1.73.19 (item 5): the person who decides a first level (resolved once): the named approver, else branch HR → company HR → admin."""
+    if level is None:
+        return None
+    if not hasattr(level, '_zt_who'):
+        level._zt_who = _zt_step_user(level.approver, employee)
+    return level._zt_who
+
+
 class _KeepLinked(Exception):
     """v1.62.0: internal – the employee already has its login (see emp_master.save)."""
 
@@ -226,7 +245,9 @@ class emp_master(models.Model):
                     try:   # v1.18.0: the temporary password goes to the employee only
                         if email and not _linked:
                             from django.core.mail import send_mail
-                            send_mail('Your ZEO HRMS login',
+                            from zeo.mailguard import essential as _essential
+                            with _essential():   # v1.79.5 sent even when the company e-mails are off
+                              send_mail('Your ZEO Books login',
                                       f'Dear {self.emp_first_name},\n\nYour self-service login was created.\nUser name: {user.username}\n'
                                       f'Temporary password: {password}\n\nYou will be asked to choose your own password at the first login.',
                                       None, [email], fail_silently=True)
@@ -1134,19 +1155,7 @@ class GeneralRequest(models.Model):
         ).first() or ApprovalWorkflow.objects.filter(request_type=self.request_type).first()
 
         if not workflow:
-            workflow = ApprovalWorkflow.objects.create(
-                request_type=self.request_type,
-                approval_type='no_approval'
-            )
-            if self.employee.emp_branch_id:
-                workflow.branch.add(self.employee.emp_branch_id)
-
-            ApprovalLevel.objects.create(
-                workflow=workflow,
-                level=1,
-                role="Auto Level",
-                approver=None
-            )
+            workflow = ApprovalWorkflow(request_type=self.request_type, approval_type='reporting_manager')   # v1.73.19 (item 5): no set-up – the step made at the start (reporting manager) decides; a 'No approval' set-up was saved here, so every later request of the type was approved by itself
 
         approval_type = workflow.approval_type
         if self.request_type.use_common_workflow:   # v1.7.0: later levels come from the common workflow too
@@ -1317,18 +1326,19 @@ class GeneralRequest(models.Model):
         next_level = (CommonWorkflow.objects.filter(level=current_level).first() if self.request_type.use_common_workflow
                       else workflow.levels.filter(level=current_level).first())
 
-        if next_level and next_level.approver:
+        _ap = _zt_step_user(next_level.approver, self.employee) if next_level else None   # v1.73.19 (item 5): never a closed login / nobody
+        if next_level and _ap is not None:
 
             Approval.objects.create(
                 general_request=self,
-                approver=next_level.approver,
+                approver=_ap,
                 role=next_level.role,
                 level=next_level.level,
                 status=Approval.PENDING
             )
 
             # send_notification_email(
-            #     user=next_level.approver,
+            #     user=_ap,
             #     employee=None,
             #     message=f"New request waiting for your approval.",
             #     template_type="request_created",
@@ -1340,7 +1350,7 @@ class GeneralRequest(models.Model):
             #     notification_model=RequestNotification,
             # )
             send_notification_email(
-                user=next_level.approver,
+                user=_ap,
                 employee=None,
 
                 branch=self.branch,
@@ -1551,7 +1561,7 @@ def create_initial_general_approval(sender, instance, created, **kwargs):   # v1
             first_level = CommonWorkflow.objects.order_by('level').first()
             workflow = None
             # the common workflow is a multi-level workflow; it used to fall through to "no approval"
-            if not first_level or not first_level.approver:
+            if not first_level or not _zt_fl(first_level, instance.employee):
                 raise ValidationError(
                     "Common approval workflow has no levels / approvers. Add them in Settings or switch the request type to its own workflow."
                 )
@@ -1563,7 +1573,7 @@ def create_initial_general_approval(sender, instance, created, **kwargs):   # v1
 
         if workflow:
             approval_type = workflow.approval_type
-            if approval_type == 'multi_approval' and not (first_level and first_level.approver):
+            if approval_type == 'multi_approval' and not (first_level and _zt_fl(first_level, instance.employee)):
                 approval_type = 'no_approval'
                 # v1.73.1 (ESS test B9) a multi-level workflow without levels: the reporting manager decides (it was approved at once)
                 if getattr(instance.employee, 'emp_reporting_manager_id', None):
@@ -1634,7 +1644,7 @@ def create_initial_general_approval(sender, instance, created, **kwargs):   # v1
 
         # ---------------- REPORTING MANAGER ----------------
         if approval_type == 'reporting_manager':
-            manager = getattr(instance.employee, "emp_reporting_manager", None)
+            manager = _zt_step_user(getattr(instance.employee, "emp_reporting_manager", None), instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
 
             if not manager:
                 raise ValidationError("Employee has no reporting manager. Set it in Employee Master before raising this request.")
@@ -1670,9 +1680,7 @@ def create_initial_general_approval(sender, instance, created, **kwargs):   # v1
 
                     notification_type="general",
 
-                    message=(f"A GeneralRequest {instance.request_type}"
-                            f"(Document No: {instance.document_number}) is waiting for your Approval"
-                        ),
+                    message=_approver_msg('general request', instance.request_type, getattr(instance, 'employee', None), instance.document_number),
 
 
                     template_type="request_created",
@@ -1694,11 +1702,11 @@ def create_initial_general_approval(sender, instance, created, **kwargs):   # v1
         # ---------------- MULTI APPROVAL ----------------
         if approval_type == 'multi_approval':
 
-            if first_level and first_level.approver:
+            if first_level and _zt_fl(first_level, instance.employee):
 
                 Approval.objects.create(
                     general_request=instance,
-                    approver=first_level.approver,
+                    approver=_zt_fl(first_level, instance.employee),
                     role=first_level.role,
                     level=first_level.level,
                     status=Approval.PENDING
@@ -1718,7 +1726,7 @@ def create_initial_general_approval(sender, instance, created, **kwargs):   # v1
                 #     notification_model=RequestNotification
                 # )
                 send_notification_email(
-                    user=first_level.approver,
+                    user=_zt_fl(first_level, instance.employee),
                     employee=instance.employee,
 
                     branch=instance.employee.emp_branch_id,
@@ -2020,11 +2028,12 @@ class DocumentRequest(models.Model):
             level=current_level
         ).first()
 
-        if next_level and next_level.approver:
+        _ap = _zt_step_user(next_level.approver, self.employee) if next_level else None   # v1.73.19 (item 5): never a closed login / nobody
+        if next_level and _ap is not None:
 
             DocumentApproval.objects.create(
                 document_request=self,
-                approver=next_level.approver,
+                approver=_ap,
                 role=next_level.role,
                 level=next_level.level,
                 status=DocumentApproval.PENDING,
@@ -2032,7 +2041,7 @@ class DocumentRequest(models.Model):
             )
 
             send_notification_email(
-                user=next_level.approver,
+                user=_ap,
                 employee=None,
                 branch=self.branch,
                 title="Request Created",
@@ -2252,7 +2261,7 @@ def create_initial_document_approval(sender, instance, created, **kwargs):   # v
         # REPORTING MANAGER
         # -------------------------------------------------
         if approval_type == "reporting_manager":
-            manager = getattr(instance.employee, "emp_reporting_manager", None)
+            manager = _zt_step_user(getattr(instance.employee, "emp_reporting_manager", None), instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
             if not manager:
                 raise ValidationError("Employee has no valid reporting manager.")
 
@@ -2271,9 +2280,7 @@ def create_initial_document_approval(sender, instance, created, **kwargs):   # v
                 branch=instance.branch,
                 notification_type="document_request",
                 title="Document Request Approval",
-                message=(f"Your DocumentRequest {instance.request_type}"
-                         f"(Document No: {instance.document_number}) is waiting for your Approval."
-                    ),
+                message=_approver_msg('document request', instance.request_type, getattr(instance, 'employee', None), instance.document_number),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -2304,7 +2311,7 @@ def create_initial_document_approval(sender, instance, created, **kwargs):   # v
 
             DocumentApproval.objects.create(
                 document_request=instance,
-                approver=first_level.approver,
+                approver=_zt_fl(first_level, instance.employee),
                 role=first_level.role,
                 level=first_level.level,
                 status=DocumentApproval.PENDING,
@@ -2312,16 +2319,14 @@ def create_initial_document_approval(sender, instance, created, **kwargs):   # v
             )
 
 
-            if first_level.approver:
+            if _zt_fl(first_level, instance.employee):
                 send_notification_email(
-                    user=first_level.approver,
+                    user=_zt_fl(first_level, instance.employee),
                     employee=None,
                     branch=instance.branch,
                     notification_type="document_request",
                     title="Document Request Approval",
-                    message=(f"Your DocumentRequest {instance.request_type}"
-                            f"(Document No: {instance.document_number}) is waiting for your Approval."
-                    ),
+                    message=_approver_msg('document request', instance.request_type, getattr(instance, 'employee', None), instance.document_number),
                     template_type="request_created",
                     context={
                         **get_employee_context(instance.employee),
@@ -2432,16 +2437,7 @@ class EmployeeResignation(models.Model):
 
         # ✅ ADD fallback (same as GeneralRequest)
         if not workflow:
-            workflow = ResignationApprovalWorkflow.objects.create(
-                approval_type='no_approval'
-            )
-
-            ResignationApprovalLevel.objects.create(
-                workflow=workflow,
-                level=1,
-                role="Auto Level",
-                approver=None
-            )
+            workflow = ResignationApprovalWorkflow(approval_type='reporting_manager')   # v1.73.19 (item 5): no set-up – the step made at the start (reporting manager) decides; a 'No approval' set-up was saved here, so every later request of the type was approved by itself
 
         approval_type = workflow.approval_type
 
@@ -2570,13 +2566,14 @@ class EmployeeResignation(models.Model):
             level=current_level
         ).first()
 
-        if next_level and next_level.approver:
+        _ap = _zt_step_user(next_level.approver, self.employee) if next_level else None   # v1.73.19 (item 5): never a closed login / nobody
+        if next_level and _ap is not None:
 
             last_approval = self.resign_approvals.order_by('-level').first()
 
             ResignationApproval.objects.create(
                 resignation_request=self,
-                approver=next_level.approver,
+                approver=_ap,
                 role=next_level.role,
                 level=next_level.level,
                 status=ResignationApproval.PENDING,
@@ -2788,7 +2785,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
     # ---------------- REPORTING MANAGER ----------------
     if approval_type == 'reporting_manager':
 
-        manager = instance.employee.emp_reporting_manager
+        manager = _zt_step_user(instance.employee.emp_reporting_manager, instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
 
         if not manager:
             raise ValidationError("Employee has no reporting manager. Please set reporting manager.")
@@ -2807,8 +2804,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="resigantion",
-            message=(f"New ResignationRequest {instance.termination_type}"
-                    f"(Document No: {instance.document_number}) is waiting for your Approval"),
+            message=_approver_msg('resignation request', instance.termination_type, getattr(instance, 'employee', None), instance.document_number),
             template_type="resignation_created",
             context={
                 **get_employee_context(instance.employee),
@@ -2830,25 +2826,24 @@ def create_initial_approval(sender, instance, created, **kwargs):
         if not first_level:
             return
 
-        if not first_level.approver:
+        if not _zt_fl(first_level, instance.employee):
             raise ValidationError(f"No approver set for level {first_level.level}")
 
         ResignationApproval.objects.create(
             resignation_request=instance,
-            approver=first_level.approver,
+            approver=_zt_fl(first_level, instance.employee),
             role=first_level.role,
             level=first_level.level,
             status=ResignationApproval.PENDING
         )
 
         send_notification_email(
-            user=first_level.approver,
+            user=_zt_fl(first_level, instance.employee),
             employee=instance.employee,
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="resignation",
-            message=(f"Your ResignationRequest {instance.termination_type}"
-                    f"(Document No: {instance.document_number}) is waiting for your Approval"),
+            message=_approver_msg('resignation request', instance.termination_type, getattr(instance, 'employee', None), instance.document_number),
             template_type="resignation_created",
             context={
                 **get_employee_context(instance.employee),

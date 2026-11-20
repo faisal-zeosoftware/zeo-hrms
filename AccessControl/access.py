@@ -398,7 +398,7 @@ class ZeoAccess(permissions.BasePermission):
         from .approvals import check as approval_check
         msg = approval_check(request, view, obj, c)
         if msg:
-            self.message = msg
+            self.message = tr(msg)   # v1.73.19: in the reader's language
             return False
         if c.admin:
             return True

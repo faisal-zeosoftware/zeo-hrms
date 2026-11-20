@@ -460,14 +460,16 @@ class EmiratisationView(Base):
                          'nafis_registered': bool(p and p.nafis_registered), 'nafis_no': p.nafis_no if p else '', 'salary_support': bool(p and p.salary_support),
                          'support_until': d(p.support_until) if p else '', 'counts_for_quota': p.counts_for_quota if p else True})
         st = EmiratisationSettings.objects.order_by('id').first()
-        return Response({'quota': S.quota(emps if self.c.branches is not None else None), 'rows': sorted(rows, key=lambda r: (not r['national'], r['employee'])),
+        from .nationalisation import programme
+        prog = programme()
+        prog = {**prog, 'programme': tr(prog['programme']), 'national': tr(prog['national']), 'nationals': tr(prog['nationals']),
+                'air_ticket': {'law': prog['air_ticket']['law'], 'text': tr(prog['air_ticket']['text'])} if prog.get('air_ticket') else None}
+        return Response({'programme': prog, 'quota': S.quota(emps if self.c.branches is not None else None), 'rows': sorted(rows, key=lambda r: (not r['national'], r['employee'])),
                          'settings': {'target_pct': float(st.target_pct) if st else 0, 'period_label': st.period_label if st else '',
                                       'deadline': d(st.deadline) if st else '', 'fine_per_head_month': float(st.fine_per_head_month) if st else 0,
                                       'min_nationals': st.min_nationals if st else 0, 'skilled_levels': st.skilled_levels if st else '1,2,3',
                                       'note': st.note if st else ''},
-                         'help': tr('MOHRE (2026): companies of 50+ employees raise Emiratis in skilled jobs by 2 % a year (1 % each half year, deadlines '
-                                    '30 June and 31 December); from 1 July 2026 AED 10,000 a month (AED 120,000 a year) for each Emirati not hired. Enter '
-                                    'the target and the amount from MOHRE\'s notice – they change every year.')})
+                         'help': tr(programme()['help'])})
 
     def put(self, request):
         if not (self.c.admin or MANAGE & self.c.codes):
@@ -511,6 +513,9 @@ class EmiratisationView(Base):
             raise S.Refused(tr('Skill level 1 – 5.'), problems={'skill_level': tr('Invalid.')})
         reg = dta.get('nafis_registered') in (True, 'true', 1, '1')
         sup = dta.get('salary_support') in (True, 'true', 1, '1')
+        from .nationalisation import pack as _pack
+        if (reg or sup) and _pack() != 'AE':
+            raise S.Refused(tr('Nafis is for UAE companies only.'), problems={'nafis_registered': tr('Invalid.')})
         if (reg or sup) and not S.is_uae_national(e):
             raise S.Refused(tr('Nafis is for UAE nationals only.'), problems={'nafis_registered': tr('Invalid.')})
         if sup and not reg:

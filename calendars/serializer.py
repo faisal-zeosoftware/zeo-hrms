@@ -828,7 +828,7 @@ class LatinEarlyoutEmailTemplateSerializer(serializers.ModelSerializer):
             queryset = queryset.exclude(id=self.instance.id)
 
         # ✅ Duplicate check
-        if queryset.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(queryset, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({
                 "template_type": f"{template_type} template already exists."
             })
@@ -888,7 +888,7 @@ class LateinEarlyoutRequestSerializer(serializers.ModelSerializer):
 
         if workflow.approval_type == 'reporting_manager':
 
-            if not getattr(employee, "emp_reporting_manager", None):
+            if __import__('LeavePolicy.approvers', fromlist=['pick']).pick(getattr(employee, 'emp_reporting_manager', None), employee)[0] is None:   # v1.73.19 (item 5)
                 raise serializers.ValidationError({
                     "employee": "Employee has no reporting manager."
                 })
@@ -1605,7 +1605,7 @@ class LvEmailTemplateSerializer(serializers.ModelSerializer):
         temp=LvEmailTemplate.objects.filter(template_type=template_type)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
         })
         return attrs

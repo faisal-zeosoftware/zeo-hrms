@@ -3,6 +3,7 @@
 The link carries the company and a random secret (only its hash is stored); it works once and for 7 days.
 API (no login): GET /users/sign-in-link/?t=… → who it is for; POST {t, password} → password set, link used.
 """
+from zeo.mailguard import essential_mail
 import hashlib
 import logging
 import secrets
@@ -62,6 +63,9 @@ def send(user, employee=None, by=None, base_url=''):
 
 
 _quiet = threading.local()
+
+
+@essential_mail   # v1.79.5 sent even when the company e-mails are off
 
 
 def welcome(user, employee):

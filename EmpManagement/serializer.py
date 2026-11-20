@@ -535,7 +535,7 @@ class DocRequestSerializer(serializers.ModelSerializer):
             approval_type = workflow.approval_type if workflow else 'no_approval'
 
             if approval_type == "reporting_manager":
-                if not employee.emp_reporting_manager:
+                if __import__('LeavePolicy.approvers', fromlist=['pick']).pick(getattr(employee, 'emp_reporting_manager', None), employee)[0] is None:   # v1.73.19 (item 5): no manager → branch HR → company HR → admin
                     raise serializers.ValidationError({
                         "reporting_manager": "Employee has no reporting manager. Set it in Employee Master before raising this request."
                     })
@@ -1084,7 +1084,7 @@ class EmailTemplateSerializer(serializers.ModelSerializer):
         temp=EmailTemplate.objects.filter(template_type=template_type)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
         })
         return attrs
@@ -1210,7 +1210,7 @@ class GeneralRequestSerializer(serializers.ModelSerializer):
             # (like leave, loans, advances since 1.37.1); it used to be refused with "Approval workflow is not configured."
             approval_type = workflow.approval_type if workflow else 'no_approval'
 
-        if approval_type == "reporting_manager" and not employee.emp_reporting_manager:
+        if approval_type == "reporting_manager" and __import__('LeavePolicy.approvers', fromlist=['pick']).pick(getattr(employee, 'emp_reporting_manager', None), employee)[0] is None:   # v1.73.19 (item 5)
             raise serializers.ValidationError({
                 "reporting_manager": "Employee has no reporting manager."
             })
@@ -1423,7 +1423,7 @@ class DocExpEmailTemplateSerializer(serializers.ModelSerializer):
         temp=DocExpEmailTemplate.objects.filter(template_name=template_name)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_name": f"{template_name} template already exists."
         })
         return attrs
@@ -1781,7 +1781,7 @@ class ResignationTemplateSerializer(serializers.ModelSerializer):
         temp=ResignationEmailTemplate.objects.filter(template_type=template_type)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_type": f"{template_type} template already exists."
         })
         return attrs
@@ -1794,7 +1794,7 @@ class DocRequestEmailTemplateSerializer(serializers.ModelSerializer):
         temp=DocRequestEmailTemplate.objects.filter(template_type=template_type)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
         })
         return attrs

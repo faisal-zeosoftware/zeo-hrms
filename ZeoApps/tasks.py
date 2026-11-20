@@ -8,7 +8,7 @@ from celery import shared_task
 from django_tenants.utils import get_tenant_model, schema_context
 
 log = logging.getLogger(__name__)
-KIT = ('ZeoCRM', 'ZeoProperty', 'ZeoMaintenance', 'ZeoAssets', 'ZeoPeople')
+KIT = ('ZeoCRM', 'ZeoProperty', 'ZeoMaintenance', 'ZeoAssets', 'ZeoPeople', 'ZeoInventory', 'ZeoLedger', 'ZeoSales', 'ZeoPurchase', 'ZeoMfg')
 
 
 @shared_task

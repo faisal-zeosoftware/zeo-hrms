@@ -24,7 +24,7 @@ from . import licence as L
 from .models import EnterpriseRequest, IssuedLicence, LicenceFile
 from .signing import LicenceError, sign
 
-APPS = ['hrms', 'payroll', 'projects', 'crm', 'property', 'maintenance', 'assets', 'hse']   # v1.36.0: People is part of HRMS (no own licence key)
+APPS = ['hrms', 'payroll', 'projects', 'crm', 'property', 'maintenance', 'assets', 'hse', 'inventory', 'accounting', 'sales', 'purchase', 'manufacturing']   # v1.36.0: People is part of HRMS (no own licence key)
 FEATURES = ['group']
 
 

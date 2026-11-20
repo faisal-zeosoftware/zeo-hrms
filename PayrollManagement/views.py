@@ -503,13 +503,28 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
  
             # Save the run itself first (without branch — it's handled via the
             # through model below, not a plain .set()).
-            payroll = serializer.save()
- 
+            # v1.75.1: a large run (or "background" asked by the screen) is calculated in the background – the request only
+            # saves the run (the employees given in the body are set by save() too: deferred as well);
+            # PayrollPlus/run_background.py calculates it in batches with live progress
+            _bg = None
             if hasattr(serializer, '_payroll_employee_ids'):
-                employees = emp_master.objects.filter(
-                    id__in=serializer._payroll_employee_ids
-                )
-                payroll.employees.set(employees)
+                try:
+                    from PayrollPlus import run_background as _bg
+                except ImportError:
+                    _bg = None
+                if _bg is not None and not _bg.wanted(_bg.truthy(self.request.data.get('background')), len(serializer._payroll_employee_ids)):
+                    _bg = None
+            if _bg is not None:
+                with _bg.deferred():
+                    payroll = serializer.save()
+                    payroll.employees.set(emp_master.objects.filter(id__in=serializer._payroll_employee_ids))
+            else:
+                payroll = serializer.save()
+                if hasattr(serializer, '_payroll_employee_ids'):
+                    employees = emp_master.objects.filter(
+                        id__in=serializer._payroll_employee_ids
+                    )
+                    payroll.employees.set(employees)
  
             # One PayrollRunBranch per selected branch, each with its own number.
             # If any branch's DocumentNumbering config is missing or exhausted,
@@ -526,11 +541,24 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
                 record_prepared(payroll, self.request.user)
             except ImportError:
                 pass
+            if _bg is not None:
+                self._zeo_progress = _bg.start(payroll, self.request.headers.get('X-Zeo-Progress'), self.request.user,
+                                               n_employees=len(serializer._payroll_employee_ids))
+
+    def create(self, request, *args, **kwargs):
+        # v1.75.1: tell the screen the run is calculated in the background (and the token of its progress)
+        self._zeo_progress = None
+        resp = super().create(request, *args, **kwargs)
+        if self._zeo_progress and isinstance(resp.data, dict):
+            resp.data['background'] = True
+            resp.data['progress_token'] = self._zeo_progress
+        return resp
 
     def perform_update(self, serializer):
         # v1.18.0: segregation of duties – the preparer may not approve / release the run; who approved / paid is recorded
         old = str(serializer.instance.status or '').lower()
         new = str(serializer.validated_data.get('status', old) or '').lower()
+        self._zeo_not_calculating(serializer.instance)   # v1.75.1
         try:
             from PayrollPlus import services as _pp
         except ImportError:
@@ -545,7 +573,18 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
         if _pp and new != old:
             _pp.record_status_change(run, new, self.request.user, str(self.request.data.get('payment_ref') or ''))
  
+    def _zeo_not_calculating(self, run):
+        """v1.75.1: no change, approval or delete while the run is calculated in the background."""
+        try:
+            from PayrollPlus.run_background import is_calculating
+        except ImportError:
+            return
+        if is_calculating(run.pk):
+            from rest_framework.exceptions import ValidationError as _VE
+            raise _VE({'detail': 'This payroll is still being calculated. Wait until it is finished.'})
+
     def perform_destroy(self, instance):
+        self._zeo_not_calculating(instance)   # v1.75.1
         # v1.16.0 (D16): a paid run is closed (salaries transferred, WPS file made) – it stays as the record of the payment
         if str(instance.status or '').lower() == 'paid':
             from rest_framework.exceptions import ValidationError as _DRFValidationError
@@ -1300,6 +1339,14 @@ class LoanApprovalviewset(viewsets.ModelViewSet):
             "message": "Response sent successfully",
             "response": response_text
         })
+def _wps_by():
+    try:
+        from PayrollPlus.bankfiles import wps_by
+        return wps_by()
+    except ImportError:
+        return 'branch'
+
+
 class SIFDataView(APIView):
     def post(self, request):
         try:  # v1.14.0: the UAE WPS SIF file only where the country pack has it (Settings → Country settings)
@@ -1318,14 +1365,34 @@ class SIFDataView(APIView):
         # v1.67.19: one file per WPS establishment – a run of branches with different employer IDs is made per establishment
         _data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
         _groups = []
+        _run0 = None
+        _visa = []
         try:
             from PayrollPlus.bankfiles import establishments as _est
             _run0 = PayrollRun.objects.filter(pk=_data.get('payroll_run_id')).first() if str(_data.get('payroll_run_id') or '').isdigit() else None
             _t0 = get_tenant_model().objects.filter(schema_name=request.tenant.schema_name).first()
+            _visa = [int(x) for x in (request.data.get('visa_branch_ids') or []) if str(x).isdigit()]
+            _wb = None
+            if _visa and _run0 is not None:   # v1.73.24: only the employees of the chosen visa branches – and their establishments
+                from PayrollPlus.bankfiles import visa_employee_ids, wps_by as _wby
+                _ids = visa_employee_ids(_run0, _visa) or [0]
+                if hasattr(_data, 'setlist'):
+                    _data.setlist('employee_ids', _ids)
+                else:
+                    _data['employee_ids'] = _ids
+                _pairs = _run0.payslips.filter(employee_id__in=_ids).values_list('employee__visa_location_id', 'employee__emp_branch_id')
+                _wb = {(v or b) if _wby() == 'visa' else b for v, b in _pairs} - {None}
+                if _wb and not (_data.get('branch_ids') or []):
+                    if hasattr(_data, 'setlist'):
+                        _data.setlist('branch_ids', [min(_wb)])
+                    else:
+                        _data['branch_ids'] = [min(_wb)]
             if _run0 is not None:
                 _e0 = _t0.employer_unique_id.zfill(13) if _t0 and _t0.employer_unique_id else '0' * 13
                 _r0 = _t0.bank_routing_code if _t0 and _t0.bank_routing_code else '0' * 9
                 _bids, _emp_g, _rout_g, _groups = _est(_run0, _data.get('branch_ids') or [], _e0, _r0)
+                if _wb is not None:   # v1.73.24: only the establishments of the chosen visa branches' employees
+                    _groups = [g for g in _groups if set(g['branch_ids']) & _wb]
                 if hasattr(_data, 'setlist'):
                     _data.setlist('branch_ids', _bids)
                 else:
@@ -1454,6 +1521,8 @@ class SIFDataView(APIView):
                     'warnings': warnings,
                     'establishments': _groups,
                     'branch_ids': list(_br),
+                    'wps_by': _wps_by(),   # v1.73.24
+                    'visa_branch_ids': _visa,
                 }
             }
 
@@ -2170,6 +2239,8 @@ class AirticketEmailTemplateViewSet(viewsets.ModelViewSet):
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_gender }}',
                 '{{ emp_date_of_birth }}',
                 '{{ emp_personal_email }}',
@@ -2193,7 +2264,7 @@ class AirticketNotificationsViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return AirticketNotification.objects.all().order_by('-created_at')
         # Normal user → show request notifications assigned directly to them
         qs = AirticketNotification.objects.filter(
@@ -2247,6 +2318,8 @@ class LoanEmailTemplateViewSet(viewsets.ModelViewSet):
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_gender }}',
                 '{{ emp_date_of_birth }}',
                 '{{ emp_personal_email }}',
@@ -2271,7 +2344,7 @@ class LoanNotificationViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return LoanNotification.objects.all().order_by('-created_at')
 
         # Normal user → show request notifications assigned directly to them
@@ -2294,6 +2367,8 @@ class AdvSalaryEmailTemplateViewSet(viewsets.ModelViewSet):
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_gender }}',
                 '{{ emp_date_of_birth }}',
                 '{{ emp_personal_email }}',
@@ -2315,7 +2390,7 @@ class AdvSalaryNotificationViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return AdvanceSalaryNotification.objects.all().order_by('-created_at')
 
         # Normal user → show request notifications assigned directly to them

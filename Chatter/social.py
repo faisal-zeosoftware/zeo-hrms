@@ -1,5 +1,6 @@
 """v1.45.0 – starred records, recently viewed records and colour tags on any record (keyed like the rest of the chatter by
 'app_label.model_name' + object id)."""
+import re   # v1.73.21
 from collections import defaultdict
 
 from django.utils import timezone
@@ -44,14 +45,38 @@ def toggle_star(user, rec, label, page):
     return True
 
 
+def _fresh_label(x):
+    """v1.73.21 a label saved as "PurchaseOrder object (14)" (a record without a name, before 1.73.21) is read again from the record
+    and stored – "PO-00014 – Paint for unit 204"."""
+    lab = x.label or ''
+    if not re.match(r'^\w+ object \(\d+\)$', lab):
+        return lab
+    try:
+        from django.apps import apps as _apps
+        M = _apps.get_model(x.model)
+        o = M.objects.filter(pk=x.object_id).first()
+        if o is None:   # the record is gone – the line goes too
+            type(x).objects.filter(pk=x.pk).delete()
+            return None
+        if o is not None:
+            new = str(o)[:255]
+            if new and not re.match(r'^\w+ object \(\d+\)$', new):
+                type(x).objects.filter(pk=x.pk).update(label=new)
+                return new
+    except Exception:   # noqa: BLE001 – a key that is not a model label, a removed app
+        pass
+    return lab
+
+
 def row(x, at):
-    return {'id': x.id, 'model': x.model, 'object_id': x.object_id, 'label': x.label, 'page': x.page, 'endpoint': x.endpoint,
+    return {'id': x.id, 'model': x.model, 'object_id': x.object_id, 'label': _fresh_label(x), 'page': x.page, 'endpoint': x.endpoint,
             'app': app_of(x.model), 'at': at}
 
 
 def lists(user):
-    return {'starred': [row(s, s.created_at) for s in Star.objects.filter(user=user)[:50]],
-            'recent': [row(r, r.at) for r in RecentRecord.objects.filter(user=user)[:KEEP_RECENT]]}
+    st = [row(s, s.created_at) for s in Star.objects.filter(user=user)[:50]]
+    rc = [row(r, r.at) for r in RecentRecord.objects.filter(user=user)[:KEEP_RECENT]]
+    return {'starred': [x for x in st if x['label'] is not None], 'recent': [x for x in rc if x['label'] is not None]}   # v1.73.21 removed records left out
 
 
 # ------------------------------------------------------------------ tags

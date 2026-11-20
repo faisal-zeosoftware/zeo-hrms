@@ -179,7 +179,14 @@ def values(emp, lr):
             for key, fk, attr in (('designation', 'emp_desgntn_id', 'desgntn_job_title'), ('department', 'emp_dept_id', 'dept_name'),
                                   ('branch', 'emp_branch_id', 'branch_name'), ('nationality', 'emp_nationality', 'N_name')):
                 if getattr(emp, fk + '_id', None):
-                    v[key] = translated(getattr(emp, fk), attr, lr.language) or v[key]
+                    t = translated(getattr(emp, fk), attr, lr.language)
+                    if not t or t == v[key]:   # v1.73.19 (item 8): no own translation – the language pack's term (the table showed "المدير", the text "Manager")
+                        try:
+                            from Translations.i18n import for_lang
+                            t = for_lang(v[key], lr.language) if v[key] else t
+                        except Exception:   # noqa: BLE001
+                            pass
+                    v[key] = t or v[key]
         except Exception:
             log.debug('translated names for the letter skipped', exc_info=True)
     # v1.67.26: the text HR typed (purpose – the whole body of a general / mail-merge letter) may use the placeholders too
@@ -353,11 +360,11 @@ def render_pdf(emp, lr, tpl, vals):
     c.setStrokeColorRGB(0.8, 0.8, 0.8)
     c.setLineWidth(0.6)
     c.line(left, 22 * mm, right, 22 * mm)
-    foot = f'Verification code: {lr.verification_code}  ·  Reference: {lr.reference_no}  ·  Verify with HR or in ZEO HRMS → Self service → Verify a letter.'
+    foot = f'Verification code: {lr.verification_code}  ·  Reference: {lr.reference_no}  ·  Verify with HR or in ZEO Books → Self service → Verify a letter.'
     if rtl:  # v1.15.0: the verification line in the letter's language
         try:
             from Translations.i18n import tr
-            foot = tr('Verification code: {0}  ·  Reference: {1}  ·  Verify with HR or in ZEO HRMS → Self service → Verify a letter.',
+            foot = tr('Verification code: {0}  ·  Reference: {1}  ·  Verify with HR or in ZEO Books → Self service → Verify a letter.',
                       lr.verification_code, lr.reference_no, lang=lr.language)
         except Exception:
             pass

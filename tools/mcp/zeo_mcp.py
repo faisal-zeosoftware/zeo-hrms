@@ -117,7 +117,7 @@ def handle(msg):
     if m == 'initialize':
         return {'protocolVersion': p.get('protocolVersion') or PROTOCOL, 'capabilities': {'tools': {}},
                 'serverInfo': {'name': 'zeo-hrms', 'version': VERSION},
-                'instructions': 'ZEO HRMS. Read with zeo_read; propose changes with zeo_propose_change – they are drafts until a company '
+                'instructions': 'ZEO Books. Read with zeo_read; propose changes with zeo_propose_change – they are drafts until a company '
                                 'administrator approves them in ZEO.'}
     if m == 'ping':
         return {}

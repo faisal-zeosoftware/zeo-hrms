@@ -42,7 +42,7 @@ def _skeleton():
 def _system():
     sk = _skeleton()
     files = '\n\n'.join(f'--- {k}\n{v}' for k, v in sk.items())
-    return ('You write a ZEO HRMS level 4 code module: a Django app (REST API with Django REST framework) and an Angular standalone page, '
+    return ('You write a ZEO Books level 4 code module: a Django app (REST API with Django REST framework) and an Angular standalone page, '
             'exactly in the style of this skeleton (rename ZeoAcme / acme):\n' + files +
             '\nRules: the app is new (name ZeoSomething); link to ZEO tables only with ForeignKey from your own tables '
             "('EmpManagement.emp_master', 'OrganisationManager.brnch_mstr', 'UserManagement.CustomUser'); never change ZEO's apps; no raw "
@@ -100,7 +100,7 @@ def check(p):
 
 
 def readme(app, slug, title, summary):
-    return f"""# {title} – code module drafted by Ask ZEO (ZEO HRMS level 4)
+    return f"""# {title} – code module drafted by Ask ZEO (ZEO Books level 4)
 
 {summary}
 

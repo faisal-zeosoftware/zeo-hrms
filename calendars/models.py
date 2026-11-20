@@ -44,6 +44,24 @@ from EmpManagement.utils import send_notification_email, get_employee_context
 
 
 # Create your models here.
+def _zt_step_user(user, employee):
+    """v1.73.19 (item 5): the person who decides a level – the named approver, else branch HR → company HR → administrator."""
+    try:
+        from LeavePolicy.approvers import pick
+        return pick(user, employee)[0]
+    except Exception:   # noqa: BLE001
+        return user
+
+
+def _zt_fl(level, employee):
+    """v1.73.19 (item 5): the person who decides a first level (resolved once): the named approver, else branch HR → company HR → admin."""
+    if level is None:
+        return None
+    if not hasattr(level, '_zt_who'):
+        level._zt_who = _zt_step_user(level.approver, employee)
+    return level._zt_who
+
+
 class weekend_calendar(models.Model):
     DAY_TYPE_CHOICES = [
         ('leave', 'Leave'),
@@ -895,17 +913,23 @@ class LvApprovalNotify(models.Model):
                 recipient_name = self.recipient_employee.emp_first_name
 
             if to_email:
-                context.update({'recipient_name': recipient_name})
-
-                # Fetch the email template
-                try:
-                    email_template = LvEmailTemplate.objects.get(template_type=template_type)
-                    subject = email_template.subject
-                    template = Template(email_template.body)
-                    html_message = template.render(Context(context))
-                    plain_message = strip_tags(html_message)
-                except LvEmailTemplate.DoesNotExist:
+                # v1.73.19 (item 7): the template of the employee's branch, every placeholder filled, the subject's placeholders too,
+                # the reader's name – and no forged "From: zeosoftware@abc.com" header
+                from EmpManagement.utils import _pick_template, _fill_context, _person_name
+                emp = self.recipient_employee
+                if emp is None and self.recipient_user is not None:
+                    emp = emp_master.objects.filter(users=self.recipient_user).first()
+                email_template = _pick_template(LvEmailTemplate, template_type, emp)
+                if email_template is None:
                     raise ValidationError("Email template not found. Please set an email template for this notification type.")
+                _fill_context(context, emp, self.message)
+                lt = context.get('leave_type')
+                if lt is not None and not context.get('request_type'):
+                    context['request_type'] = getattr(lt, 'name', None) or str(lt)
+                context['recipient_name'] = _person_name(self.recipient_user, self.recipient_employee if self.recipient_user is None else None) or recipient_name
+                subject = Template(email_template.subject).render(Context(context)).replace('\n', ' ').strip()
+                html_message = Template(email_template.body).render(Context(context))
+                plain_message = strip_tags(html_message)
 
                 # Send the email
                 email = EmailMultiAlternatives(
@@ -914,7 +938,6 @@ class LvApprovalNotify(models.Model):
                     from_email=default_email,  # From email
                     to=[to_email],  # Recipient list
                     connection=connection,
-                    headers={'From': 'zeosoftware@abc.com'}  # Custom header
                 )
                 email.attach_alternative(html_message, "text/html")
                 email.send(fail_silently=False)
@@ -1084,9 +1107,10 @@ class CompensatoryLeaveRequest(models.Model):
 
         if next_level:
             last_approval = self.approvals.order_by('-level').first()
+            _cap = _lp_approver(next_level, self.employee, next_level.approver)   # v1.73.19 (item 5): the same person is told
             LeaveApproval.objects.create(
                 compensatory_request=self,
-                approver=_lp_approver(next_level, self.employee, next_level.approver),   # v1.15.1: role / fallback when the level names nobody
+                approver=_cap,   # v1.15.1: role / fallback when the level names nobody
                 level=next_level.level,
                 status=LeaveApproval.PENDING,
                 note=last_approval.note if last_approval else None
@@ -1094,7 +1118,7 @@ class CompensatoryLeaveRequest(models.Model):
 
             # Notify next approver
             notification = LvApprovalNotify.objects.create(
-                recipient_user=next_level.approver,
+                recipient_user=_cap,
                 message=f"New compensatory leave request for approval: work date {self.work_date}, employee: {self.employee}"
             )
             notification.send_email_notification('request_created', {
@@ -1159,7 +1183,7 @@ def create_initial_approval_for_compensatory_leave(sender, instance, created, **
             )
         # Notify first approver
             notification = LvApprovalNotify.objects.create(
-                recipient_user=first_level.approver,
+                recipient_user=_lp_approver(first_level, instance.employee, first_level.approver),   # v1.73.19 (item 5): the person asked
                 message=f"New request for approval: Compensatory Leave, employee: {instance.employee}"
             )
             notification.send_email_notification('request_created', {
@@ -1618,8 +1642,8 @@ class employee_leave_request(models.Model):
                     branch=self.branch,
                     title="Request Created",
                     notification_type="lv_request",
-                    message=(f"Your LeaveRequest {self.leave_type}"
-                        f"(Document No: {self.document_number}) is waiting for your Approval."
+                    message=(f"A leave request {self.leave_type} of {self.employee.emp_first_name} {self.employee.emp_last_name or ''}".replace('  ', ' ')   # v1.73.19 (item 11): to the approver, not "Your LeaveRequest"
+                        + f" (Document No: {self.document_number}) is waiting for your approval."
                     ),
                     template_type="request_created",
                     context={
@@ -1696,6 +1720,15 @@ class employee_leave_request(models.Model):
 
                 return
 
+            prev = self.approvals.filter(approver=approver, status=LeaveApproval.APPROVED).order_by('level').first()
+            if prev is not None:
+                # v1.73.19 (item 5): the same person on two levels approves once – this level is approved with his earlier decision
+                # (he was asked again for the same request)
+                LeaveApproval.objects.create(leave_request=self, approver=approver, level=next_level.level, status=LeaveApproval.APPROVED,
+                                             employee_id=self.employee.id, approved_days=prev.approved_days,
+                                             note=f'Approved at level {prev.level} by the same person')
+                return self.move_to_next_level()
+
             LeaveApproval.objects.create(
                 leave_request=self,
                 approver=approver,
@@ -1710,8 +1743,8 @@ class employee_leave_request(models.Model):
                 branch=self.branch,
                 title="Request Created",
                 notification_type="lv_request",
-                message=(f"Your LeaveRequest {self.leave_type}"
-                        f"(Document No: {self.document_number}) is requires your Approval."
+                message=(f"A leave request {self.leave_type} of {self.employee.emp_first_name} {self.employee.emp_last_name or ''}".replace('  ', ' ')   # v1.73.19 (item 11): to the approver, not "Your LeaveRequest"
+                        + f" (Document No: {self.document_number}) is waiting for your approval."
                     ),
                 template_type="request_created",
                 context={
@@ -1894,6 +1927,9 @@ class LeaveApproval(models.Model):
                         f"(Document No: {self.leave_request.document_number}) has been Rejected."
                     ),
             )
+            from EmpManagement.utils import push_bell   # v1.73.19 (item 11): the employee's bell inbox (top bar, phone) too
+            push_bell(self.leave_request.created_by or getattr(self.leave_request.employee, 'users', None), notification.message, 'Request Rejected',
+                      self.leave_request.branch, 'lv_request', notification)
             notification.send_email_notification('request_rejected', {
                 'leave_type': self.leave_request.leave_type,
                 'start_date':self.leave_request.start_date,
@@ -1910,7 +1946,8 @@ class LeaveApproval(models.Model):
                 'emp_joined_date': self.leave_request.employee.emp_joined_date,
             })
 
-            if self.leave_request.employee:
+            if self.leave_request.employee and (self.leave_request.created_by_id is None
+                                                or self.leave_request.created_by_id != self.leave_request.employee.users_id):   # v1.73.19 (item 7): not twice to the same person
                 notification = LvApprovalNotify.objects.create(
                     recipient_employee=self.leave_request.employee,
                     message=(f"Your LeaveRequest {self.leave_request.leave_type}"
@@ -2019,13 +2056,14 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
         if not approver and instance.employee and hasattr(instance.employee, 'users'):
             approver = instance.employee.users
 
-        LeaveApproval.objects.create(
-            leave_request=instance,
-            approver=approver,
-            level=1,
-            status=LeaveApproval.APPROVED,
-            # note="Auto Approved"
-        )
+        if approver is not None:   # v1.75.1: a leave entered with no user (import, an employee without a login) is approved without a step
+            LeaveApproval.objects.create(
+                leave_request=instance,
+                approver=approver,
+                level=1,
+                status=LeaveApproval.APPROVED,
+                # note="Auto Approved"
+            )
 
         instance.status = 'approved'
         instance.save(update_fields=['status'])
@@ -2092,8 +2130,8 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="lv_request",
-            message=(f"Your LeaveRequest {instance.leave_type}"
-                        f"(Document No: {instance.document_number}) is waiting for your Approval."
+            message=(f"A leave request {instance.leave_type} of {instance.employee.emp_first_name} {instance.employee.emp_last_name or ''}".replace('  ', ' ')   # v1.73.19 (item 11): to the approver, not "Your LeaveRequest"
+                        + f" (Document No: {instance.document_number}) is waiting for your approval."
                     ),
             template_type="request_created",
             context={
@@ -2172,8 +2210,8 @@ def create_initial_leave_approval(sender, instance, created, **kwargs):
             branch=instance.employee.emp_branch_id,
             title="Request Created",
             notification_type="lv_request",
-            message=(f"Your LeaveRequest {instance.leave_type}"
-                        f"(Document No: {instance.document_number}) is requires your Approval."
+            message=(f"A leave request {instance.leave_type} of {instance.employee.emp_first_name} {instance.employee.emp_last_name or ''}".replace('  ', ' ')   # v1.73.19 (item 11): to the approver, not "Your LeaveRequest"
+                        + f" (Document No: {instance.document_number}) is waiting for your approval."
                     ),
             template_type="request_created",
             context={
@@ -2310,10 +2348,13 @@ class ShiftPattern(models.Model):
                                   "shift_id / shift_sequence)."
                 })
 
-            if len(shift_sequence) != work_days:
+            blocks = self._rotating_blocks()
+            if blocks < 1 or blocks > 12:
+                raise ValidationError({"pattern_config": "A rotation has 1 to 12 blocks."})
+            if len(shift_sequence) != work_days * blocks:
                 raise ValidationError({
-                    "pattern_config": f"shift_sequence must have exactly {work_days} entries "
-                                       f"(one per working day), got {len(shift_sequence)}."
+                    "pattern_config": f"shift_sequence must have exactly {work_days * blocks} entries "
+                                       f"(one per working day of each of the {blocks} block(s)), got {len(shift_sequence)}."
                 })
 
             if off_days is not None and off_days < 0:
@@ -2324,6 +2365,14 @@ class ShiftPattern(models.Model):
         super().save(*args, **kwargs)
 
     # -------------------------------------------------------------------
+    def _rotating_blocks(self):
+        """v1.73.24: blocks in one rotation cycle – each block is work_days days on, then off_days off; the shifts of block 2
+        follow those of block 1 in shift_sequence (e.g. A×6, 2 off, B×6, 2 off, C×6, 2 off = 3 blocks, a 24-day cycle)."""
+        try:
+            return max(1, int(((self.pattern_config or {}).get('rotating') or {}).get('blocks') or 1))
+        except (TypeError, ValueError):
+            return 1
+
     def _get_rotating_config(self):
         """
         Resolve the effective rotating config for this pattern.
@@ -2369,10 +2418,10 @@ class ShiftPattern(models.Model):
 
         For 'rotating' pattern:
           1. days_elapsed = (target_date - start_date).days
-          2. cycle_length = work_days + off_days   (both dynamic, set per pattern)
-          3. position = days_elapsed % cycle_length
-          4. If position < work_days -> working day, return shift_sequence[position].
-             Else                    -> day off, return None (no fallback).
+          2. block_length = work_days + off_days; cycle = block_length x blocks (v1.73.24 – blocks default 1)
+          3. position = days_elapsed % cycle; block, day = divmod(position, block_length)
+          4. If day < work_days -> working day, return shift_sequence[block x work_days + day].
+             Else              -> day off, return None (no fallback).
 
         Falls back to get_shift_for_day() for 'weekly'/'monthly' when no rule
         matches, or when pattern_config is empty entirely. 'rotating' falls back
@@ -2389,18 +2438,20 @@ class ShiftPattern(models.Model):
         # --- Rotating: checked first, independent of pattern_config presence ---
         if self.pattern_type == "rotating":
             work_days, off_days, shift_sequence = self._get_rotating_config()
-            if not work_days or not shift_sequence or len(shift_sequence) != work_days:
+            blocks = self._rotating_blocks()   # v1.73.24: the shift can change from block to block
+            if not work_days or not shift_sequence or len(shift_sequence) != work_days * blocks:
                 return self.get_shift_for_day(target_date.weekday())
 
-            cycle_length = work_days + (off_days or 0)
-            if cycle_length <= 0:
+            block_length = work_days + (off_days or 0)
+            if block_length <= 0:
                 return self.get_shift_for_day(target_date.weekday())
 
             days_elapsed = (target_date - start_date).days
-            position = days_elapsed % cycle_length
+            position = days_elapsed % (block_length * blocks)
+            block, in_block = divmod(position, block_length)
 
-            if position < work_days:
-                shift_id = shift_sequence[position]
+            if in_block < work_days:
+                shift_id = shift_sequence[block * work_days + in_block]
                 try:
                     return Shift.objects.get(id=shift_id)
                 except Shift.DoesNotExist:
@@ -3449,20 +3500,21 @@ class LateinEarlyoutRequest(models.Model):
             level=current_level
         ).first()
 
-        if next_level and next_level.approver:
+        _ap = _zt_step_user(next_level.approver, self.employee) if next_level else None   # v1.73.19 (item 5): never a closed login / nobody
+        if next_level and _ap is not None:
 
             LateinEarlyoutApproval.objects.create(
                 lateinearlyout_request=self,
-                approver=next_level.approver,
+                approver=_ap,
                 role=next_level.role,
                 level=next_level.level,
                 status=LateinEarlyoutApproval.PENDING
             )
 
             send_notification_email(
-                user=next_level.approver,
+                user=_ap,
                 employee=None,
-                message=f"Your LateinEarlyout Request {self.request_type} is waiting for your Approval.",
+                message=f"A late in / early out request {self.request_type} of {self.employee.emp_first_name} is waiting for your approval.",   # v1.73.19 (item 11)
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -3628,7 +3680,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
         # ================= REPORTING MANAGER =================
         if approval_type == 'reporting_manager':
 
-            manager = instance.employee.emp_reporting_manager
+            manager = _zt_step_user(instance.employee.emp_reporting_manager, instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
 
             if not manager:
                 raise ValidationError("Employee has no reporting manager.")
@@ -3644,7 +3696,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             send_notification_email(
                 user=manager,
                 employee=None,
-                message=f"Your LateinEarlyoutRequest {instance.request_type} is waiting for your Approval.",
+                message=f"A late in / early out request {instance.request_type} of {instance.employee.emp_first_name} is waiting for your approval.",   # v1.73.19 (item 11)
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -3663,15 +3715,15 @@ def create_initial_approval(sender, instance, created, **kwargs):
 
         LateinEarlyoutApproval.objects.create(
             lateinearlyout_request=instance,
-            approver=first_level.approver,
+            approver=_zt_fl(first_level, instance.employee),
             role=first_level.role,
             level=first_level.level,
             status=LateinEarlyoutApproval.PENDING
         )
         send_notification_email(
-            user=first_level.approver,
+            user=_zt_fl(first_level, instance.employee),
             employee=None,
-            message=f"Your LateinEarlyoutRequest {instance.request_type} is waiting for your Approval.",
+            message=f"A late in / early out request {instance.request_type} of {instance.employee.emp_first_name} is waiting for your approval.",   # v1.73.19 (item 11)
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),

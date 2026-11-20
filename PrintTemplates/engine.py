@@ -209,7 +209,7 @@ def render_html(source, context):
     return html
 
 
-def html_to_pdf(html, css=''):
+def html_to_pdf(html, css='', seconds=None):
     from weasyprint import CSS, HTML
     from weasyprint.text.fonts import FontConfiguration
 
@@ -219,7 +219,7 @@ def html_to_pdf(html, css=''):
         doc = HTML(string=html, url_fetcher=uf, base_url=None)
         return doc.write_pdf(stylesheets=[CSS(string=css, url_fetcher=uf, font_config=fc)] if css else None, font_config=fc)
     try:
-        return _run(go, PDF_SECONDS, 'PDF')
+        return _run(go, seconds or PDF_SECONDS, 'PDF')   # v1.79.1 seconds: a part of a long report made in the background may take longer
     except PrintError:
         raise
     except Exception as e:   # noqa: BLE001

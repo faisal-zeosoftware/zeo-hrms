@@ -2974,6 +2974,8 @@ class EmailTemplateViewset(viewsets.ModelViewSet):
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_gender }}',
                 '{{ emp_date_of_birth }}',
                 '{{ emp_personal_email }}',
@@ -3323,7 +3325,7 @@ class UserNotificationsViewSet(viewsets.ModelViewSet):
         # v1.67.6 (setup) item 14: every request notification only for a company administrator (was: anybody with the staff
         # flag saw the approval notifications of all users); everybody else sees the ones addressed to them
         from AccessControl.access import ctx as _zctx
-        if _zctx(self.request).admin:
+        if (_zctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return RequestNotification.objects.all().order_by('-created_at')
         # Normal user → show request notifications assigned directly to them
         qs = RequestNotification.objects.filter(
@@ -3666,6 +3668,8 @@ class DocExpEmailTemplateViewset(viewsets.ModelViewSet):
             'employee': [
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_branch_name }}',
                 '{{ emp_department_name }}',
                 '{{ emp_designation_name }}',
@@ -4205,6 +4209,8 @@ class DocRequestEmailTemplateViewset(viewsets.ModelViewSet):
                 '{{ recipient_name }}',
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_gender }}',
                 '{{ emp_date_of_birth }}',
                 '{{ emp_personal_email }}',
@@ -4222,7 +4228,7 @@ class DocRequestNotificationViewset(viewsets.ModelViewSet):
         user = self.request.user
 
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): own notices unless asked (?all=1)
             return DocRequestNotification.objects.all().order_by('-created_at')
 
         # Normal user → show request notifications assigned directly to them
@@ -4571,6 +4577,8 @@ class ResignationEmailTemplateViewset(viewsets.ModelViewSet):
             'employee': [
                 '{{ emp_first_name }}',
                 '{{ emp_last_name }}',
+                '{{ employee_name }}',
+                '{{ emp_code }}',
                 '{{ emp_branch_name }}',
                 '{{ emp_department_name }}',
                 '{{ emp_designation_name }}',
@@ -4612,7 +4620,7 @@ class ResignationRequestNotificationViewset(viewsets.ModelViewSet):
         user = self.request.user
 
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): own notices unless asked (?all=1)
             return ResignationRequestNotification.objects.all().order_by('-created_at')
 
         # Normal user → show request notifications assigned directly to them
@@ -4790,7 +4798,7 @@ class ResignationRequestNotificationViewSet(viewsets.ReadOnlyModelViewSet):
         user = self.request.user
 
         # Admin / staff / superuser → see all request notifications
-        if user.is_superuser or user.is_staff:
+        if (user.is_superuser or user.is_staff or __import__('AccessControl.access', fromlist=['ctx']).ctx(self.request).admin) and self.request.query_params.get('all') == '1':   # v1.73.19 (item 11): the bell lists the user's own notices – everybody's only when asked (?all=1)
             return ResignationRequestNotification.objects.all().order_by('-created_at')
 
         # Normal user → show request notifications assigned directly to them

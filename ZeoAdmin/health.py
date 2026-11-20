@@ -289,8 +289,36 @@ def check_integrations():
     return out
 
 
+def check_jobs():
+    """v1.73.19 (item 10): the jobs of the scheduler – failed, never ran (since the last restart of Redis), late, or not found."""
+    try:
+        from zeo.jobwatch import status
+        rows = status()
+    except Exception as e:   # noqa: BLE001
+        return _c('jobs', 'Scheduled jobs', 'warn', 'Not checked', str(e)[:200])
+    if not rows:
+        return _c('jobs', 'Scheduled jobs', 'warn', 'No scheduled jobs')
+    bad = [r for r in rows if r['state'] in ('failed', 'missing')]
+    late = [r for r in rows if r['state'] == 'late']
+    never = [r for r in rows if r['state'] == 'never']
+    names = lambda xs: ', '.join(r['job'] for r in xs[:6]) + (' …' if len(xs) > 6 else '')   # noqa: E731
+    if bad:
+        return _c('jobs', 'Scheduled jobs', 'bad', _t('{0} failed or not found', len(bad)), names(bad) + ' – ' + (bad[0]['error'] or _t('task not found'))[:150])
+    if late:
+        return _c('jobs', 'Scheduled jobs', 'bad', _t('{0} late', len(late)), names(late))
+    if len(never) == len(rows):
+        return _c('jobs', 'Scheduled jobs', 'warn', 'No job has run yet', 'They run when the scheduler (Celery beat) and a worker are running.')
+    return _c('jobs', 'Scheduled jobs', 'ok', _t('{0} of {1} ran on time', len(rows) - len(never), len(rows)),
+              _t('Waiting for their first run: {0}', names(never)) if never else '')
+
+
 def run(test_mail=False):
-    checks = [check_db(), check_cache(), check_celery(), check_beat(), check_mail(test_mail), check_storage(), check_backup(), check_licence(),
+    checks = [check_db(), check_cache(), check_celery(), check_beat(), check_jobs(), check_mail(test_mail), check_storage(), check_backup(), check_licence(),
               check_migrations()] + check_messaging() + check_integrations() + check_security()
     worst = 'bad' if any(c['state'] == 'bad' for c in checks) else ('warn' if any(c['state'] == 'warn' for c in checks) else 'ok')
-    return {'state': worst, 'checked_at': timezone.now(), 'checks': checks}
+    try:   # v1.73.19 (item 10): each scheduled job with its last run
+        from zeo.jobwatch import status as _jobs
+        jobs = _jobs()
+    except Exception:   # noqa: BLE001
+        jobs = []
+    return {'state': worst, 'checked_at': timezone.now(), 'checks': checks, 'jobs': jobs}

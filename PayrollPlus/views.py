@@ -80,6 +80,11 @@ def _payslip_lock_public():   # v1.62.11 (item 230)
         return {}
 
 
+def _wps_by_get():
+    from .bankfiles import wps_by
+    return wps_by()
+
+
 class SettingsView(Base):
     def get(self, request):
         s = S.settings()
@@ -93,6 +98,7 @@ class SettingsView(Base):
                 'bank_routing_code': getattr(bw.get(b.pk), 'bank_routing_code', '')} for b in brs]
         return Response({'branch_wps': wps, 'encashment_chain': s.encashment_chain, 'segregation': s.segregation, 'wps_late_days': s.wps_late_days,
                          'settlement_due_days': s.settlement_due_days, 'part_month': s.part_month, 'wps_period': s.wps_period,
+                         'wps_by': _wps_by_get(),   # v1.73.24
                          'payslip_language': s.payslip_language,
                          'pay_weekly': s.pay_weekly, 'pay_biweekly': s.pay_biweekly, 'pay_semimonthly': s.pay_semimonthly,   # v1.55.0
                          **self._net(),   # v1.62.2 (item 51)
@@ -130,6 +136,11 @@ class SettingsView(Base):
                         raise S.Refused(tr('This pay frequency is used by the calendar {0} – deactivate the calendar first.', ', '.join(used)),
                                         problems={f: 'In use.'})
                 setattr(s, f, on)
+        if 'wps_by' in d:   # v1.73.24 WPS establishment by the working or the visa branch
+            if d['wps_by'] not in ('branch', 'visa'):
+                raise S.Refused(tr('Choose what makes the WPS establishment of an employee.'), problems={'wps_by': 'Invalid.'})
+            from .bankfiles import set_wps_by
+            set_wps_by(d['wps_by'])
         if 'wps_period' in d:   # v1.20.2
             if d['wps_period'] not in ('month', 'attendance'):
                 raise S.Refused(tr('Choose the pay period of the WPS file.'), problems={'wps_period': 'Invalid.'})
@@ -467,7 +478,11 @@ class StatutorySerializer(serializers.ModelSerializer):
             return []
         if not isinstance(v, list) or any(not isinstance(x, dict) for x in v):
             raise serializers.ValidationError(tr('Slabs must be a list of rows.'))
-        return v
+        from .india import clean_rows   # v1.73.22 state-wise rows (India PT / LWF)
+        try:
+            return clean_rows(v)
+        except ValueError as e:
+            raise serializers.ValidationError(tr(str(e)))
 
 
 STAT_CODES = ('change_salarycomponent', 'add_salarycomponent', 'change_payrollplussettings', 'view_salarycomponent', 'view_payrollrun')
@@ -643,7 +658,11 @@ class SchemeVersionSerializer(serializers.ModelSerializer):
             return []
         if not isinstance(v, list) or any(not isinstance(x, dict) for x in v):
             raise serializers.ValidationError(tr('Slabs must be a list of rows.'))
-        return v
+        from .india import clean_rows   # v1.73.22 state-wise rows (India PT / LWF)
+        try:
+            return clean_rows(v)
+        except ValueError as e:
+            raise serializers.ValidationError(tr(str(e)))
 
     def validate(self, d):
         sc = self.context['scheme']

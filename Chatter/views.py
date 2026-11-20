@@ -309,6 +309,7 @@ class NotesView(APIView):
         from . import collab as C
         kind = 'message' if request.data.get('kind') == 'message' else 'note'
         mentions = C.mention_ids(body, request.data.get('mention_ids') or [])
+        mentions = sorted(_company_users(request).filter(pk__in=mentions).values_list('pk', flat=True)) if mentions else []   # v1.73.19 (item 6): this company only
         label = str(rec.obj)[:255] if rec.obj is not None else ''
         parent = None
         if str(request.data.get('parent') or '').isdigit():   # v1.46.0 a reply in a thread
@@ -506,6 +507,13 @@ class ActivitiesView(APIView):
                                     screen=rec.endpoint, page=str(d.get('page') or '')[:255], activity_type=atype,
                                     summary=summary or dict(Activity.TYPES)[atype], note=str(d.get('note') or '')[:5000],
                                     due_date=due, assigned_to=user, created_by=request.user)
+        if user.pk != request.user.pk:   # v1.73.19 (item 6): the person given the activity is told in the bell (only the inbox listed it)
+            try:
+                from .collab import _bell
+                _bell(user, f'{uname(request.user)} assigned you: {a.summary}'[:200], f'{a.record_label} – due {due:%d/%m/%Y}'
+                      + (f'\n{a.note[:250]}' if a.note else ''), a.page, a.model, a.object_id)
+            except Exception:   # noqa: BLE001
+                pass
         return Response(act_json(a), status=status.HTTP_201_CREATED)
 
 

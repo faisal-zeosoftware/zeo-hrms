@@ -513,14 +513,14 @@ def _audit(run):
         u = run.by
         RecordLog.objects.create(model='ZeoAdmin.historyrun', object_id=str(run.pk), record_label='Log and history cleaning'[:255], action='updated',
                                  changes={'cleaning': {'label': 'Cleaning', 'old': '', 'new': _sentence(run)[:2000]}},
-                                 user=u, user_name=((u.get_full_name() or u.username) if u else 'ZEO')[:150])
+                                 user=u, user_name=((u.get_full_name() or u.username) if u else 'ZEO Books')[:150])
     except Exception:
         log.exception('history audit line')
 
 
 def run_json(r):
     return {'id': r.id, 'how': r.how, 'how_text': r.get_how_display(), 'categories': r.categories, 'counts': r.counts, 'archive': os.path.basename(r.archive or ''),
-            'archive_rows': r.archive_rows, 'finished': r.finished, 'by': (r.by.get_full_name() or r.by.username) if r.by_id else 'ZEO', 'at': r.at,
+            'archive_rows': r.archive_rows, 'finished': r.finished, 'by': (r.by.get_full_name() or r.by.username) if r.by_id else 'ZEO Books', 'at': r.at,
             'seconds': r.seconds, 'text': _sentence(r)}
 
 

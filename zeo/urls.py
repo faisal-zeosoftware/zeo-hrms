@@ -55,6 +55,12 @@ urlpatterns = [
     path('zeo-property/', include('ZeoProperty.urls')),          # v1.21.0 Property
     path('zeo-masters/', include('ZeoMasters.urls')),          # v1.41.0 business partners (shared masters under every business app)
     path('zeo-maintenance/', include('ZeoMaintenance.urls')),    # v1.21.0 Maintenance
+    path('zeo-inventory/', include('ZeoInventory.urls')),    # v1.75.0 Inventory
+    path('zeo-ledger/', include('ZeoLedger.urls')),          # v1.76.0 Accounting
+    path('zeo-sales/', include('ZeoSales.urls')),            # v1.77.0 Sales
+    path('doc-capture/', include('DocCapture.urls')),        # v1.79.4 Document capture
+    path('zeo-purchase/', include('ZeoPurchase.urls')),      # v1.78.0 Purchase
+    path('zeo-manufacturing/', include('ZeoMfg.urls')),      # v1.79.0 Manufacturing
     path('zeo-people/', include('ZeoPeople.urls')),               # v1.36.0 People
     path('zeo-hr/', include('ZeoHR.urls')),                       # v1.48.0 HR operations
     path('insights/', include('ZeoInsights.urls')),               # v1.53.0 report builder and dashboard builder

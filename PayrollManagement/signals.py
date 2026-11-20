@@ -2024,12 +2024,22 @@ def process_payroll(instance, employees_qs, start_date, end_date, total_days):
         on = _dd(int(instance.year), int(instance.month), 1)
     except Exception:
         on = start_date
+    try:   # v1.75.1 live progress ("432 of 1,000 employees")
+        from PayrollPlus import run_progress as _rp
+    except ImportError:
+        _rp = None
+    if _rp is not None:
+        _rp.add_total(instance, employees_qs.count())
     try:
         from CountryPack.services import rules_on
     except ImportError:
-        return _process_payroll(instance, employees_qs, start_date, end_date, total_days)
-    with rules_on(on):
-        return _process_payroll(instance, employees_qs, start_date, end_date, total_days)
+        out = _process_payroll(instance, employees_qs, start_date, end_date, total_days)
+    else:
+        with rules_on(on):
+            out = _process_payroll(instance, employees_qs, start_date, end_date, total_days)
+    if _rp is not None:
+        _rp.part_done(instance)
+    return out
 
 
 def _process_payroll(
@@ -2146,7 +2156,13 @@ def _process_payroll(
         _pp_cycles, _pp_skip_events = None, False
 
     # v1.16.0 (D15): branch / department / designation / category read with the employees (used by every lookup)
+    try:
+        from PayrollPlus.run_progress import step as _rp_step   # v1.75.1
+    except ImportError:
+        _rp_step = None
     for employee in employees_qs.select_related('emp_branch_id', 'emp_dept_id', 'emp_desgntn_id', 'emp_ctgry_id'):
+        if _rp_step is not None:
+            _rp_step(instance, employee)
         if _pp_cycles is not None and _pp_cycles.excluded(instance, employee):
             continue
 
@@ -3134,11 +3150,49 @@ def payrollrun_m2m_changed(sender, instance, action, pk_set, **kwargs):
         logger.info(f"PayrollRun {instance.id} status is {instance.status}; skipping m2m processing.")
         return
 
+    # v1.75.1: a large run is calculated in the background (PayrollPlus/run_background.py) – the request only saves the run
+    if getattr(_BG, 'defer', False):
+        _BG.deferred = instance.pk
+        return
+
     # employees have been added; process only those employees attached to instance
     employees_qs = instance.employees.all()
     if not employees_qs.exists():
         logger.warning(f"No employees in PayrollRun {instance.id} after m2m post_add")
         return
+    calculate_run(instance, employees_qs)
+
+
+import threading as _thr1751
+_BG = _thr1751.local()   # v1.75.1 defer = the m2m handler leaves the calculation to the background job
+
+
+def _batches(ids, batch):
+    ids = list(ids)
+    if not batch or batch <= 0 or len(ids) <= batch:
+        return [ids]
+    return [ids[i:i + batch] for i in range(0, len(ids), batch)]
+
+
+def _calc_part(instance, employees_qs, ids, start_date, end_date, total_days, batch, after=None):
+    """v1.75.1: one group of employees, in batches of `batch` employees each committed on its own (batch 0 = one call, as
+    before). A failed batch rolls back only itself; the batches before it stay – Continue calculates only the employees
+    without a payslip (process_payroll skips those that have one)."""
+    from django.db import transaction as _tx
+    for part in _batches(ids, batch):
+        if batch:
+            with _tx.atomic():
+                process_payroll(instance, employees_qs.filter(pk__in=part), start_date, end_date, total_days)
+                if after:
+                    after(part)
+        else:
+            process_payroll(instance, employees_qs.filter(pk__in=part), start_date, end_date, total_days)
+            if after:
+                after(part)
+
+
+def calculate_run(instance, employees_qs, batch=0):
+    """The calculation of a run's employees (was the body of payrollrun_m2m_changed); batch > 0 = background batches."""
 
     # v1.15.1: dates and days per branch from the branch's pay structure (Payroll settings: fixed 30 days, custom cycle …);
     # the run used to be calculated on calendar days for every branch because no branch was passed
@@ -3167,7 +3221,7 @@ def payrollrun_m2m_changed(sender, instance, action, pk_set, **kwargs):
             except ImportError:
                 _paid = None
             if _paid is None:
-                process_payroll(instance, employees_qs.filter(pk__in=ids), start_date, end_date, total_days)
+                _calc_part(instance, employees_qs, ids, start_date, end_date, total_days, batch)
                 continue
             by_win = {}
             for e in employees_qs.filter(pk__in=ids):
@@ -3177,9 +3231,10 @@ def payrollrun_m2m_changed(sender, instance, action, pk_set, **kwargs):
                     continue
                 by_win.setdefault((ws, we), []).append(e.pk)
             for (ws, we), wids in by_win.items():
-                process_payroll(instance, employees_qs.filter(pk__in=wids), ws, we, total_days)
-                for ps in apps.get_model("PayrollManagement", "Payslip").objects.filter(payroll_run=instance, employee_id__in=wids):
-                    _paid.record(ps, ws, we, ps_id)
+                def _rec(part, ws=ws, we=we):
+                    for ps in apps.get_model("PayrollManagement", "Payslip").objects.filter(payroll_run=instance, employee_id__in=part):
+                        _paid.record(ps, ws, we, ps_id)
+                _calc_part(instance, employees_qs, wids, ws, we, total_days, batch, after=_rec)
     _store_window(instance, windows)
 
 

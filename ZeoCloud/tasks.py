@@ -34,9 +34,9 @@ def run_daily(today=None):
         msg = None
         if st['status'] in ('trial', 'active') and st['days_left'] in (30, 14, 7, 1):
             what = tr('Your ZEO free trial ends on {0}.', st['until']) if st['status'] == 'trial' else tr('Your ZEO subscription renews on {0}.', st['until'])
-            msg = (tr('ZEO – {0} days left', st['days_left']), what + ' ' + tr('Adept sends the invoice; once it is paid nothing changes for your users.'))
+            msg = (tr('ZEO Books – {0} days left', st['days_left']), what + ' ' + tr('Adept sends the invoice; once it is paid nothing changes for your users.'))
         elif st['status'] == 'grace' and st['days_left'] == acc.grace_days - 1:
-            msg = (tr('ZEO – grace period started'), tr('The renewal date has passed. Everything still works for {0} days; after that ZEO becomes read-only until the invoice is paid.', st['days_left']))
+            msg = (tr('ZEO Books – grace period started'), tr('The renewal date has passed. Everything still works for {0} days; after that ZEO becomes read-only until the invoice is paid.', st['days_left']))
         elif st['status'] == 'suspended' and st.get('expired') and st['until'] == (d - __import__('datetime').timedelta(days=1)).isoformat():
             msg = (tr('ZEO – read-only'), tr('Your ZEO account {0} is read-only: users can view, export and print. Nothing is deleted. Pay the invoice to continue.', acc.name))
         if msg and acc.owner_email:

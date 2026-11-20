@@ -6,6 +6,7 @@ from django.core.validators import FileExtensionValidator
 from django.utils import timezone
 from datetime import datetime,timedelta
 from EmpManagement .utils import send_notification_email,get_employee_context
+from EmpManagement.utils import approver_msg as _approver_msg   # v1.73.21 (item 3)
 from EmpManagement .models import RequestNotification
 # from calendars .models import LeaveApproval
 from django.db.models import Max 
@@ -16,6 +17,24 @@ from decimal import Decimal
 # Create your models here.
 
     
+def _zt_step_user(user, employee):
+    """v1.73.19 (item 5): the person who decides a level – the named approver, else branch HR → company HR → administrator."""
+    try:
+        from LeavePolicy.approvers import pick
+        return pick(user, employee)[0]
+    except Exception:   # noqa: BLE001
+        return user
+
+
+def _zt_fl(level, employee):
+    """v1.73.19 (item 5): the person who decides a first level (resolved once): the named approver, else branch HR → company HR → admin."""
+    if level is None:
+        return None
+    if not hasattr(level, '_zt_who'):
+        level._zt_who = _zt_step_user(level.approver, employee)
+    return level._zt_who
+
+
 class SalaryComponent(models.Model):
     COMPONENT_TYPES = [
         ('deduction', 'Deduction'),
@@ -966,17 +985,7 @@ class  LoanApplication(models.Model):
             ).first()
 
         if not workflow:
-            workflow = LoanApprovalWorkflow.objects.create(
-                loan_type=self.loan_type,
-                approval_type="no_approval"
-            )
-
-            LoanApprovalLevels.objects.create(
-                workflow=workflow,
-                level=1,
-                role="Auto Approval",
-                approver=None
-            )
+            workflow = LoanApprovalWorkflow(loan_type=self.loan_type, approval_type="reporting_manager")   # v1.73.19 (item 5): no set-up – the step made at the start (reporting manager) decides; a 'No approval' set-up was saved here, so every later request of the type was approved by itself
         approval_type = workflow.approval_type
         if self.loan_type.use_common_workflow:   # v1.7.0: the common workflow's levels decide
             approval_type = "multi_approval"
@@ -1112,7 +1121,8 @@ class  LoanApplication(models.Model):
                 level=current_level
             ).first()
 
-        if next_level and next_level.approver:
+        _ap = _zt_step_user(next_level.approver, self.employee) if next_level else None   # v1.73.19 (item 5): never a closed login / nobody
+        if next_level and _ap is not None:
 
             last_approval = self.approvals.order_by("-level", "-id").first()
 
@@ -1123,7 +1133,7 @@ class  LoanApplication(models.Model):
 
             approval = LoanApproval.objects.create(
                 loan_request=self,
-                approver=next_level.approver,
+                approver=_ap,
                 role=next_level.role,
                 level=next_level.level,
                 status=LoanApproval.PENDING,
@@ -1136,14 +1146,12 @@ class  LoanApplication(models.Model):
 
             # Notify next approver
             send_notification_email(
-                user=next_level.approver,
+                user=_ap,
                 employee=None,
                 branch=self.branch,
                 title="Loan Approval Required",
                 notification_type="loan",
-                message=(f"A LoanRequest {self.loan_type}"
-                        f"(Document No: {self.document_number}) is waiting for your Approval."
-                        ),
+                message=_approver_msg('loan request', self.loan_type, getattr(self, 'employee', None), self.document_number),
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -1416,7 +1424,7 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
 
         if approval_type == "reporting_manager":
 
-            manager = getattr(instance.employee, "emp_reporting_manager", None)
+            manager = _zt_step_user(getattr(instance.employee, "emp_reporting_manager", None), instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
 
             if not manager:
                 raise ValidationError("Employee has no reporting manager.")
@@ -1436,9 +1444,7 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
                 branch=instance.employee.emp_branch_id,
                 title="Request Created",
                 notification_type="loan",
-                message=(f"A LoanRequest {instance.loan_type}"
-                        f"(Document No: {instance.document_number}) is waiting for your Approval."
-                        ),
+                message=_approver_msg('loan request', instance.loan_type, getattr(instance, 'employee', None), instance.document_number),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -1462,11 +1468,11 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
 
         if approval_type == "multi_approval":
 
-            if first_level and first_level.approver:
+            if first_level and _zt_fl(first_level, instance.employee):
 
                 LoanApproval.objects.create(
                     loan_request=instance,
-                    approver=first_level.approver,
+                    approver=_zt_fl(first_level, instance.employee),
                     role=first_level.role,
                     level=first_level.level,
                     status=LoanApproval.PENDING,
@@ -1474,14 +1480,12 @@ def create_initial_loan_approval(sender, instance, created, **kwargs):
                 )
 
                 send_notification_email(
-                    user=first_level.approver,
+                    user=_zt_fl(first_level, instance.employee),
                     employee=instance.employee,
                     branch=instance.employee.emp_branch_id,
                     title="Request Created",
                     notification_type="loan",
-                    message=(f"A LoanRequest {instance.loan_type}"
-                            f"(Document No: {instance.document_number}) is waiting for your Approval."
-                        ),
+                    message=_approver_msg('loan request', instance.loan_type, getattr(instance, 'employee', None), instance.document_number),
                     template_type="request_created",
                     context={
                         **get_employee_context(instance.employee),
@@ -1636,9 +1640,9 @@ class AdvanceSalaryRequest(models.Model):
 
             # same logic
             if workflow.approval_type == 'reporting_manager':
-                approver = self.employee.emp_reporting_manager
+                approver = _zt_step_user(self.employee.emp_reporting_manager, self.employee)
             else:
-                approver = next_level.approver
+                approver = _zt_fl(next_level, self.employee)   # v1.73.19 (item 5)
 
             if not approver:
                 raise ValidationError(f"No approver configured for level {next_level.level}")
@@ -1684,7 +1688,7 @@ class AdvanceSalaryRequest(models.Model):
                 send_notification_email(
                     user=approver,
                     employee=None,
-                    message=f"Your AdvanceSalaryRequest {self.document_number} is waiting for your Approval.",
+                    message=_approver_msg('salary advance request', None, getattr(self, 'employee', None), self.document_number),
                     template_type="request_created",
                     context={
                         **get_employee_context(self.employee),
@@ -1903,7 +1907,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
 
     # ---------------- REPORTING MANAGER ----------------
     if approval_type == 'reporting_manager':
-        manager = instance.employee.emp_reporting_manager
+        manager = _zt_step_user(instance.employee.emp_reporting_manager, instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
 
         if not manager:
             raise ValidationError("Employee has no reporting manager.")
@@ -1920,7 +1924,7 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         send_notification_email(
             user=manager,
             employee=None,
-            message=f"Your AdvanceSalaryRequest {instance.document_number} is waiting for your Approval.",
+            message=_approver_msg('salary advance request', None, getattr(instance, 'employee', None), instance.document_number),
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),
@@ -1942,12 +1946,12 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
             return
 
         # ✅ FIX 2: approver safety
-        if not first_level.approver:
+        if not _zt_fl(first_level, instance.employee):
             raise ValidationError(f"No approver configured for level {first_level.level}")
 
         AdvanceSalaryApproval.objects.create(
             request=instance,
-            approver=first_level.approver,
+            approver=_zt_fl(first_level, instance.employee),
             role=first_level.role,
             level=first_level.level,
             status=AdvanceSalaryApproval.PENDING,
@@ -1955,9 +1959,9 @@ def create_initial_advance_approval(sender, instance, created, **kwargs):
         )
 
         send_notification_email(
-            user=first_level.approver,
+            user=_zt_fl(first_level, instance.employee),
             employee=None,
-            message=f"Your AdvanceSalaryRequest {instance.document_number} is waiting for your Approval.",
+            message=_approver_msg('salary advance request', None, getattr(instance, 'employee', None), instance.document_number),
             template_type="request_created",
             context={
                 **get_employee_context(instance.employee),
@@ -2247,9 +2251,7 @@ class AirTicketRequest(models.Model):
             send_notification_email(
                 user=reporting_manager,
                 employee=None,
-                message=(f"Your AirticketRequest {self.request_type}"
-                        f"(Document No: {self.document_number}) is waiting for your Approval."
-                    ),
+                message=_approver_msg('air ticket request', self.request_type, getattr(self, 'employee', None), self.document_number),
                 template_type="request_created",
                 context={
                     **get_employee_context(self.employee),
@@ -2298,7 +2300,7 @@ class AirTicketRequest(models.Model):
             return
 
         # ---------------- SAFETY CHECK ----------------
-        if not next_level.approver:
+        if not _zt_fl(next_level, self.employee):
             raise ValidationError(f"No approver configured for level {next_level.level}")
 
         # ---------------- NOTE CARRY ----------------
@@ -2312,7 +2314,7 @@ class AirTicketRequest(models.Model):
         # ---------------- CREATE NEXT APPROVAL ----------------
         new_approval = AirticketApproval.objects.create(
             request=self,
-            approver=next_level.approver,
+            approver=_zt_fl(next_level, self.employee),
             role=next_level.role,
             level=next_level.level,
             status=AirticketApproval.PENDING,
@@ -2325,7 +2327,7 @@ class AirTicketRequest(models.Model):
 
         # ---------------- NOTIFICATION ----------------
         send_notification_email(
-            user=next_level.approver,
+            user=_zt_fl(next_level, self.employee),
             employee=None,
             message=(f"Air ticket request {self.document_number} of "   # v1.62.0: was "Your DocumentRequest <code>"
                      f"{getattr(self.employee, 'emp_first_name', '') or ''} {getattr(self.employee, 'emp_last_name', '') or ''}".rstrip()
@@ -2529,7 +2531,7 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
         # ---------------- REPORTING MANAGER ----------------
         if approval_type == 'reporting_manager':
 
-            manager = getattr(instance.employee, "emp_reporting_manager", None)
+            manager = _zt_step_user(getattr(instance.employee, "emp_reporting_manager", None), instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
 
             if not manager:
                 raise ValidationError("Employee has no reporting manager.")
@@ -2549,9 +2551,7 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
                 branch=instance.branch,
                 title="Air Ticket Approval Request",
                 notification_type="air_ticket",
-                message=(f"Your AirticketRequest {instance.request_type}"
-                     f"(Document No: {instance.document_number}) is waiting for your Approval."
-                    ),
+                message=_approver_msg('air ticket request', instance.request_type, getattr(instance, 'employee', None), instance.document_number),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),
@@ -2572,12 +2572,12 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
             if not first_level:
                 raise ValidationError("No approval levels configured.")
 
-            if not first_level.approver:
+            if not _zt_fl(first_level, instance.employee):
                 raise ValidationError("First level approver is missing.")
 
             approval = AirticketApproval.objects.create(
                 request=instance,
-                approver=first_level.approver,
+                approver=_zt_fl(first_level, instance.employee),
                 role=first_level.role,
                 level=first_level.level,
                 status=AirticketApproval.PENDING,
@@ -2587,14 +2587,12 @@ def create_initial_airticket_approval(sender, instance, created, **kwargs):
             airticket_schedule_escalation(approval, first_level)
 
             send_notification_email(
-                user=first_level.approver,
+                user=_zt_fl(first_level, instance.employee),
                 employee=instance.employee,
                 branch=instance.branch,
                 title="Air Ticket Approval Request",
                 notification_type="air_ticket",
-                message=(f"Your AirticketRequest {instance.request_type}"
-                     f"(Document No: {instance.document_number}) is waiting for your Approval."
-                    ),
+                message=_approver_msg('air ticket request', instance.request_type, getattr(instance, 'employee', None), instance.document_number),
                 template_type="request_created",
                 context={
                     **get_employee_context(instance.employee),

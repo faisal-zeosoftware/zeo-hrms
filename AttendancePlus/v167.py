@@ -214,7 +214,28 @@ def ramadan_settings():
             # v1.67.22 (pending C7): the break on a Ramadan day – None keeps the shift's / rule's break (no legal rule: the company decides)
             'break_minutes': int(v['break_minutes']) if v.get('break_minutes') not in (None, '') else None,
             'country': _country(), 'law': law['law'] if law else '', 'sources': list(law['sources']) if law else [],
-            'law_default_hours': law['reduce_hours'] if law else None, 'verified': bool(law), 'saved': bool(v)}
+            'law_default_hours': law['reduce_hours'] if law else None, 'verified': bool(law), 'saved': bool(v),
+            'expected': _expected_ramadan([p['year'] for p in periods])}
+
+
+def _expected_ramadan(have):
+    """v1.73.25 (pending E): the expected Ramadan of the coming years from the expected Eid al-Fitr of the country pack's holiday
+    calendar (CountryPack/holidays.py): the 29 days before Eid – HR confirms them with the moon-sighting announcement."""
+    try:
+        from datetime import timedelta
+        from CountryPack.holidays import ISLAMIC
+        from zeo.tz import today as _today
+        y0 = _today().year
+        out = []
+        for y in sorted(ISLAMIC):
+            eid = (ISLAMIC[y].get('eid_fitr') or (None,))[0]
+            if eid is None or y < y0 or y in have or eid < _today():
+                continue
+            out.append({'year': y, 'from': (eid - timedelta(days=29)).isoformat(), 'to': (eid - timedelta(days=1)).isoformat(),
+                        'note': 'Expected – confirm with the announcement'})
+        return out
+    except Exception:   # noqa: BLE001
+        return []
 
 
 def save_ramadan(data):

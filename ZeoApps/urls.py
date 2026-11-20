@@ -7,6 +7,7 @@ from . import useremployee as UE   # v1.67.6 (setup) item 9
 
 urlpatterns = [
     path('api/apps/', V.AppsView.as_view()),
+    path('api/features/hrms/', V.HrFeaturesView.as_view()),               # v1.75.1 Settings › Features of HRMS
     path('api/apps/<str:key>/activate/', V.ActivateView.as_view()),
     path('api/apps/<str:key>/deactivate/', V.DeactivateView.as_view()),
     path('api/apps/<str:key>/setup/', V.AppSetupView.as_view()),        # v1.67.6 (setup) item 5

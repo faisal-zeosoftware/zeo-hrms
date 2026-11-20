@@ -6,3 +6,10 @@ from celery import shared_task
 def run_workbook(schema, run_id):
     from .workbook_jobs import execute
     execute(schema, run_id)
+
+
+@shared_task(ignore_result=True, acks_late=False, time_limit=6 * 3600, soft_time_limit=None)
+def run_import(schema, token):
+    """v1.79.1 a large list import in the background (DataTools/import_jobs.py)."""
+    from .import_jobs import execute
+    execute(schema, token)

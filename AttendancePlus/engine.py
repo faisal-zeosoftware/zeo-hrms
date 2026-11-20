@@ -1111,8 +1111,16 @@ def refresh_missing(employee_ids=None):
     qs = M.AttendanceDay.objects.filter(flags__in_progress=True)
     if employee_ids is not None:
         qs = qs.filter(employee_id__in=employee_ids)
-    for d in qs[:500]:
-        recompute_day(d.employee_id, d.date, sync_calendar=False)
+    from EmpManagement.models import emp_master as _E
+    gone = set(qs.exclude(employee_id__in=_E.objects.values('pk')).values_list('employee_id', flat=True))
+    if gone:   # v1.73.19 (item 10): open days of a deleted employee stopped the hourly job for the whole company (DoesNotExist)
+        qs.filter(employee_id__in=gone).delete()
+    for d in qs.exclude(employee_id__in=gone)[:500]:
+        try:
+            recompute_day(d.employee_id, d.date, sync_calendar=False)
+        except Exception:   # noqa: BLE001 – one day never stops the others
+            import logging
+            logging.getLogger(__name__).exception('missing punch check of employee %s on %s', d.employee_id, d.date)
 
 
 def as_date(v):

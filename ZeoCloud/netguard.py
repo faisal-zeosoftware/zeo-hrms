@@ -17,6 +17,7 @@ v1.62.0: the country is shown when the server has a free country database (ZeoCl
 The client address: the last X-Forwarded-For entry (the one the proxy in front of ZEO added), else REMOTE_ADDR – the first entry
 is typed by the visitor and can be faked.
 """
+from zeo.mailguard import essential_mail
 import ipaddress
 import logging
 import re
@@ -174,6 +175,9 @@ def _rules(user):
     return {'alert_new_signin': any(p.alert_new_signin for p in ps), 'alert_lock': any(p.alert_lock for p in ps),
             # v1.67.6 (setup) item 13: the stricter rule wins – "any" (a new place, address or device) unless every company chose "both"
             'alert_rule': 'both' if all(getattr(p, 'alert_rule', 'any') == 'both' for p in ps) else 'any'}
+
+
+@essential_mail   # v1.79.5 sent even when the company e-mails are off
 
 
 def send_mail_for(user, subject, body, to, schema='', lang=None):

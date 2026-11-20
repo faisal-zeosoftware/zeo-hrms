@@ -44,6 +44,14 @@ class AppsView(Base):
                 out['pay_cycles'] = PayrollPlusSettings.get().pay_frequencies()
             except Exception:
                 out['pay_cycles'] = []
+            try:   # v1.75.0 Settings › Features of the kit apps: "feat:inventory.lots" in the menu
+                from zeo.appkit.engine import REGISTRY
+                from zeo.appkit import features as FT
+                out['features'] = {a.slug.replace('zeo-', ''): FT.state(a) for a in REGISTRY.values() if getattr(a, 'features', None) and a.activated()}
+                from .hrfeatures import state as _hrstate
+                out['features']['hrms'] = _hrstate()
+            except Exception:
+                out['features'] = {}
             try:   # v1.74.0 ZEO Developer: the menu Settings › Developer shows only when the company switched Developer mode on
                 from ZeoDeveloper.models import DeveloperSettings
                 out['developer_mode'] = DeveloperSettings.get().developer_mode
@@ -140,3 +148,43 @@ class DeactivateView(Base):
         except S.AppsError as e:
             return Response({'detail': e.message}, status=e.status)
         return Response(S.state(key))
+
+
+
+class HrFeaturesView(Base):
+    """v1.75.1 Settings › Features of HRMS: GET the list; PATCH {key: true|false}; POST {do: all | standard | preset, preset}"""
+
+    def get(self, request):
+        from . import hrfeatures as HF
+        return Response(HF.listing() | {'can_change': can_manage(request)})
+
+    def patch(self, request):
+        from . import hrfeatures as HF
+        from zeo.appkit.engine import AppError
+        if not can_manage(request):
+            return Response({'detail': 'Only an administrator switches HR features on or off.'}, status=403)
+        try:
+            HF.save({k: v for k, v in dict(request.data).items()}, request.user)
+        except AppError as e:
+            return Response({'detail': e.message}, status=400)
+        return Response(HF.listing() | {'can_change': True})
+
+    def post(self, request):
+        from . import hrfeatures as HF
+        from zeo.appkit.engine import AppError
+        if not can_manage(request):
+            return Response({'detail': 'Only an administrator switches HR features on or off.'}, status=403)
+        do = str(request.data.get('do') or '')
+        if do == 'all':
+            vals = {f.key: True for f in HF.FEATURES}
+        elif do == 'standard':
+            vals = {f.key: bool(HF.used(f)) for f in HF.FEATURES}
+        elif do == 'preset' and str(request.data.get('preset') or '') in HF.PRESETS:
+            vals = {k: True for k in HF.PRESETS[str(request.data.get('preset'))][1]}
+        else:
+            return Response({'detail': 'Choose: all, standard or preset.'}, status=400)
+        try:
+            HF.save(vals, request.user)
+        except AppError as e:
+            return Response({'detail': e.message}, status=400)
+        return Response(HF.listing() | {'can_change': True})

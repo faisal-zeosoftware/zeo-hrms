@@ -18,9 +18,12 @@ from django.db.models import Avg, Count, Max, Q, Sum
 log = logging.getLogger(__name__)
 
 # report key prefix → the app (Settings → Apps) it belongs to
-PREFIX_APP = {'crm-': 'crm', 'prop-': 'property', 'mnt-': 'maintenance', 'ast-': 'assets', 'ppl-': 'people', 'hse-': 'hse', 'pj-': 'projects'}
+PREFIX_APP = {'crm-': 'crm', 'prop-': 'property', 'mnt-': 'maintenance', 'ast-': 'assets', 'ppl-': 'people', 'hse-': 'hse', 'pj-': 'projects', 'inv-': 'inventory',
+              # v1.79.3 the reports of Accounting, Sales, Purchase and Manufacturing follow their own app (they were taken as HR reports and refused
+              # in a company without HR: "This app is not active in the company")
+              'gl-': 'accounting', 'sal-': 'sales', 'pur-': 'purchase', 'mfg-': 'manufacturing'}
 SLUG_PAGE = {'crm': '/main-sidebar/zeo-crm/', 'property': '/main-sidebar/zeo-property/', 'maintenance': '/main-sidebar/zeo-maintenance/', 'assets': '/main-sidebar/zeo-assets/', 'people': '/main-sidebar/zeo-people/', 'hr': '/main-sidebar/zeo-hr/',
-             'hse': '/main-sidebar/zeo-hse/', 'projects': '/main-sidebar/zeo-projects/'}
+             'hse': '/main-sidebar/zeo-hse/', 'projects': '/main-sidebar/zeo-projects/', 'inventory': '/main-sidebar/zeo-inventory/', 'accounting': '/main-sidebar/zeo-ledger/', 'sales': '/main-sidebar/zeo-sales/', 'purchase': '/main-sidebar/zeo-purchase/', 'manufacturing': '/main-sidebar/zeo-manufacturing/'}
 DATE_FIELDS = ('date', 'occurred_at', 'reported_at', 'scheduled_at', 'due_date', 'start', 'start_date', 'cheque_date', 'created_at', 'requested_at')
 
 
@@ -125,7 +128,17 @@ def register_report(app_key, page_slug, reg, value_fn, ftype_fn, field_of, branc
         if branch_path:
             out_cols.insert(1, ('branch', 'Branch', 'text'))
         rows = []
-        for obj in qs[:5000]:
+        # v1.79.3 every record (before: the first 5,000 only, without saying so); the linked records read with the list
+        fks = []
+        for c in [c for c, _, _t in out_cols] + ([branch_path] if branch_path and '__' not in branch_path else []):
+            try:
+                f = reg.model._meta.get_field(c)
+            except Exception:   # noqa: BLE001
+                continue
+            if getattr(f, 'many_to_one', False) or getattr(f, 'one_to_one', False):
+                fks.append(c)
+        qs = qs.select_related(*dict.fromkeys(fks)) if fks else qs
+        for obj in qs.iterator(chunk_size=2000):
             r = {'_url': f'{page_slug}r/{reg.kind}/{obj.pk}', '_m': obj._meta.label, '_id': obj.pk}
             for c, _, t in out_cols:
                 if c == 'branch':
@@ -158,7 +171,12 @@ def kit_reports():
     for label, key, prefix, section in (('ZeoCRM', 'crm', 'crm-', 'CRM'), ('ZeoProperty', 'property', 'prop-', 'Property'),
                                         ('ZeoMaintenance', 'maintenance', 'mnt-', 'Maintenance'),
                                         ('ZeoAssets', 'assets', 'ast-', 'Asset Management'), ('ZeoPeople', 'people', 'ppl-', 'People'),
-                                        ('ZeoHR', 'hr', 'hro-', 'HR operations')):   # v1.48.0
+                                        ('ZeoHR', 'hr', 'hro-', 'HR operations'),   # v1.48.0
+                                        ('ZeoInventory', 'inventory', 'inv-', 'Inventory'),   # v1.75.0
+                                        ('ZeoLedger', 'accounting', 'gl-', 'Accounting'),   # v1.76.0
+                                        ('ZeoSales', 'sales', 'sal-', 'Sales'),   # v1.77.0
+                                        ('ZeoPurchase', 'purchase', 'pur-', 'Purchase'),   # v1.78.0
+                                        ('ZeoMfg', 'manufacturing', 'mfg-', 'Manufacturing')):   # v1.79.0
         try:
             importlib.import_module(f'{label}.app')
         except Exception:
@@ -817,7 +835,322 @@ def _crm_more(a):
     return out
 
 
-KIT_EXTRA = {'crm': _crm_more, 'property': _property, 'maintenance': _maintenance, 'people': _people}
+def _inventory(a):
+    """v1.75.0 Inventory: stock and value at a date, ageing, stock ledger, Inventory ↔ GL reconciliation, reorder list, lots and expiry."""
+    from ZeoInventory import services as S
+    from ZeoInventory.models import ItemSetting, StockMove, Warehouse
+    codes = [a.code(r) for r, _ in a.roles]
+    acc = [a.code('inv_manager'), a.code('inv_accountant')]
+    page = SLUG_PAGE['inventory']
+
+    def whs(run):
+        qs = Warehouse.objects.all()
+        if run.branches is not None:
+            qs = qs.filter(Q(branch_id__in=run.branches) | Q(branch__isnull=True))
+        return list(qs)
+
+    def valuation(run):
+        on = run.date_to or _zt_today()
+        ws = {w.pk: w for w in whs(run)}
+        rows = []
+        for r in S.valuation(on, group='item_warehouse'):
+            w = ws.get(r.get('warehouse_id'))
+            if w is None:
+                continue
+            rows.append({'warehouse': str(w), 'item': r['item'], 'qty': r['qty'], 'unit_cost': round(r['unit_cost'], 4), 'value': r['value'],
+                         '_url': f'{page}r/warehouse/{w.pk}'})
+        lvl = S.settings().costing_level
+        notes = [f'Stock and value at {on:%d/%m/%Y} (valuation date up to it) – later postings do not change it; the total is the stock ledger closing and the ageing total.']
+        if lvl != 'warehouse':
+            notes.append(f'Costing per {lvl}: a warehouse holds its quantity at the item\'s {lvl} cost at that date.')
+        return ([('warehouse', 'Warehouse', 'text'), ('item', 'Item', 'text'), ('qty', 'On hand', 'number'), ('unit_cost', 'Unit cost', 'number'),
+                 ('value', 'Value', 'number')], rows, {'notes': notes, 'filters': ['warehouse', 'item'], 'no_totals': ('unit_cost',)})
+
+    def ageing(run):
+        on = run.date_to or _zt_today()
+        ag = S.ageing(on)
+        cols = [('item', 'Item', 'text')] + [(f'b{i}', f'{lb} days', 'number') for i, lb in enumerate(ag['labels'])] + [('qty', 'On hand', 'number'), ('value', 'Value', 'number')]
+        rows = []
+        for r in ag['rows']:
+            x = {'item': r['item'], 'qty': r['qty'], 'value': r['value']}
+            for i, b in enumerate(r['buckets']):
+                x[f'b{i}'] = b['value']
+            rows.append(x)
+        return cols, rows, {'notes': [f'Value of the stock held at {on:%d/%m/%Y} by the age of its first receipt (a transfer keeps the receipt date); '
+                                      f'the total is the stock value at that date.']}
+
+    def ledger(run):
+        w = None
+        led = S.stock_ledger(run.date_from, run.date_to)
+        allowed = {x.code for x in whs(run)}
+        rows = []
+        for it in led['items']:
+            rows.append({'date': run.date_from, 'document': '', 'kind': 'Opening', 'warehouse': '', 'item': it['item'], 'lot': '', 'qty': float(it['opening_qty']),
+                         'value': float(it['opening_value']), 'balance_qty': float(it['opening_qty']), 'balance_value': float(it['opening_value'])})
+            for r in it['rows']:
+                if r['warehouse'] and run.branches is not None and r['warehouse'] not in allowed:
+                    continue
+                rows.append({'date': r['date'], 'document': r['document'], 'kind': r['kind'], 'warehouse': r['warehouse'], 'item': r['item'], 'lot': r['lot'],
+                             'qty': float(r['qty']), 'value': float(r['value']), 'balance_qty': float(r['balance_qty']), 'balance_value': float(r['balance_value']),
+                             '_url': f'{page}r/doc/{r["doc_id"]}' if r.get('doc_id') else (f'{page}r/landed/{r["landed_id"]}' if r.get('landed_id') else '')})
+            rows.append({'date': run.date_to, 'document': '', 'kind': 'Closing', 'warehouse': '', 'item': it['item'], 'lot': '', 'qty': float(it['closing_qty']),
+                         'value': float(it['closing_value']), 'balance_qty': float(it['closing_qty']), 'balance_value': float(it['closing_value'])})
+        return ([('date', 'Date', 'date'), ('document', 'Document', 'text'), ('kind', 'Movement', 'text'), ('warehouse', 'Warehouse', 'text'), ('item', 'Item', 'text'),
+                 ('lot', 'Lot / serial', 'text'), ('qty', 'Quantity', 'number'), ('value', 'Value', 'number'), ('balance_qty', 'Balance quantity', 'number'),
+                 ('balance_value', 'Balance value', 'number')], rows,   # v1.79.3 every row (before: the first 30,000)
+                {'filters': ['kind', 'warehouse', 'item'], 'no_totals': ('qty', 'value', 'balance_qty', 'balance_value'),
+                 'notes': [f'Opening at {run.date_from:%d/%m/%Y}, every movement and every cost-only entry (landed cost, revaluation, cost adjustment) on its valuation date; '
+                           f'the closing ({led["closing_value"]:,.2f} in all) is the stock value at {run.date_to:%d/%m/%Y}.']})
+
+    def reconciliation(run):
+        on = run.date_to or _zt_today()
+        rec = S.reconciliation(on)
+        rows = [{'account': r['account'], 'valuation': r['valuation'], 'gl': r['gl'], 'unposted': r['unposted'], 'difference': r['difference'], 'note': r['note']}
+                for r in rec['rows']]
+        return ([('account', 'Inventory account', 'text'), ('valuation', 'Stock valuation', 'number'), ('gl', 'GL balance', 'number'),
+                 ('unposted', 'Not yet in the GL', 'number'), ('difference', 'Difference', 'number'), ('note', 'Note', 'text')], rows,
+                {'notes': [f'At {on:%d/%m/%Y}; {"perpetual" if rec["mode"] == "perpetual" else "periodic"} accounting. GRNI {rec["grni"]["account"]}: {rec["grni"]["gl"]:,.2f}.']})
+
+    def movement(run):
+        rows = [{'item': r['item'], 'opening_qty': float(r['opening_qty']), 'opening_value': float(r['opening_value']), 'in_qty': float(r['in_qty']),
+                 'in_value': float(r['in_value']), 'out_qty': float(r['out_qty']), 'out_value': float(r['out_value']), 'closing_qty': float(r['closing_qty']),
+                 'closing_value': float(r['closing_value'])} for r in S.movement_summary(run.date_from, run.date_to)]
+        return ([('item', 'Item', 'text'), ('opening_qty', 'Opening quantity', 'number'), ('opening_value', 'Opening value', 'number'), ('in_qty', 'In', 'number'),
+                 ('in_value', 'In value', 'number'), ('out_qty', 'Out', 'number'), ('out_value', 'Out value', 'number'), ('closing_qty', 'Closing quantity', 'number'),
+                 ('closing_value', 'Closing value', 'number')], rows,
+                {'notes': [f'{run.date_from:%d/%m/%Y} – {run.date_to:%d/%m/%Y}: opening + in − out = closing; it ties to the stock ledger and the stock value at the end.']})
+
+    def valuation_doc(run):
+        on = run.date_to or _zt_today()
+        ws = {w.pk for w in whs(run)}
+        rows = [{'where': r['where'], 'warehouse': r['warehouse'], 'item': r['item'], 'qty': r['qty'], 'unit_cost': round(r['unit_cost'], 4), 'value': r['value']}
+                for r in S.valuation_by_document(on) if r['warehouse_id'] in ws]
+        return ([('where', 'Where', 'text'), ('warehouse', 'Warehouse', 'text'), ('item', 'Item', 'text'), ('qty', 'On hand', 'number'),
+                 ('unit_cost', 'Unit cost', 'number'), ('value', 'Value', 'number')], rows,
+                {'notes': [f'Operations view at {on:%d/%m/%Y}: by the date on the documents (the books use the posting date – Stock on hand and value). '
+                           'Stock in transit and at customers shown apart.'], 'filters': ['where', 'warehouse'], 'no_totals': ('unit_cost',)})   # v1.79.3 no total of unit costs
+
+    def backdated(run):
+        from ZeoInventory.models import StockDoc
+        rows = []
+        for x in StockDoc.objects.filter(status__in=('posted', 'reversed'), posted_at__date__gte=run.date_from, posted_at__date__lte=run.date_to).select_related('posted_by', 'warehouse'):
+            days = (x.posted_at.date() - x.date).days if x.posted_at else 0
+            if days > 0:
+                rows.append({'number': x.number, 'kind': x.get_kind_display(), 'date': x.date, 'posted': x.posted_at.date(), 'days': days,
+                             'by': str(x.posted_by or ''), 'warehouse': x.warehouse.code, 'value': float(x.total_value), '_url': f'{page}r/doc/{x.pk}'})
+        rows.sort(key=lambda r: -r['days'])
+        return ([('number', 'Document', 'text'), ('kind', 'Kind', 'text'), ('date', 'Dated', 'date'), ('posted', 'Posted on', 'date'), ('days', 'Days back', 'number'),
+                 ('by', 'Posted by', 'text'), ('warehouse', 'Warehouse', 'text'), ('value', 'Value', 'number')], rows,
+                {'notes': ['Documents posted with an earlier date (audit) – the cost adjustment corrected the later documents they changed.']})
+
+    def negative(run):
+        on = run.date_to or _zt_today()
+        rows = [{'what': 'Negative now', 'item': r['item'], 'warehouse': r['warehouse'], 'qty': r['qty'], 'value': r['value'], 'document': '', 'date': on}
+                for r in S.valuation(on, group='item_warehouse') if r['qty'] < 0]
+        from ZeoInventory.models import StockValue
+        for v in StockValue.objects.filter(kind='adjustment', valuation_date__gte=run.date_from, valuation_date__lte=on).select_related('doc', 'product', 'warehouse'):
+            rows.append({'what': 'Cost correction', 'item': str(v.product), 'warehouse': v.warehouse.code if v.warehouse_id else '', 'qty': None, 'value': float(v.amount),
+                         'document': v.doc.number if v.doc_id else '', 'date': v.valuation_date, '_url': f'{page}r/doc/{v.doc_id}' if v.doc_id else ''})
+        return ([('what', 'What', 'text'), ('date', 'Date', 'date'), ('document', 'Document', 'text'), ('item', 'Item', 'text'), ('warehouse', 'Warehouse', 'text'),
+                 ('qty', 'Quantity', 'number'), ('value', 'Value / correction', 'number')], rows,
+                {'notes': ['Stock below zero at the date, and the cost corrections the cost adjustment made to earlier issues (negative stock costed at the last '
+                           'cost, back-dated receipts) in the period.'], 'filters': ['what', 'warehouse']})
+
+    def returnable(run):
+        from ZeoInventory.models import ItemSetting as IS
+        on = run.date_to or _zt_today()
+        items = {x.product_id: x for x in IS.objects.filter(returnable=True)}
+        bal = defaultdict(lambda: Decimal(0))
+        for m in StockMove.objects.filter(product_id__in=items, date__lte=on, doc__partner__isnull=False, kind__in=('delivery', 'return_in', 'receipt', 'return_out')) \
+                .values('doc__partner_id', 'doc__partner__name', 'product_id', 'kind').annotate(s=Sum('qty')):
+            side = 'customer' if m['kind'] in ('delivery', 'return_in') else 'supplier'
+            bal[(m['doc__partner_id'], m['doc__partner__name'], m['product_id'], side)] += -Decimal(m['s'] or 0) if side == 'customer' else Decimal(m['s'] or 0)
+        rows = []
+        for (pid_, pname, prod, side), q in sorted(bal.items(), key=lambda kv: (kv[0][1] or '', kv[0][2])):
+            if not q:
+                continue
+            dep = Decimal(items[prod].deposit or 0)
+            rows.append({'partner': pname, 'side': 'Held by the customer' if side == 'customer' else 'Owed to the supplier', 'item': str(items[prod].product),
+                         'qty': float(q), 'deposit': float(q * dep)})
+        return ([('partner', 'Partner', 'text'), ('side', 'Balance', 'text'), ('item', 'Packaging', 'text'), ('qty', 'Quantity', 'number'),
+                 ('deposit', 'Deposit value', 'number')], rows,
+                {'notes': [f'Returnable packaging (pallets, crates, cylinders) at {on:%d/%m/%Y}: given to customers less returned; received from suppliers less returned.'],
+                 'filters': ['partner', 'side', 'item']})
+
+    def deliveries(run):
+        from ZeoInventory.models import StockDoc as SD
+        rows = []
+        for x in SD.objects.filter(kind__in=('delivery', 'dropship'), status='posted').filter(
+                Q(requested_date__gte=run.date_from, requested_date__lte=run.date_to) | Q(requested_date__isnull=True, date__gte=run.date_from, date__lte=run.date_to)) \
+                .select_related('partner').order_by('requested_date', 'date'):
+            rows.append({'date': x.requested_date or x.date, 'number': x.number, 'customer': str(x.partner or ''), 'ship_to': x.ship_to[:80], 'contact': f'{x.site_contact} {x.site_phone}'.strip(),
+                         'method': x.get_ship_method_display() if x.ship_method else '', 'driver': f'{x.driver} {x.vehicle}'.strip(),
+                         'status': x.get_delivery_status_display() if x.delivery_status else 'Ready', 'received_by': x.pod_name, '_url': f'{page}r/doc/{x.pk}'})
+        return ([('date', 'Delivery date', 'date'), ('number', 'Delivery', 'text'), ('customer', 'Customer', 'text'), ('ship_to', 'Ship to', 'text'),
+                 ('contact', 'Site contact', 'text'), ('method', 'Method', 'text'), ('driver', 'Driver / vehicle', 'text'), ('status', 'Status', 'text'),
+                 ('received_by', 'Received by', 'text')], rows, {'filters': ['date', 'status', 'driver', 'method'],
+                                                                  'notes': ['The delivery route list: deliveries by requested date with their status and proof of delivery.']})
+
+    def count_var(run):
+        from ZeoInventory.models import StockDoc as SD
+        rows = []
+        for x in SD.objects.filter(kind='count', status='posted', date__gte=run.date_from, date__lte=run.date_to).select_related('warehouse'):
+            for ln in x.lines.select_related('product'):
+                if ln.qty:
+                    rows.append({'date': x.date, 'number': x.number, 'warehouse': x.warehouse.code, 'item': str(ln.product), 'lot': ln.lot or ln.serial,
+                                 'expected': float(ln.expected_qty or 0), 'counted': float(ln.counted_qty or 0), 'difference': float(ln.qty), 'value': float(ln.value),
+                                 '_url': f'{page}r/doc/{x.pk}'})
+        return ([('date', 'Date', 'date'), ('number', 'Count', 'text'), ('warehouse', 'Warehouse', 'text'), ('item', 'Item', 'text'), ('lot', 'Lot / serial', 'text'),
+                 ('expected', 'Expected', 'number'), ('counted', 'Counted', 'number'), ('difference', 'Difference', 'number'), ('value', 'Value', 'number')], rows,
+                {'filters': ['warehouse', 'item']})
+
+    def consignment(run):
+        on = run.date_to or _zt_today()
+        rows = [{'what': 'Supplier consignment', 'partner': r['supplier'], 'item': r['item'], 'warehouse': r['warehouse'], 'qty': r['qty'], 'value': r['value'], 'age': r['age'],
+                 'old': 'Old' if r['old'] else ''} for r in S.consignment_stock(on)]
+        for r in S.valuation(on, group='item_warehouse'):
+            w = Warehouse.objects.filter(pk=r.get('warehouse_id')).first()
+            if w is not None and w.kind == 'customer':
+                rows.append({'what': 'At customers (ours)', 'partner': str(w.partner or w.name), 'item': r['item'], 'warehouse': w.code, 'qty': r['qty'], 'value': r['value'],
+                             'age': None, 'old': ''})
+        return ([('what', 'Stock', 'text'), ('partner', 'Supplier / customer', 'text'), ('item', 'Item', 'text'), ('warehouse', 'Warehouse', 'text'),
+                 ('qty', 'Quantity', 'number'), ('value', 'Value (agreed price / our cost)', 'number'), ('age', 'Days held', 'number'), ('old', 'Old', 'text')], rows,
+                {'notes': [f'At {on:%d/%m/%Y}: supplier consignment stock in our warehouses (not ours – not in the stock value) and our stock at customers.'],
+                 'filters': ['what', 'partner', 'old']})
+
+    def transit(run):
+        rows = [{**r, '_url': f'{page}r/doc/{r["id"]}'} for r in S.transit_list(run.date_to or _zt_today())]
+        return ([('number', 'Transfer', 'text'), ('from', 'From', 'text'), ('to', 'To', 'text'), ('shipped_on', 'Shipped', 'date'), ('expected', 'Expected', 'date'),
+                 ('days', 'Days in transit', 'number'), ('left', 'Still in transit', 'number'), ('status', 'Status', 'text')], rows,
+                {'notes': ['Two-step transfers not fully received (overdue when past the expected date).'], 'filters': ['from', 'to', 'status'], 'no_totals': ('days',)})
+
+    def kpi(run):
+        rows = S.kpis(run.date_from, run.date_to)
+        return ([('kpi', 'KPI', 'text'), ('value', 'Value', 'number'), ('note', 'How', 'text')], rows,
+                {'no_totals': ('value',), 'notes': [f'{run.date_from:%d/%m/%Y} – {run.date_to:%d/%m/%Y}.']})
+
+    def integrity_(run):
+        on = run.date_to or _zt_today()
+        rows = S.integrity(on)
+        return ([('check', 'Check', 'text'), ('what', 'What', 'text'), ('expected', 'Expected', 'number'), ('found', 'Found', 'number')], rows,
+                {'no_totals': ('expected', 'found'), 'notes': [f'At {on:%d/%m/%Y}: ' + ('everything ties – move values, cost layers, stock ledger, ageing and the GL.' if not rows else
+                                                    f'{len(rows)} findings – run the cost adjustment (Period close) and post the journals, then check again.')]})
+
+    def provision(run):
+        on = run.date_to or _zt_today()
+        rows = [{'item': r['item'], 'value': float(r['value']), 'provision': float(r['provision'])} for r in S.provision_needed(on)]
+        return ([('item', 'Item', 'text'), ('value', 'Stock value', 'number'), ('provision', 'Provision needed', 'number')], rows,
+                {'notes': [f'At {on:%d/%m/%Y}, by the provision matrix of the set-up (age bands × %; expired lots 100 %).']})
+
+    def clearing(run):
+        on = run.date_to or _zt_today()
+        rows = []
+        for r in S.clearing(on)['rows']:
+            rows.append({'account': r['account'], 'what': r['label'], 'document': '', 'date': None, 'partner': '', 'stock': float(r['stock_side']), 'gl': float(r['gl']),
+                         'cleared': float(r['cleared']), 'open': float(r['open'])})
+            for d in r['docs']:
+                rows.append({'account': r['account'], 'what': '', 'document': d['number'], 'date': d['date'], 'partner': d['partner'], 'stock': float(d['amount']),
+                             'gl': None, 'cleared': None, 'open': None, '_url': f'{page}r/{"doc" if d["kind"] == "doc" else "landed"}/{d["id"]}'})
+        return ([('account', 'Account', 'text'), ('what', 'Clearing account', 'text'), ('document', 'Document', 'text'), ('date', 'Date', 'date'),
+                 ('partner', 'Partner', 'text'), ('stock', 'Booked by stock', 'number'), ('gl', 'GL balance', 'number'), ('cleared', 'Cleared by other journals', 'number'),
+                 ('open', 'Open balance', 'number')], rows,
+                {'notes': [f'At {on:%d/%m/%Y}: what the stock journals booked to each clearing account (credit negative), the GL balance and what supplier invoices '
+                           f'and other journals have cleared. The open balance should be the goods received and not yet invoiced, goods in transit and charges not yet billed.']})
+
+    def reorder(run):
+        rows = []
+        for x in S.suggestions():
+            rows.append({'item': x['item'], 'warehouse': x['warehouse'], 'on_hand': float(x['on_hand']), 'reserved': float(x['reserved']), 'incoming': float(x['incoming']),
+                         'projected': float(x['projected']), 'reorder_point': float(x['min']), 'order_qty': float(x['order_qty']),
+                         'source': 'Transfer' if x['source'] == 'transfer' else 'Buy', 'from': x['from'], 'daily_use': float(x['daily_use']),
+                         'days_cover': float(x['days_cover']) if x['days_cover'] is not None else None, 'stockout': x['stockout'],
+                         '_url': f'{page}r/reorder/{x["rule"]}'})
+        for s_ in ItemSetting.objects.filter(min_qty__gt=0).select_related('product'):   # items with only the item-level point (no rule)
+            from ZeoInventory.models import ReorderRule
+            if ReorderRule.objects.filter(product=s_.product).exists():
+                continue
+            q = S.on_hand(s_.product)
+            if q < s_.min_qty:
+                rows.append({'item': str(s_.product), 'warehouse': 'all', 'on_hand': float(q), 'reserved': None, 'incoming': None, 'projected': float(q),
+                             'reorder_point': float(s_.min_qty), 'order_qty': float(s_.reorder_qty), 'source': 'Buy', 'from': str(s_.product.preferred_supplier or ''),
+                             '_url': f'{page}r/item/{s_.pk}'})
+        return ([('item', 'Item', 'text'), ('warehouse', 'Warehouse', 'text'), ('on_hand', 'On hand', 'number'), ('reserved', 'Reserved', 'number'),
+                 ('incoming', 'Incoming', 'number'), ('projected', 'Projected', 'number'), ('reorder_point', 'Reorder point', 'number'),
+                 ('order_qty', 'Order', 'number'), ('source', 'How', 'text'), ('from', 'From', 'text'), ('daily_use', 'Use a day', 'number'),
+                 ('days_cover', 'Days of cover', 'number'), ('stockout', 'Runs out', 'date')], rows,
+                {'no_totals': ('daily_use', 'days_cover', 'reorder_point', 'projected'), 'notes': ['Projected = on hand − reserved + incoming drafts; at or below the reorder point. Inventory › Reorder rules: select and "Order now".']})
+
+    def abc(run):
+        rows = [{'class': r['class'], 'item': r['item'], 'used': float(r['used']), 'share': float(r['share']), 'cumulative': float(r['cumulative'])}
+                for r in S.abc(365, run.date_to)]
+        return ([('class', 'Class', 'text'), ('item', 'Item', 'text'), ('used', 'Value used (12 months)', 'number'), ('share', '% of all', 'number'),
+                 ('cumulative', 'Cumulative %', 'number')], rows, {'no_totals': ('share', 'cumulative'), 'notes': ['A: the items making 80 % of the value used, B: the next 15 %, C: the rest.'],
+                                                                    'filters': ['class']})
+
+    def lots(run):
+        on = run.date_to or _zt_today()
+        from ZeoInventory.models import LotRecord
+        st_ = {(x.product_id, x.lot): x for x in LotRecord.objects.filter(serial='')}
+        rows = []
+        for r in S.valuation(on, group='lot'):
+            if not r.get('lot') or r['qty'] <= 0:
+                continue
+            lr = st_.get((r['item_id'], r['lot']))
+            m = StockMove.objects.filter(product_id=r['item_id'], lot=r['lot'], expiry__isnull=False).order_by('expiry').first()
+            exp = (lr.expiry if lr and lr.expiry else None) or (m.expiry if m else None)
+            rows.append({'item': r['item'], 'lot': r['lot'], 'qty': r['qty'], 'value': r['value'], 'expiry': exp, 'days': (exp - on).days if exp else None,
+                         'status': lr.get_status_display() if lr else 'Available', '_url': f'{page}r/lot/{lr.pk}' if lr else ''})
+        rows.sort(key=lambda x: (x['expiry'] is None, x['expiry'] or on))
+        return ([('item', 'Item', 'text'), ('lot', 'Lot', 'text'), ('qty', 'On hand', 'number'), ('value', 'Value', 'number'), ('expiry', 'Expiry', 'date'),
+                 ('days', 'Days to expiry', 'number'), ('status', 'Status', 'text')], rows, {'filters': ['status', 'item'], 'no_totals': ('days',)})
+
+    return {'inv-valuation': ('Stock on hand and value', 'Inventory', 'Quantity, unit cost and value per warehouse and item at the end of the period.', valuation, 'month', codes),
+            'inv-ageing': ('Stock ageing', 'Inventory', 'Value of the stock held by the age of its receipt.', ageing, 'month', codes),
+            'inv-ledger': ('Stock ledger', 'Inventory', 'Every stock movement in the period with its value.', ledger, 'month', codes),
+            'inv-reconciliation': ('Inventory ↔ GL reconciliation', 'Inventory', 'The stock valuation against the inventory accounts in the GL at a date.', reconciliation, 'month', acc),
+            'inv-movement': ('Stock movement summary', 'Inventory', 'Opening, in, out and closing quantity and value per item between two dates.', movement, 'month', codes),
+            'inv-valuation-doc': ('Stock value by document date', 'Inventory', 'The operations view: by document date, with stock in transit and at customers apart.', valuation_doc, 'month', codes),
+            'inv-backdated': ('Back-dated postings', 'Inventory', 'Documents posted with an earlier date – who, when, how many days back.', backdated, 'month', acc),
+            'inv-negative': ('Negative stock and cost corrections', 'Inventory', 'Stock below zero and the cost corrections of earlier issues.', negative, 'month', codes),
+            'inv-returnable': ('Returnable packaging', 'Inventory', 'Pallets, crates and cylinders held by customers and owed to suppliers, with deposits.', returnable, 'month', codes),
+            'inv-deliveries': ('Delivery route list', 'Inventory', 'Deliveries by requested date with their status and proof of delivery.', deliveries, 'month', codes),
+            'inv-count': ('Count variances', 'Inventory', 'Posted stock counts: expected, counted, difference and value.', count_var, 'month', codes),
+            'inv-consignment': ('Consignment stock', 'Inventory', 'Supplier consignment stock (quantity, agreed value, age) and our stock at customers.', consignment, 'month', codes),
+            'inv-transit': ('Goods in transit', 'Inventory', 'Two-step transfers not fully received, with the expected date and days in transit.', transit, None, codes),
+            'inv-kpi': ('Inventory KPIs', 'Inventory', 'Stock turnover, days of inventory, dead stock, stock accuracy and fill rate.', kpi, 'month', codes),
+            'inv-integrity': ('Integrity check', 'Inventory', 'Recalculates and compares the ledger, cost layers, valuation, ageing and the GL.', integrity_, 'month', acc),
+            'inv-provision': ('Inventory provision (matrix)', 'Inventory', 'The provision the ageing matrix asks for, per item.', provision, 'month', acc),
+            'inv-clearing': ('Clearing accounts', 'Inventory', 'Goods received not invoiced, goods in transit, landed cost clearing and accrual, consignment payable: booked by stock, cleared, open.', clearing, 'month', acc),
+            'inv-reorder': ('Reorder list', 'Inventory', 'Items at or below their reorder point with the quantity to order, from where, days of cover.', reorder, None, codes),
+            'inv-abc': ('ABC analysis', 'Inventory', 'Items by the value used in the last 12 months.', abc, 'month', codes),
+            'inv-lots': ('Lots and expiry', 'Inventory', 'Lots in stock with their expiry date.', lots, 'month', codes)}
+
+
+def _mfg(a):
+    """v1.79.0 Manufacturing: production by item, order costs, variances, WIP, work centre load, material usage."""
+    from ZeoMfg.reports import mfg_reports
+    return mfg_reports(a, SLUG_PAGE['manufacturing'])
+
+
+def _purchase(a):
+    """v1.78.0 Purchase: by supplier, item, month; to receive; received not billed; mismatches; supplier performance."""
+    from ZeoPurchase.reports import purchase_reports
+    return purchase_reports(a, SLUG_PAGE['purchase'])
+
+
+def _sales(a):
+    """v1.77.0 Sales: by customer, item, salesperson, month; backorders; to invoice; conversion; commissions."""
+    from ZeoSales.reports import sales_reports
+    return sales_reports(a, SLUG_PAGE['sales'])
+
+
+def _ledger(a):
+    """v1.76.0 Accounting: financial statements, ageing, VAT 201, corporate tax, bank reconciliation, integrity."""
+    from ZeoLedger.reports import ledger_reports
+    return ledger_reports(a, SLUG_PAGE['accounting'])
+
+
+KIT_EXTRA = {'crm': _crm_more, 'property': _property, 'maintenance': _maintenance, 'people': _people, 'inventory': _inventory, 'accounting': _ledger, 'sales': _sales, 'purchase': _purchase, 'manufacturing': _mfg}
 
 
 # ------------------------------------------------------------------ HSE
@@ -839,7 +1172,7 @@ def hse_reports():
             qs = _branch_pick(run, scope(run.request), A.bpath(scope(run.request).model))
             qs, _ = _period(run, qs, qs.model)
             rows = []
-            for o in qs[:5000]:
+            for o in qs.iterator(chunk_size=2000):   # v1.79.3 every record (before: the first 5,000, without saying so)
                 r = label_fn(o)
                 r.update({'_url': page + link.format(id=o.pk), '_m': o._meta.label, '_id': o.pk})
                 rows.append(r)

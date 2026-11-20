@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import FieldsView, ImportView, DirectoryView, FormSettingsView
+from .views import FieldsView, ImportView, ImportJobView, DirectoryView, FormSettingsView
 from .fieldhelp import FieldHelpView   # v1.16.0
 from .people import UserNamesView   # v1.62.0 ui
 from .usage import UsageView, ActiveView   # v1.62.1
@@ -8,6 +8,8 @@ from . import workbook_views as WB   # v1.62.0 workbook
 urlpatterns = [
     path('api/fields/', FieldsView.as_view(), name='tools-fields'),
     path('api/import/', ImportView.as_view(), name='tools-import'),
+    path('api/import/job/<str:token>/', ImportJobView.as_view(), name='tools-import-job'),   # v1.79.1 background import
+    path('api/import/job/<str:token>/<str:action>/', ImportJobView.as_view(), name='tools-import-job-action'),
     path('api/directory/', DirectoryView.as_view(), name='tools-directory'),
     path('api/form-settings/', FormSettingsView.as_view(), name='tools-form-settings'),
     path('api/field-help/', FieldHelpView.as_view(), name='tools-field-help'),   # v1.16.0

@@ -933,7 +933,7 @@ class CalendarFeedView(APIView):
             return _HttpResponse('Not found', status=404, content_type='text/plain')
         CalendarFeed.objects.filter(pk=f.pk).update(last_used=timezone.now())
         r = _HttpResponse(CF.build(f), content_type='text/calendar; charset=utf-8')
-        r['Content-Disposition'] = 'inline; filename="zeo.ics"'
+        r['Content-Disposition'] = 'inline; filename="zeo-books.ics"'
         r['Cache-Control'] = 'private, max-age=900'
         return r
 

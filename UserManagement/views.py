@@ -1,3 +1,4 @@
+from zeo.mailguard import essential_mail
 from django.shortcuts import render
 from django.contrib.auth.models import User,Group,Permission
 from .serializers import CustomUserSerializer,CustomTokenObtainPairSerializer,CompanySerializer,DomainSerializer,UserListSerializer,Non_EssUserListSerializer,ValidateCredentialsSerializer,UserAllocatedCompanySerializer,ChangePasswordSerializer
@@ -540,6 +541,7 @@ from django.utils import timezone
 from django.core.mail import send_mail
 import random    
 class SendOTPView(APIView):
+    @essential_mail   # v1.79.5 sent even when the company e-mails are off
     def post(self, request):
         user_id = request.data.get("user_id")
 
@@ -670,6 +672,7 @@ class VerifyOTPView(APIView):
             "tenant_id": tenant_ids    # ➜ ADDED
         })
 class SendResetPasswordOTP(APIView):
+    @essential_mail   # v1.79.5 sent even when the company e-mails are off
     def post(self, request):
         from django.core.mail import EmailMessage
         from .utils import generate_otp
@@ -853,6 +856,7 @@ from django.core.mail import EmailMessage
 from .utils import generate_otp
 class ESSSendResetPasswordOTP(APIView):
 
+    @essential_mail   # v1.79.5 sent even when the company e-mails are off
     def post(self, request):
 
         emp_code = request.data.get("emp_code")

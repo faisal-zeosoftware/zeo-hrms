@@ -359,3 +359,83 @@ class BankFileDownloadView(_FileBase):
         x = _public(res)
         x['content_b64'] = base64.b64encode(content).decode('ascii')
         return Response(x)
+
+
+class BankFileZipView(_B):
+    """v1.73.24 – POST api/bank-files/zip/ {run, agent?|profile?, visa_branch_ids?}: every WPS establishment's file of a run in one
+    ZIP (one SIF per establishment – the working branch or the visa branch, Payroll controls), optionally only the employees of
+    the chosen visa branches. → {file_name, content_b64, files: [{file_name, employer_id, branches, employees, total}], skipped}"""
+    def post(self, request):
+        import io
+        import zipfile
+        self.need(FILE, 'You do not have the right to make the WPS file.')
+        d = request.data or {}
+        PR = M('PayrollManagement', 'PayrollRun')
+        run = PR.objects.filter(pk=d.get('run')).first() if str(d.get('run') or '').isdigit() else None
+        if run is None or not run_in_branches(self.c.branches, run):
+            raise S.Refused(tr('Choose the payroll run.'), problems={'run': tr('Required.')})
+        if run.status not in ('approved', 'paid'):
+            raise S.Refused(tr('Approve the run first.'))
+        prof = None
+        if d.get('profile'):
+            prof = next((p for p in B.profiles() if str(p['id']) == str(d.get('profile'))), None)
+            if prof is None or not self.mine(prof):
+                raise S.Refused(tr('Not found.'), status=404)
+        else:
+            ag = str(d.get('agent') or 'cbuae')
+            if ag not in B.AGENT:
+                raise S.Refused(tr('Choose the bank or exchange house.'), problems={'agent': tr('Invalid.')})
+            prof = {'id': None, 'agent': ag, 'branch_ids': []}
+        try:
+            from CountryPack.services import WPS_SIF_OFF, feature
+            if not feature('wps_sif'):
+                raise S.Refused(tr(WPS_SIF_OFF))
+        except ImportError:
+            pass
+        visa = [int(x) for x in d.get('visa_branch_ids') or [] if str(x).isdigit()]
+        emp_ids = B.visa_employee_ids(run, visa) if visa else None
+        if visa and not emp_ids:
+            raise S.Refused(tr('No employee of this run has the chosen visa branch.'))
+        t = B._tenant()
+        employer = t.employer_unique_id.zfill(13) if t and t.employer_unique_id else '0' * 13
+        routing = t.bank_routing_code if t and t.bank_routing_code else '0' * 9
+        groups = B.establishment_groups(run, employer, routing) or [{'key': 'all', 'employer_id': employer, 'routing_code': routing, 'branch_ids': [],
+                                                                     'branches': []}]
+        buf, files, names, skipped = io.BytesIO(), [], set(), []
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+            for g in groups:
+                res = B.make(run, prof, branch_ids=list(g['branch_ids']), employee_ids=emp_ids)
+                s = res.get('summary') or {}
+                n = int(s.get('employees') or 0)
+                skipped += [dict(x, reason=tr(x.get('reason') or '')) for x in res.get('skipped') or []]
+                if not n:
+                    continue
+                name = res['file_name']
+                if name in names:   # two establishments with the same employer ID (another bank): keep both
+                    base, dot, ext = name.rpartition('.')
+                    name = f"{base}_{g['routing_code']}.{ext}" if dot else f"{name}_{g['routing_code']}"
+                names.add(name)
+                content = res['content'] if isinstance(res['content'], bytes) else res['content'].encode('utf-8')
+                z.writestr(name, content)
+                files.append({'file_name': name, 'employer_id': s.get('employer_id') or g['employer_id'], 'routing_code': s.get('routing_code') or g['routing_code'],
+                              'branches': g['branches'], 'employees': n, 'total': s.get('total'), 'warnings': res.get('warnings') or []})
+        if not files:
+            raise S.Refused(tr('No employee can be paid through WPS in this run yet – make the file to see who is left out.'))
+        zname = f"WPS_{(run.name or 'run').replace(' ', '_')[:40]}_{run.month:02d}{run.year}.zip"
+        u = request.user
+        try:
+            B.log_file({'profile': prof.get('id'), 'agent': prof.get('agent') or 'cbuae', 'layout': 'zip', 'run': run.pk, 'file_name': zname,
+                        'employees': sum(f['employees'] for f in files), 'total': f"{sum(float(f['total'] or 0) for f in files):.2f}", 'accounts': {},
+                        'by': getattr(u, 'username', ''), 'at': datetime.datetime.now().isoformat(timespec='seconds')})
+            M('Chatter', 'RecordLog').objects.create(
+                model='PayrollManagement.payrollrun', object_id=str(run.pk), record_label=(run.name or f'{run.month:02d}/{run.year}')[:255],
+                action='updated', changes={'wps_file': {'label': 'WPS file', 'old': None,
+                                                        'new': f"ZIP – {len(files)} file(s) – {sum(f['employees'] for f in files)}",
+                                                        'info': {'file': 'zip', 'employees': sum(f['employees'] for f in files),
+                                                                 'total': f"{sum(float(f['total'] or 0) for f in files):.2f}", 'file_name': zname,
+                                                                 'skipped': len(skipped)}}},
+                user=u, user_name=getattr(u, 'username', '')[:150], path=request.path[:255], method='POST')
+        except Exception:   # noqa: BLE001
+            pass
+        return Response({'file_name': zname, 'content_b64': base64.b64encode(buf.getvalue()).decode('ascii'), 'files': files,
+                         'skipped': skipped, 'wps_by': B.wps_by(), 'visa_branch_ids': visa})

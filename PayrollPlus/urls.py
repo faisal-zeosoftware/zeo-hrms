@@ -16,7 +16,8 @@ from . import bulk_settlement as BS   # v1.62.11 (item 230) bulk final settlemen
 from . import branch_schemes as BSC   # v1.62.11 (item 229) ADPF / DIFC DEWS per branch
 from . import bankfile_views as BF   # v1.62.11 (item 227) bank file layouts
 from . import run_payment_views as RPV   # v1.62.11 (item 227) payroll run payments, payment file layouts
-from . import pay163_views as P163   # v1.63.0 (items 27, 28) salary split, recovery schedules
+from . import pay163_views as P163
+from . import run_progress_views as RPV2   # v1.75.1 payroll calculation progress   # v1.63.0 (items 27, 28) salary split, recovery schedules
 
 router = DefaultRouter()
 router.register(r'statutory', V.StatutoryViewSet, basename='statutory')   # v1.31.0
@@ -24,6 +25,8 @@ router.register(r'statutory', V.StatutoryViewSet, basename='statutory')   # v1.3
 urlpatterns = [
     path('api/', include(router.urls)),
     path('api/settings/', V.SettingsView.as_view()),
+    path('api/run-progress/', RPV2.RunProgressView.as_view()),                 # v1.75.1
+    path('api/run-progress/continue/<int:pk>/', RPV2.RunContinueView.as_view()),   # v1.75.1
     path('api/rule-versions/', EFV.RuleVersionsView.as_view()),               # v1.67.12 (effective, item 64)
     path('api/pension/<int:pk>/', EFV.PensionView.as_view()),                  # v1.67.12 (effective, item 249)
     path('api/pension-settings/', EFV.PensionSettingsView.as_view()),          # v1.67.12 (effective, item 249)
@@ -105,6 +108,7 @@ urlpatterns = [
     path('api/bank-files/profiles/<int:pk>/', BF.BankFileProfileView.as_view()),
     path('api/bank-files/preview/', BF.BankFilePreviewView.as_view()),
     path('api/bank-files/download/', BF.BankFileDownloadView.as_view()),
+    path('api/bank-files/zip/', BF.BankFileZipView.as_view()),   # v1.73.24 every establishment's file in one ZIP
     path('api/accruals/', AC.AccrualsView.as_view()),                                  # v1.62.7 (item 18)
     path('api/accruals/components/<int:pk>/', AC.AccrualComponentView.as_view()),
     path('api/accruals/balances/', AC.AccrualBalancesView.as_view()),

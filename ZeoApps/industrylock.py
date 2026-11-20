@@ -21,6 +21,11 @@ TRANSACTIONS = {
     'assets': ['ZeoAssets.WorkOrder', 'ZeoAssets.Ticket', 'ZeoAssets.Audit'],
     'people': ['ZeoPeople.SignRequest', 'ZeoPeople.BenefitClaim', 'ZeoPeople.Survey'],
     'hse': ['ZeoHSE.Incident', 'ZeoHSE.Permit', 'ZeoHSE.Inspection', 'ZeoHSE.Observation'],
+    'inventory': ['ZeoInventory.StockMove'],
+    'accounting': ['ZeoLedger.EntryLine'],
+    'sales': ['ZeoSales.Order'],
+    'purchase': ['ZeoPurchase.Order'],
+    'manufacturing': ['ZeoMfg.ProductionOrder'],
 }
 
 

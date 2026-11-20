@@ -1798,8 +1798,12 @@ class SIFSerializer(serializers.Serializer):
         payroll_run = PayrollRun.objects.get(id=self.validated_data['payroll_run_id'])
         slips = payroll_run.payslips.select_related('employee').order_by('employee__emp_code')
         branch_ids = self.validated_data.get("branch_ids", [])
-        if branch_ids:
-            slips = slips.filter(employee__emp_branch_id__in=branch_ids)
+        if branch_ids:   # v1.73.24: the WPS branch (working branch, or the visa branch – Payroll controls)
+            try:
+                from PayrollPlus.bankfiles import wps_branch_q
+                slips = slips.filter(wps_branch_q(branch_ids))
+            except ImportError:
+                slips = slips.filter(employee__emp_branch_id__in=branch_ids)
         department_ids = self.validated_data.get("department_ids", [])
         if department_ids:
             slips = slips.filter(employee__emp_dept_id__in=department_ids)
@@ -2612,6 +2616,16 @@ class AirticketEmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketEmailTemplate
         fields = '__all__'
+
+    def validate(self, attrs):   # v1.73.19 (item 7): one template per type, as the other modules
+        t = attrs.get('template_type')
+        if t:
+            q = AirticketEmailTemplate.objects.filter(template_type=t)
+            if self.instance:
+                q = q.exclude(pk=self.instance.pk)
+            if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(q, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
+                raise serializers.ValidationError({'template_type': f'{t} template already exists.'})
+        return attrs
 class AirticketNotifySerializer(serializers.ModelSerializer):
     class Meta:
         model = AirticketNotification
@@ -2716,7 +2730,7 @@ class LoanEmailTemplateSerializer(serializers.ModelSerializer):
         temp=LoanEmailTemplate.objects.filter(template_type=template_type)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
         })
         return attrs
@@ -2733,7 +2747,7 @@ class AdvSalaryEmailTemplateSerializer(serializers.ModelSerializer):
         temp=AdvanceSalaryEmailTemplate.objects.filter(template_type=template_type)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
         })
         return attrs

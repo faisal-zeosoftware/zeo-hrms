@@ -187,6 +187,9 @@ def default_for(doc_type, branch_id=None, lang=None):
         for r in rows:
             if r.branch_id == b and r.language == l and (ok is None or r.template.language in ok):
                 return r.template
+    if lang == 'ar':   # v1.73.19 (item 8): no Arabic default chosen – the Arabic or bilingual sample (an Arabic print came out in English)
+        return (PrintTemplate.objects.filter(doc_type=doc_type, is_sample=True, sample_key='arabic').first()
+                or PrintTemplate.objects.filter(doc_type=doc_type, is_sample=True, language__in=('ar', 'bi')).order_by('id').first())
     return None
 
 

@@ -75,6 +75,12 @@ def ensure(branches=None, user=None):
         return []
     pay = _on('payroll')
     added = []
+    try:   # v1.75.1 a company with the approval hierarchy off (every new company): the chains are "No approval"
+        from ZeoApps.hrfeatures import on as _feat
+        kind = 'reporting_manager' if _feat('approvals') else 'no_approval'
+    except Exception:   # noqa: BLE001
+        kind = 'reporting_manager'
+    role = ROLE if kind == 'reporting_manager' else 'No approval'
     for label, wf, lv in SIMPLE:
         if label in PAYROLL and not pay:
             continue
@@ -85,13 +91,13 @@ def ensure(branches=None, user=None):
         need = [b for b in brs if b.pk not in covered]
         if not need:
             continue
-        w = W.objects.filter(approval_type='reporting_manager').order_by('id').first()
+        w = W.objects.filter(approval_type=kind).order_by('id').first()
         if w is None:
-            w = W.objects.create(approval_type='reporting_manager')
+            w = W.objects.create(approval_type=kind)
             fk = next(f.name for f in L._meta.concrete_fields if f.is_relation and f.related_model is W)
             kw = {fk: w, 'level': 1}
             if any(f.name == 'role' for f in L._meta.concrete_fields):
-                kw['role'] = ROLE
+                kw['role'] = role
             L.objects.create(**kw)
         w.branch.add(*need)
         added.append(f'{label}: {", ".join(b.branch_name for b in need)}')
@@ -104,8 +110,8 @@ def ensure(branches=None, user=None):
             need = [b for b in brs if t.branch_id in (None, b.pk) and (t.pk, b.pk) not in have]
             if not need:
                 continue
-            w = LW.objects.filter(request_type=t, approval_type='reporting_manager').order_by('id').first() or \
-                LW.objects.create(request_type=t, approval_type='reporting_manager', created_by=user)
+            w = LW.objects.filter(request_type=t, approval_type=kind).order_by('id').first() or \
+                LW.objects.create(request_type=t, approval_type=kind, created_by=user)
             w.branch.add(*need)
             n += 1
         if n:
@@ -119,8 +125,8 @@ def ensure(branches=None, user=None):
                 continue
             w = LoW.objects.filter(loan_type=t).first()
             if w is None:
-                w = LoW.objects.create(loan_type=t, approval_type='reporting_manager')
-                LoL.objects.create(workflow=w, level=1, role=ROLE)
+                w = LoW.objects.create(loan_type=t, approval_type=kind)
+                LoL.objects.create(workflow=w, level=1, role=role)
                 n += 1
             missing_b = [b for b in brs if not w.branch.filter(pk=b.pk).exists()]
             if missing_b:
@@ -148,9 +154,9 @@ def ensure(branches=None, user=None):
             need = [b for b in brs if (not only or b.pk in only) and (t.pk, b.pk) not in have]
             if not need:
                 continue
-            w = Wf.objects.filter(**{fk: t, 'approval_type': 'reporting_manager'}).order_by('id').first()
+            w = Wf.objects.filter(**{fk: t, 'approval_type': kind}).order_by('id').first()
             if w is None:
-                kw = {fk: t, 'approval_type': 'reporting_manager'}
+                kw = {fk: t, 'approval_type': kind}
                 if any(f.name == 'created_by' for f in Wf._meta.concrete_fields) and user is not None and getattr(user, 'pk', None):
                     kw['created_by'] = user
                 w = Wf.objects.create(**kw)

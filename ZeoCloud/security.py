@@ -27,7 +27,7 @@ from django.utils import timezone
 from rest_framework import exceptions
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-ISSUER = 'ZEO HRMS'
+ISSUER = 'ZEO Books'
 STEP = 30
 CACHE_S = 30
 

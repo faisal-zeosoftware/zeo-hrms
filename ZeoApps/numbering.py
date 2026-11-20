@@ -58,6 +58,11 @@ SERIES = {
     'people': [('development_plan', 'Development plan', 'PDP'), ('sign_request', 'E-signature request', 'SGN'), ('survey', 'Survey', 'SRV'),
                ('enrolment', 'Benefit enrolment', 'BEN'), ('claim', 'Benefit claim', 'CLM'), ('form_submission', 'Form submission', 'FRM'),
                ('recognition', 'Recognition', 'REC'), ('reward', 'Reward', 'RWD')],
+    'inventory': [('doc_receipt', 'Goods receipt', 'GRN'), ('doc_delivery', 'Delivery', 'DN'), ('doc_transfer', 'Stock transfer', 'TRF'),
+                  ('doc_adjustment', 'Stock adjustment', 'ADJ'), ('doc_count', 'Stock count', 'CNT'), ('doc_scrap', 'Scrap / write-off', 'SCR'),
+                  ('doc_consumption', 'Internal issue', 'ISS'), ('doc_return_in', 'Customer return', 'CRN'), ('doc_return_out', 'Return to supplier', 'SRN'),
+                  ('doc_opening', 'Opening stock', 'OPN'), ('landed', 'Landed cost', 'LC'), ('closing', 'Closing stock JV', 'CSJ'),
+                  ('close', 'Stock period close', 'SPC'), ('reservation', 'Stock reservation', 'RSV'), ('warehouse', 'Warehouse', 'WH')],   # v1.75.0
     'hse': [('incident', 'Incident', 'INC'), ('permit', 'Permit to work', 'PTW'), ('risk', 'Risk assessment', 'RA'),
             ('action', 'Corrective action (CAPA)', 'CAPA'), ('inspection', 'HSE inspection', 'INS'), ('observation', 'Observation', 'OBS'),
             ('toolbox', 'Toolbox talk', 'TBT'), ('health', 'Occupational health', 'OH'), ('moc', 'Management of change', 'MOC'),
@@ -65,9 +70,9 @@ SERIES = {
             ('ergo', 'Ergonomics assessment', 'ERG'), ('waste', 'Waste record', 'WST'), ('chemical', 'Chemical record', 'CHM'),
             ('claim', 'Claim', 'CLM'), ('hygiene', 'Industrial hygiene', 'IH')],
 }
-KIT_LABEL = {'crm': 'ZeoCRM', 'property': 'ZeoProperty', 'maintenance': 'ZeoMaintenance', 'assets': 'ZeoAssets', 'people': 'ZeoPeople'}
+KIT_LABEL = {'crm': 'ZeoCRM', 'property': 'ZeoProperty', 'maintenance': 'ZeoMaintenance', 'assets': 'ZeoAssets', 'people': 'ZeoPeople', 'inventory': 'ZeoInventory', 'accounting': 'ZeoLedger', 'sales': 'ZeoSales', 'purchase': 'ZeoPurchase', 'manufacturing': 'ZeoMfg'}
 LABEL_KEY = {v: k for k, v in KIT_LABEL.items()}
-APP_PREFIX = {'projects': 'prj', 'crm': 'crm', 'property': 'prop', 'maintenance': 'mnt', 'assets': 'am', 'people': 'ppl', 'hse': 'hse'}
+APP_PREFIX = {'projects': 'prj', 'crm': 'crm', 'property': 'prop', 'maintenance': 'mnt', 'assets': 'am', 'people': 'ppl', 'hse': 'hse', 'inventory': 'inv'}
 
 
 def code(app_key, kind):

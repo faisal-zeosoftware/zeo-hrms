@@ -70,7 +70,11 @@ class OverviewView(APIView):
         from django.db import connection
         import hashlib
         qp = request.query_params
-        lang = request.headers.get('Accept-Language', '')[:20]
+        try:   # v1.73.21: the language ZEO answers in (X-Language / the user's choice) – an Arabic reader got the English figures of the last 2 minutes
+            from Translations.i18n import current_lang
+            lang = current_lang(request)
+        except Exception:   # noqa: BLE001
+            lang = request.headers.get('X-Language', '') or request.headers.get('Accept-Language', '')[:20]
         raw = f"{connection.schema_name}|{request.user.pk}|{lang}|" + '&'.join(f'{k}={qp.get(k)}' for k in sorted(qp) if k not in ('fresh', '_'))
         key = 'zeo:dash:ov:' + hashlib.sha1(raw.encode()).hexdigest()
         if qp.get('fresh') not in ('1', 'true'):

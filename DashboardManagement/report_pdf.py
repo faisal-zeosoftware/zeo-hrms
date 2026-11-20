@@ -28,7 +28,8 @@ from rest_framework.views import APIView
 from Translations.i18n import current_lang, tr
 
 M = apps.get_model
-MAX_ROWS = 5000
+MAX_ROWS = 100000   # v1.79.1 (was 5,000): longer reports are made in the background in parts
+SYNC_ROWS = 800     # v1.79.1 more rows than this: the background job (one PDF of 1,800 rows took more than the 30 s a PDF may take)
 E = html.escape
 
 
@@ -61,8 +62,8 @@ def _is_num(s):
     return bool(re.match(r'^-?[\d,]+(\.\d+)?$', str(s or '').strip()))
 
 
-def _page(title, head_html, body_html, landscape=False, small=False):
-    """the letterhead page (WeasyPrint)."""
+def _page(title, head_html, body_html, landscape=False, small=False, letterhead=True, page_label=None, seconds=None):
+    """the letterhead page (WeasyPrint). v1.79.1: letterhead=False for the later parts of a long report; page_label '' = no page numbers."""
     from PrintTemplates.contexts import branding, company_ctx
     from PrintTemplates.engine import family_stack, font_faces
     lang = _lang()
@@ -77,7 +78,7 @@ def _page(title, head_html, body_html, landscape=False, small=False):
     size = 'A4 landscape' if landscape else 'A4'
     fs = {0: '8.4pt', 1: '7.4pt', 2: '6.2pt'}[int(small)]
     pad = '2px 2.5px' if int(small) == 2 else '3px 5px'
-    pg = tr('Page {0} of {1}', '" counter(page) "', '" counter(pages) "')
+    pg = tr('Page {0} of {1}', '" counter(page) "', '" counter(pages) "') if page_label is None else page_label
     css = f"""{font_faces(fams)}
 @page {{ size: {size}; margin: 13mm 11mm 15mm 11mm;
   @bottom-left {{ content: "{E(foot)[:160]}"; font: 7pt {stack}; color: #6b7080; }}
@@ -111,10 +112,10 @@ h2 {{ font-size: 10pt; margin: 12px 0 4px; color: {b.primary_color or '#1f3a5f'}
 """
     doc = f"""<!doctype html><html lang="{lang}" dir="{'rtl' if lang == 'ar' else 'ltr'}"><head><meta charset="utf-8"><title>{E(title)}</title>
 <style>{css}</style></head><body>
-<div class="lh">{logo}<div><div class="co">{E(name)}</div><div class="sub">{E(sub)}</div></div></div>
+{f'<div class="lh">{logo}<div><div class="co">{E(name)}</div><div class="sub">{E(sub)}</div></div></div>' if letterhead else ''}
 {head_html}{body_html}</body></html>"""
     from PrintTemplates.engine import html_to_pdf
-    return html_to_pdf(doc)
+    return html_to_pdf(doc, seconds=seconds)
 
 
 def _printed_by(request):
@@ -126,7 +127,12 @@ def _printed_by(request):
 def _branches_text(request):
     picked = [int(x) for x in re.findall(r'\d+', request.query_params.get('branch', '') or '')]
     names = list(M('OrganisationManager', 'brnch_mstr').objects.filter(pk__in=picked).values_list('branch_name', flat=True)) if picked else []
-    return ', '.join(names) if names else tr('All branches I may see')
+    out = ', '.join(names) if names else tr('All branches I may see')
+    visa = [int(x) for x in re.findall(r'\d+', request.query_params.get('visa_branch', '') or '')]   # v1.73.24
+    if visa:
+        vn = list(M('OrganisationManager', 'brnch_mstr').objects.filter(pk__in=visa).values_list('branch_name', flat=True))
+        out += ' · ' + tr('Visa branch: {0}', ', '.join(vn))
+    return out
 
 
 _AR = re.compile('[\u0600-\u06ff\ufb50-\ufdff\ufe70-\ufeff]')
@@ -162,6 +168,30 @@ class ReportPdfView(APIView):
         spec, data = _run_report(request, key)   # the rights and the period checks of the report itself
         if spec is None:
             return data
+        if key in ('gl-trial-balance', 'gl-profit-loss', 'gl-balance-sheet') and request.query_params.get('layout') == 't':
+            # v1.79.3 T format printed side by side
+            from ZeoLedger.statement_pdf import render_t
+            try:
+                pdf = render_t(request, key, data)
+            except Exception as exc:   # noqa: BLE001
+                return Response({'detail': tr('The PDF could not be made: {0}', str(exc)[:200])}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _pdf_response(pdf, f"{key}-t-{_zt_today().isoformat()}.pdf", inline=request.query_params.get('download') != '1')
+        if key.startswith('gl-fr-'):   # v1.79.4 designed statements: indents, bold headings, ruled totals on the letterhead
+            from ZeoLedger.statement_pdf import render_fr
+            try:
+                pdf = render_fr(request, key, data)
+            except Exception as exc:   # noqa: BLE001
+                return Response({'detail': tr('The PDF could not be made: {0}', str(exc)[:200])}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _pdf_response(pdf, f"{key}-{_zt_today().isoformat()}.pdf", inline=request.query_params.get('download') != '1')
+        if key in ('gl-customer-statement', 'gl-supplier-statement', 'gl-customer-ledger', 'gl-supplier-ledger'):
+            # v1.79.3 the customer / supplier statement and ledger print as documents: one per partner, letterhead with the logo
+            from ZeoLedger.statement_pdf import render as party_pdf
+            try:
+                pdf = party_pdf(request, key, data, shown)
+            except Exception as exc:   # noqa: BLE001 – WeasyPrint missing / failed
+                return Response({'detail': tr('The PDF could not be made: {0}', str(exc)[:200])}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            if pdf is not None:
+                return _pdf_response(pdf, f"{key}-{_zt_today().isoformat()}.pdf", inline=request.query_params.get('download') != '1')
         types = {c['label']: c.get('type') for c in data['columns']}
         if shown:   # the table as the screen shows it (filters, sort, visible columns, a column per group level)
             rows = list(csv.reader(io.StringIO(shown.lstrip('﻿'))))
@@ -219,22 +249,41 @@ class ReportPdfView(APIView):
         meta.append(f"<b>{E(tr('Rows'))}:</b> {len(cells):,}")
         meta.append(E(_printed_by(request)))
         head = f'<h1>{E(title)}</h1><div class="meta">{" &nbsp;·&nbsp; ".join(meta)}</div>'
-        th = ''.join(f'<th class="{"n" if numeric[i] else ""}">{E(h)}</th>' for i, h in enumerate(heads))
-        trs = []
-        for r in cells:
-            trs.append('<tr>' + ''.join((f'<td class="n"><span>{E(str(v))}</span></td>' if numeric[i] else _cell(v)) for i, v in enumerate(r)) + '</tr>')
-        if tot:
-            trs.append('<tr class="tot">' + ''.join((f'<td class="n"><span>{E(str(v))}</span></td>' if numeric[i] and i else f'<td>{E(str(v))}</td>') for i, v in enumerate(tot)) + '</tr>')
-        if not cells:
-            trs.append(f'<tr><td colspan="{max(len(heads), 1)}">{E(tr("No rows for this period and branch."))}</td></tr>')
-        notes = ''.join(f'<div>{E(str(n))}</div>' for n in (data.get('notes') or []))
-        body = f'<table><thead><tr>{th}</tr></thead><tbody>{"".join(trs)}</tbody></table>' + (f'<div class="notes">{notes}</div>' if notes else '')
+        notes = [str(n) for n in (data.get('notes') or [])]
+        name = f"{key}-{_zt_today().isoformat()}.pdf"
+        spec = {'title': title, 'head': head, 'heads': heads, 'numeric': numeric, 'tot': tot, 'notes': notes, 'landscape': len(heads) > 6,
+                'small': 2 if len(heads) > 14 else (1 if len(heads) > 9 else 0), 'lang': _lang(), 'name': name,
+                'pg': tr('Page {0} of {1}', '" counter(page) "', '" counter(pages) "'), 'empty': tr('No rows for this period and branch.')}
+        if len(cells) > SYNC_ROWS:   # v1.79.1 a long report: made in the background in parts, with the count
+            from DataTools import import_jobs as J
+            from . import report_jobs  # noqa: F401 – registers the task
+            job = J.start_task(request, 'DashboardManagement.report_jobs:report_pdf', cells,
+                               dict(spec, page=f'/main-sidebar/report-options/r/{key}'), label=title, kind='pdf')
+            return Response({'job': J.public(job)}, status=status.HTTP_202_ACCEPTED)
         try:
-            pdf = _page(title, head, body, landscape=len(heads) > 6, small=2 if len(heads) > 14 else (1 if len(heads) > 9 else 0))
+            pdf = render_table(spec, cells, first=True, last=True)
         except Exception as exc:   # noqa: BLE001 – WeasyPrint missing / failed
             return Response({'detail': tr('The PDF could not be made: {0}', str(exc)[:200])}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        name = f"{key}-{_zt_today().isoformat()}.pdf"
         return _pdf_response(pdf, name, inline=request.query_params.get('download') != '1')
+
+
+def render_table(spec, cells, first=True, last=True, numbers=True, seconds=None):
+    """v1.79.1 the report table as a PDF: the whole report, or one part of a long one (first: the heading; last: the totals and
+    notes; numbers=False: no "Page x of y" – a long report gets its page numbers after the parts are joined)."""
+    numeric = spec['numeric']
+    th = ''.join(f'<th class="{"n" if numeric[i] else ""}">{E(h)}</th>' for i, h in enumerate(spec['heads']))
+    trs = []
+    for r in cells:
+        trs.append('<tr>' + ''.join((f'<td class="n"><span>{E(str(v))}</span></td>' if numeric[i] else _cell(v)) for i, v in enumerate(r)) + '</tr>')
+    tot = spec.get('tot')
+    if last and tot:
+        trs.append('<tr class="tot">' + ''.join((f'<td class="n"><span>{E(str(v))}</span></td>' if numeric[i] and i else f'<td>{E(str(v))}</td>') for i, v in enumerate(tot)) + '</tr>')
+    if first and last and not cells:
+        trs.append(f'<tr><td colspan="{max(len(spec["heads"]), 1)}">{E(spec.get("empty") or "")}</td></tr>')
+    notes = ''.join(f'<div>{E(str(n))}</div>' for n in (spec.get('notes') or [])) if last else ''
+    body = f'<table><thead><tr>{th}</tr></thead><tbody>{"".join(trs)}</tbody></table>' + (f'<div class="notes">{notes}</div>' if notes else '')
+    return _page(spec['title'], spec['head'] if first else '', body, landscape=spec['landscape'], small=spec['small'],
+                 letterhead=first, page_label=spec.get('pg') if numbers else '', seconds=seconds)
 
 
 # ------------------------------------------------------------------ the employee's leave statement

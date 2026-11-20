@@ -9,11 +9,30 @@ from django.db import transaction
 from django.db.models import Q,F
 from django.dispatch import receiver
 from EmpManagement.utils import send_notification_email, get_employee_context
+from EmpManagement.utils import approver_msg as _approver_msg   # v1.73.21 (item 3)
 from  .utils import asset_schedule_escalation
 from EmpManagement.models import RequestNotification
 from django.db.models.signals import post_save
 
 #branch model
+def _zt_step_user(user, employee):
+    """v1.73.19 (item 5): the person who decides a level – the named approver, else branch HR → company HR → administrator."""
+    try:
+        from LeavePolicy.approvers import pick
+        return pick(user, employee)[0]
+    except Exception:   # noqa: BLE001
+        return user
+
+
+def _zt_fl(level, employee):
+    """v1.73.19 (item 5): the person who decides a first level (resolved once): the named approver, else branch HR → company HR → admin."""
+    if level is None:
+        return None
+    if not hasattr(level, '_zt_who'):
+        level._zt_who = _zt_step_user(level.approver, employee)
+    return level._zt_who
+
+
 class brnch_mstr(models.Model):
     branch_name               = models.CharField(max_length=100)
     branch_code               = models.CharField(max_length=50,unique=True)
@@ -493,10 +512,7 @@ class AssetRequest(models.Model):
             ).first()
 
         if not workflow:
-            workflow = AssetApprovalWorkflow.objects.create(
-                asset_type=self.asset_type,
-                approval_type="no_approval"
-            )
+            workflow = AssetApprovalWorkflow(asset_type=self.asset_type, approval_type="reporting_manager")   # v1.73.19 (item 5): no set-up – the step made at the start (reporting manager) decides; a 'No approval' set-up was saved here, so every later request of the type was approved by itself
 
         approval_type = workflow.approval_type
 
@@ -551,7 +567,7 @@ class AssetRequest(models.Model):
         # =========================================================
         if approval_type in ["reporting_manager", "multi_approval"]:
 
-            next_level = workflow.asset_levels.filter(level=next_level_number).first()
+            next_level = workflow.asset_levels.filter(level=next_level_number).first() if workflow.pk else None   # v1.73.19: no set-up saved
 
             # =========================================================
             # DUPLICATE CHECK
@@ -562,7 +578,7 @@ class AssetRequest(models.Model):
             # =========================================================
             # FINAL APPROVAL (NO LEVEL FOUND)
             # =========================================================
-            if not next_level or not next_level.approver:
+            if not next_level or not _zt_fl(next_level, self.employee):
                 self.status = "approved"  # v1.12.0: lower-case choice
                 self.save()
 
@@ -609,7 +625,7 @@ class AssetRequest(models.Model):
             # =========================================================
             approval = AssetApproval.objects.create(
                 asset_request=self,
-                approver=next_level.approver,
+                approver=_zt_fl(next_level, self.employee),
                 role=next_level.role,
                 level=next_level.level,
                 status=AssetApproval.PENDING,
@@ -623,11 +639,9 @@ class AssetRequest(models.Model):
             # NOTIFICATION (APPROVER)
             # =========================================================
             send_notification_email(
-                user=next_level.approver,
+                user=_zt_fl(next_level, self.employee),
                 employee=self.employee,
-                message=(f"Your AssetRequest {self.asset_type}"
-                        f"(Document No: {self.document_number}) is waiting for your Approval."
-                    ),
+                message=_approver_msg('asset request', self.asset_type, getattr(self, 'employee', None), self.document_number),
                 template_type="asset_created",
                 context={
                     **get_employee_context(self.employee),
@@ -825,7 +839,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
     # =========================================================
     if approval_type == 'reporting_manager':
 
-        manager = getattr(instance.employee, 'emp_reporting_manager', None)
+        manager = _zt_step_user(getattr(instance.employee, 'emp_reporting_manager', None), instance.employee)   # v1.73.19 (item 5): a closed login / the employee himself → HR
 
         if not manager:
             raise ValidationError("Employee has no reporting manager.")
@@ -873,11 +887,11 @@ def create_initial_approval(sender, instance, created, **kwargs):
         if not first_level:
             raise ValidationError("Approval level not configured for workflow.")
 
-        if first_level.approver:
+        if _zt_fl(first_level, instance.employee):
 
             approval = AssetApproval.objects.create(
                 asset_request=instance,
-                approver=first_level.approver,
+                approver=_zt_fl(first_level, instance.employee),
                 role=first_level.role,
                 level=first_level.level,
                 status=AssetApproval.PENDING,
@@ -887,7 +901,7 @@ def create_initial_approval(sender, instance, created, **kwargs):
             asset_schedule_escalation(approval, first_level)
 
             send_notification_email(
-                user=first_level.approver,
+                user=_zt_fl(first_level, instance.employee),
                 employee=instance.employee,
                 branch=instance.employee.emp_branch_id,
                 title="Asset Request Pending",

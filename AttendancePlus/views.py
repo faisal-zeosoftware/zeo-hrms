@@ -37,6 +37,8 @@ def _int(v):
         return None
 
 
+BACKGROUND_PUNCHES = 1000   # v1.79.1 more punches than this are saved in the background (the window shows the count)
+
 class APViewSet(viewsets.ModelViewSet):
     zeo_access = False
     zeo_scope = False
@@ -395,6 +397,15 @@ class PunchViewSet(APViewSet):
         except Exception:
             raise ValidationError({'file': tr('The file could not be read. Save it as CSV (UTF-8) or .xlsx.')})
         commit = str(request.data.get('commit') or request.query_params.get('commit') or '').lower() in ('1', 'true', 'yes')
+        rows = S.expand_daily(rows)
+        if len(rows) > BACKGROUND_PUNCHES:   # v1.79.1 a large file is checked / saved in the background with the count
+            from DataTools import import_jobs as J
+            from . import import_tasks  # noqa: F401 – registers the task
+            allowed = hr_employee_ids(request)
+            job = J.start_task(request, 'AttendancePlus.import_tasks:punches', rows, {'allowed_ids': sorted(allowed) if allowed is not None else None, 'commit': commit,
+                                                                         'page': request.data.get('page') or '/main-sidebar/attendance-plus/punch-import'},
+                               label='Punches', dry=not commit)
+            return Response({'job': J.public(job)}, status=202)
         res = S.import_punches(rows, commit=commit, user_id=request.user.id, allowed_ids=hr_employee_ids(request))
         tot = {k: sum(1 for r in res if r['status'] == k) for k in ('ok', 'duplicate', 'error', 'imported')}
         # v1.26.0: a month of daily rows is tens of thousands of punches – send the errors and the first rows only

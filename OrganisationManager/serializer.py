@@ -699,7 +699,7 @@ class AssetEmailTemplateSerializer(serializers.ModelSerializer):
         temp=AssetEmailTemplate.objects.filter(template_type=template_type)
         if self.instance:
             temp=temp.exclude(id=self.instance.id)
-        if temp.exists():
+        if __import__('EmpManagement.utils', fromlist=['x']).template_scope_clash(temp, attrs, self.instance):   # v1.73.19 (item 7): other branches allowed
             raise serializers.ValidationError({"template_name": f"{template_type} template already exists."
         })
         return attrs
@@ -798,7 +798,7 @@ class AssetRequestSerializer(serializers.ModelSerializer):
 
             # ---------------- REPORTING MANAGER CHECK ---------------- #
             if approval_type == "reporting_manager":
-                if not getattr(employee, "emp_reporting_manager", None):
+                if __import__('LeavePolicy.approvers', fromlist=['pick']).pick(getattr(employee, 'emp_reporting_manager', None), employee)[0] is None:   # v1.73.19 (item 5): no manager → HR
                     raise serializers.ValidationError({
                         "reporting_manager": "Employee has no reporting manager assigned."
                     })

@@ -104,6 +104,38 @@ def _approvals(user):
     return out
 
 
+HR_PAGES = {'leave': 'leave-options/leave-approvals', 'general': 'general-sidebar/approvals', 'document': 'general-sidebar/document-request-approval',
+            'latein': 'attendance-sidebar/latein-earlyout-approvals', 'asset': 'asset-options/asset-approval', 'loan': 'loan-sidebar/loan-approval',
+            'advance': 'salary-options/advance-salary-approvals', 'airticket': 'air-ticket-options/airticket-approvals',
+            'resignation': 'sub-sidebar/resignation-approvals'}
+
+
+def _hr_approvals(user, request=None):
+    """v1.73.19 (item 6): HR requests waiting for the user (leave, general / document requests, late in, assets, loans, advances, air
+    tickets, resignations, goal sheets, nominations …) – the Approvals tab listed only workflow (automation) approvals."""
+    try:
+        from DashboardManagement import services as DS
+        from DashboardManagement.dash171 import LINKS
+    except Exception:
+        return []
+    out = []
+    try:
+        rows = DS.pending_approvals(user, request)
+    except Exception:
+        return []
+    for a in rows:
+        m = a.get('module') or ''
+        page = ('/main-sidebar/' + HR_PAGES[m]) if m in HR_PAGES else ((LINKS.get(m) or {}).get('approval') or '')
+        d = a.get('date')
+        at = timezone.make_aware(datetime.datetime.combine(d, datetime.time(8, 0))) if isinstance(d, datetime.date) and not isinstance(d, datetime.datetime) else (d or None)
+        label = DS.module_label(m)
+        out.append({'key': f'h{m}{a.get("approval_id")}', 'id': a.get('approval_id'), 'source': 'approval', 'kind': 'approval', 'kind_label': 'Approval',
+                    'app': 'HRMS', 'title': f'Approve {label.lower()} – {a.get("employee") or ""}'.strip(' –'), 'body': a.get('summary') or '',
+                    'from': a.get('employee') or '', 'record': a.get('document_number') or label, 'page': page, 'model': m,
+                    'object_id': str(a.get('request_id') or ''), 'at': at, 'unread': True, 'done': False, 'level': a.get('level')})
+    return out
+
+
 def _activities(user):
     out = []
     today = _zt_today()
@@ -131,7 +163,7 @@ class InboxView(APIView):
         items = InboxItem.objects.filter(user=u)
         if q.get('done') != '1':
             items = items.filter(done=False)
-        rows = [_item(i) for i in items[:500]] + _activities(u) + _approvals(u)
+        rows = [_item(i) for i in items[:500]] + _activities(u) + _approvals(u) + _hr_approvals(u, request)   # v1.73.19 (item 6)
         apps = sorted({r['app'] for r in rows})
         if q.get('app'):
             rows = [r for r in rows if r['app'] == q['app']]

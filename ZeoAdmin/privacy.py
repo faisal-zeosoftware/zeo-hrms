@@ -292,7 +292,7 @@ def export(emp, by=None, self_service=False):
             z.writestr(f'csv/{m._meta.label}.csv', '﻿' + s.getvalue())
         z.writestr('all-data.json', json.dumps(allj, ensure_ascii=False, indent=1))
         z.writestr('README.txt', (
-            f'All the data ZEO HRMS keeps about employee {emp.emp_code}, exported on {_zt_today():%d/%m/%Y}.\n\n'
+            f'All the data ZEO Books keeps about employee {emp.emp_code}, exported on {_zt_today():%d/%m/%Y}.\n\n'
             f'all-data.json – every record, by record type ({nrec} records)\ncsv/ – the same records, one CSV file per record type\n'
             f'files/ – the documents and photos of the employee ({nfiles} files)\n\n'
             'Secret values (passwords, codes, face templates) are never exported. Records about other people that only name the '

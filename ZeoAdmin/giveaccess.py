@@ -26,6 +26,7 @@ administrators and HR / payroll users only get the e-mail link (and the authenti
 gets no password (the employee uses the company's Microsoft / Google sign-in); the company's Sign-in ID rule (e-mail required /
 optional, per employee category) decides who may sign in without an e-mail; everything is in the audit log.
 """
+from zeo.mailguard import essential_mail
 import hashlib
 import io
 import logging
@@ -279,6 +280,9 @@ def do_generate(e, user, by):
     audit(e, 'generate', 'a password was generated and shown once to HR', by, user.pk)
     return {'detail': tr('Password generated – give it to the employee; it must be changed at the first sign-in.'), 'password': pw,
             'username': user.username}
+
+
+@essential_mail   # v1.79.5 sent even when the company e-mails are off
 
 
 def send_code(user, e, by=None, kind='code'):

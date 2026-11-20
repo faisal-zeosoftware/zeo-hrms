@@ -37,6 +37,12 @@ KNOWN_RATES = {
                                'label': 'GPSSA employer rate without the government share – joined on / after 31/10/2023 with a contribution salary at or above the limit below (fraction)'},
     'ae_gpssa_subsidy_salary_limit': {'country': 'AE', 'default': Decimal('20000'),
                                       'label': 'GPSSA – the government pays 2.5 % of the employer share below this contribution salary, joined on / after 31/10/2023 (AED / month)'},
+    # v1.73.23 (item 156): Nafis. From September 2026 private-sector employers pay their full GPSSA share for Nafis-enrolled
+    # Emiratis (Emirati Talent Competitiveness Council, April 2026 – Gulf News, Aletihad, Sharjah24); the programme keeps supporting
+    # the employee's own contribution, with no published percentage – so the part Nafis pays is entered here from the Nafis
+    # letter (0 = none). It is taken off the payslip deduction of a Nafis-registered Emirati only; the employer share is unchanged.
+    'ae_nafis_employee_cover': {'country': 'AE', 'default': Decimal('0'),
+                                'label': 'Nafis – share of the employee\'s GPSSA contribution that Nafis pays for a Nafis-registered Emirati (fraction, 0 = none; from the Nafis letter)'},
     # v1.62.11 (item 229) ADPF – Abu Dhabi Pension Fund (UAE nationals employed in Abu Dhabi, instead of GPSSA).
     # Sources: Abu Dhabi Law No. (18) of 2023 amending Law No. (2) of 2000, Official Gazette of Abu Dhabi 01/12/2023 (abudhabi.gov.ae):
     # Art. 15 – existing members 5 % / employer 15 %, members first covered from 01/12/2023 11 % / 15 %; Art. 1 – private sector pensionable
@@ -194,7 +200,25 @@ def gpssa_terms(employee, base, on=None, scheme_emp=None, scheme_er=None, scheme
         b = min(max(b, lo), hi)
     if not old and b >= rate('ae_gpssa_subsidy_salary_limit', on):
         er = max(er, rate('ae_gpssa_employer_full', on))
-    return {'law': 'old' if old else 'new', 'emp': emp, 'er': er, 'base': b}
+    nafis = nafis_cover(employee, on)   # v1.73.23 (item 156)
+    out = {'law': 'old' if old else 'new', 'emp': emp, 'er': er, 'base': b}
+    if nafis > 0:
+        out['nafis_emp'] = emp * nafis
+        out['emp'] = emp - out['nafis_emp']
+    return out
+
+
+def nafis_cover(employee, on=None):
+    """v1.73.23 (item 156): the fraction of the employee's GPSSA share Nafis pays – Payroll › Legal rates 'ae_nafis_employee_cover',
+    for an employee registered with Nafis (Payroll extras › Emiratisation); 0 otherwise."""
+    try:
+        c = rate('ae_nafis_employee_cover', on) or Decimal('0')
+        if c <= 0:
+            return Decimal('0')
+        p = M('PayrollExtras', 'EmiratisationProfile').objects.filter(employee_id=employee.pk).first()
+        return min(c, Decimal('1')) if (p is not None and p.nafis_registered) else Decimal('0')
+    except Exception:   # noqa: BLE001  (payroll extras not installed)
+        return Decimal('0')
 
 
 def plain(v):

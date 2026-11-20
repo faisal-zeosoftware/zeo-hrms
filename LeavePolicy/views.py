@@ -335,6 +335,38 @@ class EffectiveView(APIView):
 
 
 # ------------------------------------------------------------------ UAE setup, accrual, year end, ledger start
+class CountrySetupView(APIView):
+    """v1.73.23 (item 154): the standard leave setup of the company's country – UAE (setup.py) or SA / QA / OM / BH / KW / IN
+    (country_setup.py)."""
+    permission_classes = [LeaveHR]
+
+    def _pack(self):
+        from CountryPack import services as cp
+        return cp.pack_code()
+
+    def get(self, request):
+        from . import country_setup
+        p = self._pack()
+        if p == 'AE':
+            return Response({**setup.preview(), 'country': 'AE', 'country_name': 'United Arab Emirates'})
+        d = country_setup.preview(p)
+        if d is None:
+            return Response({'detail': tr('There is no standard leave setup for this country yet – add the leave types and a policy yourself.')}, status=404)
+        # v1.73.25: the rules, the law and what is not loaded in the reader's language
+        d['leave_types'] = [{**t, 'description': tr(t['description'])} for t in d['leave_types']]
+        d['law'], d['left_out'] = tr(d['law']), [tr(x) for x in d['left_out']]
+        return Response(d)
+
+    def post(self, request):
+        from . import country_setup
+        p = self._pack()
+        if p == 'AE':
+            return Response(setup.load(request.user))
+        if country_setup.country_of(p) is None:
+            return Response({'detail': tr('There is no standard leave setup for this country yet – add the leave types and a policy yourself.')}, status=404)
+        return Response({**country_setup.load(p, request.user), 'categories_mapped': []})
+
+
 class UAESetupView(APIView):
     permission_classes = [LeaveHR]
 
@@ -430,16 +462,17 @@ class OpeningsView(APIView):
             if 'leave_type' in hn or 'leave type' in hn:
                 li = hn.index('leave_type') if 'leave_type' in hn else hn.index('leave type')
                 di = next((i for i, h in enumerate(hn) if h in ('days', 'balance', 'opening', 'opening balance', 'openings')), None)   # v1.62.10 (item 170): the template's "Openings" column
-                rows = [{'employee_code': _txt(r[ci]), 'leave_type': _txt(r[li]), 'days': (r[di] if di is not None and di < len(r) else None)}
-                        for r in data_rows if ci < len(r)]
+                rows = [{'employee_code': _txt(r[ci]), 'leave_type': _txt(r[li]), 'days': (r[di] if di is not None and di < len(r) else None), '_line': n + 2}
+                        for n, r in enumerate(data_rows) if ci < len(r)]
             else:
                 cols = [(i, h) for i, h in enumerate(header) if i != ci and str(h or '').strip().lower() in types]
                 if not cols:
                     return Response({'detail': tr('No column is a leave type – name the columns as the leave types (e.g. Annual Leave, Sick Leave) or use employee_code, leave_type, days.')}, status=400)
-                rows = [{'employee_code': _txt(r[ci]), 'leave_type': str(h).strip(), 'days': r[i]}
-                        for r in data_rows for i, h in cols if ci < len(r) and i < len(r) and r[i] not in (None, '')]
+                rows = [{'employee_code': _txt(r[ci]), 'leave_type': str(h).strip(), 'days': r[i], '_line': n + 2}
+                        for n, r in enumerate(data_rows) for i, h in cols if ci < len(r) and i < len(r) and r[i] not in (None, '')]
         emps = {e.emp_code.upper(): e for e in Emp.objects.all().only('id', 'emp_code', 'emp_branch_id')}
-        done, errors = 0, []
+        dry = str(request.data.get('dry_run') or '').lower() in ('1', 'true', 'yes')   # v1.79.2 Test: every row checked, nothing saved
+        done, errors, problems = 0, [], []
         from Chatter.tracking import paused
         _p = paused(); _p.__enter__()
         for i, r in enumerate(rows, 1):
@@ -454,11 +487,19 @@ class OpeningsView(APIView):
                 days = float(r.get('days'))
             except (TypeError, ValueError):
                 days = None
+            line = r.get('_line') or i + 1   # the line of the file (the header is line 1)
             if e is not None and not branch_allows(request, employee_id=e.pk):   # v1.22.0 branch rights
                 errors.append(tr('Row {0}: ', i) + tr(BRANCH_DENIED))
+                problems.append({'row': line, 'ok': False, 'employee_code': r.get('employee_code'), 'errors': [tr(BRANCH_DENIED)]})
                 continue
             if not e or not t or days is None:
+                why = (tr('Employee code: no employee "{0}"', r.get('employee_code')) if not e else tr('Leave type: "{0}" not found', r.get('leave_type')) if not t
+                       else tr('Days: "{0}" is not a number', r.get('days')))
                 errors.append(tr('Row {0}: ', i) + (tr('employee not found') if not e else tr('leave type not found') if not t else tr('days must be a number')))
+                problems.append({'row': line, 'ok': False, 'employee_code': r.get('employee_code'), 'errors': [why]})
+                continue
+            if dry:
+                done += 1
                 continue
             cur = float(engine.balance_row(e.pk, t.pk).balance or 0)
             delta = days - cur if mode == 'set' else days
@@ -469,7 +510,8 @@ class OpeningsView(APIView):
                     engine.post(e.pk, t.pk, d, 'opening', delta, note=f'Opening balance ({mode} {days:g})', user_id=request.user.pk, move_balance=True)
             done += 1
         _p.__exit__(None, None, None)
-        return Response({'loaded': done, 'errors': errors[:500], 'error_count': len(errors), 'rows': len(rows)})
+        return Response({'loaded': 0 if dry else done, 'ok': done, 'dry_run': dry, 'errors': errors[:500], 'error_count': len(errors), 'rows': len(rows), 'total': len(rows),
+                         'problems': problems[:20000], 'only_problems': True})
 
 
 class LedgerView(APIView):

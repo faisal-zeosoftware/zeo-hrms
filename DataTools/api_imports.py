@@ -142,9 +142,69 @@ def _specs():
 
 def spec(path):
     try:
-        return _specs().get(path)
+        out = _specs().get(path)
     except Exception:   # noqa: BLE001 – Projects app not installed
+        out = None
+    if out is None:
+        out = kit_spec(path)
+    return out
+
+
+_KIT = re.compile(r'^/([a-z0-9-]+)/api/r/([a-z0-9_]+)/$')
+# how a record of another list is found from the readable value of the file (first match wins; the id works too)
+_MATCH = ('code', 'number', 'sku', 'barcode', 'emp_code', 'name', 'title', 'email')
+
+
+def kit_spec(path):
+    """v1.79.1 every list of the app-kit apps (Inventory, Accounting, Sales, Purchase, Manufacturing, CRM, Property, Maintenance,
+    Assets, HSE, People, HR …) can be imported: the columns are the fields of the list's New form – the same rules, numbering
+    and rights as the form, each row through the list's own create. A link to another record (item, customer, warehouse,
+    account …) is given by its code, number or name; choice fields by their value or label; tables (lines) are not in the file."""
+    m = _KIT.match(path or '')
+    if not m:
         return None
+    try:
+        from zeo.appkit.engine import REGISTRY, fmeta
+    except Exception:   # noqa: BLE001
+        return None
+    app = next((a for a in REGISTRY.values() if a.slug == m.group(1)), None)
+    r = app.regs.get(m.group(2)) if app else None
+    if r is None or r.create == 'none':
+        return None
+    out = []
+    for name in r.form:
+        try:
+            if r.link_off(name) or name in (r.readonly or ()) or name in (r.links or {}):
+                continue
+            meta = fmeta(r, name)
+        except Exception:   # noqa: BLE001 – a form entry that is not a field (section title)
+            continue
+        t, label, req = meta.get('type'), meta.get('label') or name, bool(meta.get('required'))
+        if t in ('json', 'file', 'image'):
+            continue
+        if t in ('fk', 'm2m'):
+            try:
+                from zeo.appkit.engine import field_of
+                rm = field_of(r.model, name).related_model
+            except Exception:   # noqa: BLE001
+                continue
+            if rm is None:
+                continue
+            names = {f.name for f in rm._meta.get_fields()}
+            match = tuple(k for k in _MATCH if k in names) or ('name',)
+            out.append(F(name, label, required=req, link=(rm._meta.app_label, rm.__name__), many=t == 'm2m', match=match,
+                         help_=meta.get('help') or ''))
+        elif t == 'choice':
+            out.append(F(name, label, required=req, choices=[(c['value'], c['label']) for c in meta.get('choices') or []], help_=meta.get('help') or ''))
+        elif t in ('bool', 'bool3'):
+            out.append(F(name, label, 'yes/no', help_=meta.get('help') or ''))
+        elif t in ('int', 'decimal'):
+            out.append(F(name, label, 'number', required=req, help_=meta.get('help') or ''))
+        elif t in ('date', 'datetime'):
+            out.append(F(name, label, 'date', required=req, help_=meta.get('help') or ''))
+        else:
+            out.append(F(name, label, required=req, help_=meta.get('help') or ''))
+    return out or None
 
 
 def public_fields(path):
@@ -254,10 +314,12 @@ def run(request, path, rows, dry, schema, factory):
         start = 1 + max(0, int((request.data or {}).get('row_offset') or 0))
     except Exception:   # noqa: BLE001
         start = 1
+    from .import_jobs import row_done   # v1.79.1 the count of a background import
     for i, row in enumerate(rows, start=start):
         data, problems = convert(path, row if isinstance(row, dict) else {})
         if problems:
             results.append({'row': i, 'ok': False, 'errors': problems})
+            row_done(False)
             continue
         sub = _sub_request(factory, path, schema, data, request)
         force_authenticate(sub, user=request.user)
@@ -274,10 +336,13 @@ def run(request, path, rows, dry, schema, factory):
                 res['id'] = resp.data.get('id')
             results.append(res)
             ok += 1
+            row_done(True)
         except _Rollback as rb:
             results.append({'row': i, 'ok': False, 'errors': _flatten(getattr(rb.resp, 'data', None) or 'Rejected')})
+            row_done(False)
         except Exception as exc:   # noqa: BLE001
             results.append({'row': i, 'ok': False, 'errors': [str(exc)[:200]]})
+            row_done(False)
     return {'dry_run': dry, 'total': len(rows), 'ok': ok, 'failed': len(rows) - ok, 'results': results}
 
 

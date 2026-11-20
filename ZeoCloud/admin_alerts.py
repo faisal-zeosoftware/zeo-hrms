@@ -181,7 +181,7 @@ def _mail(ev, schema):
             lines.append(sentence(ev.detail, L))   # v1.67.8 (fixes) item 10: the event sentence in the reader's language too
         lines += ['', T('Open Settings › Sign-in security › Security dashboard in ZEO to see the details.', L),
                   T('You get this e-mail because you are an administrator of the company. It can be switched off in Settings › Sign-in security.', L)]
-        subject = T('ZEO security: {0}', L, T(SUBJECTS.get(ev.kind, ev.get_kind_display()), L))
+        subject = T('ZEO Books security: {0}', L, T(SUBJECTS.get(ev.kind, ev.get_kind_display()), L))
         try:
             message(subject, '\n'.join(lines), L, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [p.email]).send()
             sent = True

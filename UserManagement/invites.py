@@ -11,6 +11,7 @@ Now, when the e-mail (or user name) belongs to an existing login, the company in
   branches and the employee link are set afterwards in Users as for any user;
 - in ZEO Cloud the person then counts as a user of the inviting account (the plan's user limit is checked on accept).
 """
+from zeo.mailguard import essential_mail
 import logging
 
 from django.db import transaction
@@ -106,6 +107,7 @@ def create(target, companies, by, is_staff=False, is_superuser=False):
     return invites, already, refused
 
 
+@essential_mail   # v1.79.5 sent even when the company e-mails are off
 def _mail(inv):
     to = inv.user.email or (inv.user.username if '@' in (inv.user.username or '') else '')
     if not to:
@@ -113,8 +115,8 @@ def _mail(inv):
     try:
         from django.core.mail import send_mail
         who = (inv.invited_by.email or inv.invited_by.username) if inv.invited_by else 'ZEO'
-        send_mail(f'Invitation to {inv.company.name} in ZEO',
-                  f'{who} invited you to work in {inv.company.name} in ZEO HRMS.\n\n'
+        send_mail(f'Invitation to {inv.company.name} in ZEO Books',
+                  f'{who} invited you to work in {inv.company.name} in ZEO Books.\n\n'
                   f'Sign in with your usual ZEO login ({inv.user.username}) – the invitation is at the top of your company list. '
                   f'Press Accept to add {inv.company.name} to your companies, or Decline.\n\n'
                   f'Nothing is shared with {inv.company.name} before you accept.',

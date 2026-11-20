@@ -90,8 +90,8 @@ def build(f):
         co = company_name()
     except Exception:   # noqa: BLE001
         pass
-    lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ZEO HRMS//Calendar sync//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-             f'X-WR-CALNAME:{_esc("ZEO – " + (co or "HR"))}', 'X-PUBLISHED-TTL:PT4H', 'REFRESH-INTERVAL;VALUE=DURATION:PT4H']
+    lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ZEO Books//Calendar sync//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+             f'X-WR-CALNAME:{_esc("ZEO Books – " + (co or "HR"))}', 'X-PUBLISHED-TTL:PT4H', 'REFRESH-INTERVAL;VALUE=DURATION:PT4H']
     LR = M('calendars', 'employee_leave_request')
     if emp is not None:
         for r in LR.objects.filter(employee=emp, status__in=('approved', 'pending'), start_date__lte=b, end_date__gte=a).select_related('leave_type'):

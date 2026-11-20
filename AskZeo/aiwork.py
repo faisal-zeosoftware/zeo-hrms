@@ -65,7 +65,7 @@ def write(request, c, conv, question, uploads, lang):
             facts = (f"\nFacts about the employee (use only these): name {S.emp_name(e)}, code {e.emp_code}, designation {e.emp_desgntn_id or ''}, "
                      f"department {e.emp_dept_id or ''}, branch {e.emp_branch_id or ''}, joined {e.emp_joined_date or ''}.")
     from django.db import connection
-    system = ('You are "Ask ZEO" in ZEO HRMS. Write the letter, e-mail, announcement or message the user asks for, ready to send, in '
+    system = ('You are "Ask ZEO" in ZEO Books. Write the letter, e-mail, announcement or message the user asks for, ready to send, in '
               f"{'Arabic' if lang == 'ar' else 'English'} unless the user asks for another language. Company: {getattr(getattr(connection, 'tenant', None), 'name', '') or ''}. "
               'Use placeholders in [square brackets] for anything you do not know. No legal promises. Today is ' + _zt_today().strftime('%d %B %Y') + '.' + sh.text(facts))
     r = ai.call(request, meter, system, [{'role': 'user', 'content': sh.text(question)}], max_tokens=1200)

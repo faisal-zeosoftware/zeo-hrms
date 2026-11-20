@@ -112,6 +112,22 @@ def resolve(level, emp, exclude_ids=()):
     return None, 'none'
 
 
+def pick(user, emp, exclude_ids=()):
+    """v1.73.19 (item 5): (user, how) for a step of any request – the named user while he is an active login of this company and
+    not the employee himself, else branch HR → company HR → a company administrator (as for leave since v1.11.0). Before, a general
+    request, document, resignation, loan, advance, air ticket, asset or late-in step waited for a closed login or for the employee
+    himself (who may not approve his own request) for ever."""
+    own = _own_user_ids(emp) | set(exclude_ids)
+    uid = getattr(user, 'pk', user)
+    u = _user(uid) if uid else None
+    if u is not None and u.pk not in own:
+        return u, 'user'
+    for how, x in fallback_chain(emp):
+        if x is not None and x.pk not in own:
+            return x, how
+    return None, 'none'
+
+
 # ------------------------------------------------------------------ escalation
 def _level_for(approval):
     req = approval.leave_request

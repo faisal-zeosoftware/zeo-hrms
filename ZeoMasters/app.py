@@ -9,6 +9,7 @@ Rights
   merge   Masters manager, admins
 """
 from django.db.models import Q
+from decimal import Decimal
 
 from zeo.appkit.engine import Act, App, AppError, Reg, ctx, need, now, user_name
 
@@ -368,7 +369,36 @@ app.option('item-categories', lambda: ProductCategory.objects.filter(is_active=T
 app.option('tax-codes', lambda: TaxCode.objects.filter(is_active=True), str, ('code', 'name'), TaxCode)
 
 
+COST_LOCK = ('cost_price', 'standard_cost', 'valuation', 'stock_value')
+COST_LOCK_MSG = ('The cost of a stock item comes from Inventory while it is on – change it with a stock adjustment (cost increase / decrease) '
+                 'in Inventory › Stock documents, or a new standard cost in Inventory › Standard costs.')
+
+
+def _inv_on():
+    try:
+        from ZeoApps import services as AS
+        return AS.is_active('inventory')
+    except Exception:   # noqa: BLE001
+        return False
+
+
+class _CostLock(tuple):
+    """v1.75.0 (as Sage 300): read-only on the item form while Inventory is on – the cost comes from the Inventory ledger"""
+    def __contains__(self, n):
+        return n in COST_LOCK and _inv_on()
+
+
 def item_check(o, request, old):
+    if old is not None and old.track_stock and _inv_on():   # v1.75.0 a direct change (screen, API, import) is refused
+        data = getattr(request, 'data', None) or {}
+        for f in COST_LOCK:
+            if hasattr(data, 'get') and f in data and data.get(f) not in (None, ''):
+                try:
+                    same = Decimal(str(data.get(f))) == Decimal(str(getattr(old, f) or 0)) if f != 'valuation' else data.get(f) == old.valuation
+                except Exception:   # noqa: BLE001
+                    same = False
+                if not same:
+                    raise AppError(COST_LOCK_MSG, f)
     force = str(request.data.get('force_duplicate', '')).lower() in ('1', 'true', 'yes')
     if not force:
         for f, label in (('code', 'code'), ('barcode', 'barcode')):
@@ -414,6 +444,7 @@ ITEM_FORM = ('kind', 'code', 'name', 'arabic_name', 'category', 'uom', 'barcode'
 ireg = app.reg(Reg('item', Product, 'Item', 'Items', 'Items',
             cols=('number', 'code', 'name', 'kind', 'category', 'uom', 'sale_price', 'preferred_supplier', 'apps_text', 'is_active'),
             form=ITEM_FORM, manage=EDIT, view=VIEW, create=('any_app',), restricted=('cost_price', 'purchase_price', 'standard_cost', 'stock_value'),
+            readonly=_CostLock(),
             can_restricted=lambda request, obj=None: app.any(request, *EDIT),
             search=('number', 'code', 'name', 'arabic_name', 'barcode', 'manufacturer_no', 'supplier_code'),
             filters=('kind', 'category', 'is_sold', 'is_purchased', 'track_stock', 'is_active'),

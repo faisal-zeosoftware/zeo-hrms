@@ -37,7 +37,56 @@ def is_neutralized(schema=None):
     return value
 
 
+_off_cache = {}   # v1.79.5 schema → (until, e-mail switched off)
+
+
+def is_mail_off(schema=None):
+    """v1.79.5: Settings › E-mail configuration › "Send e-mails from this company" (CompanyOption 'company_email').
+    A new company starts with it off; a company without the option (made before 1.79.5) keeps sending as before."""
+    schema = schema or getattr(connection, 'schema_name', 'public')
+    if not schema or schema == 'public':
+        return False
+    hit = _off_cache.get(schema)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    value = False
+    try:
+        from ZeoApps.models import CompanyOption
+        o = CompanyOption.objects.filter(key='company_email').first()
+        value = bool(o is not None and not (o.value or {}).get('on'))
+    except Exception:
+        value = False
+    _off_cache[schema] = (time.time() + 30, value)
+    return value
+
+
 _local = threading.local()   # v1.62.0 workbook: no e-mail from this thread (the trial load of a data workbook)
+
+
+@contextlib.contextmanager
+def essential():
+    """v1.79.5: sign-in, password, invitation and security e-mails go even when the company's e-mails are switched off"""
+    old = getattr(_local, 'essential', False)
+    _local.essential = True
+    try:
+        yield
+    finally:
+        _local.essential = old
+
+
+def is_essential():
+    return bool(getattr(_local, 'essential', False))
+
+
+def essential_mail(fn):
+    """decorator: the e-mails sent by fn are essential (sign-in, password, invitation, security)"""
+    import functools
+
+    @functools.wraps(fn)
+    def run(*a, **k):
+        with essential():
+            return fn(*a, **k)
+    return run
 
 
 @contextlib.contextmanager
@@ -57,8 +106,10 @@ def is_suppressed():
 def forget(schema=None):
     if schema:
         _cache.pop(schema, None)
+        _off_cache.pop(schema, None)
     else:
         _cache.clear()
+        _off_cache.clear()
 
 
 class GuardedBackend(BaseEmailBackend):
@@ -91,5 +142,8 @@ class GuardedBackend(BaseEmailBackend):
             return len(msgs)
         if msgs and is_neutralized():
             log.info('neutralized company %s: %d e-mail(s) not sent', getattr(connection, 'schema_name', '?'), len(msgs))
+            return len(msgs)
+        if msgs and not is_essential() and is_mail_off():   # v1.79.5 the company's e-mails are switched off
+            log.info('company %s has e-mails switched off: %d e-mail(s) not sent', getattr(connection, 'schema_name', '?'), len(msgs))
             return len(msgs)
         return self.real.send_messages(msgs)

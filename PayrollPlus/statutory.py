@@ -154,6 +154,16 @@ def compute(scheme, employee, rows=None, national=None):
         pass
     if scheme.applies_to == 'nationals' and not nat or scheme.applies_to == 'expats' and nat:
         return Decimal('0'), Decimal('0'), Decimal('0')
+    # v1.73.22 (item 153) India: professional tax / labour welfare fund by the branch's state, statutory bonus provision
+    from . import india as _IN
+    if (scheme.code or '').strip().lower() == 'bonus' and (scheme.country or '') == 'IN':
+        from .legal import _on as _on_in
+        return _IN.bonus_month(scheme, employee, base_amount(rows, 'basic_da'), _on_in(None))
+    if scheme.kind == 'slab' and _IN.is_state_wise(scheme):
+        from .legal import _on as _on_in
+        b = base_amount(rows, scheme.base)
+        e_, r_ = _IN.slab_for(scheme, employee, b, _on_in(None))
+        return b.quantize(Q2), e_.quantize(Q2, ROUND_HALF_UP), r_.quantize(Q2, ROUND_HALF_UP)
     gross = base_amount(rows, 'gross')
     if scheme.eligible_gross_max is not None and gross > _d(scheme.eligible_gross_max):
         return Decimal('0'), Decimal('0'), Decimal('0')

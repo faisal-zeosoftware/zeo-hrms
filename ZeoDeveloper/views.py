@@ -707,7 +707,7 @@ class ExportView(Base):
         pkg = export(mods if isinstance(mods, list) else [mods])
         if (request.data or {}).get('download'):
             resp = HttpResponse(json.dumps(pkg, ensure_ascii=False, indent=1), content_type='application/json')
-            resp['Content-Disposition'] = f'attachment; filename="zeo-package-{"-".join(m["key"] for m in pkg["modules"])[:60]}.json"'
+            resp['Content-Disposition'] = f'attachment; filename="zeo-books-package-{"-".join(m["key"] for m in pkg["modules"])[:60]}.json"'
             return resp
         return Response(pkg)
 

@@ -55,17 +55,73 @@ def app_info(app, request):
         'industry_source': s.industry_source, 'company_industry': code, 'company_industry_label': label, 'suggested': sug,
         'packs_installed': s.packs_installed, 'terms': s.terms or {}, 'require_review': s.require_review,
         'rights': r, 'can_setup': can_setup(app, request), 'links': links_state(app),
-        'settings': {f: getattr(s, f) for f in app.settings_fields} | ({'secret_set': bool(getattr(s, 'messaging_secret', ''))} if hasattr(app, 'set_secret') else {}),
-        'settings_meta': [_smeta(app, f) for f in app.settings_fields],
+        'features_on': (__import__('zeo.appkit.features', fromlist=['state']).state(app) if getattr(app, 'features', None) else {}),
+        'settings': {f: _sval(s, f) for f in app.settings_fields if f not in _hidden_settings(app)} | ({'secret_set': bool(getattr(s, 'messaging_secret', ''))} if hasattr(app, 'set_secret') else {}),
+        'settings_meta': [_smeta(app, f) for f in app.settings_fields if f not in _hidden_settings(app)],
         'to_review': len(P.to_review(app)) if s.activated_at else 0,
         'roles': [{'code': k, 'label': v} for k, v in app.roles],
     })
+
+
+def _hidden_settings(app):
+    if not getattr(app, 'features', None):
+        return set()
+    from . import features as FT
+    return FT.hidden_settings(app)
+
+
+class FeaturesView(Base):
+    """v1.75.0 Settings › Features of the app: GET the list; PATCH {key: true|false, …}; POST {do: 'all' | 'standard' | 'preset', preset}"""
+    needs_activation = False
+
+    @guard
+    def get(self, request):
+        from . import features as FT
+        return Response(FT.listing(self.app) | {'can_change': can_setup(self.app, request)})
+
+    @guard
+    def patch(self, request):
+        from . import features as FT
+        need(can_setup(self.app, request), 'Only the manager of the app or an administrator switches features on or off.')
+        FT.save(self.app, {k: v for k, v in dict(request.data).items()}, request.user)
+        return Response(FT.listing(self.app) | {'can_change': True})
+
+    @guard
+    def post(self, request):
+        from . import features as FT
+        need(can_setup(self.app, request), 'Only the manager of the app or an administrator switches features on or off.')
+        do = str(request.data.get('do') or '')
+        feats = getattr(self.app, 'features', [])
+        if do == 'all':
+            vals = {f.key: True for f in feats}
+        elif do == 'standard':   # back to standard: only the features not in use go off
+            vals = {f.key: (f.standard or bool(FT.used(f))) for f in feats}
+        elif do == 'preset':
+            p = (getattr(self.app, 'presets', None) or {}).get(str(request.data.get('preset') or ''))
+            need(p is not None, 'Choose a preset.')
+            vals = {k: True for k in p[1]}
+        else:
+            raise AppError('Choose: all, standard or preset.')
+        FT.save(self.app, vals, request.user)
+        return Response(FT.listing(self.app) | {'can_change': True})
+
+
+def _sval(s, name):
+    v = getattr(s, name)
+    return v.pk if hasattr(v, '_meta') else v   # v1.75.0 a link (Inventory: the default account set) is its id
 
 
 def _smeta(app, name):
     from .engine import ftype, label_of
     f = app.settings_model._meta.get_field(name)
     m = {'name': name, 'label': label_of(f), 'type': ftype(f), 'help': str(f.help_text or '')}
+    if ftype(f) == 'fk':   # v1.75.0 a link in the settings: offered as a choice of its records
+        qs = f.related_model.objects.all()
+        if hasattr(f.related_model, 'parent'):
+            qs = qs.filter(parent__isnull=True)
+        m['type'] = 'choice'
+        m['choices'] = [{'value': o.pk, 'label': str(getattr(o, 'code', '') and f'{o.code} – {o}' or o)} for o in qs[:300]]
+        return m
     if f.choices:
         m['choices'] = [{'value': k, 'label': str(v)} for k, v in f.choices]
     return m
@@ -111,6 +167,15 @@ class AppInfoView(Base):
                 v = (None if fld.null else fld.get_default()) if v is None else v
             elif t == 'json':
                 v = f.j(n)
+            elif t in ('date', 'datetime'):   # v1.75.0 an empty date clears it
+                v = f.s(n) or None
+                if v is None and not fld.null:
+                    continue
+            elif t == 'fk':   # v1.75.0
+                i = f.i(n)
+                v = fld.related_model.objects.filter(pk=i).first() if i else None
+                if i and v is None:
+                    raise AppError(f'{fld.verbose_name}: not found.', n)
             elif t == 'choice':
                 v = f.choice(n, fld.choices, fld.default)
             else:
@@ -120,6 +185,8 @@ class AppInfoView(Base):
         if f.has('secret') and f.s('secret') and hasattr(a, 'set_secret'):   # v1.40.0: a provider key, kept encrypted and never returned (empty = keep)
             a.set_secret(s, f.s('secret'))
             changed.append('provider key')
+        if getattr(a, 'settings_check', None):   # v1.75.0 an app may refuse a change (Inventory: the costing level once stock moved)
+            a.settings_check(s, request)
         s.save()
         if changed:
             a.event('settings', 0, 'Settings changed: ' + ', '.join(changed), request.user)
@@ -570,30 +637,65 @@ class OptionsView(Base):
 
 
 class RegisterExportView(Base):
-    """Excel export of what the user can see (same filters as the list)."""
+    """Excel export of what the user can see (same filters as the list). v1.79.3 every row (before: the first 20,000, without saying so):
+    a long list is written in the background (the screen downloads the file when it is ready; a notice downloads it later), in sheets
+    of a million rows (the Excel limit), the linked records read with the list."""
+    INLINE = 5000
+
     @guard
     def get(self, request, kind):
         from openpyxl import Workbook
+        from openpyxl.cell import WriteOnlyCell
         from openpyxl.styles import Font, PatternFill
+        from DataTools import import_jobs as IJ
         r = get_reg(self.app, kind, request)
-        qs = filtered(r, request)[:20000]
+        qs = filtered(r, request)
+        n = qs.count()
+        if n > self.INLINE:
+            from DataTools.request_jobs import get_in_background
+            bg = get_in_background(request, str(r.plural), wait=0 if n > 50000 else 15, page=f'{self.app.page}r/{r.kind}',
+                                   detail='The list is long – the Excel file is written in the background.')
+            if bg is not None:
+                return bg
+        IJ.set_total(n)
         cols = [fmeta(r, c) for c in tuple(dict.fromkeys(r.cols + getattr(r, 'export_extra', ()))) if not r.link_off(c)]
         dm = dyn_map(r, request)   # v1.67.27: every dynamic field of the register in the export
         cols += [dyn_meta(x) for x in dm.values()]
-        wb = Workbook()
-        ws = wb.active
-        ws.title = r.plural[:30]
-        ws.append([c['label'] for c in cols])
-        for c in ws[1]:
-            c.font = Font(bold=True, color='FFFFFF')
-            c.fill = PatternFill('solid', fgColor='334155')
-        for x in qs:
+        fks = []
+        for c in cols:
+            try:
+                f = r.model._meta.get_field(c['name'])
+            except Exception:   # noqa: BLE001
+                continue
+            if getattr(f, 'many_to_one', False) or getattr(f, 'one_to_one', False):
+                fks.append(c['name'])
+        if fks:
+            qs = qs.select_related(*fks)
+        wb = Workbook(write_only=True)
+        head_font, head_fill = Font(bold=True, color='FFFFFF'), PatternFill('solid', fgColor='334155')
+
+        def sheet(no):
+            ws = wb.create_sheet(r.plural[:26] + (f' {no}' if no > 1 else ''))
+            for i, c in enumerate(cols, 1):
+                ws.column_dimensions[_col_letter(i)].width = max(12, min(40, len(c['label']) + 4))
+            hd = []
+            for c in cols:
+                x = WriteOnlyCell(ws, value=c['label'])
+                x.font, x.fill = head_font, head_fill
+                hd.append(x)
+            ws.append(hd)
+            return ws
+        ws, k, no = sheet(1), 0, 1
+        for x in qs.iterator(chunk_size=2000):
+            if k and k % 1_000_000 == 0:   # an Excel sheet holds 1,048,576 rows
+                no += 1
+                ws = sheet(no)
             row = ser(r, x, request, [c['name'] for c in cols])
             ws.append([(dyn_show(dm[c['name']], row.get(c['name'])) if c['name'] in dm and dm[c['name']].get('type') in ('yesno', 'date') else
                         row.get(c['name'] + '_label', row.get(c['name']))) if not isinstance(row.get(c['name']), list)
                        else row.get(c['name'] + '_label', '') for c in cols])
-        for i, c in enumerate(cols, 1):
-            ws.column_dimensions[ws.cell(1, i).column_letter].width = max(12, min(40, len(c['label']) + 4))
+            k += 1
+            IJ.row_done(True)
         buf = BytesIO()
         wb.save(buf)
         buf.seek(0)
@@ -601,6 +703,10 @@ class RegisterExportView(Base):
         resp['Content-Disposition'] = f'attachment; filename="{self.app.slug}-{r.kind}.xlsx"'
         return resp
 
+
+def _col_letter(i):
+    from openpyxl.utils import get_column_letter
+    return get_column_letter(i)
 
 
 def _company_perms():   # v1.22.0: only the users of the open company (see AccessControl.access.company_perms)

@@ -75,7 +75,7 @@ def answer_builtin(c, question, lang):
     guides = H.find_guides(c, question, 1)
     if not hits and not screens and not guides:
         return None
-    lines = [tr('From the ZEO guides:', lang=lang)] if hits else []
+    lines = [tr('From the ZEO Books guides:', lang=lang)] if hits else []
     for h in hits:
         lines.append(f"- **{_where(h)}** – {_snippet(h['text'], question)}")
     if screens:

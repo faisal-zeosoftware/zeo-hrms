@@ -526,7 +526,7 @@ CELERY_IMPORTS = ('EmpManagement.tasks',)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 EMAIL_HOST = env('ZEO_EMAIL_HOST', default='smtp.hostinger.com')
-EMAIL_PORT = env.int('ZEO_EMAIL_PORT', default=465)
+EMAIL_PORT = int(env('ZEO_EMAIL_PORT', default='465'))
 
 EMAIL_USE_SSL = True
 EMAIL_USE_TLS = False

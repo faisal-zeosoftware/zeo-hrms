@@ -525,15 +525,15 @@ CELERY_IMPORTS = ('EmpManagement.tasks',)
 # Fallback sender (each company can also set its own mail server under Settings → E-mail configuration).
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
-EMAIL_HOST = env('ZEO_EMAIL_HOST', default='smtp.hostinger.com')
-EMAIL_PORT = int(env('ZEO_EMAIL_PORT', default='465'))
+# EMAIL_HOST = env('ZEO_EMAIL_HOST', default='smtp.hostinger.com')
+# EMAIL_PORT = int(env('ZEO_EMAIL_PORT', default='465'))
 
-EMAIL_USE_SSL = True
-EMAIL_USE_TLS = False
+# EMAIL_USE_SSL = True
+# EMAIL_USE_TLS = False
 
-EMAIL_HOST_USER = env('ZEO_EMAIL_USER', default='')
-EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'ZEO Books <notifications@zeosoftware.com>')   # v1.79.5
+# EMAIL_HOST_USER = env('ZEO_EMAIL_USER', default='')
+# EMAIL_HOST_PASSWORD = env('ZEO_EMAIL_PASSWORD', default='')
+# DEFAULT_FROM_EMAIL = env('ZEO_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'ZEO Books <notifications@zeosoftware.com>')   # v1.79.5
 # without a mail account, e-mails are written to the log instead of failing
 ZEO_REAL_EMAIL_BACKEND = env('ZEO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend' if EMAIL_HOST_USER else 'django.core.mail.backends.console.EmailBackend')
 # v1.22.3: every e-mail goes through the guard – a neutralized company (test copy) sends none
